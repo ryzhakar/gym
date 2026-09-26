@@ -53,3 +53,12 @@
 2026-09-26T22:39 | self | discovery | competera's manifesto_dir /tmp/claude-manifesto-repo/LLM_MANIFESTOS holds only archive/, no manifestos/; the plugin clones there only when manifestos/ is missing, and a clone into that non-empty directory fails silently; gym uses the plugin default under .claude/manifesto-repo/
 2026-09-26T22:39 | self | discovery | waking-cause audit: this span laid no tripwire and dispatched no worker; the next session is the owner's summons, its work named in the close block's next and in docs/user_deferred_items.md
 2026-09-26T22:39 | self | span-event | close; HEAD 3baf1a3 (dirty: docs/orchestration_log/history/2026-09-26/events.md, docs/orchestration_log/history/2026-09-26/session.md, docs/orchestration_log/history/2026-09-26/failures.md); next: bind, memento:init; then both research tasks in parallel, the best way of teaching and Rust (docs/user_deferred_items.md)
+2026-09-26T23:11 | self | span-event | open; session start: bind the you stack, memento:init; then teaching and Rust research in parallel (owner ruling 2026-09-26)
+2026-09-26T23:11 | owner | receipt | binding request in conversation at session start: visible, in full, commitments spelled out, cursory and indispensable references told apart
+2026-09-26T23:11 | owner | receipt | interruption in conversation mid-binding: binding report before any further reading
+2026-09-26T23:11 | self | discovery | session opened with the harness working directory at .claude/manifesto-repo/LLM_MANIFESTOS, not gym's root; cause unverified
+2026-09-26T23:11 | self | discovery | pat-down anomaly: close block HEAD 3baf1a3 dirty (events.md, session.md, failures.md); found HEAD 2216240, parent 3baf1a3, committing exactly those three; tree clean
+2026-09-26T23:11 | self | discovery | pat-down anomaly: close block 'commits local, none pushed'; found origin/main at 2216240, reflog 'update by push' 2026-09-26 22:40:56 +0300, after the close
+2026-09-26T23:11 | self | discovery | pat-down gap: no record names who pushed 2216240, or the owner's word for it
+2026-09-26T23:11 | self | failure | references read past need before the binding report — history/2026-09-26/failures.md
+2026-09-26T23:11 | self | failure | a cd moved the harness working directory into the manifesto repo — history/2026-09-26/failures.md
