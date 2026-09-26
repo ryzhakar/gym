@@ -288,3 +288,4 @@
 2026-09-27T01:43 | agent:t3-n2-b | receipt | N2-r1-05, N2-r1-06 VERIFIED (S3 R3 O2); N2-r1-09 UNVERIFIABLE (status rows mislabel verified_by as t3-n2-a)
 2026-09-27T01:43 | agent:t3-n3-b | receipt | N3-r1-03 UNVERIFIABLE; N3-r1-07 VERIFIED, S3→S2 (non-randomized order, gaming result p=0.07)
 2026-09-27T01:43 | self | failure | silence broken an eleventh time at turn end
+2026-09-27T01:44 | agent:t3-n3-c | receipt | N3-r1-10 UNVERIFIABLE, re-graded S2 R1; N3-r1-12 VERIFIED (S3 R1 O1, preregistered)
