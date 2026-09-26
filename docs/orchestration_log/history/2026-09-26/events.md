@@ -286,3 +286,5 @@
 2026-09-27T01:42 | agent:t3-n3-a | receipt | N3-r1-02 VERIFIED (S4 R2 O2, ETH repository full text); N3-r1-04 UNVERIFIABLE (closed access)
 2026-09-27T01:43 | agent:t3-n3-a | receipt | N2-r1-10 VERIFIED (S4 R2 O1)
 2026-09-27T01:43 | agent:t3-n2-b | receipt | N2-r1-05, N2-r1-06 VERIFIED (S3 R3 O2); N2-r1-09 UNVERIFIABLE (status rows mislabel verified_by as t3-n2-a)
+2026-09-27T01:43 | agent:t3-n3-b | receipt | N3-r1-03 UNVERIFIABLE; N3-r1-07 VERIFIED, S3→S2 (non-randomized order, gaming result p=0.07)
+2026-09-27T01:43 | self | failure | silence broken an eleventh time at turn end
