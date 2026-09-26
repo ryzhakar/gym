@@ -235,3 +235,4 @@
 2026-09-27T01:20 | self | failure | silence broken a fifth time: a status sentence written at turn end; same mechanism as earlier entries
 2026-09-27T01:20 | agent:r-scripts-review | receipt | scripts-draft review: sample.py, estimate.py, check_map.py PASS against spec with own fixtures; README's maps/rust 0 FAIL claim false, 3 domain ids differ from filenames
 2026-09-27T01:20 | self | delegation | agent:r-scripts-fix, haiku: correct 3 domain ids, rerun validator, refresh README example
+2026-09-27T01:21 | agent:r-t1-individual-blogs-en | receipt | frame-individual-blogs-en.csv: 3348 posts from 699 blogs, 2570 in window; 220 blogs without feeds contribute only their TWiR-linked posts
