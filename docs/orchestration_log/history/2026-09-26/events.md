@@ -176,3 +176,7 @@
 2026-09-27T01:00 | self | delegation | agent:r-t1-survey-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-survey-en.csv (started before census: listing methods fixed in plan §2)
 2026-09-27T01:00 | self | delegation | agent:r-t1-domains-1-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-domains-1-en.csv (started before census: listing methods fixed in plan §2)
 2026-09-27T01:00 | self | delegation | agent:r-t1-domains-2-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-domains-2-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:02 | agent:t0-rulings | receipt | rulings-brief.md, 22 fact lines; flagged wrong decision-line pointer; corrected to lines 139–145 via SendMessage
+2026-09-27T01:02 | agent:t0-substrate | receipt | substrate-audit.md: 9 capabilities documented with quotes
+2026-09-27T01:02 | agent:t0-seed-facts | receipt | seed-citations.csv: 60 cited works
+2026-09-27T01:02 | agent:rust-fable | receipt | Rust plan revised in place: §8 open points decided, 10% rule specified; matches decisions at 00:59
