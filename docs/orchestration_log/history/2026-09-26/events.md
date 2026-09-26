@@ -249,3 +249,4 @@
 2026-09-27T01:24 | agent:r-t1-all-de | receipt | German frames: 43 rows; German meetups publish in English, so the German-language population is small
 2026-09-27T01:24 | self | discovery | German-language Rust discourse is thin (43 items) because German venues run in English; the third-language choice stands by the OP3 rule, its stratum small
 2026-09-27T01:24 | agent:r-t1-users-forum-en-3 | receipt | frame-users-forum-en.csv: 217 threads ≥31 posts in window, month-sliced Discourse search, no month capped
+2026-09-27T01:26 | self | failure | silence broken a sixth time: turn-end status sentence; stale teammate notifications processed, nothing new to act on
