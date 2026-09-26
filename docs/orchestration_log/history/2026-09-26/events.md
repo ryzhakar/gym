@@ -198,3 +198,7 @@
 2026-09-27T01:05 | self | decision | haiku frame builders under-enumerate (hn-lobsters, users-forum); users-forum relaunched on sonnet with sliced search; later frame failures relaunch on sonnet (agentic-delegation: upgrade on observed failure)
 2026-09-27T01:05 | self | delegation | agent:r-t1-users-forum-en-2, sonnet: users-forum frame, exhaustive
 2026-09-27T01:05 | self | delegation | agent:r-t1-books-courses-en-2, sonnet: books-courses frame recheck, exhaustive per publisher
+2026-09-27T01:05 | agent:r-t1-domains-1-en | receipt | domain-subframes part 1: 17 items, only tokio.rs blog listed; relaunched on sonnet as r-t1-domains-1-en-2
+2026-09-27T01:05 | agent:t1-cs-ed | receipt | index/fields/cs-education.md: 37 papers, 5 venues, DOIs resolved via Crossref; OpenAlex shared-IP rate limit
+2026-09-27T01:05 | agent:t1-ai-tutor | receipt | index/fields/ai-tutoring.md: 47 anchors, 3 disputes, 2 vendor-authored flags
+2026-09-27T01:05 | self | discovery | OpenAlex and Crossref rate-limit the shared IP under parallel agents (429s reported by t1-cs-ed, t1-ai-tutor); later waves stagger or pass a mailto polite-pool parameter
