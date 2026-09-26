@@ -184,3 +184,11 @@
 2026-09-27T01:02 | self | failure | silence broken on a harness prompt for visible output — history/2026-09-26/failures.md
 2026-09-27T01:03 | self | failure | r-t1-rfc-en stopped before writing its frame — history/2026-09-26/failures.md
 2026-09-27T01:03 | self | delegation | agent:r-t1-rfc-en-2, haiku: rfc frame relaunch, frame/frame-rfc-en.csv
+2026-09-27T01:03 | agent:r-t1-survey-en | receipt | frame-survey-en.csv: 26 survey artifacts, 13 in window
+2026-09-27T01:03 | agent:r-t0-census | receipt | frame-census.md: 1119 merged RFCs, ~770 project posts, 7686 internals and 58414 users threads unfiltered, 3838 HN stories ≥50 comments; Discourse reply filters need pagination
+2026-09-27T01:03 | agent:r-t1-project-blog-en | receipt | frame-project-blog-en.csv: 394 posts, 152 in window
+2026-09-27T01:03 | agent:r-t0-lang | receipt | language-ranking.md: English, Chinese, German (German over French by venue size 2x); README-share measure unobtainable
+2026-09-27T01:03 | self | decision | Rust source languages fixed: English, Chinese, German, plus Ukrainian as its own frame (OP3 rule applied to r-t0-lang's table)
+2026-09-27T01:03 | self | delegation | agent:r-t1-all-zh, sonnet: non-English frame for zh, frame/frame-*-zh.csv (sampled from batch 2)
+2026-09-27T01:03 | self | delegation | agent:r-t1-all-de, sonnet: non-English frame for de, frame/frame-*-de.csv (sampled from batch 2)
+2026-09-27T01:03 | self | delegation | agent:r-t1-all-uk, sonnet: non-English frame for uk, frame/frame-*-uk.csv (sampled from batch 2)
