@@ -70,3 +70,8 @@
 2026-09-26T23:21 | self | decision | teaching-planner and rust-planner stopped before writing any plan; tripwire 70e0bdd1 cancelled
 2026-09-26T23:22 | self | failure | research dispatched without the research-tree skill — history/2026-09-26/failures.md
 2026-09-26T23:22 | self | failure | research dispatched before the owner could seed it — history/2026-09-26/failures.md
+2026-09-26T23:26 | owner | receipt | answers in the question tool: seed mode per research, and who pushed 2216240
+2026-09-26T23:26 | self | decision | Rust map research seeded first by an owner interview, now (owner ruling)
+2026-09-26T23:26 | self | decision | teaching, coaching and learning research waits for the owner's temporary seed file, his progress with another agent; its interview comes after (owner ruling)
+2026-09-26T23:26 | self | discovery | gap closed: the owner pushed 2216240 at 22:40:56 (owner, question tool)
+2026-09-26T23:26 | self | decision | docs/user_deferred_items.md pickup lines updated: teaching waits for the owner's seed file, then its interview; Rust picked up, seeded by interview first (owner ruling)
