@@ -291,3 +291,4 @@
 2026-09-27T01:44 | agent:t3-n3-c | receipt | N3-r1-10 UNVERIFIABLE, re-graded S2 R1; N3-r1-12 VERIFIED (S3 R1 O1, preregistered)
 2026-09-27T01:44 | agent:t3-n3-c | receipt | N7-r1-04 VERIFIED (S3 R1 O1)
 2026-09-27T01:45 | agent:t3-n1-b | receipt | N1-r1-10 VERIFIED (S4 R2 O0); N1-r1-12 UNVERIFIABLE
+2026-09-27T01:46 | self | failure | silence broken a twelfth time at turn end
