@@ -221,3 +221,4 @@
 2026-09-27T01:11 | self | delegation | agent:r-t1-lobsters-en, sonnet: Lobsters rows plus resolution of census 3838 vs frame 541 HN
 2026-09-27T01:12 | agent:t1-expertise | receipt | index/fields/expertise.md written (17.9 KB)
 2026-09-27T01:12 | self | discovery | stray files in repo root from agents: err.log, err2.log (r-t1-talks-en-2, told to remove), a 6-byte file named from a broken heredoc; cleanup queued once the frame wave ends
+2026-09-27T01:13 | self | failure | a cd moved the harness working directory again (heartbeat liveness check); reset; same entry as history/2026-09-26/failures.md 'A cd moved the harness working directory'
