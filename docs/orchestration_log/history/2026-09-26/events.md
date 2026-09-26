@@ -270,3 +270,7 @@
 2026-09-27T01:37 | self | delegation | N7 S≥3 claims to Tier 3: 01, 02 to t3-n3-d and 04 to t3-n3-c via SendMessage (same sources); agent:t3-n7-a (03, 05), agent:t3-n7-b (06, 07), agent:t3-n7-c (08, 09), sonnet
 2026-09-27T01:37 | self | failure | silence broken an eighth time at turn end
 2026-09-27T01:38 | agent:r-t1-union-v2 | receipt | frame-v2-nonen.csv: 2185 rows (2146 in window), sha256 a9be0076bf77f03de0373d98adf8bc484d0f22aa9e0e64fae9e25aaff13c8e38; 184 rows collapsed onto 4 URLs, likely index-page links in the zh digest
+2026-09-27T01:38 | agent:t2-n2-r1 | receipt | needs/n2-r1.md: 11 claims, 10 sources, 3 full texts
+2026-09-27T01:38 | self | discovery | frame-v2: zh conference talks collapsed to 4 schedule-page URLs, per-talk rows lost; fix before batch 2 samples non-English
+2026-09-27T01:38 | self | failure | silence broken a ninth time at turn end
+2026-09-27T01:38 | self | delegation | N2 S≥3 claims to Tier 3: 10 to t3-n3-a via SendMessage (same source); agent:t3-n2-a (01, 02, 03), agent:t3-n2-b (05, 06, 09), sonnet
