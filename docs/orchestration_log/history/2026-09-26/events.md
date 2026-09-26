@@ -217,3 +217,5 @@
 2026-09-27T01:09 | agent:t1-adult | receipt | index/fields/adult-skill.md: 51 anchors, 3 disputes, upskilling-label gap
 2026-09-27T01:10 | agent:r-scripts | receipt | scripts-draft: schema.yaml, 6 values, 12 domains, check_map.py, sample.py, estimate.py with fixtures; author reports all tests pass; claim, unverified
 2026-09-27T01:10 | self | delegation | agent:r-scripts-review, sonnet: independent review of scripts-draft with own fixtures, scripts-draft/review/review.md
+2026-09-27T01:11 | agent:r-t1-hn-lobsters-en | receipt | frame-hn-lobsters-en.csv: 541 HN stories month-sliced; Lobsters API returned nothing
+2026-09-27T01:11 | self | delegation | agent:r-t1-lobsters-en, sonnet: Lobsters rows plus resolution of census 3838 vs frame 541 HN
