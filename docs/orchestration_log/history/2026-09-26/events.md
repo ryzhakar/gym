@@ -296,3 +296,5 @@
 2026-09-27T01:48 | self | discovery | WebSearch session budget reported exhausted (200/200) and OpenAlex daily budget spent; later agents lean on Crossref, Semantic Scholar, Unpaywall, arXiv, PMC, DataCite
 2026-09-27T01:48 | self | failure | silence broken a thirteenth time at turn end
 2026-09-27T01:49 | agent:t3-n2-a | receipt | N2-r1-01 VERIFIED (S4 R1 O2), N2-r1-02 VERIFIED (S3 R1 O2), N2-r1-03 VERIFIED (S3 R1 O0)
+2026-09-27T01:50 | self | decision | teaching Stage A W5 launches: 30 S≥3 claims checked (22 VERIFIED, 8 UNVERIFIABLE, 0 REFUTED); N1-r1-09 shares N2-r1-01's verified source, its row may land during synthesis
+2026-09-27T01:50 | self | delegation | agent:t5-first-protocol, fable: Stage A brief, synthesis/first-protocol.md
