@@ -245,3 +245,6 @@
 2026-09-27T01:23 | self | delegation | agent:t2-n3-r1, sonnet: teaching need survey n3 round 1, needs/n3-r1.md + ledger rows (Stage A W3)
 2026-09-27T01:23 | self | delegation | agent:t2-n7-r1, sonnet: teaching need survey n7 round 1, needs/n7-r1.md + ledger rows (Stage A W3)
 2026-09-27T01:23 | self | delegation | agent:t2-breadth-r1, sonnet: breadth expansion round 1, needs/breadth-r1.md (upgraded from haiku: high-signal judgment)
+2026-09-27T01:24 | agent:r-t1-all-zh | receipt | Chinese frames: 2173 rows (rustcc.cn forum, weekly, Q&A, RustChinaConf); Bilibili and Zhihu blocked
+2026-09-27T01:24 | agent:r-t1-all-de | receipt | German frames: 43 rows; German meetups publish in English, so the German-language population is small
+2026-09-27T01:24 | self | discovery | German-language Rust discourse is thin (43 items) because German venues run in English; the third-language choice stands by the OP3 rule, its stratum small
