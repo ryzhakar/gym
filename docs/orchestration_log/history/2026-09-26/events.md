@@ -255,3 +255,6 @@
 2026-09-27T01:29 | self | delegation | agent:r-t1-union, sonnet: English frame union, frame/frame.csv + frame-stats.md + sha256
 2026-09-27T01:30 | self | failure | silence broken a seventh time at turn end
 2026-09-27T01:33 | agent:t2-breadth-r1 | receipt | needs/breadth-r1.md: 62 queries, 18 graded sources appended; clusters: kata practice unit, driver/navigator timing, vibe-coding erosion self-reports, a deployed Socratic tutor (O=0); one fabricated GitHub URL flagged
+2026-09-27T01:34 | agent:r-t1-union | receipt | frame/frame.csv: 13406 rows (11083 in window), 1925 URLs merged across classes, 6 non-Rust rows dropped
+2026-09-27T01:34 | self | decision | Rust English frame v1 fixed: frame.csv sha256 99ea45bb67b8c64238c7cff0286ca74cd4c27db06aa96c20b9b6f6823dab80e7; later additions form frame v2
+2026-09-27T01:34 | self | commitment | open wait: Rust batch 1 sampling needs sample.py, estimate.py, check_map.py ratified by the owner (drafts reviewed PASS, scripts-draft/review/review.md); silent until the owner writes
