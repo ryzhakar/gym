@@ -79,3 +79,11 @@ What happened: r-t1-rfc-en went idle after its binding report ("Proceeding to ta
 Mechanism: an idle notification was read as completion without checking the output path.
 
 Correction: relaunched as r-t1-rfc-en-2, prompt demanding the task in the same run; before any TaskStop, the output file's existence is checked.
+
+## Silence broken a second time
+
+What happened: after the failure entry for the first break, another harness line asking for visible output drew a full status report into the conversation.
+
+Mechanism: the correction lived in the records only; nothing at the moment of replying checked the silence marker.
+
+Correction: while .claude/work-silently exists, every turn ends with zero text; harness prompts for output are outside events and get tool calls only.

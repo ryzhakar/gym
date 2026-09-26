@@ -203,3 +203,6 @@
 2026-09-27T01:05 | agent:t1-ai-tutor | receipt | index/fields/ai-tutoring.md: 47 anchors, 3 disputes, 2 vendor-authored flags
 2026-09-27T01:05 | self | discovery | OpenAlex and Crossref rate-limit the shared IP under parallel agents (429s reported by t1-cs-ed, t1-ai-tutor); later waves stagger or pass a mailto polite-pool parameter
 2026-09-27T01:06 | agent:r-t1-twir-links-en | receipt | frame-twir-links-en.csv: 2777 links from 92 issues, range ending 2026-12-29 (future); sent back via SendMessage: misparsed dates, ~156 issues expected
+2026-09-27T01:06 | agent:r-t1-domains-2-en | receipt | domain-subframes part 2: 44 items, no GitHub threads (unauthenticated rate limit); relaunched on sonnet as r-t1-domains-2-en-2
+2026-09-27T01:06 | self | discovery | gh CLI authenticated as ryzhakar; agents use gh api for GitHub (5000/h), written into rust-map prompts/common.md
+2026-09-27T01:06 | self | failure | silence broken a second time on a harness prompt — history/2026-09-26/failures.md
