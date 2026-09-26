@@ -232,3 +232,4 @@
 2026-09-27T01:19 | agent:t1-coaching | receipt | index/fields/coaching.md: 49 anchors
 2026-09-27T01:19 | self | delegation | agent:t1-merge, sonnet: merged index, ledgers, calibration set (teaching W2)
 2026-09-27T01:19 | self | delegation | agent:r-t1-users-forum-en-3, sonnet: users-forum frame, foreground month slices (-2 idled on its own background job, stopped)
+2026-09-27T01:20 | self | failure | silence broken a fifth time: a status sentence written at turn end; same mechanism as earlier entries
