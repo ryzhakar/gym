@@ -282,3 +282,5 @@
 2026-09-27T01:40 | self | failure | silence broken a tenth time at turn end
 2026-09-27T01:41 | self | delegation | N1 S≥3 claims to Tier 3: 09 to t3-n2-a via SendMessage (same source); agent:t3-n1-a (01, 02), agent:t3-n1-b (10, 12), sonnet
 2026-09-27T01:41 | agent:t3-n7-a | receipt | N7-r1-03 VERIFIED (S3 R2 O1); N7-r1-05 UNVERIFIABLE
+2026-09-27T01:42 | agent:t3-n7-a | receipt | N7-r1-03 VERIFIED, immediate post-test only; N7-r1-05 UNVERIFIABLE, paywalled
+2026-09-27T01:42 | agent:t3-n3-a | receipt | N3-r1-02 VERIFIED (S4 R2 O2, ETH repository full text); N3-r1-04 UNVERIFIABLE (closed access)
