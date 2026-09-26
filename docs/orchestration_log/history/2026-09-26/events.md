@@ -233,3 +233,5 @@
 2026-09-27T01:19 | self | delegation | agent:t1-merge, sonnet: merged index, ledgers, calibration set (teaching W2)
 2026-09-27T01:19 | self | delegation | agent:r-t1-users-forum-en-3, sonnet: users-forum frame, foreground month slices (-2 idled on its own background job, stopped)
 2026-09-27T01:20 | self | failure | silence broken a fifth time: a status sentence written at turn end; same mechanism as earlier entries
+2026-09-27T01:20 | agent:r-scripts-review | receipt | scripts-draft review: sample.py, estimate.py, check_map.py PASS against spec with own fixtures; README's maps/rust 0 FAIL claim false, 3 domain ids differ from filenames
+2026-09-27T01:20 | self | delegation | agent:r-scripts-fix, haiku: correct 3 domain ids, rerun validator, refresh README example
