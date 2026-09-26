@@ -224,3 +224,4 @@
 2026-09-27T01:13 | self | failure | a cd moved the harness working directory again (heartbeat liveness check); reset; same entry as history/2026-09-26/failures.md 'A cd moved the harness working directory'
 2026-09-27T01:14 | agent:r-t1-all-uk | receipt | Ukrainian frames: 153 items across youtube, github, dou, rustukraine (dead domain); Telegram 0
 2026-09-27T01:14 | agent:r-t1-books-courses-en-2 | receipt | frame-books-courses-en.csv recheck: 271 items (was 40), 221 in window
+2026-09-27T01:16 | self | failure | silence broken a third time: a one-line status written on a harness prompt; same entry as history/2026-09-26/failures.md 'Silence broken a second time'
