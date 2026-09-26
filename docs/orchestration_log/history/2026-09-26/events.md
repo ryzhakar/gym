@@ -226,3 +226,4 @@
 2026-09-27T01:14 | agent:r-t1-books-courses-en-2 | receipt | frame-books-courses-en.csv recheck: 271 items (was 40), 221 in window
 2026-09-27T01:16 | self | failure | silence broken a third time: a one-line status written on a harness prompt; same entry as history/2026-09-26/failures.md 'Silence broken a second time'
 2026-09-27T01:17 | self | decision | teaching verifiers append status to ledger/claims-status.csv instead of editing claims.csv (parallel writers never edit one file in place); prompts for t1-merge, t3-verify, rust t1-union, t2-extract written to each research's prompts/
+2026-09-27T01:17 | agent:r-t1-lobsters-en | receipt | frame-hn-lobsters-en.csv: 541 HN + 281 Lobsters; census 3838 resolved as all-time untitled query, 541 verified for window and title
