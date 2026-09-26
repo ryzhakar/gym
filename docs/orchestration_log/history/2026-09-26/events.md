@@ -213,3 +213,4 @@
 2026-09-27T01:08 | agent:r-t1-twir-links-en | receipt | frame-twir-links-en.csv corrected: 3615 links, issues #514–#670, 157 issues
 2026-09-27T01:08 | agent:r-t1-rfc-en-2 | receipt | frame-rfc-en.csv: 1291 (1119 merged, 172 closed ≥50 comments), 213 in window, via gh api
 2026-09-27T01:08 | self | delegation | agent:r-t1-talks-en-2, sonnet: talks frame, every conference-year in window
+2026-09-27T01:08 | self | delegation | agent:r-t1-individual-blogs-en, sonnet: individual-blogs frame from twir-links hosts
