@@ -192,3 +192,4 @@
 2026-09-27T01:03 | self | delegation | agent:r-t1-all-zh, sonnet: non-English frame for zh, frame/frame-*-zh.csv (sampled from batch 2)
 2026-09-27T01:03 | self | delegation | agent:r-t1-all-de, sonnet: non-English frame for de, frame/frame-*-de.csv (sampled from batch 2)
 2026-09-27T01:03 | self | delegation | agent:r-t1-all-uk, sonnet: non-English frame for uk, frame/frame-*-uk.csv (sampled from batch 2)
+2026-09-27T01:04 | agent:r-t1-books-courses-en | receipt | frame-books-courses-en.csv: 40 items, Apress incomplete; count low against publisher catalogs, spot-check queued before sampling
