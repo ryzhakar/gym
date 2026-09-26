@@ -258,3 +258,4 @@
 2026-09-27T01:34 | agent:r-t1-union | receipt | frame/frame.csv: 13406 rows (11083 in window), 1925 URLs merged across classes, 6 non-Rust rows dropped
 2026-09-27T01:34 | self | decision | Rust English frame v1 fixed: frame.csv sha256 99ea45bb67b8c64238c7cff0286ca74cd4c27db06aa96c20b9b6f6823dab80e7; later additions form frame v2
 2026-09-27T01:34 | self | commitment | open wait: Rust batch 1 sampling needs sample.py, estimate.py, check_map.py ratified by the owner (drafts reviewed PASS, scripts-draft/review/review.md); silent until the owner writes
+2026-09-27T01:34 | self | delegation | agent:r-t1-union-v2, sonnet: non-English frame v2 union (zh, de, uk)
