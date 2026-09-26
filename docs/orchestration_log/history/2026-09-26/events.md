@@ -298,3 +298,8 @@
 2026-09-27T01:49 | agent:t3-n2-a | receipt | N2-r1-01 VERIFIED (S4 R1 O2), N2-r1-02 VERIFIED (S3 R1 O2), N2-r1-03 VERIFIED (S3 R1 O0)
 2026-09-27T01:50 | self | decision | teaching Stage A W5 launches: 30 S≥3 claims checked (22 VERIFIED, 8 UNVERIFIABLE, 0 REFUTED); N1-r1-09 shares N2-r1-01's verified source, its row may land during synthesis
 2026-09-27T01:50 | self | delegation | agent:t5-first-protocol, fable: Stage A brief, synthesis/first-protocol.md
+2026-09-27T01:50 | self | decision | teaching Stage B W6 starts in parallel with Stage A synthesis: surveys N4, N5, N6 round 2 plus breadth-r2 (plan §7); WebSearch budget spent, so API routes first
+2026-09-27T01:50 | self | delegation | agent:t2-n4-r2, sonnet: need survey n4 round 2, needs/n4-r2.md
+2026-09-27T01:50 | self | delegation | agent:t2-n5-r2, sonnet: need survey n5 round 2, needs/n5-r2.md
+2026-09-27T01:50 | self | delegation | agent:t2-n6-r2, sonnet: need survey n6 round 2, needs/n6-r2.md
+2026-09-27T01:50 | self | delegation | agent:t2-breadth-r2, sonnet: breadth round 2 for N4, N5, N6, needs/breadth-r2.md
