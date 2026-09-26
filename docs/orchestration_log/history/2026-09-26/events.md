@@ -47,3 +47,9 @@
 2026-09-26T22:39 | self | decision | polars manifesto and dev-orchestration dropped from the orchestrator's stack in .manifestos.yaml; manifesto_polars.md removed and struck from the schema's products (owner ruling)
 2026-09-26T22:39 | self | decision | owner ruling carried out, shape ratified: every record standing on 2026-09-26 is in force; written into .claude/memento.yaml ratification
 2026-09-26T22:39 | self | decision | both research tasks, teaching and Rust, run next session in parallel; pickup lines in docs/user_deferred_items.md updated (owner ruling)
+2026-09-26T22:39 | self | failure | first question round framed keep-or-retire rulings on notes the owner wanted dissolved — history/2026-09-26/failures.md
+2026-09-26T22:39 | self | failure | question context put in conversation text the owner does not read — history/2026-09-26/failures.md
+2026-09-26T22:39 | self | failure | a five-bullet list offered as the setup's pitch — history/2026-09-26/failures.md
+2026-09-26T22:39 | self | discovery | competera's manifesto_dir /tmp/claude-manifesto-repo/LLM_MANIFESTOS holds only archive/, no manifestos/; the plugin clones there only when manifestos/ is missing, and a clone into that non-empty directory fails silently; gym uses the plugin default under .claude/manifesto-repo/
+2026-09-26T22:39 | self | discovery | waking-cause audit: this span laid no tripwire and dispatched no worker; the next session is the owner's summons, its work named in the close block's next and in docs/user_deferred_items.md
+2026-09-26T22:39 | self | span-event | close; HEAD 3baf1a3 (dirty: docs/orchestration_log/history/2026-09-26/events.md, docs/orchestration_log/history/2026-09-26/session.md, docs/orchestration_log/history/2026-09-26/failures.md); next: bind, memento:init; then both research tasks in parallel, the best way of teaching and Rust (docs/user_deferred_items.md)
