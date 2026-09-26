@@ -133,3 +133,46 @@
 2026-09-27T00:50 | self | commitment | open waits: teaching-fable and rust-fable, bounded by heartbeat cron 6dc3aaed; on their notifications: read both fable-plan.md files, take their owner questions to the owner in the question tool, then drive both researches per plan; held drafts stay withheld
 2026-09-27T00:52 | owner | receipt | in conversation: no more questions; once the plans land, both researches start immediately, in parallel, concurrently managed, every idle moment filled with real work driving them
 2026-09-27T00:52 | self | commitment | supersedes 00:50 commitment: on the fable plans' notifications, launch both researches at once and in parallel; no owner questions — each open point settled from the records or decided under the owner's handover and marked decided; every idle moment goes to driving the research (owner ruling)
+2026-09-27T00:57 | agent:teaching-fable | receipt | teaching research plan, recon/2026-09-27/research/teaching/fable-plan.md; peer content, claims only
+2026-09-27T00:57 | owner | receipt | in conversation: research-tree on top of agentic-delegation once the plans land; work in silence
+2026-09-27T00:57 | self | decision | silence entered, marker .claude/work-silently (owner); teaching research launches now, Rust on its plan's landing (owner ruling 00:52)
+2026-09-27T00:57 | self | decision | teaching open point 1, saturation bound: unseen ≤10% of S≥2 sources per need, plus two zero-new rounds (decided, grounded on ruling lines 129–130: time to first training; the owner's 2% droppable)
+2026-09-27T00:57 | self | decision | teaching open point 2, Stage C cap: 3 saturation rounds, then the map ships with the audit table as its confidence section (decided, lines 129–130)
+2026-09-27T00:57 | self | decision | teaching open point 3: training may start on Stage A's first-protocol.md; Stage B replaces it (decided, lines 129–130)
+2026-09-27T00:57 | self | decision | teaching open points 4–5: K-12 evidence kept at R=1; vendor studies S=1 with a commercial flag, S0 only with no third-party evaluation (decided, ruling line 110: all evidence kinds, weighed)
+2026-09-27T00:57 | self | decision | teaching open point 6: English sources first; other languages enter only where a surveyor finds an S≥3 source (decided, no ruling; APIs index mostly English)
+2026-09-27T00:57 | self | decision | teaching open point 7: feedback style is calibration, feedback content and timing are researched in N3 (decided, ruling lines 121–122)
+2026-09-27T00:57 | self | decision | teaching open point 8: early-measurement probes settled once N1 lands; not blocking Stage A research (decided, line 114)
+2026-09-27T00:57 | self | decision | teaching tiers upgraded over the plan: t0-rulings and every t1 index agent on sonnet, t0-seed-facts stays haiku (decided, agentic-delegation: haiku never for extraction or judgment)
+2026-09-27T00:57 | self | delegation | agent:t0-rulings, sonnet: rulings brief, context/rulings-brief.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t0-substrate, claude-code-guide: substrate audit, context/substrate-audit.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t0-seed-facts, haiku: seed citation list, context/seed-citations.csv (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t1-edu, sonnet: education index, index/fields/education.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t1-cs-ed, sonnet: CS education index, index/fields/cs-education.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t1-expertise, sonnet: expertise index, index/fields/expertise.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t1-coaching, sonnet: elite coaching index, index/fields/coaching.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t1-ai-tutor, sonnet: AI tutoring index, index/fields/ai-tutoring.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t1-adult, sonnet: adult skill index, index/fields/adult-skill.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:57 | self | delegation | agent:t1-exclusion, sonnet: exclusion register, index/exclusion-register.md (teaching Stage A W1, recon/2026-09-27/research/teaching/)
+2026-09-27T00:59 | owner | receipt | in conversation: use the harness task system to aid the orchestration
+2026-09-27T00:59 | self | discovery | harness task tools absent: TodoWrite, TaskCreate, TaskUpdate, TaskList, TaskGet match no deferred tool; only TaskStop and /tasks for background agents; tracking stays in this trace plus heartbeat 6dc3aaed
+2026-09-27T00:59 | agent:rust-fable | receipt | Rust map research plan, recon/2026-09-27/research/rust-map/fable-plan.md; peer content, claims only
+2026-09-27T00:59 | agent:teaching-fable | receipt | teaching plan revised in place: rulings ranges corrected, §8 now open points with grounded defaults
+2026-09-27T00:59 | self | decision | Rust OP1 closure: 10% unseen per stratum under the plan's five-part rule closes a slice; 2% stays the long-run bar reached by upkeep batches after training starts (decided, grounded on the owner's words line 129: 2% droppable if unrealistic; plan §4 shows ~1.5x runs for the tail)
+2026-09-27T00:59 | self | decision | Rust OP2–OP9 adopted as the plan's defaults: twelve strata (ten domains, core, other); third language by the Tier 0 three-measure table, German on a split; third blind fill with majority, three-way split unresolved; training may read MAP once the validator passes with honest statuses; widely read post = TWiR link or 100 HN points or 20 Lobsters comments; English batch 1, non-English from batch 2; YAML; most heard = most influence-evidence kinds, ties by reverse dependents (decided, owner handover; ruling lines 129–130, 135)
+2026-09-27T00:59 | self | decision | Rust scripts sample.py, estimate.py, check_map.py drafted by a worker into recon, reviewed by a second worker; run only after the owner ratifies them (authority-check: worker-written behavior withheld until ratified); S0 frame work needs no script
+2026-09-27T00:59 | self | delegation | agent:r-t0-lang, sonnet: language ranking, recon/2026-09-27/research/rust-map/frame/language-ranking.md
+2026-09-27T00:59 | self | delegation | agent:r-t0-census, haiku: frame census, recon/2026-09-27/research/rust-map/frame/frame-census.md
+2026-09-27T00:59 | self | delegation | agent:r-scripts, sonnet: draft schema.yaml, seeds, sample.py, estimate.py, check_map.py into recon/2026-09-27/research/rust-map/scripts-draft/
+2026-09-27T01:00 | self | decision | teaching-fable and rust-fable stopped, plans delivered
+2026-09-27T01:00 | self | delegation | agent:r-t1-rfc-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-rfc-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-project-blog-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-project-blog-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-twir-links-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-twir-links-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-internals-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-internals-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-users-forum-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-users-forum-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-talks-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-talks-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-books-courses-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-books-courses-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-hn-lobsters-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-hn-lobsters-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-survey-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-survey-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-domains-1-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-domains-1-en.csv (started before census: listing methods fixed in plan §2)
+2026-09-27T01:00 | self | delegation | agent:r-t1-domains-2-en, haiku: frame, recon/2026-09-27/research/rust-map/frame/frame-domains-2-en.csv (started before census: listing methods fixed in plan §2)
