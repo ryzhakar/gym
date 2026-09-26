@@ -292,3 +292,5 @@
 2026-09-27T01:44 | agent:t3-n3-c | receipt | N7-r1-04 VERIFIED (S3 R1 O1)
 2026-09-27T01:45 | agent:t3-n1-b | receipt | N1-r1-10 VERIFIED (S4 R2 O0); N1-r1-12 UNVERIFIABLE
 2026-09-27T01:46 | self | failure | silence broken a twelfth time at turn end
+2026-09-27T01:48 | agent:t3-n1-a | receipt | N1-r1-01 VERIFIED (S3 R2 O1); N1-r1-02 VERIFIED via Wayback PDF, moderator flagged for complex motor tasks
+2026-09-27T01:48 | self | discovery | WebSearch session budget reported exhausted (200/200) and OpenAlex daily budget spent; later agents lean on Crossref, Semantic Scholar, Unpaywall, arXiv, PMC, DataCite
