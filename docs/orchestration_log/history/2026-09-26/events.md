@@ -229,3 +229,5 @@
 2026-09-27T01:17 | agent:r-t1-lobsters-en | receipt | frame-hn-lobsters-en.csv: 541 HN + 281 Lobsters; census 3838 resolved as all-time untitled query, 541 verified for window and title
 2026-09-27T01:18 | self | failure | silence broken a fourth time on a harness prompt; rule: a turn in silence ends on a tool result, never on text
 2026-09-27T01:18 | agent:r-t1-domains-1-en-2 | receipt | frame-domains-1-en.csv: 1737 items, 1568 in window; distributed 1338 dominates (issue trackers); via gh api
+2026-09-27T01:19 | agent:t1-coaching | receipt | index/fields/coaching.md: 49 anchors
+2026-09-27T01:19 | self | delegation | agent:t1-merge, sonnet: merged index, ledgers, calibration set (teaching W2)
