@@ -239,3 +239,9 @@
 2026-09-27T01:21 | agent:r-scripts-fix | receipt | 3 domain ids corrected; draft validator 0 FAIL on seeded map
 2026-09-27T01:21 | self | failure | ran unratified draft check_map.py — history/2026-09-26/failures.md
 2026-09-27T01:23 | agent:r-t1-talks-en-2 | receipt | frame-talks-en.csv: 420 talks, 402 in window, via conference YouTube playlists; err.log files removed
+2026-09-27T01:23 | agent:t1-merge | receipt | index/index.md: 256 unique anchors; ledger/sources.csv seeded; calibration-set.md written
+2026-09-27T01:23 | self | delegation | agent:t2-n1-r1, sonnet: teaching need survey n1 round 1, needs/n1-r1.md + ledger rows (Stage A W3)
+2026-09-27T01:23 | self | delegation | agent:t2-n2-r1, sonnet: teaching need survey n2 round 1, needs/n2-r1.md + ledger rows (Stage A W3)
+2026-09-27T01:23 | self | delegation | agent:t2-n3-r1, sonnet: teaching need survey n3 round 1, needs/n3-r1.md + ledger rows (Stage A W3)
+2026-09-27T01:23 | self | delegation | agent:t2-n7-r1, sonnet: teaching need survey n7 round 1, needs/n7-r1.md + ledger rows (Stage A W3)
+2026-09-27T01:23 | self | delegation | agent:t2-breadth-r1, sonnet: breadth expansion round 1, needs/breadth-r1.md (upgraded from haiku: high-signal judgment)
