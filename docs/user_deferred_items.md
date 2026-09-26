@@ -6,13 +6,13 @@ Each entry quotes the owner. TASK.md and SPEC.md quotes come from the notes arch
 
 "research on the single best way of teaching in general and on a specific subject that plays to the projects strengths (LLMs) and users strengths (curiosity) to supercharge the project beyond what any amount of human-teachers schooling could ever achieve - that's one for sure." (2026-09-26)
 
-Comes before any trainer exists. Pick up on the owner's word.
+Comes before any trainer exists. Pick up next session, in parallel with Rust's research (owner, 2026-09-26).
 
 ## Research: Rust
 
 "the pending research on the first subject all of this gets tested against: rust." (2026-09-26)
 
-Rust's map research; how its Question set closes is settled inside it (see below). Pick up on the owner's word.
+Rust's map research; how its Question set closes is settled inside it (see below). Pick up next session, in parallel with the teaching research (owner, 2026-09-26).
 
 ## Trainer program
 
