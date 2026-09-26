@@ -253,3 +253,4 @@
 2026-09-27T01:29 | agent:r-t1-domains-2-en-2 | receipt | frame-domains-2-en.csv: 3163 in-window items (desktop-cli-ui 2192, embedded 468, wasm 280, ml 177, frontend 46)
 2026-09-27T01:29 | self | decision | frame-domain-subframes-en.csv superseded by frame-domains-1-en.csv and frame-domains-2-en.csv; excluded from the union
 2026-09-27T01:29 | self | delegation | agent:r-t1-union, sonnet: English frame union, frame/frame.csv + frame-stats.md + sha256
+2026-09-27T01:30 | self | failure | silence broken a seventh time at turn end
