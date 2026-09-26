@@ -215,3 +215,5 @@
 2026-09-27T01:08 | self | delegation | agent:r-t1-talks-en-2, sonnet: talks frame, every conference-year in window
 2026-09-27T01:08 | self | delegation | agent:r-t1-individual-blogs-en, sonnet: individual-blogs frame from twir-links hosts
 2026-09-27T01:09 | agent:t1-adult | receipt | index/fields/adult-skill.md: 51 anchors, 3 disputes, upskilling-label gap
+2026-09-27T01:10 | agent:r-scripts | receipt | scripts-draft: schema.yaml, 6 values, 12 domains, check_map.py, sample.py, estimate.py with fixtures; author reports all tests pass; claim, unverified
+2026-09-27T01:10 | self | delegation | agent:r-scripts-review, sonnet: independent review of scripts-draft with own fixtures, scripts-draft/review/review.md
