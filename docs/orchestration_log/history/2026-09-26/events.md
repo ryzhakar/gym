@@ -238,3 +238,4 @@
 2026-09-27T01:21 | agent:r-t1-individual-blogs-en | receipt | frame-individual-blogs-en.csv: 3348 posts from 699 blogs, 2570 in window; 220 blogs without feeds contribute only their TWiR-linked posts
 2026-09-27T01:21 | agent:r-scripts-fix | receipt | 3 domain ids corrected; draft validator 0 FAIL on seeded map
 2026-09-27T01:21 | self | failure | ran unratified draft check_map.py — history/2026-09-26/failures.md
+2026-09-27T01:23 | agent:r-t1-talks-en-2 | receipt | frame-talks-en.csv: 420 talks, 402 in window, via conference YouTube playlists; err.log files removed
