@@ -122,3 +122,9 @@
 2026-09-27T00:42 | self | decision | watching: continuous, plus the learner's ability to call attention to a specific spot (owner ruling)
 2026-09-27T00:42 | self | decision | generalizability is a requirement of the teaching research (owner ruling)
 2026-09-27T00:42 | self | decision | teaching research plan drafted under research-tree, recon/2026-09-27/research/teaching/plan.md; launch waits for the owner's go
+2026-09-27T00:47 | owner | receipt | teaching plan answer in the question tool: Hold; Fable 5.1 to plan both researches under research-tree from everything known; both stay the orchestrator's to drive; Fable indispensable for guidance on the knowledge part
+2026-09-27T00:47 | self | decision | two Fable planners, one per research, plan from records and rulings only; the orchestrator's held drafts withheld so the plans form fresh (research-tree: fresh eyes)
+2026-09-27T00:47 | self | delegation | agent:teaching-fable, fable: research-tree plan for the teaching research, output recon/2026-09-27/research/teaching/fable-plan.md
+2026-09-27T00:47 | self | delegation | agent:rust-fable, fable: research-tree plan for the Rust map research, output recon/2026-09-27/research/rust-map/fable-plan.md
+2026-09-27T00:49 | owner | receipt | in conversation: Rust's 2% saturation may be dropped if unrealistic; the owner wants to start training soon, not build gym for an eternity and lose interest; a compaction comes before the Fable plans land
+2026-09-27T00:49 | self | decision | time to first training is a first-class constraint on both research plans; the Rust 2% rule stands unless the plan shows it unrealistic, then goes back to the owner (owner ruling)
