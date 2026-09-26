@@ -39,3 +39,19 @@ What happened: a Bash call opened with `cd` into .claude/manifesto-repo/LLM_MANI
 Mechanism: the harness keeps the working directory across Bash calls; a `cd` inside a compound command moves it for every call after.
 
 Correction: working directory reset to /Users/ryzhakar/pp/gym; later calls use absolute paths, or `cd` to gym's root only.
+
+## Research dispatched without its skill
+
+What happened: after pat-down, two opus planners went out for the teaching and Rust research on a home-made brief. research-tree, the orchestration skill for research, went unloaded, though agentic-delegation names it for research and the binding report listed it as deferred to its occasion. The owner: "we have a separate skill for research orchestration."
+
+Mechanism: a reference deferred to its occasion carried no trigger; when the occasion came, nothing checked the deferred list.
+
+Correction: both planners stopped before writing; research-tree loaded. Commitment: when work changes kind, check the deferred list and load what it names before designing.
+
+## Research dispatched before the owner could seed it
+
+What happened: the recorded ruling that both research tasks run this session in parallel was taken as leave to design and dispatch at once. The owner: "i would love to have had a chance to seed your research first."
+
+Mechanism: a ruling on timing was read as a ruling on content; charter step 3 read "Task." and nothing asked the owner first.
+
+Correction: both planners stopped; the owner corrected charter step 3 to "Ask for a task and PREPARE for it." (a188e32); the seed is asked for before any design.

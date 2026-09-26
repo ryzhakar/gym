@@ -62,3 +62,11 @@
 2026-09-26T23:11 | self | discovery | pat-down gap: no record names who pushed 2216240, or the owner's word for it
 2026-09-26T23:11 | self | failure | references read past need before the binding report — history/2026-09-26/failures.md
 2026-09-26T23:11 | self | failure | a cd moved the harness working directory into the manifesto repo — history/2026-09-26/failures.md
+2026-09-26T23:14 | self | delegation | agent:teaching-planner, opus: plan the teaching research, output recon/2026-09-26/teaching-research-plan.md
+2026-09-26T23:14 | self | delegation | agent:rust-planner, opus: plan the Rust research, Question-set closure inside it, output recon/2026-09-26/rust-research-plan.md
+2026-09-26T23:14 | self | commitment | tripwire laid: one-shot cron 70e0bdd1 at 23:31 bounds the teaching-planner and rust-planner waits; session-only
+2026-09-26T23:21 | owner | receipt | correction in conversation: research orchestration has its own skill; the owner wanted to seed the research first
+2026-09-26T23:21 | owner | decision | charter CLAUDE.md corrected in place, a188e32 'fix(CLAUDE): no task autolaunch': session start step 3 'Task.' replaced by 'Ask for a task and PREPARE for it.'
+2026-09-26T23:21 | self | decision | teaching-planner and rust-planner stopped before writing any plan; tripwire 70e0bdd1 cancelled
+2026-09-26T23:22 | self | failure | research dispatched without the research-tree skill — history/2026-09-26/failures.md
+2026-09-26T23:22 | self | failure | research dispatched before the owner could seed it — history/2026-09-26/failures.md
