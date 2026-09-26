@@ -70,7 +70,7 @@ Each rule answers a finding; the finding's evidence stays with the subject or pe
 - The owner sets each subject's depth, how deep the rabbit holes go, and breadth, how wide the net is cast (owner ruling 2026-09-26). Inside that scope the user's current preferences never shape how the map is drawn.
 - Governance and community disputes count as Questions alongside technical ones.
 - Time window: current Claims, plus the history that explains today. An older episode enters only when a live Position or Convention traces back to it.
-- How a subject's Question set closes is settled in that subject's research (owner ruling 2026-09-26; `docs/user_deferred_items.md`).
+- How a subject's Question set closes is settled in that subject's research (owner ruling 2026-09-26).
 
 **Who gets onto the map:** a balance of argument strength and influence.
 

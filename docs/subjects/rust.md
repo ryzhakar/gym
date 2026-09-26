@@ -5,9 +5,17 @@ Owner rulings of 2026-09-25 (doc/SPEC.md, archived at docs/orchestration_log/arc
 ## Scope
 
 - **Questions:** all of Rust, culture included. Governance and community disputes count, for example norms about AI-written contributions.
-- **Depth and breadth** stay the owner's call, and the owner's interest in Rust is high (owner ruling 2026-09-26).
-- **Closing the Question set** is settled when Rust's research starts (owner ruling 2026-09-26; `docs/user_deferred_items.md`).
-- **Domains of particular interest:** the target domains in `docs/ground-truth.md`.
+- **Depth and breadth** stay the owner's call, and the owner's interest in Rust is high. The research goes wide first, depth later (owner rulings 2026-09-26).
+- **Domains:** the target domains in `docs/ground-truth.md`, all of interest, are swept first; Questions live only in other domains stay in scope and are swept after (owner rulings 2026-09-26).
+- **Languages:** the top three languages of Rust discourse, Russian excluded; Ukrainian included separately (owner ruling 2026-09-26).
+- **Seeds:** none; the research starts cold (owner ruling 2026-09-26).
+- **Voices:** a Claim needs a Voice with a public Rust track record: maintains a crate with real dependents, ships Rust in production, holds a Rust project or foundation role, or authored a Rust book, course, talk or widely read post (owner ruling 2026-09-26).
+- **Data layer home:** `maps/rust/` in this repository (owner ruling 2026-09-26).
+
+## Research for the map
+
+- **Wide pass:** every Question gets at least two Positions, each backed by at least two Claims from different Voices, with Source, date and locator; its Concepts and Domains; a Voice and a Source register; and the Arguments on each Position with the Values they appeal to. Which Position a Claim supports is filled twice, blind, from the start (owner ruling 2026-09-26).
+- **Closing the Question set:** saturation, organized so the process excludes laziness (owner ruling 2026-09-26). Two blind teams sweep independent random samples of a source frame fixed in advance; a script samples the sources, agents never pick them; every source read is logged with a locator; a separate agent merges duplicates; an auditor re-reads a random 10% of the sources logged as adding nothing, and one miss sends that batch back. Capture-recapture over the two teams estimates the unseen Questions per stratum; the set closes when they are at most 2% of the estimate in every stratum (owner rulings 2026-09-26).
 
 ## The Language in Rust
 

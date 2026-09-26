@@ -75,3 +75,19 @@
 2026-09-26T23:26 | self | decision | teaching, coaching and learning research waits for the owner's temporary seed file, his progress with another agent; its interview comes after (owner ruling)
 2026-09-26T23:26 | self | discovery | gap closed: the owner pushed 2216240 at 22:40:56 (owner, question tool)
 2026-09-26T23:26 | self | decision | docs/user_deferred_items.md pickup lines updated: teaching waits for the owner's seed file, then its interview; Rust picked up, seeded by interview first (owner ruling)
+2026-09-26T23:48 | owner | receipt | Rust interview round 1 answers in the question tool: deliverable, depth, closure, seeds
+2026-09-26T23:48 | self | decision | Rust research goes wide first, depth later (owner ruling)
+2026-09-26T23:48 | self | decision | Rust's Question set closes by saturation, organized so the process excludes laziness (owner ruling)
+2026-09-26T23:48 | self | decision | Rust research starts cold, no owner seeds; all ten target domains interest the owner (owner ruling)
+2026-09-26T23:48 | self | discovery | the owner sent the deliverable question back: 'tinker with this more. have you seen the ontology for a map?'
+2026-09-26T23:53 | owner | receipt | Rust interview round 2 answers in the question tool: deliverable slice, closure measure, domains outside the ten
+2026-09-26T23:53 | self | decision | Rust wide pass fills the ontology minimum plus Deliberation: Questions, 2+ Positions each with 2+ Claims from different Voices, Concepts, Domains, Voice and Source registers, Arguments and their Values; Claim-to-Position filled twice, blind, from day one (owner ruling)
+2026-09-26T23:53 | self | decision | Rust closure measure: capture-recapture over two blind teams on random samples from a fixed source frame, with a 10% audit of 'nothing new' sources; threshold the owner's to set (owner ruling)
+2026-09-26T23:53 | self | decision | Rust scope keeps all of Rust; the sweep covers the ten target domains first, other domains after (owner ruling)
+2026-09-26T23:59 | owner | receipt | Rust interview round 3 answers in the question tool: closure threshold, competence bar, languages, data home
+2026-09-26T23:59 | self | decision | Rust's Question set closes when estimated unseen Questions are at most 2% in every stratum (owner ruling)
+2026-09-26T23:59 | self | decision | a Rust Claim needs a Voice with a public Rust track record (owner ruling)
+2026-09-26T23:59 | self | decision | Rust source languages: the top three of Rust discourse, Russian excluded, Ukrainian included separately (owner ruling)
+2026-09-26T23:59 | self | decision | Rust's data layer lives inside gym, under maps/rust/ (owner ruling)
+2026-09-26T23:59 | self | decision | deferral resolved and deleted: 'Closing a subject's Question set' (owner: a 'research for the map' stage problem, settled separately, picked up inside Rust's research); resolved for Rust by the interview rulings: saturation by capture-recapture, at most 2% unseen per stratum, organized to exclude laziness
+2026-09-26T23:59 | self | decision | docs/subjects/rust.md Scope and 'Research for the map' written from the interview rulings; docs/opinion-map.md scope rule drops its pointer to the deleted deferral; the Rust deferral entry points at docs/subjects/rust.md

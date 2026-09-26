@@ -12,7 +12,7 @@ Comes before any trainer exists. Pick up once the owner hands over a temporary s
 
 "the pending research on the first subject all of this gets tested against: rust." (2026-09-26)
 
-Rust's map research; how its Question set closes is settled inside it (see below). Picked up 2026-09-26, seeded first by an owner interview (owner, 2026-09-26).
+Rust's map research, scoped by the owner's interview in docs/subjects/rust.md. Picked up 2026-09-26, seeded first by an owner interview (owner, 2026-09-26).
 
 ## Trainer program
 
@@ -45,12 +45,6 @@ Demoted 2026-09-26: "demote self-location for a planned stage and/or gate to a p
 "Further CS areas: their order, and whether each gets its own map." (TASK.md, 2026-09-25)
 
 2026-09-26: "the map thing could be later applied to C, haskell, swift, etc.; rust is just confidently first in the queue and good for motivation right now". Pick up after Rust's map.
-
-## Closing a subject's Question set
-
-"this is a \"research for the map\" stage problem and should be settled separately." (2026-09-26)
-
-Pick up inside Rust's research.
 
 ## Interface details
 
