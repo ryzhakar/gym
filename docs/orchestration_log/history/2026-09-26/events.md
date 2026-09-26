@@ -254,3 +254,4 @@
 2026-09-27T01:29 | self | decision | frame-domain-subframes-en.csv superseded by frame-domains-1-en.csv and frame-domains-2-en.csv; excluded from the union
 2026-09-27T01:29 | self | delegation | agent:r-t1-union, sonnet: English frame union, frame/frame.csv + frame-stats.md + sha256
 2026-09-27T01:30 | self | failure | silence broken a seventh time at turn end
+2026-09-27T01:33 | agent:t2-breadth-r1 | receipt | needs/breadth-r1.md: 62 queries, 18 graded sources appended; clusters: kata practice unit, driver/navigator timing, vibe-coding erosion self-reports, a deployed Socratic tutor (O=0); one fabricated GitHub URL flagged
