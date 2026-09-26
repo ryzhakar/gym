@@ -2,15 +2,27 @@
 
 Each entry quotes the owner. TASK.md and SPEC.md quotes come from the notes archived at docs/orchestration_log/archive/. The pickup lines are Claude's, entered 2026-09-26.
 
+## Research: the best way of teaching
+
+"research on the single best way of teaching in general and on a specific subject that plays to the projects strengths (LLMs) and users strengths (curiosity) to supercharge the project beyond what any amount of human-teachers schooling could ever achieve - that's one for sure." (2026-09-26)
+
+Comes before any trainer exists. Pick up on the owner's word.
+
+## Research: Rust
+
+"the pending research on the first subject all of this gets tested against: rust." (2026-09-26)
+
+Rust's map research; how its Question set closes is settled inside it (see below). Pick up on the owner's word.
+
 ## Trainer program
 
 "Trainer program: curriculum, drills, and how speed, efficacy and efficiency are measured." (TASK.md, 2026-09-25)
 
-2026-09-26: "i was thinking the gym's orchestrator would manage the whole thing, take care of the whole administrative part; and would spawn elite trainer subagents, which i would then take and have conversations with." Pick up when gym turns from the map to training.
+2026-09-26: "i was thinking the gym's orchestrator would manage the whole thing, take care of the whole administrative part; and would spawn elite trainer subagents, which i would then take and have conversations with." Pick up after the teaching research.
 
-## Manifesto stacks
+## Trainer manifesto stacks
 
-"this allows me to have different manifesto stacks for both" — one stack for the orchestrator, one for the trainer subagents (2026-09-26). Neither is set. Pick up when the owner names them, or before the first trainer is spawned.
+"this allows me to have different manifesto stacks for both" (2026-09-26). For the trainers: "those we don't have yet." (2026-09-26). Pick up when the first trainer is designed.
 
 ## Carry-over from competera
 
@@ -38,7 +50,7 @@ Demoted 2026-09-26: "demote self-location for a planned stage and/or gate to a p
 
 "this is a \"research for the map\" stage problem and should be settled separately." (2026-09-26)
 
-Pick up when Rust's research starts.
+Pick up inside Rust's research.
 
 ## Interface details
 

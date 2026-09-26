@@ -35,3 +35,11 @@
 2026-09-26T22:23 | owner | receipt | round-3 answers in the question tool: commits and commit discipline; ratification held for a pitch of the setup in chat
 2026-09-26T22:23 | self | decision | commit discipline as conventions: commit as you go; atomic commits; one-line conventional messages with no second line or attribution; memento changes exempt from atomicity, committed large-grain as 'chore(memento): <kind of update>' (owner ruling)
 2026-09-26T22:23 | self | decision | schema amended: directive headings [records, code, owner] replaced by [commit, records, code, owner]
+2026-09-26T22:33 | owner | receipt | ruling in conversation on the orchestrator's manifesto stack, the trainers, and two research tasks
+2026-09-26T22:33 | self | decision | competera's .manifestos.yaml 'you' block carried whole into gym's .manifestos.yaml as the orchestrator's stack, manifesto_dir left at the plugin default; manifesto_polars.md copied byte-identical for its ./ source and declared a product (owner ruling)
+2026-09-26T22:33 | self | discovery | the manifesto plugin's parser (hooks/mini_yaml.py) has no folded-scalar support: stop-yapping's 'purpose: >' renders as '>', in gym and in competera alike; the name still binds
+2026-09-26T22:33 | self | decision | charter CLAUDE.md corrected in place on the owner's ruling: session start 'Init, Task' replaced by 'Bind (manifesto oath on the you stack, binding report first), Init, Task'
+2026-09-26T22:33 | self | decision | deferral partly resolved: the orchestrator's manifesto stack is set; the entry now holds only the trainer stacks, since 'those we don't have yet'
+2026-09-26T22:33 | self | commitment | research queued in docs/user_deferred_items.md: the single best way of teaching, in general and for one subject, playing to LLMs and the owner's curiosity; it comes before any trainer
+2026-09-26T22:33 | self | commitment | research queued in docs/user_deferred_items.md: Rust, the first subject everything is tested against, its Question-set closure settled inside it
+2026-09-26T22:33 | self | decision | schema amended: products [README.md] replaced by [README.md, manifesto_polars.md]

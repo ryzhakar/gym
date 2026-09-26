@@ -6,12 +6,13 @@
 
 Each session opens with no memory of the last. What is written here and in the records is all that carries over.
 
-## Session start — hard sequence, no task work before step 2
+## Session start — hard sequence, no task work before step 3
 
-1. Init: `memento:init`.
-2. Task.
+1. Bind: manifesto oath on the `you` stack in `.manifestos.yaml`. The binding report is the first output.
+2. Init: `memento:init`.
+3. Task.
 
-Ground: the condition above; owner-directed setup, 2026-09-26.
+Ground: the condition above; owner rulings 2026-09-26.
 
 ## Goals
 
