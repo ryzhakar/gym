@@ -260,3 +260,4 @@
 2026-09-27T01:34 | self | commitment | open wait: Rust batch 1 sampling needs sample.py, estimate.py, check_map.py ratified by the owner (drafts reviewed PASS, scripts-draft/review/review.md); silent until the owner writes
 2026-09-27T01:34 | self | delegation | agent:r-t1-union-v2, sonnet: non-English frame v2 union (zh, de, uk)
 2026-09-27T01:35 | agent:t2-n3-r1 | receipt | needs/n3-r1.md: session shape and intervention survey; 12 claims in ledger
+2026-09-27T01:36 | self | discovery | surveyors read abstracts only (paywalls, garbled PDF extraction); pdftotext is installed; Unpaywall to pdftotext route written into teaching prompts/common.md and sent to running surveyors; Tier 3 verifiers get it from the start
