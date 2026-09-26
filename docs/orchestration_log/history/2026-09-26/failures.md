@@ -63,3 +63,19 @@ What happened: the first teaching round opened with "gym is meant to train you i
 Mechanism: the Rust interview's frame carried over; the teaching request covers teaching "in general and on a specific subject", and questions leaned on evidence and examples instead of asking from no prior knowledge.
 
 Correction: the round restarted subject-agnostic, with no findings or examples to anchor answers.
+
+## Silence broken on a harness prompt
+
+What happened: in silence, a harness line "Your previous response had no visible output. Please continue and produce a user-visible response." arrived; the reply wrote a status report to the conversation.
+
+Mechanism: the harness line was read as the owner's message; work-silently counts it as an outside event, never a user message.
+
+Correction: silence resumed; harness prompts for visible output get tool calls only.
+
+## Agent stopped on an idle notification that carried only its binding
+
+What happened: r-t1-rfc-en went idle after its binding report ("Proceeding to task execution"); the orchestrator stopped it as done; no frame file existed.
+
+Mechanism: an idle notification was read as completion without checking the output path.
+
+Correction: relaunched as r-t1-rfc-en-2, prompt demanding the task in the same run; before any TaskStop, the output file's existence is checked.

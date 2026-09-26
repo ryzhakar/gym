@@ -180,3 +180,7 @@
 2026-09-27T01:02 | agent:t0-substrate | receipt | substrate-audit.md: 9 capabilities documented with quotes
 2026-09-27T01:02 | agent:t0-seed-facts | receipt | seed-citations.csv: 60 cited works
 2026-09-27T01:02 | agent:rust-fable | receipt | Rust plan revised in place: §8 open points decided, 10% rule specified; matches decisions at 00:59
+2026-09-27T01:02 | agent:t0-rulings | receipt | rulings-brief.md corrected with decision lines 139–145
+2026-09-27T01:02 | self | failure | silence broken on a harness prompt for visible output — history/2026-09-26/failures.md
+2026-09-27T01:03 | self | failure | r-t1-rfc-en stopped before writing its frame — history/2026-09-26/failures.md
+2026-09-27T01:03 | self | delegation | agent:r-t1-rfc-en-2, haiku: rfc frame relaunch, frame/frame-rfc-en.csv
