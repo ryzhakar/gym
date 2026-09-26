@@ -194,3 +194,7 @@
 2026-09-27T01:03 | self | delegation | agent:r-t1-all-uk, sonnet: non-English frame for uk, frame/frame-*-uk.csv (sampled from batch 2)
 2026-09-27T01:04 | agent:r-t1-books-courses-en | receipt | frame-books-courses-en.csv: 40 items, Apress incomplete; count low against publisher catalogs, spot-check queued before sampling
 2026-09-27T01:04 | agent:r-t1-hn-lobsters-en | receipt | frame-hn-lobsters-en.csv: 491 rows; contradicts census (3838 HN ≥50 comments), window truncated at 2024-02-15, HN deduped against Lobsters; sent back via SendMessage for month-sliced queries
+2026-09-27T01:05 | agent:r-t1-users-forum-en | receipt | frame-users-forum-en.csv: 80 threads from top endpoints only; census ~58,000 threads
+2026-09-27T01:05 | self | decision | haiku frame builders under-enumerate (hn-lobsters, users-forum); users-forum relaunched on sonnet with sliced search; later frame failures relaunch on sonnet (agentic-delegation: upgrade on observed failure)
+2026-09-27T01:05 | self | delegation | agent:r-t1-users-forum-en-2, sonnet: users-forum frame, exhaustive
+2026-09-27T01:05 | self | delegation | agent:r-t1-books-courses-en-2, sonnet: books-courses frame recheck, exhaustive per publisher
