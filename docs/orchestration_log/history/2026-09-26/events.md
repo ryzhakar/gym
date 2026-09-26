@@ -227,3 +227,4 @@
 2026-09-27T01:16 | self | failure | silence broken a third time: a one-line status written on a harness prompt; same entry as history/2026-09-26/failures.md 'Silence broken a second time'
 2026-09-27T01:17 | self | decision | teaching verifiers append status to ledger/claims-status.csv instead of editing claims.csv (parallel writers never edit one file in place); prompts for t1-merge, t3-verify, rust t1-union, t2-extract written to each research's prompts/
 2026-09-27T01:17 | agent:r-t1-lobsters-en | receipt | frame-hn-lobsters-en.csv: 541 HN + 281 Lobsters; census 3838 resolved as all-time untitled query, 541 verified for window and title
+2026-09-27T01:18 | self | failure | silence broken a fourth time on a harness prompt; rule: a turn in silence ends on a tool result, never on text
