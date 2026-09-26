@@ -55,3 +55,11 @@ What happened: the recorded ruling that both research tasks run this session in 
 Mechanism: a ruling on timing was read as a ruling on content; charter step 3 read "Task." and nothing asked the owner first.
 
 Correction: both planners stopped; the owner corrected charter step 3 to "Ask for a task and PREPARE for it." (a188e32); the seed is asked for before any design.
+
+## Teaching interview framed around Rust
+
+What happened: the first teaching round opened with "gym is meant to train you in hard CS skills, Rust first", cited Rust-adjacent studies, and offered options such as "read, write and debug Rust". The owner: "your framing is rust-primed, again. start again."
+
+Mechanism: the Rust interview's frame carried over; the teaching request covers teaching "in general and on a specific subject", and questions leaned on evidence and examples instead of asking from no prior knowledge.
+
+Correction: the round restarted subject-agnostic, with no findings or examples to anchor answers.

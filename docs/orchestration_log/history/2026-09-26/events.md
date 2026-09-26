@@ -97,3 +97,28 @@
 2026-09-27T00:25 | self | commitment | heartbeat laid: recurring cron at :07, :27, :47; session-only, expires in 7 days
 2026-09-27T00:25 | owner | receipt | teaching seed file ~/Downloads/research-seed.md, exported from a conversation with another agent the owner partly drove, unread by the owner; copied to recon/2026-09-27/research/teaching/seed.md; peer content, claims only
 2026-09-27T00:25 | self | decision | teaching interview begins, questions written for a reader with no prior knowledge (owner request)
+2026-09-27T00:27 | owner | receipt | teaching round 1 sent back: 'your framing is rust-primed, again. start again.'
+2026-09-27T00:27 | self | failure | teaching interview framed around Rust — history/2026-09-26/failures.md
+2026-09-27T00:29 | owner | receipt | teaching interview round 1 answers in the question tool: scope, learned, LLM edge, authorship of the seed's strands
+2026-09-27T00:29 | self | decision | teaching research covers anyone learning CS-adjacent skills (owner ruling)
+2026-09-27T00:29 | self | decision | a skill counts as learned when done unaided and lasting (owner ruling)
+2026-09-27T00:29 | self | decision | LLM strengths to play to: always there, endless tailored practice, watching the work, answering anything; the edge specific to teaching and coaching is for the research to discover first (owner ruling)
+2026-09-27T00:29 | self | decision | seed strands 1 (elite vs good trainer) and 2 (watched working file) are the owner's ideas; strand 3 (core and subject packs) came from the other agent, peer claim (owner ruling)
+2026-09-27T00:32 | owner | receipt | teaching interview round 2 answers in the question tool: deliverable, single best, evidence, fields
+2026-09-27T00:32 | self | decision | teaching research hands back an evidence map plus knowledge of how it transfers effectively onto an LLM substrate; not a design (owner ruling)
+2026-09-27T00:32 | self | decision | 'single best way' means a Pareto set loosely calibrated to the owner (owner ruling)
+2026-09-27T00:32 | self | decision | all evidence kinds count: controlled trials, observed elite practice, small AI-tutor studies, practitioner accounts, each weighed by strength and by relevance to its subdomain (owner ruling)
+2026-09-27T00:32 | self | decision | fields: education research, elite coaching, expertise research, AI tutoring, anything else except snake-oil content (owner ruling)
+2026-09-27T00:35 | owner | receipt | teaching interview round 3 answers in the question tool: Pareto axes, calibration, time, done
+2026-09-27T00:35 | self | decision | Pareto axes: skill per hour, how long it lasts, transfer, sustainability (owner ruling)
+2026-09-27T00:35 | self | decision | calibration to the owner by an intake interview before the research plus early measurement in training; records not a calibration source (owner ruling)
+2026-09-27T00:35 | self | decision | training time: striving toward daily; irregular bursts are the current reality (owner)
+2026-09-27T00:35 | self | decision | teaching research is done at saturation (owner ruling)
+2026-09-27T00:39 | owner | receipt | intake part 1 answers in the question tool: experience, what worked, stalls, when stuck
+2026-09-27T00:39 | self | discovery | intake: senior engineer (declines years); best skills built by building real things and through people; stalls from life interruptions and being stuck too long; self-diagnosed ADHD, type unsure, life split between hyperfocus on a narrow sliver and soaking up breadth all at once (owner)
+2026-09-27T00:42 | owner | receipt | intake part 2 answers in the question tool: attention, feedback, watching, anything else
+2026-09-27T00:42 | self | decision | the trainer must be effective for most everyone and adapt to specific students; the owner's traits must not shape the end product much; the research asks whether established CS-specific ways exist to channel or ride hyperfocus-and-breadth attention (owner ruling)
+2026-09-27T00:42 | self | decision | feedback to the owner: blunt, terse, clear (owner ruling)
+2026-09-27T00:42 | self | decision | watching: continuous, plus the learner's ability to call attention to a specific spot (owner ruling)
+2026-09-27T00:42 | self | decision | generalizability is a requirement of the teaching research (owner ruling)
+2026-09-27T00:42 | self | decision | teaching research plan drafted under research-tree, recon/2026-09-27/research/teaching/plan.md; launch waits for the owner's go
