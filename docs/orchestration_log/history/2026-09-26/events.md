@@ -219,3 +219,4 @@
 2026-09-27T01:10 | self | delegation | agent:r-scripts-review, sonnet: independent review of scripts-draft with own fixtures, scripts-draft/review/review.md
 2026-09-27T01:11 | agent:r-t1-hn-lobsters-en | receipt | frame-hn-lobsters-en.csv: 541 HN stories month-sliced; Lobsters API returned nothing
 2026-09-27T01:11 | self | delegation | agent:r-t1-lobsters-en, sonnet: Lobsters rows plus resolution of census 3838 vs frame 541 HN
+2026-09-27T01:12 | agent:t1-expertise | receipt | index/fields/expertise.md written (17.9 KB)
