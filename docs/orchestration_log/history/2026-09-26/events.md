@@ -206,3 +206,10 @@
 2026-09-27T01:06 | agent:r-t1-domains-2-en | receipt | domain-subframes part 2: 44 items, no GitHub threads (unauthenticated rate limit); relaunched on sonnet as r-t1-domains-2-en-2
 2026-09-27T01:06 | self | discovery | gh CLI authenticated as ryzhakar; agents use gh api for GitHub (5000/h), written into rust-map prompts/common.md
 2026-09-27T01:06 | self | failure | silence broken a second time on a harness prompt — history/2026-09-26/failures.md
+2026-09-27T01:08 | agent:t1-edu | receipt | index/fields/education.md: 31 anchors, Crossref-resolved; ERIC, arXiv, PMC not queried (OpenAlex budget exhausted)
+2026-09-27T01:08 | agent:t1-exclusion | receipt | index/exclusion-register.md: 14 exclusions (7 retractions, 5 refuted mechanisms, 2 unevaluated products), 3 contested
+2026-09-27T01:08 | agent:r-t1-talks-en | receipt | frame-talks-en.csv: 120 talks, five conference-years only; relaunched on sonnet as r-t1-talks-en-2
+2026-09-27T01:08 | agent:r-t1-internals-en | receipt | frame-internals-en.csv: 257 threads ≥20 replies in window, latest.json pages 0–99
+2026-09-27T01:08 | agent:r-t1-twir-links-en | receipt | frame-twir-links-en.csv corrected: 3615 links, issues #514–#670, 157 issues
+2026-09-27T01:08 | agent:r-t1-rfc-en-2 | receipt | frame-rfc-en.csv: 1291 (1119 merged, 172 closed ≥50 comments), 213 in window, via gh api
+2026-09-27T01:08 | self | delegation | agent:r-t1-talks-en-2, sonnet: talks frame, every conference-year in window
