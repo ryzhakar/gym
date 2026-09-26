@@ -10,7 +10,8 @@ Each session opens with no memory of the last. What is written here and in the r
 
 1. Bind: manifesto oath on the `you` stack in `.manifestos.yaml`. The binding report is the first output.
 2. Init: `memento:init`.
-3. Ask for a task and PREPARE for it.
+3. Set the heartbeat cron, immediately.
+4. Ask for a task and PREPARE for it.
 
 Ground: the condition above; owner rulings 2026-09-26.
 
