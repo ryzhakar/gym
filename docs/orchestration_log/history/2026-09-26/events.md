@@ -261,3 +261,8 @@
 2026-09-27T01:34 | self | delegation | agent:r-t1-union-v2, sonnet: non-English frame v2 union (zh, de, uk)
 2026-09-27T01:35 | agent:t2-n3-r1 | receipt | needs/n3-r1.md: session shape and intervention survey; 12 claims in ledger
 2026-09-27T01:36 | self | discovery | surveyors read abstracts only (paywalls, garbled PDF extraction); pdftotext is installed; Unpaywall to pdftotext route written into teaching prompts/common.md and sent to running surveyors; Tier 3 verifiers get it from the start
+2026-09-27T01:36 | self | decision | teaching Tier 3 starts early on N3's S≥3 claims (02, 03, 04, 07, 10, 11, 12): plan §2 trigger, S≥3 with full_text_read=N
+2026-09-27T01:36 | self | delegation | agent:t3-n3-a: N3-r1-02, N3-r1-04, sonnet: claim verification, verify/claims/
+2026-09-27T01:36 | self | delegation | agent:t3-n3-b: N3-r1-03, N3-r1-07, sonnet: claim verification, verify/claims/
+2026-09-27T01:36 | self | delegation | agent:t3-n3-c: N3-r1-10, N3-r1-12, sonnet: claim verification, verify/claims/
+2026-09-27T01:36 | self | delegation | agent:t3-n3-d: N3-r1-11, sonnet: claim verification, verify/claims/
