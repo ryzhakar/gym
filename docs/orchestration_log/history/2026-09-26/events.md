@@ -91,3 +91,9 @@
 2026-09-26T23:59 | self | decision | Rust's data layer lives inside gym, under maps/rust/ (owner ruling)
 2026-09-26T23:59 | self | decision | deferral resolved and deleted: 'Closing a subject's Question set' (owner: a 'research for the map' stage problem, settled separately, picked up inside Rust's research); resolved for Rust by the interview rulings: saturation by capture-recapture, at most 2% unseen per stratum, organized to exclude laziness
 2026-09-26T23:59 | self | decision | docs/subjects/rust.md Scope and 'Research for the map' written from the interview rulings; docs/opinion-map.md scope rule drops its pointer to the deleted deferral; the Rust deferral entry points at docs/subjects/rust.md
+2026-09-27T00:01 | self | decision | Rust research plan drafted under research-tree, recon/2026-09-26/research/rust-map/plan.md; the unused home-made brief deleted; launch waits for the owner's go
+2026-09-27T00:25 | owner | receipt | plan answer in the question tool: Hold; the Rust plan waits at recon/2026-09-26/research/rust-map/plan.md
+2026-09-27T00:25 | owner | decision | charter CLAUDE.md corrected in place, e0840f1 'fix(CLAUDE): cron': session start gains step 3, set the heartbeat cron immediately
+2026-09-27T00:25 | self | commitment | heartbeat laid: recurring cron at :07, :27, :47; session-only, expires in 7 days
+2026-09-27T00:25 | owner | receipt | teaching seed file ~/Downloads/research-seed.md, exported from a conversation with another agent the owner partly drove, unread by the owner; copied to recon/2026-09-27/research/teaching/seed.md; peer content, claims only
+2026-09-27T00:25 | self | decision | teaching interview begins, questions written for a reader with no prior knowledge (owner request)
