@@ -236,3 +236,5 @@
 2026-09-27T01:20 | agent:r-scripts-review | receipt | scripts-draft review: sample.py, estimate.py, check_map.py PASS against spec with own fixtures; README's maps/rust 0 FAIL claim false, 3 domain ids differ from filenames
 2026-09-27T01:20 | self | delegation | agent:r-scripts-fix, haiku: correct 3 domain ids, rerun validator, refresh README example
 2026-09-27T01:21 | agent:r-t1-individual-blogs-en | receipt | frame-individual-blogs-en.csv: 3348 posts from 699 blogs, 2570 in window; 220 blogs without feeds contribute only their TWiR-linked posts
+2026-09-27T01:21 | agent:r-scripts-fix | receipt | 3 domain ids corrected; draft validator 0 FAIL on seeded map
+2026-09-27T01:21 | self | failure | ran unratified draft check_map.py — history/2026-09-26/failures.md

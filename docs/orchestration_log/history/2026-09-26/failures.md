@@ -87,3 +87,11 @@ What happened: after the failure entry for the first break, another harness line
 Mechanism: the correction lived in the records only; nothing at the moment of replying checked the silence marker.
 
 Correction: while .claude/work-silently exists, every turn ends with zero text; harness prompts for output are outside events and get tool calls only.
+
+## Unratified draft script run by the orchestrator
+
+What happened: to confirm r-scripts-fix, the orchestrator ran the draft check_map.py itself, a worker-written behavior not yet ratified by the owner.
+
+Mechanism: the fix's verification was taken as a read, not as running a repeatable behavior; authority-check withholds worker-written behavior until the owner ratifies it.
+
+Correction: no further runs of scripts-draft by the orchestrator; drafts run only inside worker tests in recon until the owner ratifies them.
