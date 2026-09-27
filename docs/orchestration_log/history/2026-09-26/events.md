@@ -492,3 +492,5 @@
 2026-09-27T13:42 | agent:t2-n5-r6 | receipt | N5 round 6: 11 claims, 7 sources, 6 full texts; needs/n5-r6.md
 2026-09-27T13:43 | agent:r-x-a-b1-01 | receipt | slice a-01: 6 sources, 1 Question, 1 Claim; next a-03
 2026-09-27T13:44 | agent:r-x-a-b1-02 | receipt | slice a-02: 8 sources, 2 Questions, 2 Claims; next a-04
+2026-09-27T13:45 | agent:r-x-b-s1-1 | receipt | slice b-01: 5 sources, 1 Question, 2 Claims; authors resolved via gh api, missing from bundle text
+2026-09-27T13:45 | self | delegation | agent:cache-script (continued): add comment authors and dates to GitHub, Discourse and reddit texts, rebuild unassigned bundles from a-05 and b-03
