@@ -1,10 +1,15 @@
 """Serial search step for gym's teaching-research saturation rounds.
 
-Agents write queries; this script does the searching. Two subcommands:
+Agents write queries; this script does the searching. Subcommands:
 
   run <queries.txt> <out.csv>            search every query, write one results csv
   found <out.csv> <found.md> [--sources <sources.csv>]
                                           distinct DOIs from a run, marked new/seen
+  screen-list <need> <results.csv>... <out.csv> [--sources <sources.csv>]
+                                          union of distinct DOIs across capture
+                                          files, for relevance screening
+  tally <screen.csv> <results.csv>...    per-capture relevant counts, overlap,
+                                          Chapman estimate, unseen fraction
 
 Query file format (one query per line):
   - blank lines and lines starting with `#` are ignored
@@ -49,10 +54,25 @@ out.csv columns: query,db,status,hits,doi,title,year,abstract
 
 found.md: distinct normalized DOIs across every ok row in out.csv, each marked
 `new` (not in sources.csv) or `seen` (already there), as a `## Found DOIs` list.
+
+screen-list: reads every given results.csv (a capture's `run` output), unions
+their distinct normalized DOIs (status=ok rows only), and writes out.csv with
+columns doi,title,year,in_ledger — no column says which capture a DOI came
+from, since that would bias relevance screening. Rows are shuffled with
+SCREEN_SEED (fixed, printed on every run, so a screen is reproducible). <need>
+is a label, printed in the summary line only.
+
+tally: <screen.csv> is a screen-list output an agent has annotated with a
+`relevant` column (y/yes/1/true = relevant, anything else = not). Each given
+<results.csv> is one capture; DOIs in it that are also marked relevant in
+screen.csv are that capture's "relevant DOIs found". With exactly two capture
+files, also prints their overlap m and the Chapman estimator:
+N_hat = (n1+1)(n2+1)/(m+1) - 1, unseen_fraction = 1 - (n1+n2-m)/N_hat.
 """
 import argparse
 import csv
 import json
+import random
 import re
 import sys
 import time
@@ -71,6 +91,7 @@ DEFAULT_SOURCES = Path(
     "/Users/ryzhakar/pp/gym/docs/orchestration_log/recon/2026-09-27"
     "/research/teaching/ledger/sources.csv"
 )
+SCREEN_SEED = 20260927  # fixed, logged on every screen-list run
 RETRY_STATUSES = {429, 503}
 MAX_ATTEMPTS = 6
 DEFAULT_BACKOFF = 40.0
@@ -254,7 +275,18 @@ def cmd_run(queries_path: Path, out_path: Path, db_filter: str, append: bool) ->
     print(f"wrote {len(rows)} rows -> {out_path} ({'appended' if mode == 'a' else 'new'})")
 
 
-def cmd_found(out_path: Path, found_path: Path, sources_path: Path) -> None:
+def load_ok_dois(results_path: Path) -> dict[str, tuple[str, str]]:
+    """doi -> (title, year) for every status=ok row with a doi; first occurrence wins."""
+    found: dict[str, tuple[str, str]] = {}
+    with results_path.open(newline="") as f:
+        for row in csv.DictReader(f):
+            doi = (row.get("doi") or "").strip()
+            if row.get("status") == "ok" and doi:
+                found.setdefault(doi, (row.get("title", ""), row.get("year", "")))
+    return found
+
+
+def load_ledger_dois(sources_path: Path) -> set[str]:
     existing = set()
     if sources_path.exists():
         with sources_path.open(newline="") as f:
@@ -262,13 +294,12 @@ def cmd_found(out_path: Path, found_path: Path, sources_path: Path) -> None:
                 v = (row.get("doi_or_url") or "").strip()
                 if v:
                     existing.add(clean_doi(v))
+    return existing
 
-    seen: dict[str, tuple[str, str]] = {}
-    with out_path.open(newline="") as f:
-        for row in csv.DictReader(f):
-            doi = (row.get("doi") or "").strip()
-            if row.get("status") == "ok" and doi:
-                seen.setdefault(doi, (row.get("title", ""), row.get("year", "")))
+
+def cmd_found(out_path: Path, found_path: Path, sources_path: Path) -> None:
+    existing = load_ledger_dois(sources_path)
+    seen = load_ok_dois(out_path)
 
     lines = ["## Found DOIs", ""]
     new_count = 0
@@ -279,6 +310,59 @@ def cmd_found(out_path: Path, found_path: Path, sources_path: Path) -> None:
         lines.append(f"- `{doi}` — {title} ({year}) — {tag}")
     found_path.write_text("\n".join(lines) + "\n")
     print(f"distinct={len(seen)} new={new_count} seen={len(seen) - new_count}")
+
+
+def cmd_screen_list(need: str, results_paths: list[Path], out_path: Path, sources_path: Path) -> None:
+    existing = load_ledger_dois(sources_path)
+    merged: dict[str, tuple[str, str]] = {}
+    for path in results_paths:
+        for doi, (title, year) in load_ok_dois(path).items():
+            merged.setdefault(doi, (title, year))
+
+    rows = [
+        {"doi": doi, "title": title, "year": year, "in_ledger": "Y" if doi in existing else "N"}
+        for doi, (title, year) in merged.items()
+    ]
+    random.Random(SCREEN_SEED).shuffle(rows)
+
+    with out_path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["doi", "title", "year", "in_ledger"])
+        w.writeheader()
+        w.writerows(rows)
+    in_ledger_count = sum(r["in_ledger"] == "Y" for r in rows)
+    print(
+        f"need={need} files={len(results_paths)} distinct={len(rows)} "
+        f"in_ledger={in_ledger_count} seed={SCREEN_SEED} -> {out_path}"
+    )
+
+
+def is_relevant(v: str) -> bool:
+    return v.strip().lower() in {"y", "yes", "1", "true"}
+
+
+def cmd_tally(screen_path: Path, results_paths: list[Path]) -> None:
+    with screen_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if "relevant" not in (reader.fieldnames or []):
+            sys.exit(f"{screen_path} has no 'relevant' column")
+        relevant = {clean_doi(row["doi"]) for row in reader if is_relevant(row.get("relevant", ""))}
+
+    per_capture = []
+    for path in results_paths:
+        dois = set(load_ok_dois(path)) & relevant
+        per_capture.append(dois)
+        print(f"{path}: relevant={len(dois)}")
+
+    if len(per_capture) != 2:
+        print(f"chapman needs exactly 2 capture files, got {len(per_capture)} -- skipped")
+        return
+    n1, n2 = len(per_capture[0]), len(per_capture[1])
+    m = len(per_capture[0] & per_capture[1])
+    n_hat = (n1 + 1) * (n2 + 1) / (m + 1) - 1
+    unseen = 1 - (n1 + n2 - m) / n_hat if n_hat > 0 else float("nan")
+    print(f"overlap m={m}")
+    print(f"chapman N_hat={n_hat:.1f}")
+    print(f"unseen_fraction={unseen:.3f}")
 
 
 def main() -> None:
@@ -296,11 +380,27 @@ def main() -> None:
     p_found.add_argument("found_md", type=Path)
     p_found.add_argument("--sources", type=Path, default=DEFAULT_SOURCES)
 
+    p_screen = sub.add_parser("screen-list")
+    p_screen.add_argument("need")
+    p_screen.add_argument("files", type=Path, nargs="+", help="results.csv... out.csv (last is the output)")
+    p_screen.add_argument("--sources", type=Path, default=DEFAULT_SOURCES)
+
+    p_tally = sub.add_parser("tally")
+    p_tally.add_argument("screen", type=Path)
+    p_tally.add_argument("results", type=Path, nargs="+")
+
     args = p.parse_args()
     if args.cmd == "run":
         cmd_run(args.queries, args.out, args.db, args.append)
     elif args.cmd == "found":
         cmd_found(args.out, args.found_md, args.sources)
+    elif args.cmd == "screen-list":
+        if len(args.files) < 2:
+            p.error("screen-list needs at least one results.csv and an out.csv")
+        *results_paths, out_path = args.files
+        cmd_screen_list(args.need, results_paths, out_path, args.sources)
+    elif args.cmd == "tally":
+        cmd_tally(args.screen, args.results)
 
 
 if __name__ == "__main__":
