@@ -452,3 +452,5 @@
 2026-09-27T09:40 | self | discovery | cache.py saves bot-challenge pages as source text; sent back to cache-script to reject stubs and rescan the cache
 2026-09-27T09:40 | agent:t2-n4-r5 | receipt | N4 round 5: 10 claims, 7 sources, 15 queries, all abstract-only; needs/n4-r5.md
 2026-09-27T09:43 | agent:t2-n5-r5 | receipt | N5 round 5: 11 claims, 16 sources, 22 queries, 9 read in full or full abstract, 7 title-only; flags Greenberg 2016 double-counting Soucisse 2017; needs/n5-r5.md
+2026-09-27T09:44 | agent:r-x-a-b1-01 | receipt | team a b1-01: 15 rows, 10 read from cache, 5 unreachable; 3 Questions, 4 Claims; several cached texts thin stubs
+2026-09-27T09:44 | self | discovery | measured from transcripts: r-x-a-b1-01 45 calls, 30k output, 4.04M cache-read, 0.83M cache-write for 15 rows; round surveyors ~100 calls, ~12.5M cache-read each; context re-read per call dominates
