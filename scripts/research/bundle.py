@@ -6,10 +6,14 @@ Input: samples/batch-1-team-{team}.csv (data rows, in order), samples/prefetch-b
 (one status row per batch row, in the same order: team-a's 198 rows first, then team-b's 198),
 and the shared cache CACHE/<key>.txt.
 
-For each row, keep only if its cached text exists, is not a bot/login-wall stub, is >=1,500
-chars, and mentions "rust" at least 3 times (case-insensitive); otherwise it is dropped with
-one reason: no-text, stub, thin, off-subject. Kept rows are cut, in CSV order, into ~150k-char
-slices, never splitting a source (an oversized source becomes its own truncated slice).
+For each row, keep only if its cached text exists, is not a bot/login-wall stub, and is
+>=1,500 chars; otherwise it is dropped with one reason: no-text, stub, thin. A row with zero
+"rust" mentions (case-insensitive) is also dropped as off-subject, unless its URL is a
+github.com repo, a *.rs / docs.rs / crates.io host, or one of this batch's own
+class=domain-subframes hosts (any host such a row appears under is presumed on-subject even
+at zero mentions, since the frame put it in scope on purpose). Kept rows are cut, in CSV
+order, into ~150k-char slices, never splitting a source (an oversized source becomes its own
+truncated slice).
 
 Output: samples/bundles/b1-{team}-{jj}.txt (one file per slice, each source preceded by a
 `=== ROW n | id | url | date | class ===` header) and samples/bundles/b1-{team}-manifest.csv
@@ -18,6 +22,7 @@ Output: samples/bundles/b1-{team}-{jj}.txt (one file per slice, each source prec
 import csv
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
 import cache as c  # noqa: E402 - local module, path set above
@@ -27,8 +32,20 @@ SAMPLES = RECON / "samples"
 STATUS_CSV = SAMPLES / "prefetch-b1-status.csv"
 BUNDLES = SAMPLES / "bundles"
 SLICE_TARGET_CHARS = 150_000
-MIN_RUST_MENTIONS = 3
 EXCLUDED_DATA_ROWS = {"team-a": set(range(1, 31))}  # already extracted
+
+
+def host_of(url: str) -> str:
+    return urlparse(url).netloc.lower().removeprefix("www.")
+
+
+def is_presumed_on_subject_host(host: str, domain_subframe_hosts: set[str]) -> bool:
+    return (host == "github.com" or host in ("crates.io", "docs.rs")
+            or host.endswith(".rs") or host in domain_subframe_hosts)
+
+
+def domain_subframe_hosts_of(batch_rows: list[dict]) -> set[str]:
+    return {host_of(r["url"]) for r in batch_rows if "domain-subframes" in r["class"].split(";")}
 
 
 def team_status_rows(team: str) -> list[dict]:
@@ -50,7 +67,7 @@ def load_text(status_row: dict) -> str | None:
     return None
 
 
-def classify(text: str | None) -> str | None:
+def classify(text: str | None, url: str, domain_subframe_hosts: set[str]) -> str | None:
     """None if the row is kept; otherwise the drop reason."""
     if text is None:
         return "no-text"
@@ -59,7 +76,7 @@ def classify(text: str | None) -> str | None:
         return "stub"
     if len(text) < c.MIN_PAGE_CHARS:
         return "thin"
-    if lower.count("rust") < MIN_RUST_MENTIONS:
+    if "rust" not in lower and not is_presumed_on_subject_host(host_of(url), domain_subframe_hosts):
         return "off-subject"
     return None
 
@@ -72,6 +89,7 @@ def build(team: str) -> None:
         f"{team}: {len(batch_rows)} batch rows vs {len(status_rows)} status rows"
     )
     excluded = EXCLUDED_DATA_ROWS.get(team, set())
+    domain_subframe_hosts = domain_subframe_hosts_of(batch_rows)
 
     manifest: list[dict] = []
     kept: list[tuple[dict, str]] = []  # (batch_row with data_row, text)
@@ -80,7 +98,7 @@ def build(team: str) -> None:
         if data_row in excluded:
             continue
         text = load_text(status_row)
-        reason = classify(text)
+        reason = classify(text, batch_row["url"], domain_subframe_hosts)
         chars = len(text) if text is not None else 0
         manifest.append({
             "data_row": data_row, "id": batch_row["id"], "url": batch_row["url"],
