@@ -406,3 +406,4 @@
 2026-09-27T08:50 | self | decision | opus is orchestration-tier, placed only at knowledge-and-intelligence bottlenecks where a bad sonnet pass would decide the outcome (owner ruling)
 2026-09-27T08:53 | owner | receipt | in conversation: text at heartbeat end broke silence
 2026-09-27T08:53 | self | failure | heartbeat turn ended on text 'Nothing to act on.' while silent; silent turns end on tool results only
+2026-09-27T08:54 | self | failure | silence broken again: answered a harness visible-output nudge with text; nudges get zero text
