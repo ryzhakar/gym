@@ -668,3 +668,4 @@
 2026-09-27T19:49 | self | discovery | opus third pass over-corrects rule 6 into practice-as-Claim and Swift-to-Rust mapping; rule 8 and the Voice bar restated to all six
 2026-09-27T19:50 | agent:r-xt-a-1 | receipt | third pass a-T01: 4 sources; SE-0410 Swift thread mapped to 6 Questions, 12 Claims without Rust-track-record Voices; sent back to drop; next a-T02
 2026-09-27T19:50 | agent:r-xt-b-3 | receipt | third pass b-T08: 3 sources; Swift Codable thread Claims from a Voice without Rust track record, sent back to drop; next b-T09
+2026-09-27T19:50 | agent:r-xt-b-1 | receipt | third pass b-T01 revised to 1 Question, 1 Claim; b-T02: Swift thread, 1 Question, 3 Claims from self-declared Rust users, track records left to tier 3; next b-T03
