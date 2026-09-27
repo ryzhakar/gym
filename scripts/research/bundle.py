@@ -21,10 +21,12 @@ own truncated slice).
 Some slices are frozen (FROZEN_SLICE_MAX below) - already assigned and read by an extractor.
 Their manifest rows and slice files are left untouched; only unassigned rows are
 reclassified and packed into new slices numbered above the frozen range. Exception: a frozen
-row of class=hn-lobsters (SUPPLEMENT_CLASS) whose cached text was refreshed after its slice
-was assigned gets a fresh copy written to a supplementary b1-{team}-L1.txt, and the manifest's
-slice column for that row is repointed at "L1" - the original numbered slice file is still
-left alone.
+row matching a SUPPLEMENTS predicate (class=hn-lobsters -> L1; a talks-class row whose frozen
+`chars` exceeded the 150k slice cap, i.e. it was truncated -> L2) gets a fresh copy of its
+current cached text written to a supplementary b1-{team}-<name>.txt, and the manifest's slice
+column for that row is repointed at that name - the original numbered slice file is still
+left alone. Once assigned to a supplement a row stays there on every future rerun, even if
+refreshed text no longer matches the predicate that first caught it.
 
 Output: samples/bundles/b1-{team}-{jj}.txt (one file per slice, each source preceded by a
 `=== ROW n | id | url | date | class ===` header) and samples/bundles/b1-{team}-manifest.csv
@@ -33,6 +35,7 @@ Output: samples/bundles/b1-{team}-{jj}.txt (one file per slice, each source prec
 import csv
 import sys
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -44,8 +47,19 @@ STATUS_CSV = SAMPLES / "prefetch-b1-status.csv"
 BUNDLES = SAMPLES / "bundles"
 SLICE_TARGET_CHARS = 150_000
 EXCLUDED_DATA_ROWS = {"team-a": set(range(1, 31))}  # already extracted
-FROZEN_SLICE_MAX = {"team-a": 20, "team-b": 16}  # slices 1..N already assigned/read; never touched
-SUPPLEMENT_CLASS = "hn-lobsters"  # frozen rows of this class get a fresh copy in slice L1
+FROZEN_SLICE_MAX = {"team-a": 25, "team-b": 20}  # slices 1..N already assigned/read; never touched
+
+# Each entry: (supplement slice name, predicate over (batch_row, frozen_manifest_entry)).
+# A frozen row matching one of these gets its current cached text written to a supplementary
+# b1-{team}-<name>.txt, and its manifest slice/chars repointed there - the original numbered
+# slice file is left exactly as it was. Checked in order; a row is claimed by the first match.
+SUPPLEMENTS: list[tuple[str, Callable[[dict, dict], bool]]] = [
+    ("L1", lambda batch_row, frozen_entry: "hn-lobsters" in batch_row["class"].split(";")),
+    ("L2", lambda batch_row, frozen_entry: (
+        "talks" in batch_row["class"].split(";")
+        and int(frozen_entry.get("chars") or 0) > SLICE_TARGET_CHARS
+    )),
+]
 SWIFT_FORUM_HOST = "forums.swift.org"
 SWIFT_FORUM_MIN_MENTIONS = 3  # Swift-internal threads with a passing Rust mention read as noise
 
@@ -105,9 +119,11 @@ def classify(text: str | None, url: str, domain_subframe_hosts: set[str]) -> str
 
 
 def is_frozen_slice(slice_value: str, frozen_max: int) -> bool:
-    if slice_value == "L1":  # already-supplemented row from a frozen slice; stays frozen
+    if not slice_value:
+        return False
+    if not slice_value.isdigit():  # a supplement name (L1, L2, ...): stays frozen forever
         return True
-    return bool(slice_value) and int(slice_value) <= frozen_max
+    return int(slice_value) <= frozen_max
 
 
 def load_frozen(team: str) -> dict[int, dict]:
@@ -191,18 +207,31 @@ def build(team: str) -> None:
         if entry["data_row"] not in frozen:
             entry["slice"] = row_to_slice.get(entry["data_row"], "")
 
-    # Frozen rows of SUPPLEMENT_CLASS: the frozen slice file is left alone, but its text may
-    # be stale (a defect fixed after that slice was assigned). Give an extractor a fresh copy
-    # in a supplementary slice L1, and repoint the manifest at it rather than the stale slice.
-    supplement_rows = [
-        (data_row, batch_rows[data_row - 1]) for data_row in frozen
-        if SUPPLEMENT_CLASS in batch_rows[data_row - 1]["class"].split(";")
-    ]
-    if supplement_rows:
+    # Frozen rows matching a SUPPLEMENTS predicate: the frozen slice file is left alone, but
+    # its text may be stale (a defect fixed after that slice was assigned). Give an extractor
+    # a fresh copy in a supplementary slice, and repoint the manifest at it rather than the
+    # stale slice. Once assigned to a supplement, a row stays there on every future rerun even
+    # if fresher text would no longer match the predicate that first caught it (e.g. an L2 talk
+    # is short again after cleanup, so `chars > 150k` alone would no longer flag it).
+    claimed: set[int] = set()
+    supplement_counts: dict[str, int] = {}
+    for name, predicate in SUPPLEMENTS:
+        already = {dr for dr in frozen if frozen[dr]["slice"] == name}
+        newly = {
+            dr for dr in frozen
+            if dr not in claimed and dr not in already
+            and predicate(batch_rows[dr - 1], frozen[dr])
+        }
+        rows_for_this = already | newly
+        claimed |= rows_for_this
+        supplement_counts[name] = len(rows_for_this)
+        if not rows_for_this:
+            continue
         fresh_chars = {}
-        supplement_path = BUNDLES / f"b1-{team}-L1.txt"
+        supplement_path = BUNDLES / f"b1-{team}-{name}.txt"
         with supplement_path.open("w") as f:
-            for data_row, batch_row in sorted(supplement_rows):
+            for data_row in sorted(rows_for_this):
+                batch_row = batch_rows[data_row - 1]
                 status_row = status_by_id_url.get((batch_row["id"], batch_row["url"]), {})
                 text = load_text(status_row) or ""
                 fresh_chars[data_row] = len(text)
@@ -211,7 +240,7 @@ def build(team: str) -> None:
                 f.write(header + "\n" + text + "\n\n")
         for entry in manifest:
             if entry["data_row"] in fresh_chars:
-                entry["slice"] = "L1"
+                entry["slice"] = name
                 entry["chars"] = fresh_chars[entry["data_row"]]  # the frozen row's chars was stale
 
     manifest.sort(key=lambda e: int(e["data_row"]))
@@ -225,10 +254,11 @@ def build(team: str) -> None:
     n_new_slices = sum(1 for sl in slices if sl)
     n_kept = sum(1 for e in manifest if e["status"] == "kept")
     n_dropped = len(manifest) - n_kept
+    supplement_summary = ", ".join(f"{n} in {name}" for name, n in supplement_counts.items())
     print(f"{team}: {len(manifest)} rows total ({len(frozen)} frozen, {len(excluded)} excluded), "
           f"{n_kept} kept, {n_dropped} dropped ({swift_dropped} by the swift-forum rule), "
           f"{n_new_slices} new slices (numbered {frozen_max + 1}+), "
-          f"{len(supplement_rows)} rows refreshed in slice L1 -> {manifest_path}")
+          f"supplements: {supplement_summary} -> {manifest_path}")
 
 
 if __name__ == "__main__":

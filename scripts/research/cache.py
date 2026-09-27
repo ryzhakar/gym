@@ -576,6 +576,66 @@ def route_lobsters(url: str) -> Fetched:
         return Fetched(text, "html-fallback-after:" + str(e)[:80])
 
 
+VTT_INLINE_TAG_RE = re.compile(r"<[^>]+>")
+VTT_TIME_RANGE_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2})\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}")
+VTT_MARKER_EVERY_SECS = 60
+
+
+def vtt_to_text(raw: str) -> str:
+    """Flatten a yt-dlp auto-sub VTT into plain, deduplicated, timestamped text.
+
+    YouTube's auto-captions are "rolling": each cue repeats the previous settled line, then
+    grows a new line word by word with inline `<00:00:09.230><c>word</c>` timing tags. Naively
+    stripping only the `-->` timing lines (the old approach) leaves those inline tags and the
+    word-by-word growth in place, so the same phrase appears ~5-10x with mostly-duplicate,
+    non-identical text - the actual cause of talks getting cut off well before their real
+    length once a slice hits its char budget. A cue's last line is "settled" (one clean,
+    complete phrase, no inline tags) once it has finished growing; every settled line appears
+    exactly once, in order, so collecting only those reconstructs the transcript with no
+    duplication and no gaps. A `[mm:ss]` marker is inserted roughly every 60s of video time.
+    """
+    out_lines: list[str] = []
+    last_emitted = ""
+    next_marker = 0
+    pending: tuple[int, str] | None = None
+    for block in raw.split("\n\n"):
+        start_sec = None
+        text_lines = []
+        for ln in block.splitlines():
+            m = VTT_TIME_RANGE_RE.search(ln)
+            if m:
+                start_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+                continue
+            s = ln.strip()
+            if not s or s.isdigit() or ln.startswith(("WEBVTT", "Kind:", "Language:", "NOTE")):
+                continue
+            text_lines.append(ln)
+        if not text_lines or start_sec is None:
+            continue
+        last_line = text_lines[-1]
+        cleaned = VTT_INLINE_TAG_RE.sub("", last_line).strip()
+        if not cleaned:
+            continue
+        if "<" in last_line:  # still growing word-by-word; wait for its settled repeat
+            pending = (start_sec, cleaned)
+            continue
+        if cleaned == last_emitted:
+            pending = None
+            continue
+        if start_sec >= next_marker:
+            out_lines.append(f"[{start_sec // 60:02d}:{start_sec % 60:02d}]")
+            next_marker = start_sec + VTT_MARKER_EVERY_SECS
+        out_lines.append(cleaned)
+        last_emitted = cleaned
+        pending = None
+    if pending and pending[1] != last_emitted:  # video ended mid-cue; the tail wasn't repeated
+        start_sec, cleaned = pending
+        if start_sec >= next_marker:
+            out_lines.append(f"[{start_sec // 60:02d}:{start_sec % 60:02d}]")
+        out_lines.append(cleaned)
+    return "\n".join(out_lines)
+
+
 def route_video(url: str) -> Fetched:
     with tempfile.TemporaryDirectory() as td:
         out = subprocess.run(
@@ -586,10 +646,10 @@ def route_video(url: str) -> Fetched:
         vtts = list(Path(td).glob("*.vtt"))
         if not vtts:
             raise FetchError([f"yt-dlp: no subtitles ({out.stderr.decode(errors='replace')[:150]})"])
-        raw = vtts[0].read_text(errors="replace")
-        lines = [ln for ln in raw.splitlines()
-                 if ln and "-->" not in ln and not ln.startswith(("WEBVTT", "Kind:", "Language:"))]
-        return Fetched("\n".join(dict.fromkeys(lines)), "yt-dlp-subs")
+        text = vtt_to_text(vtts[0].read_text(errors="replace"))
+        if not text:
+            raise FetchError(["yt-dlp: subtitles present but empty after cleanup"])
+        return Fetched(text, "yt-dlp-subs")
 
 
 def route_html(url: str) -> Fetched:
