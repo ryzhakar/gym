@@ -596,3 +596,5 @@
 2026-09-27T19:03 | agent:r-x-a-s1-10 | receipt | slice a-29: 6 sources, 6 Questions, 13 Claims, 1 unreachable (Zulip); retired; team a slices 01-30 done, a-L2 running
 2026-09-27T19:03 | agent:r-x-b-s1-7 | receipt | slice b-24: 4 talks, 16 Questions, 16 Claims; retired
 2026-09-27T19:03 | agent:r-x-b-s1-9 | receipt | slice b-25: 8 sources, 7 Questions, 7 Claims; team b remaining: b-26 running
+2026-09-27T19:04 | agent:r-x-b-s1-8 | receipt | slice b-26: 3 sources, 6 Questions, 13 Claims; team b batch 1 done (26 slices)
+2026-09-27T19:04 | self | delegation | agent:t4-merge-b1 and agent:t4-audit-b1, opus: merge both teams' batch-1 extracts and audit nothing-new and dropped rows per prompts/t4-merge.md; a-L2 still running, merged on arrival
