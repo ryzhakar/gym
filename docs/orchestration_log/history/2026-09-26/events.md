@@ -646,3 +646,4 @@
 2026-09-27T19:31 | agent:r-xr-b-4 | receipt | send-back b-R10: 8 sources, 6 overturned (14 Questions, 15 Claims); next b-R12
 2026-09-27T19:33 | agent:r-xr-b-5 | receipt | send-back b-R11: 7 sources, 6 overturned (8 Questions, 8 Claims); next b-R13
 2026-09-27T19:34 | agent:s-n2-r8 | receipt | N2 title screen: 3166 labeled, Y 1414; tally m=254, Chapman N=2716, 48% unseen
+2026-09-27T19:35 | agent:r-xr-b-4 | receipt | send-back b-R12: 12 sources, 5 overturned (8 Questions, 8 Claims); retired
