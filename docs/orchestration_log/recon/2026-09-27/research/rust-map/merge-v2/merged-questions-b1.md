@@ -17,15 +17,67 @@ In practice, team-local Questions merge when they choose between the same kind o
   - `### Question —`, the layout of team a's sR14, with `- Position (Voice, label)` and `- Claim:` lines. The Claim date comes from the source header, and the Domain is the text before any parenthetical, as the adjudicator ruled.
 - The earlier merge (merge/) missed the 20 `- Question:` items, as the adjudicator found. They are included here.
 - Supersession: saL1 replaces sa14's and sa15's entries for f005360, f005454 and f005516. saL2, sR* and sT* add to their rows and delete nothing.
-- Withdrawn Claims: none. No sT file marks any Claim withdrawn, and a search for withdraw, retract and supersede markers found none. No sT row re-extracts a row that earlier held Questions or Claims. sT09's note that "an earlier version of this section logged 5 Questions and 24 Claims" refers to its own discarded draft, which is not in the file. Every sT Claim is kept. 54 Claims carry `flag: voice-unverified`, which tier 3 must verify.
+- Withdrawn Claims: none marked in the extracts themselves. The audit's strikes are applied separately; see "Third-pass strikes" below. No sT file marks any Claim withdrawn, and a search for withdraw, retract and supersede markers found none. No sT row re-extracts a row that earlier held Questions or Claims. sT09's note that "an earlier version of this section logged 5 Questions and 24 Claims" refers to its own discarded draft, which is not in the file. Every sT Claim is kept. 54 Claims carry `flag: voice-unverified`, which tier 3 must verify.
 - Claim to Question: in a source with one Question, a Claim goes to that Question. Otherwise it goes to the Question whose `positions_seen` names its Position label, or to the Question it nests under. 189 were placed by reading.
 
 ## Counts
 
 - Team-local Questions: 484 (team a 233, team b 251). Of these, 44 are from the third pass (sT): team a 18, team b 26.
-- Canonical Questions: 278. Team a only: 115. Team b only: 108. Both: 55. With more than one member: 77.
-- Canonical ids: 232 are merge-final ids that survive, and 46 are new. Each new id is either a decision-level group that absorbs merge-final ids (listed under "Absorbs merge-final ids") or a new sT Question.
-- Claims placed: 697 under canonical Positions. 4 are orphans: `a-02-f000993-c1`, `b-sb25-f011435-c3`, and two shown under the Question they answer but with no crosswalk row: `b-sb23-f011233-c2` (under `mutex-vs-atomics`) and `a-sR13-f004685-c3` (under `non-exhaustive-by-default`).
+- Canonical Questions: 271. 270 have team-local members backed by a valid Claim, and one (`lambda-build-tooling`) is carried only by a re-homed Claim. Of the 270: team a only 110, team b only 106, both 54. With more than one member: 75. 14 team-local Questions and 8 canonical Questions were removed as Claim-less; see "Removed captures" below.
+- Canonical ids: 230 are merge-final ids that survive, and 41 are new. Each new id is either a decision-level group that absorbs merge-final ids (listed under "Absorbs merge-final ids") or a new sT Question.
+- Claims placed: 687 under canonical Positions. That includes 5 re-homed Claims, and a10 counted twice after its split into a10a and a10b. 11 were dropped as struck. 4 are orphans: `a-02-f000993-c1`, `b-sb25-f011435-c3`, and two shown under the Question they answer but with no crosswalk row: `b-sb23-f011233-c2` (under `mutex-vs-atomics`) and `a-sR13-f004685-c3` (under `non-exhaustive-by-default`).
+
+## Third-pass strikes (audit/strike-b1-third.md)
+
+The audit ruled on all 54 sT Claims: 38 KEEP (9 weak), 16 STRIKE. Following the lead's instruction:
+
+- **Dropped (11):**
+  - a03, a-sT07-f002226-c1: Swift decision.
+  - a09, a-sT10-f004205-c1: Hylo decision.
+  - b01, b-sT01-f000267-c1: practice without a reason.
+  - b04, b-sT02-f000576-c3: Swift syntax.
+  - b11, b-sT05-f002499-c5: an assessment.
+  - b12 and b13, b-sT05-f002499-c6 and c7: diagnoses.
+  - b18, b-sT05-f002501-c2: a support request.
+  - b23, b-sT05-f003044-c1: a support-answer aside.
+  - b25, b-sT05-f003044-c3: a bug report.
+  - b26, b-sT07-f003809-c1: a support request.
+
+  The Positions that rested only on them are removed: `release-cadence--sequence-after-dependency-major`.
+- **Re-homed (5)**, struck for answering a different decision than their Question. Under the decision-level test:
+  - a12 (a-sT11-f007659-c2, maahl) recommends the Cargo Lambda tool, with Docker only "if you need" it. It never argues zip against container image. It goes to a new Question, `lambda-build-tooling`. No team logged that Question, so it has no crosswalk row.
+  - b28 and b29 (b-sT07-f003809-c3, c4) answer how downstream copes with a removed trait. They go to `downstream-vendor-removed-api-vs-rework`. merge-v2 had already linked them there, to the second Question in their source rather than the release-sequencing one. b28's second ground, "tentative plan", is kept visible in its Position text, since the lead named it for re-homing.
+  - b31 (b-sT07-f004166-c2) is a D1 schema-integrity choice. It goes to `foreign-keys-vs-app-integrity`, where merge-v2 had already linked it.
+  - b33 (b-sT09-f005314-c1, summer-rs) argues against the JVM and C/C++, not against composing axum and sqlx. It goes to `choose-rust-for-a-domain`, Position `rust-over-jvm-for-backends`. A re-homed Claim adds no crosswalk row: a capture is a Question a team logged.
+- **Split a10 (lead ruling):** the audit found that a-sT11-f004960-c1 (n0, relay authentication) holds two Positions in one Claim. It is split into `a-sT11-f004960-c1a` (the managed service authenticates relays by default) and `a-sT11-f004960-c1b` (the library stays unopinionated for self-hosted relays). They sit under `library-auth-opinionated-vs-unopinionated`, as `--authenticated-managed-default` and `--unopinionated-library`.
+
+## Removed captures (lead ruling: a capture needs a Question backed by at least one valid Claim)
+
+Every team-local Question with no valid Claim of its own is removed from the crosswalk. A re-homed Claim still backs its Question when it re-homes onto that same canonical Question, so b28/b29 (f003809-q2) and b31 (f004166-q2) keep their Questions. The lead named nine removals. The same rule also removes five older Claim-less Questions, listed separately so the lead can check them.
+
+Canonical Questions removed, with every member Claim-less:
+
+| canonical id | team-local id | reason |
+| --- | --- | --- |
+| `non-ascii-identifier-restrictions` | a-sT07-f002226-q1 | its only Claim (a03) struck: a Swift decision |
+| `first-class-references-vs-scoped-access` | a-sT10-f004205-q1 | its only Claim (a09) struck: a Hylo decision |
+| `lambda-zip-vs-container-image` | a-sT11-f007659-q2 | its only Claim (a12) re-homed to `lambda-build-tooling` |
+| `crate-license-choice` | b-sT01-f000267-q1 | its only Claim (b01) struck: practice without a reason |
+| `async-executor-with-timing-critical-dma` | b-sT05-f002499-q3 | its Claims (b12, b13) struck: diagnoses |
+| `hot-patch-explicit-hook` | b-sT05-f003044-q1 | its only Claim (b23) struck: a support-answer aside |
+| `tensor-container-uniform-type` | a-02-f000993-q2 | no Claim since batch 1's first extraction; positions seen unattributed. Beyond the lead's nine, same rule |
+| `url-crate-vs-rfc3986` | a-sa03-f002356-q1 | no Claim; only an unattributed commenter. Beyond the lead's nine, same rule |
+
+Members removed, while their canonical Question stays:
+
+| canonical id | team-local id | reason |
+| --- | --- | --- |
+| `rust-vs-c-inherent-performance` | b-sT05-f002499-q2 | its only Claim (b11) struck: an assessment |
+| `hot-patching-for-iteration` | b-sT05-f003044-q3 | its only Claim (b25) struck: a bug report |
+| `batteries-included-web-framework` | b-sT09-f005314-q1 | its only Claim (b33) re-homed to `choose-rust-for-a-domain` |
+| `hot-patching-for-iteration` | b-sb20-f007290-q3 | no Claim: the trade-off is reported with no recommendation. Beyond the lead's nine, same rule |
+| `large-pr-split` | a-02-f000993-q1 | no Claim: its one candidate (a-02-f000993-c1) is an orphan. Beyond the lead's nine, same rule. The Question becomes team b only |
+| `default-features-minimal-vs-inclusive` | b-sb25-f011684-q1 | no Claim: "not stated in this source". Beyond the lead's nine, same rule |
 
 ## Crosswalk
 
@@ -34,7 +86,7 @@ In practice, team-local Questions merge when they choose between the same kind o
 - `stratum` runs over the canonical Question's Domains: the union across all its members, per the lead's ruling that a Question is one member of the population wherever a team met it.
 - Two local Questions from one team, one source and one canonical Question share a row, joined in `team_local_id`.
 - `source_hint` is the source's sampling cells, kept for bias checks.
-- The crosswalk has 1,414 rows.
+- The crosswalk has 1,378 rows.
 
 ## Estimate
 
@@ -42,24 +94,24 @@ In practice, team-local Questions merge when they choose between the same kind o
 
 | stratum | n1 | n2 | m | seen | Chapman N̂ | unseen % | Chao1 N̂ | unseen % |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cloud-workers | 27 | 21 | 14 | 34 | 40.1 | 15.1% | 54.6 | 37.8% |
-| core | 103 | 88 | 42 | 149 | 214.3 | 30.5% | 305.7 | 51.3% |
+| cloud-workers | 26 | 21 | 14 | 33 | 38.6 | 14.5% | 51.3 | 35.7% |
+| core | 100 | 87 | 41 | 146 | 210.6 | 30.7% | 290.6 | 49.8% |
 | decentralized-iroh | 27 | 29 | 17 | 39 | 45.7 | 14.6% | 47.9 | 18.6% |
-| desktop-cli-ui | 31 | 30 | 18 | 43 | 51.2 | 16.0% | 80.8 | 46.8% |
-| distributed | 29 | 33 | 18 | 44 | 52.7 | 16.5% | 60.4 | 27.2% |
-| embedded | 38 | 35 | 22 | 51 | 60.0 | 15.1% | 118.6 | 57.0% |
-| frontend | 14 | 16 | 9 | 21 | 24.5 | 14.3% | undefined (f2=0) | undefined |
-| ml | 25 | 24 | 16 | 33 | 37.2 | 11.4% | 49.3 | 33.1% |
-| other | 14 | 17 | 12 | 19 | 19.8 | 3.9% | 43.5 | 56.3% |
+| desktop-cli-ui | 30 | 29 | 18 | 41 | 47.9 | 14.5% | 68.6 | 40.2% |
+| distributed | 29 | 32 | 18 | 43 | 51.1 | 15.9% | 61.0 | 29.6% |
+| embedded | 38 | 34 | 22 | 50 | 58.3 | 14.3% | 94.6 | 47.2% |
+| frontend | 14 | 15 | 9 | 20 | 23.0 | 13.0% | 80.5 | 75.2% |
+| ml | 23 | 24 | 15 | 32 | 36.5 | 12.3% | 51.6 | 38.0% |
+| other | 14 | 17 | 12 | 19 | 19.8 | 3.9% | 31.2 | 39.2% |
 | swift-interop | 7 | 4 | 4 | 7 | 7.0 | 0.0% | undefined (f2=0) | undefined |
-| wasm | 26 | 29 | 12 | 43 | 61.3 | 29.9% | 115.9 | 62.9% |
-| web | 31 | 30 | 17 | 44 | 54.1 | 18.7% | 74.2 | 40.7% |
+| wasm | 26 | 29 | 12 | 43 | 61.3 | 29.9% | 103.8 | 58.6% |
+| web | 30 | 28 | 16 | 42 | 51.9 | 19.0% | 76.6 | 45.1% |
 
 Every stratum FAILs. Only `other` and `swift-interop` pass the Chapman 10% bar, and neither passes Chao1. Rule 2 (at least two batches) and rule 3 (audit and merge-check) fail everywhere. Rule 4 (seen at least 10) fails for swift-interop.
 
 What could change the result:
 
-- Broad Questions inflate m. A canonical Question's Domains are the union over its members, so a broad Question counts in every stratum any member names. The three broadest are `choose-rust-for-a-domain` (150 rows), `ship-stopgap-now-vs-proper-fix` (80) and `typestate-vs-runtime-checks` (70). Removing just these three lowers m by 1 to 3 in every stratum: for example core 42→39, embedded 22→19, wasm 12→9, other 12→9.
+- Broad Questions inflate m. A canonical Question's Domains are the union over its members, so a broad Question counts in every stratum any member names. The three broadest are `choose-rust-for-a-domain` (150 rows), `ship-stopgap-now-vs-proper-fix` (80) and `typestate-vs-runtime-checks` (70). Removing just these three lowered m by 1 to 3 in every stratum before the Claim-less removals (measured then: core 42→39, embedded 22→19, wasm 12→9, other 12→9). The effect is of the same size now.
 - A stricter Domain rule, counting a mention only in its own member's Domains, would lower m further. The lead's ruling uses the union, so this crosswalk does too.
 - Chao1 stays high because most canonical Questions are still found in only one read (f1 is large). Chapman responds to the decision-level test; Chao1 mostly does not yet.
 
@@ -121,6 +173,8 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Jonathan Kelly** · Source `f011305` · date 2025-10-03 · locator ~02:01 — long compile times and language rigidity made Dioxus's own users more productive with existing tools like React and FastAPI than with early high-level Rust Quote: "we realized that Rust just wasn't that fast to write. Due to the long compile times and language rigidity, our users were simply more productive" [`a-sa26-f011305-c2`, team a]
   - `choose-rust-for-a-domain--rust-for-ai-generated-code` — Rust suits a future of AI-written code, since the compiler checks it
     - **Mordecai Emmanuel Etukudo** · Source `f011443` · date 2026-06-11 · locator ~13:17-14:18 — as AI increasingly writes code and humans architect systems, Rust's compiler acts as an independent, automatic check on AI-generated code that other languages' compilers don't provide Quote: "Rust is the best language for AI because AI is is like bare machine... with Rust, which the compiler have already... is already there to vet your system and know that this code is not having memory leaks" [`a-sa26-f011443-c2`, team a]
+  - `choose-rust-for-a-domain--rust-over-jvm-for-backends` — Rust over the JVM (Spring Boot) or C/C++ for backend services (re-homed Claim, strike b33)
+    - **summer-rs project (github.com/spring-rs/spring-rs, README now titled summer-rs; no individual maintainer named in the source)** · Source `f005314` · date 2024-08-17 (frame date; the README revision read is undated, describes crate `summer` 0.4) · locator README intro paragraph, § Features, § component macros — the framework puts convention over configuration, following Spring Boot, and offers an extensible plugin system over Rust crates. It claims ease of use through a concise API and optional procedural macros. The `#[component]` macro removes the need to implement the Plugin trait by hand. Quote: "summer-rs is an application framework that emphasizes convention over configuration, inspired by Java's SpringBoot" (flag: voice-unverified) [`b-sT09-f005314-c1`, team b]
   - `choose-rust-for-a-domain--rust-for-gpu-kernels` — Back Rust-native GPU kernels (rust-cuda) despite gaps
     - **Evgenii Seliverstov** · Source `f011233` · date 2025-02-26 · locator ~45:52-48:54 (GPU section + audience Q&A) — presents Rust-CUDA (kernels and host code both in Rust, wrapping LLVM/NVVM/PTX) as the exciting alternative to writing kernels in C++/CUDA; when the audience presses on CUDA being vendor-specific and asks about AMD/other-vendor equivalents, he concedes he knows of none and that almost all real GPU work still goes through C++ kernels with a thin Rust host layer Quote: "it allows us to write kernels in Rust instead of C++ ... I'm really excited about this" [`b-sb23-f011233-c1`, team b]
   - `choose-rust-for-a-domain--gamedev-not-ready` — Not ready for demanding multi-year 3D game projects
@@ -366,7 +420,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **nmn (nmn.sh blog author)** · Source `f005668` · date 2026-01-31 · locator section "Convenience has its costs" — neither default is simply better; Rust's performance-first default suits systems, embedded, compilers and browser engines, Swift's convenience-first default suits UI, servers and parts of compilers/operating systems, and the author expects the overlap between the two to grow over time Quote: "I would say both languages have their uses. Rust is better for systems and embedded programming... Swift is better for writing UI and servers and some parts of compilers and operating systems. Over time I expect to see the overlap get bigger." [`b-sR12-f005668-c1`, team b]
   - `ergonomics-vs-explicitness--tail-expression-reads-better` — Implicit tail expressions read better
     - **Nobody1707** · Source `f000576` · date 2023-12-01 · locator post @Nobody1707 2023-12-01T17:02:06Z — Answers a claim that languages with last-expression evaluation are worse for it. Says their own experience runs the other way: Rust's implicit return of the last expression is much easier to read than return statements everywhere. Quote: "I find implicit return of the last expression in Rust much easier to read than if there were return statements everywhere." (flag: voice-unverified) [`b-sT02-f000576-c2`, team b]
-    - **stackotter** · Source `f000576` · date 2023-11-14 · locator post @stackotter 2023-11-14T07:04:45Z; follow-up 2023-12-15T09:27:10Z — Prefers bare last expressions over a new `then` keyword and says their preference comes from earning a living in Rust. Later built a Swift `@BareLastExprs` body macro (repo "swift-bare-last-exprs", no URL given) so people could try the rule. Quote: "I'd still likely prefer bare last expressions (but I'm biased cause Rust development is what makes me money" (flag: voice-unverified) [`b-sT02-f000576-c3`, team b]
   - `ergonomics-vs-explicitness--tail-expression-hurts` — Implicit tail expressions hurt readability
     - **andrews05** · Source `f000576` · date 2023-11-17 · locator post @andrews05 2023-11-17T03:44:40Z (quotes their own earlier SE-0380 review comment, whose date is not given in this source) — Says they are strongly opposed to any bare/last-expression rule on readability grounds. Draws on their Rust work: the rule "seriously hurts readability" for function returns and `if` expressions alike, most of all when the block is long and the last expression sits far from the assignment. Quote: "as someone who has been working with Rust a lot lately. I am really not a fan of the "last expression" rule" (flag: voice-unverified) [`b-sT02-f000576-c1`, team b]
 - Positions seen by the extractor (`a-sa26-f011305-q3`): add-lightweight-clones-to-Rust (Jonathan Kelley, proposed as a project goal); opposed-or-skeptical (unnamed — Kelley states "not everyone may agree" and "opinions were divided" without naming the dissenters)
@@ -687,42 +740,6 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`b-sb24-f011413-q2`): reflection-avoids-the-missing-annotation-problem (Amos)
 - Positions seen by the extractor (`b-sb24-f011413-q3`): reflection-doesnt-clearly-win-and-jit-isnt-generally-shippable (Amos)
 
-### `rust-vs-c-inherent-performance`
-
-**Question.** Does safe Rust cost performance compared with C/C++ (initialization rules, borrow-checker refactors, no `unsafe`), or can it match or beat it?
-
-- Grouping: One performance question; its contexts are language-level, embedded display work, games and data structures.
-- Absorbs merge-final ids: `composability-vs-borrowck-friction`, `init-requirement-perf-cost`, `safe-rust-for-high-perf-games`
-- Teams: a, b · members (context): `a-saL1-f005516-q1` (f005516, core); `a-saL1-f005516-q3` (f005516, core, embedded); `a-saL1-f005516-q4` (f005516, core); `b-sT05-f002499-q2` (f002499, embedded); `b-sb26-f013214-q2` (f013214, other, embedded)
-- Domains: core, embedded, other
-- Concepts: compiler optimization; type systems; aliasing (`noalias`/`restrict`); benchmarking methodology; zero-initialization; `MaybeUninit`; allocators; dataflow analysis; codegen/inlining; data-structure abstraction; borrow checker; defensive cloning/`Rc`; late-bound vs. early-optimized language design; esp-hal vs esp-idf/Arduino; hardware-resource efficiency; unsafe; memory safety; concurrency; crash rates
-- Positions:
-  - `rust-vs-c-inherent-performance--no-inherent-advantage` — No inherent advantage; social factors dominate
-    - **ajdecon** · Source `f005516` · date 2025-06-09 · locator reply, 2025-06-09T14:34:18-05:00 — Agrees there's no inherent reason either language is faster; to the extent C codebases are faster today it's mostly because they're older and have had more engineer-hours of optimization, not a property of C itself. Quote: "there's no inherent reason for either language to be faster. It's all project specific... it's often just because they're much older codebases and have been optimized over a long time." [`a-saL1-f005516-c1`, team a]
-  - `rust-vs-c-inherent-performance--types-enable-optimizations` — Rust's type system enables optimizations C lacks
-    - **rtpg** · Source `f005516` · date 2025-06-09 · locator reply, 2025-06-09T20:16:56-05:00 — Argues a language with more semantic granularity gives the compiler more true invariants to exploit, e.g. Rust code built on iteration rather than raw array access can eliminate bounds checks entirely; cautions that "like for like" benchmarking between languages is inherently ambiguous. Quote: "a language with 'more' semantic granularity will have more leeway to give you free optimizations... if your codebase is filled with iteration rather than array access, you just don't need your bounds checks!" [`a-saL1-f005516-c2`, team a]
-    - **steveklabnik** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T14:15:50-05:00 — States Rust puts the equivalent of C's `restrict` on every reference that doesn't contain an `UnsafeCell`, meaning the no-aliasing guarantee is encoded in the type system, not just a vague folk claim, and that Rust is also ahead on pointer provenance semantics. Quote: "Rust puts the equivalent of `restrict` on every reference that doesn't contain an `UnsafeCell`, so it is doing a bit more than you assume here, and that is in the type system." [`a-saL1-f005516-c3`, team a]
-    - **kornel** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T08:19:54-05:00 — Frames the practical gap as partly ecosystem-driven: C's lack of an easily-reached-for hashmap pushes real-world C code toward slow linear searches until forced to fix (citing a GitLab backup-time postmortem), while Rust's easy hashmaps and parallel iterators make fast-by-default code more common in practice. Quote: "C doesn't have easily accessible hashmaps, so implementations tend to default to linear searches, until it becomes a problem... That means the discussion is just about which language makes it easier to write fast programs." [`a-saL1-f005516-c5`, team a]
-  - `rust-vs-c-inherent-performance--real-overheads` — Rust has real overheads: initialization, forced refactors and copies
-    - **dataangel** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T07:16:21-05:00 — Counters that real Rust disassembly shows concrete recurring costs: bounds checks on every array/division/shift access, "unsafe"-gated SIMD intrinsics, poorly-optimizing iterators (citing open rustc codegen issues), `RefCell` overhead, un-collapsible layers of `Result<>` wrapping, and clones/`Rc` added defensively to satisfy the borrow checker — concluding this is why Rust solutions don't top competitive-programming performance leaderboards. Quote: "if you spend a little time looking at Rust disassembly on nontrivial examples it becomes very obvious... There's a reason the Rust solutions don't win on highload.fun" [`a-saL1-f005516-c4`, team a]
-    - **dataangel** · Source `f005516` · date 2025-06-12 · locator reply, 2025-06-12T07:56:20-05:00 and 2025-06-13T20:10:53-05:00 — Argues safe Rust requires a value at construction time (not just before use via dataflow analysis, as for ordinary variables), so a large array or a small-object allocator must eagerly zero-initialize memory it may never read before writing, and the cost compounds with more allocations, sometimes bloating codegen enough to block inlining and further optimization. Quote: "safe Rust requires you to provide a value at construction time, which is not based on dataflow analysis. For example if you make a very large array, you must spend the time to zero init the entire thing even if you always write to elements before reading them." [`a-saL1-f005516-c9`, team a]
-    - **dataangel** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T11:09:00-05:00 — Disputes that Rust is generally "faster" in this practical-design-choice sense, saying trivial new features can require large refactorings because they necessitate new borrowing schemes, and separately notes extra clones/`Rc` are commonly added just to satisfy the borrow checker where they aren't algorithmically necessary. Quote: "trivial new features can require large refactorings because they necessitate new borrowing schemes." [`a-saL1-f005516-c12`, team a]
-  - `rust-vs-c-inherent-performance--init-cost-narrow` — Initialization cost is a narrow edge case
-    - **rpjohnst** · Source `f005516` · date 2025-06-11 · locator reply, 2025-06-11T11:16:03-05:00 and 2025-06-12T10:09:38-05:00 — Repeatedly presses that Rust has no implicit default initialization and only requires init-before-use by dataflow analysis, so the described cost should only bite in narrow cases like large arrays or read buffers, not "all variables" broadly, and questions whether the allocator scenario generalizes. Quote: "Rust merely requires init *before use* based on dataflow analysis. Surely the C code you're comparing with doesn't read from uninitialized variables to a noticeable degree?" [`a-saL1-f005516-c10`, team a]
-  - `rust-vs-c-inherent-performance--composability-wins` — Composability lets engineers ship better data structures
-    - **ssokolow** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T09:04:39-05:00 and 2025-06-10T11:32:55-05:00 — Argues Rust wins in the sense of what design choices engineers are actually willing to ship (versus benchmark racing); quotes Bryan Cantrill's account of choosing a safe, composable B-Tree in Rust where he'd have defaulted to a less-optimal AVL tree in C, because a hand-rolled intrusive B-Tree in C carries too much memory-corruption risk to trust. Quote: "I would still use an AVL tree in C even though I know I'm giving up some small amount of performance, but in Rust, I get to use a B-Tree." (quoting Bryan Cantrill) [`a-saL1-f005516-c11`, team a]
-    - **david_chisnall** · Source `f005516` · date 2025-06-11 · locator reply, 2025-06-11T02:18:49-05:00 — Argues the biggest practical performance advantage of C++ or Rust over C is that it's trivial to write code abstract over data structures, so a wrong choice found in profiling can be swapped easily; in C, implementation details leak through unless wrapped in painful macros — describes replacing his own hand-rolled generic concurrent hash table (many macros) with an off-the-shelf container plus a lock, which was both more maintainable and faster. Quote: "It is *trivial* to write code that is abstract over data structures... In C, implementation details of the data structure tend to leak unless you're *really* careful." [`a-saL1-f005516-c13`, team a]
-  - `rust-vs-c-inherent-performance--safe-rust-matches` — Safe Rust matches C for demanding work (embedded display, 3D)
-    - **EliteTK** · Source `f002499` · date 2026-02-03 · locator comment 2026-02-03T10:34:12Z — Arduino users build sophisticated DPI-display devices on ESP32-S3 (mostly with XIP from PSRAM); bare Rust needs methodical alignment with what they do differently Quote: "I don't see why this should be any worse with bare rust" (flag: voice-unverified) [`b-sT05-f002499-c5`, team b]
-    - **John_Nagle** · Source `f013214` · date 2024-01-13 · locator reply timestamped 2024-01-13T20:31:31 — states his metaverse client's several coordinated CPU-bound threads (refresh, per-frame update, event processing, asset-decoding) doing entirely different work would be "really hard" to coordinate safely in C++, but works acceptably in safe Rust with no `unsafe` used anywhere in his own code Quote: "In safe Rust (I don't use \"unsafe\" in my own code at all) it's not bad." [`b-sb26-f013214-c3`, team b]
-  - `rust-vs-c-inherent-performance--safety-cost-acceptable` — A real safety cost is an acceptable trade
-    - **parasyte** · Source `f013214` · date 2024-01-10 · locator reply timestamped 2024-01-10T18:33:17 — cites a session where Ark: Survival Ascended crashed three times and topped out near 45 FPS despite an unsafe/unmanaged-heavy implementation, to argue relaxed memory safety isn't a performance free lunch; states a personal preference for "a 10% perf hit (40 FPS) for a memory safe implementation that doesn't crash," and separately reports deliberately abandoning an early Bevy game project after three months as a "fail fast" call once its immaturity became clear, later moving to Godot Quote: "Personally, I would prefer a 10% perf hit (40 FPS) for a memory safe implementation that doesn't crash." [`b-sb26-f013214-c4`, team b]
-- Positions seen by the extractor (`a-saL1-f005516-q1`): no-inherent-advantage-social-factors-dominate; stronger-type-system-enables-compiler-optimizations-c-lacks; rust-has-real-overheads-that-hurt-practical-perf
-- Positions seen by the extractor (`a-saL1-f005516-q3`): safe-rust-init-requirement-has-real-perf-cost; init-cost-is-narrow-edge-case-not-general-issue
-- Positions seen by the extractor (`a-saL1-f005516-q4`): composability-enables-better-real-world-data-structures; borrow-checker-forces-costly-refactors-and-copies
-- Positions seen by the extractor (`b-sT05-f002499-q2`): bare Rust no worse, a matter of methodical alignment
-- Positions seen by the extractor (`b-sb26-f013214-q2`): a demanding, highly concurrent 3D client is fully achievable in 100% safe Rust with no `unsafe` (John_Nagle); a measurable performance cost for memory safety is an acceptable, even preferable, trade — "playing loose with safety" is not a free lunch for performance either, evidenced by a shipped title with safety-linked crashes (parasyte)
-
 ### `static-vs-dynamic-dispatch`
 
 **Question.** Should Rust code use static dispatch (enums, generics, associated types) or dynamic dispatch and type erasure (`dyn Trait`, downcasting, open traits), for closed or extensible sets?
@@ -801,49 +818,6 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`b-sR08-f003731-q2`): rename-for-vocabulary-consistency-pre-1.0
 - Positions seen by the extractor (`b-sR11-f005050-q2`): gradual, warned deprecation over an immediate break
 
-### `default-features-minimal-vs-inclusive`
-
-**Question.** What should be on by default: enable optional capabilities by default for low friction, or keep defaults minimal and opt-in (codecs, formats, heap profiling)?
-
-- Grouping: One default-features decision; image formats, engine codecs and production heap profiling are contexts.
-- Absorbs merge-final ids: `heap-profiling-default`, `per-capability-features-vs-bundled`
-- Teams: a, b · members (context): `a-sa02-f002127-q1` (f002127, desktop-cli-ui); `a-sa26-f011684-q1` (f011684, core, other); `b-sb25-f011435-q2` (f011435, web, core); `b-sb25-f011684-q1` (f011684, core)
-- Domains: core, desktop-cli-ui, other, web
-- Concepts: feature flags; API defaults; crate ecosystem curation; memory profiling; build features; observability tooling; binary size; compile time; dependency count; jemalloc; heap profiling; default feature flags; production overhead
-- Positions:
-  - `default-features-minimal-vs-inclusive--inclusive-defaults` — Enable by default for minimal friction
-    - **clarfonthey** · Source `f002127` · date 2024-10-02 · locator PR comment — weighing reviewer pushback that niche formats (QOI, GIF) shouldn't be defaults, the author leans toward shipping with minimal friction now and adjusting defaults later rather than pre-curating by popularity Quote: "Kinda just would prefer the path of least friction and we can change the defaults later." [`a-sa02-f002127-c1`, team a]
-  - `default-features-minimal-vs-inclusive--minimal-defaults` — Compile in only what is used
-    - **Nico** · Source `f011435` · date 2026-06-11 · locator ~31:30-32:31 (audience Q&A on dependency counts) — contrasts Servo's ~1,000 dependencies (dominated by SpiderMonkey, WebGL, XR) with Blitz's ~300, achieved by enabling only 4 of 20 available image codecs by default and making SVG/networking support opt-in per deployment Quote: "you should be able to only compile in what you're actually using" [`b-sb25-f011435-c2`, team b]
-  - `default-features-minimal-vs-inclusive--unresolved-reported` — Reported as an open debate, no side taken (heap profiling)
-    - **Lei Huang** · Source `f011684` · date 2024-01-31 · locator section "Enabling Heap Profiling in GreptimeDB" — GreptimeDB currently ships with heap profiling (mem-prof) off by default, compiled in only via a cargo feature flag; whether it should be on by default is an active, unresolved discussion the author points readers to rather than settles Quote: "The discussion about whether the mem-prof feature should be enabled by default is ongoing in greptimedb#3166. You are welcome to share your opinion there" [`a-sa26-f011684-c1`, team a]
-- Positions seen by the extractor (`a-sa02-f002127-q1`): prefer-minimal-friction-defaults (PR author), curate-by-popularity-or-quality (reviewers, unattributed)
-- Positions seen by the extractor (`a-sa26-f011684-q1`): currently-off-by-default-with-open-internal-debate (GreptimeDB team, no side taken by this Voice)
-- Positions seen by the extractor (`b-sb25-f011435-q2`): default to the smallest compiled surface, enabling codecs/capabilities one at a time per deployment (Blitz: ~300 total dependencies, 4 image codecs enabled by default of 20 available); accept a large bundled dependency tree because the core scripting engine alone dominates it anyway (implicit contrast drawn with Servo's ~1,000 dependencies, dominated by SpiderMonkey)
-- Positions seen by the extractor (`b-sb25-f011684-q1`): not stated in this source beyond noting the choice is unsettled
-
-### `hot-patching-for-iteration`
-
-**Question.** Should the Rust edit-compile loop use binary hot-patching (bypassing the normal link pipeline), or faster full rebuilds, given costs such as lost DWARF debugging?
-
-- Grouping: Tooling direction and user adoption of hot-patching are one decision.
-- Absorbs merge-final ids: `hot-patch-vs-dwarf-debugging`
-- Teams: a, b · members (context): `a-sa26-f011305-q5` (f011305, core, desktop-cli-ui, embedded); `b-sT05-f003044-q3` (f003044, web, frontend, desktop-cli-ui); `b-sb09-f002719-q1` (f002719, desktop-cli-ui, frontend, wasm); `b-sb20-f007290-q3` (f007290, wasm, frontend)
-- Domains: core, desktop-cli-ui, embedded, frontend, wasm, web
-- Concepts: build tooling; linkers; hot reload; iteration speed; incremental compilation; compile times; hot-patching; dynamic linking; codegen backend; hot patching (Subsecond); DWARF debugging; WASM tooling
-- Positions:
-  - `hot-patching-for-iteration--hot-patch` — Hot-patch for iteration speed
-    - **Jonathan Kelly** · Source `f011305` · date 2025-10-03 · locator ~22:12-23:12 — "Subsecond" hot-patches running Rust binaries by recompiling only changed crates and linking them to hardcoded addresses at runtime, skipping the normal linking step, despite "a huge number of quirks, edge cases, incomprehensible behavior" needed to make it work Quote: "it bypasses the traditional cargo build system, almost completely eliminating the expensive linking step that slows down incremental development" [`a-sa26-f011305-c5`, team a]
-    - **frederikhors** · Source `f003044` · date 2025-05-26 · locator comment 2025-05-26T00:18:05Z — on an ~86k-line Rust project, hot-patch took 2.7 s against 13 s with Cargo Quote: "2.7 seconds instead of 13 seconds with Cargo (night and day for me)" (flag: voice-unverified) [`b-sT05-f003044-c3`, team b]
-    - **jkelleyrtp** · Source `f002719` · date 2025-03-18 · locator comment @jkelleyrtp 2025-03-18T21:13:39Z — describes "zerolink"/"thinlink", an approach that automatically dynamically links workspace crates against a cached dependencies dylib to speed up builds, alongside the subsecond hot-patching mechanism. Quote: "our new approach for drastically speeding up rust compile times by automatically using dynamic linking" [`b-sb09-f002719-c1`, team b]
-    - **jkelleyrtp** · Source `f002719` · date 2025-03-19 · locator comment @jkelleyrtp 2025-03-19T20:56:59Z — reports profiling showed 100-300ms of a ~500ms build spent copying incremental artifacts to disk, and points to an upstream rustc PR aiming to remove that cost, wanting it to reach "blink and you miss it" hotpatch speed. Quote: "I did some profiling of rustc and about 100-300ms is spent copying incremental artifacts on disk." [`b-sb09-f002719-c3`, team b]
-  - `hot-patching-for-iteration--faster-codegen-backend` — Faster full rebuilds via an alternate codegen backend
-    - **DrewRidley** · Source `f002719` · date 2025-03-19 · locator comment @DrewRidley 2025-03-19T19:41:13Z — suggests adding the cranelift codegen backend as an optional flag for hot-reload builds, reporting it roughly halved build times on their machine (600ms to 300ms). Quote: "I found on my M3 Pro Macbook it brings down the average times from ~600ms to ~300ms." [`b-sb09-f002719-c2`, team b]
-- Positions seen by the extractor (`a-sa26-f011305-q5`): bypass-the-linker-for-speed (Jonathan Kelley, re: "Subsecond")
-- Positions seen by the extractor (`b-sT05-f003044-q3`): hot-patch for speed (2.7 s vs 13 s)
-- Positions seen by the extractor (`b-sb09-f002719-q1`): binary-hot-patching (jkelleyrtp, dx/subsecond), faster-codegen-backend (DrewRidley, cranelift)
-- Positions seen by the extractor (`b-sb20-f007290-q3`): tradeoff reported without a recommendation — enabling hot-patch breaks DWARF debugging and vice versa (fasterthanlime)
-
 ### `lambda-vs-containers`
 
 **Question.** Should a Rust service run on serverless compute (Lambda, edge Workers and managed primitives) or on long-running containers or VPSes, or split by workload?
@@ -863,6 +837,40 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`a-sa24-f011220-q1`): Lambda/FaaS-first for production Rust services once measured (Eastham: cold starts become statistically negligible at scale — 3 of 850 and 4 of 1,350 invokes — with equal or better latency and a fourth to fifth of the memory footprint) vs. cold-start skepticism (unnamed, described by Eastham as "people bashing cold starts all over the internet") and long-running-container-first for a one-person team wanting a simple imperative/request-response model over Lambda's reactive, poll-driven programming model (Eastham's own earlier-stated position before he reverses it: "surely lambda's not an option right", ~16:00)
 - Positions seen by the extractor (`b-sT07-f004166-q1`): serverless edge primitives, each data class on the primitive matching its consistency need
 - Positions seen by the extractor (`b-sb20-f007797-q1`): splitting environments (Lambda for infrequently-used test environments, ECS for always-on production) is floated as a cost-saving option, explicitly named as a tradeoff rather than a clear recommendation (Sam Van Overmeire)
+
+### `rust-vs-c-inherent-performance`
+
+**Question.** Does safe Rust cost performance compared with C/C++ (initialization rules, borrow-checker refactors, no `unsafe`), or can it match or beat it?
+
+- Grouping: One performance question; its contexts are language-level, embedded display work, games and data structures.
+- Absorbs merge-final ids: `composability-vs-borrowck-friction`, `init-requirement-perf-cost`, `safe-rust-for-high-perf-games`
+- Teams: a, b · members (context): `a-saL1-f005516-q1` (f005516, core); `a-saL1-f005516-q3` (f005516, core, embedded); `a-saL1-f005516-q4` (f005516, core); `b-sb26-f013214-q2` (f013214, other, embedded)
+- Domains: core, embedded, other
+- Concepts: compiler optimization; type systems; aliasing (`noalias`/`restrict`); benchmarking methodology; zero-initialization; `MaybeUninit`; allocators; dataflow analysis; codegen/inlining; data-structure abstraction; borrow checker; defensive cloning/`Rc`; late-bound vs. early-optimized language design; unsafe; memory safety; concurrency; crash rates
+- Positions:
+  - `rust-vs-c-inherent-performance--no-inherent-advantage` — No inherent advantage; social factors dominate
+    - **ajdecon** · Source `f005516` · date 2025-06-09 · locator reply, 2025-06-09T14:34:18-05:00 — Agrees there's no inherent reason either language is faster; to the extent C codebases are faster today it's mostly because they're older and have had more engineer-hours of optimization, not a property of C itself. Quote: "there's no inherent reason for either language to be faster. It's all project specific... it's often just because they're much older codebases and have been optimized over a long time." [`a-saL1-f005516-c1`, team a]
+  - `rust-vs-c-inherent-performance--types-enable-optimizations` — Rust's type system enables optimizations C lacks
+    - **rtpg** · Source `f005516` · date 2025-06-09 · locator reply, 2025-06-09T20:16:56-05:00 — Argues a language with more semantic granularity gives the compiler more true invariants to exploit, e.g. Rust code built on iteration rather than raw array access can eliminate bounds checks entirely; cautions that "like for like" benchmarking between languages is inherently ambiguous. Quote: "a language with 'more' semantic granularity will have more leeway to give you free optimizations... if your codebase is filled with iteration rather than array access, you just don't need your bounds checks!" [`a-saL1-f005516-c2`, team a]
+    - **steveklabnik** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T14:15:50-05:00 — States Rust puts the equivalent of C's `restrict` on every reference that doesn't contain an `UnsafeCell`, meaning the no-aliasing guarantee is encoded in the type system, not just a vague folk claim, and that Rust is also ahead on pointer provenance semantics. Quote: "Rust puts the equivalent of `restrict` on every reference that doesn't contain an `UnsafeCell`, so it is doing a bit more than you assume here, and that is in the type system." [`a-saL1-f005516-c3`, team a]
+    - **kornel** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T08:19:54-05:00 — Frames the practical gap as partly ecosystem-driven: C's lack of an easily-reached-for hashmap pushes real-world C code toward slow linear searches until forced to fix (citing a GitLab backup-time postmortem), while Rust's easy hashmaps and parallel iterators make fast-by-default code more common in practice. Quote: "C doesn't have easily accessible hashmaps, so implementations tend to default to linear searches, until it becomes a problem... That means the discussion is just about which language makes it easier to write fast programs." [`a-saL1-f005516-c5`, team a]
+  - `rust-vs-c-inherent-performance--real-overheads` — Rust has real overheads: initialization, forced refactors and copies
+    - **dataangel** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T07:16:21-05:00 — Counters that real Rust disassembly shows concrete recurring costs: bounds checks on every array/division/shift access, "unsafe"-gated SIMD intrinsics, poorly-optimizing iterators (citing open rustc codegen issues), `RefCell` overhead, un-collapsible layers of `Result<>` wrapping, and clones/`Rc` added defensively to satisfy the borrow checker — concluding this is why Rust solutions don't top competitive-programming performance leaderboards. Quote: "if you spend a little time looking at Rust disassembly on nontrivial examples it becomes very obvious... There's a reason the Rust solutions don't win on highload.fun" [`a-saL1-f005516-c4`, team a]
+    - **dataangel** · Source `f005516` · date 2025-06-12 · locator reply, 2025-06-12T07:56:20-05:00 and 2025-06-13T20:10:53-05:00 — Argues safe Rust requires a value at construction time (not just before use via dataflow analysis, as for ordinary variables), so a large array or a small-object allocator must eagerly zero-initialize memory it may never read before writing, and the cost compounds with more allocations, sometimes bloating codegen enough to block inlining and further optimization. Quote: "safe Rust requires you to provide a value at construction time, which is not based on dataflow analysis. For example if you make a very large array, you must spend the time to zero init the entire thing even if you always write to elements before reading them." [`a-saL1-f005516-c9`, team a]
+    - **dataangel** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T11:09:00-05:00 — Disputes that Rust is generally "faster" in this practical-design-choice sense, saying trivial new features can require large refactorings because they necessitate new borrowing schemes, and separately notes extra clones/`Rc` are commonly added just to satisfy the borrow checker where they aren't algorithmically necessary. Quote: "trivial new features can require large refactorings because they necessitate new borrowing schemes." [`a-saL1-f005516-c12`, team a]
+  - `rust-vs-c-inherent-performance--init-cost-narrow` — Initialization cost is a narrow edge case
+    - **rpjohnst** · Source `f005516` · date 2025-06-11 · locator reply, 2025-06-11T11:16:03-05:00 and 2025-06-12T10:09:38-05:00 — Repeatedly presses that Rust has no implicit default initialization and only requires init-before-use by dataflow analysis, so the described cost should only bite in narrow cases like large arrays or read buffers, not "all variables" broadly, and questions whether the allocator scenario generalizes. Quote: "Rust merely requires init *before use* based on dataflow analysis. Surely the C code you're comparing with doesn't read from uninitialized variables to a noticeable degree?" [`a-saL1-f005516-c10`, team a]
+  - `rust-vs-c-inherent-performance--composability-wins` — Composability lets engineers ship better data structures
+    - **ssokolow** · Source `f005516` · date 2025-06-10 · locator reply, 2025-06-10T09:04:39-05:00 and 2025-06-10T11:32:55-05:00 — Argues Rust wins in the sense of what design choices engineers are actually willing to ship (versus benchmark racing); quotes Bryan Cantrill's account of choosing a safe, composable B-Tree in Rust where he'd have defaulted to a less-optimal AVL tree in C, because a hand-rolled intrusive B-Tree in C carries too much memory-corruption risk to trust. Quote: "I would still use an AVL tree in C even though I know I'm giving up some small amount of performance, but in Rust, I get to use a B-Tree." (quoting Bryan Cantrill) [`a-saL1-f005516-c11`, team a]
+    - **david_chisnall** · Source `f005516` · date 2025-06-11 · locator reply, 2025-06-11T02:18:49-05:00 — Argues the biggest practical performance advantage of C++ or Rust over C is that it's trivial to write code abstract over data structures, so a wrong choice found in profiling can be swapped easily; in C, implementation details leak through unless wrapped in painful macros — describes replacing his own hand-rolled generic concurrent hash table (many macros) with an off-the-shelf container plus a lock, which was both more maintainable and faster. Quote: "It is *trivial* to write code that is abstract over data structures... In C, implementation details of the data structure tend to leak unless you're *really* careful." [`a-saL1-f005516-c13`, team a]
+  - `rust-vs-c-inherent-performance--safe-rust-matches` — Safe Rust matches C for demanding work (embedded display, 3D)
+    - **John_Nagle** · Source `f013214` · date 2024-01-13 · locator reply timestamped 2024-01-13T20:31:31 — states his metaverse client's several coordinated CPU-bound threads (refresh, per-frame update, event processing, asset-decoding) doing entirely different work would be "really hard" to coordinate safely in C++, but works acceptably in safe Rust with no `unsafe` used anywhere in his own code Quote: "In safe Rust (I don't use \"unsafe\" in my own code at all) it's not bad." [`b-sb26-f013214-c3`, team b]
+  - `rust-vs-c-inherent-performance--safety-cost-acceptable` — A real safety cost is an acceptable trade
+    - **parasyte** · Source `f013214` · date 2024-01-10 · locator reply timestamped 2024-01-10T18:33:17 — cites a session where Ark: Survival Ascended crashed three times and topped out near 45 FPS despite an unsafe/unmanaged-heavy implementation, to argue relaxed memory safety isn't a performance free lunch; states a personal preference for "a 10% perf hit (40 FPS) for a memory safe implementation that doesn't crash," and separately reports deliberately abandoning an early Bevy game project after three months as a "fail fast" call once its immaturity became clear, later moving to Godot Quote: "Personally, I would prefer a 10% perf hit (40 FPS) for a memory safe implementation that doesn't crash." [`b-sb26-f013214-c4`, team b]
+- Positions seen by the extractor (`a-saL1-f005516-q1`): no-inherent-advantage-social-factors-dominate; stronger-type-system-enables-compiler-optimizations-c-lacks; rust-has-real-overheads-that-hurt-practical-perf
+- Positions seen by the extractor (`a-saL1-f005516-q3`): safe-rust-init-requirement-has-real-perf-cost; init-cost-is-narrow-edge-case-not-general-issue
+- Positions seen by the extractor (`a-saL1-f005516-q4`): composability-enables-better-real-world-data-structures; borrow-checker-forces-costly-refactors-and-copies
+- Positions seen by the extractor (`b-sb26-f013214-q2`): a demanding, highly concurrent 3D client is fully achievable in 100% safe Rust with no `unsafe` (John_Nagle); a measurable performance cost for memory safety is an acceptable, even preferable, trade — "playing loose with safety" is not a free lunch for performance either, evidenced by a shipped title with safety-linked crashes (parasyte)
 
 ### `serialization-format-choice`
 
@@ -918,6 +926,26 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`a-sa19-f009196-q2`): panic-on-overflow; never-ready-without-panic
 - Positions seen by the extractor (`b-sR10-f004706-q1`): fail-the-build
 - Positions seen by the extractor (`b-sb03-f000669-q1`): silent-default-workaround, surface-and-fix-root-cause
+
+### `default-features-minimal-vs-inclusive`
+
+**Question.** What should be on by default: enable optional capabilities by default for low friction, or keep defaults minimal and opt-in (codecs, formats, heap profiling)?
+
+- Grouping: One default-features decision; image formats, engine codecs and production heap profiling are contexts.
+- Absorbs merge-final ids: `heap-profiling-default`, `per-capability-features-vs-bundled`
+- Teams: a, b · members (context): `a-sa02-f002127-q1` (f002127, desktop-cli-ui); `a-sa26-f011684-q1` (f011684, core, other); `b-sb25-f011435-q2` (f011435, web, core)
+- Domains: core, desktop-cli-ui, other, web
+- Concepts: feature flags; API defaults; crate ecosystem curation; memory profiling; build features; observability tooling; binary size; compile time; dependency count
+- Positions:
+  - `default-features-minimal-vs-inclusive--inclusive-defaults` — Enable by default for minimal friction
+    - **clarfonthey** · Source `f002127` · date 2024-10-02 · locator PR comment — weighing reviewer pushback that niche formats (QOI, GIF) shouldn't be defaults, the author leans toward shipping with minimal friction now and adjusting defaults later rather than pre-curating by popularity Quote: "Kinda just would prefer the path of least friction and we can change the defaults later." [`a-sa02-f002127-c1`, team a]
+  - `default-features-minimal-vs-inclusive--minimal-defaults` — Compile in only what is used
+    - **Nico** · Source `f011435` · date 2026-06-11 · locator ~31:30-32:31 (audience Q&A on dependency counts) — contrasts Servo's ~1,000 dependencies (dominated by SpiderMonkey, WebGL, XR) with Blitz's ~300, achieved by enabling only 4 of 20 available image codecs by default and making SVG/networking support opt-in per deployment Quote: "you should be able to only compile in what you're actually using" [`b-sb25-f011435-c2`, team b]
+  - `default-features-minimal-vs-inclusive--unresolved-reported` — Reported as an open debate, no side taken (heap profiling)
+    - **Lei Huang** · Source `f011684` · date 2024-01-31 · locator section "Enabling Heap Profiling in GreptimeDB" — GreptimeDB currently ships with heap profiling (mem-prof) off by default, compiled in only via a cargo feature flag; whether it should be on by default is an active, unresolved discussion the author points readers to rather than settles Quote: "The discussion about whether the mem-prof feature should be enabled by default is ongoing in greptimedb#3166. You are welcome to share your opinion there" [`a-sa26-f011684-c1`, team a]
+- Positions seen by the extractor (`a-sa02-f002127-q1`): prefer-minimal-friction-defaults (PR author), curate-by-popularity-or-quality (reviewers, unattributed)
+- Positions seen by the extractor (`a-sa26-f011684-q1`): currently-off-by-default-with-open-internal-debate (GreptimeDB team, no side taken by this Voice)
+- Positions seen by the extractor (`b-sb25-f011435-q2`): default to the smallest compiled surface, enabling codecs/capabilities one at a time per deployment (Blitz: ~300 total dependencies, 4 image codecs enabled by default of 20 available); accept a large bundled dependency tree because the core scripting engine alone dominates it anyway (implicit contrast drawn with Servo's ~1,000 dependencies, dominated by SpiderMonkey)
 
 ### `extract-single-use-function`
 
@@ -1011,8 +1039,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `release-cadence--release-often` — Release often or on request
     - **daxpedda** · Source `f002883` · date 2025-08-06 · locator comment 2025-08-06T11:36 ("My 2¢"), follow-up 2025-08-06T11:43 — making a release costs little, so a release should follow as soon as one is requested; a request in a closed PR counts, with a tracking issue so it is not lost Quote: "making a release is relatively low cost so I favor making one as soon as requested" (flag: voice-unverified — Rust connection in the source is the maintainer role on wasm-bindgen stated in the same comment. Left out: the 1 MiB decoder margin (bes 2025-08-06T09:00 vs daxpedda's request for the exact failing byte count) is a JavaScript workaround detail, not a Rust decision; "Lets convert those to hex" and the `let`/`const` choice carry no reason on a Rust decision.) [`a-sT07-f002883-c1`, team a]
     - **ramfox** · Source `f003188` · date 2025-06-27 · locator blog body, paragraph beginning "Last time we published a release blog" — waiting until everything was fully finished before releasing was not the best way to get a stable release into users' hands; three-week cycles and fast canary releases before 1.0 get feedback quickly and let the team move with confidence Quote: "we realized that waiting until we had everything worked through and finished before releasing was not actually the best way for us to get a stable release into the hands of our users." [`b-sb10-f003188-c1`, team b]
-  - `release-cadence--sequence-after-dependency-major` — Wait for the dependency's major first
-    - **brancz** · Source `f003809` · date 2026-01-06 · locator comment 2026-01-06T15:32:51Z — asks for arrow 58 then a DataFusion update then release, so downstream stops carrying patches and uses upstream Quote: "it would just allow us not to have to carry some patches and actually use upstream once df 52 is out" (flag: voice-unverified) [`b-sT07-f003809-c1`, team b]
   - `release-cadence--ship-on-schedule` — Ship on schedule against the current minor
     - **alamb** · Source `f003809` · date 2026-01-06 · locator comment 2026-01-06T15:41:44Z — the next arrow release is minor 57.2.0; being minor, it should work with DataFusion 52, so no reordering Quote: "Since it is a minor version I think you should be able to update to use it with DataFusion 52" (flag: voice-unverified) [`b-sT07-f003809-c2`, team b]
 - Positions seen by the extractor (`a-sT07-f002883-q1`): release-on-request
@@ -1165,6 +1191,25 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`a-sT11-f007659-q1`): size-optimized profile; default release profile
 - Positions seen by the extractor (`b-sR03-f001160-q2`): favors performance over output size for this change. (daxpedda)
 
+### `hot-patching-for-iteration`
+
+**Question.** Should the Rust edit-compile loop use binary hot-patching (bypassing the normal link pipeline), or faster full rebuilds, given costs such as lost DWARF debugging?
+
+- Grouping: Tooling direction and user adoption of hot-patching are one decision.
+- Absorbs merge-final ids: `hot-patch-vs-dwarf-debugging`
+- Teams: a, b · members (context): `a-sa26-f011305-q5` (f011305, core, desktop-cli-ui, embedded); `b-sb09-f002719-q1` (f002719, desktop-cli-ui, frontend, wasm)
+- Domains: core, desktop-cli-ui, embedded, frontend, wasm
+- Concepts: build tooling; linkers; hot reload; compile times; hot-patching; dynamic linking; codegen backend
+- Positions:
+  - `hot-patching-for-iteration--hot-patch` — Hot-patch for iteration speed
+    - **Jonathan Kelly** · Source `f011305` · date 2025-10-03 · locator ~22:12-23:12 — "Subsecond" hot-patches running Rust binaries by recompiling only changed crates and linking them to hardcoded addresses at runtime, skipping the normal linking step, despite "a huge number of quirks, edge cases, incomprehensible behavior" needed to make it work Quote: "it bypasses the traditional cargo build system, almost completely eliminating the expensive linking step that slows down incremental development" [`a-sa26-f011305-c5`, team a]
+    - **jkelleyrtp** · Source `f002719` · date 2025-03-18 · locator comment @jkelleyrtp 2025-03-18T21:13:39Z — describes "zerolink"/"thinlink", an approach that automatically dynamically links workspace crates against a cached dependencies dylib to speed up builds, alongside the subsecond hot-patching mechanism. Quote: "our new approach for drastically speeding up rust compile times by automatically using dynamic linking" [`b-sb09-f002719-c1`, team b]
+    - **jkelleyrtp** · Source `f002719` · date 2025-03-19 · locator comment @jkelleyrtp 2025-03-19T20:56:59Z — reports profiling showed 100-300ms of a ~500ms build spent copying incremental artifacts to disk, and points to an upstream rustc PR aiming to remove that cost, wanting it to reach "blink and you miss it" hotpatch speed. Quote: "I did some profiling of rustc and about 100-300ms is spent copying incremental artifacts on disk." [`b-sb09-f002719-c3`, team b]
+  - `hot-patching-for-iteration--faster-codegen-backend` — Faster full rebuilds via an alternate codegen backend
+    - **DrewRidley** · Source `f002719` · date 2025-03-19 · locator comment @DrewRidley 2025-03-19T19:41:13Z — suggests adding the cranelift codegen backend as an optional flag for hot-reload builds, reporting it roughly halved build times on their machine (600ms to 300ms). Quote: "I found on my M3 Pro Macbook it brings down the average times from ~600ms to ~300ms." [`b-sb09-f002719-c2`, team b]
+- Positions seen by the extractor (`a-sa26-f011305-q5`): bypass-the-linker-for-speed (Jonathan Kelley, re: "Subsecond")
+- Positions seen by the extractor (`b-sb09-f002719-q1`): binary-hot-patching (jkelleyrtp, dx/subsecond), faster-codegen-backend (DrewRidley, cranelift)
+
 ### `immediate-vs-retained-gui`
 
 **Question.** Which GUI architecture fits a Rust desktop app: immediate mode, or retained or message-passing (Elm-style), and does the choice matter?
@@ -1182,31 +1227,19 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`a-sa15-f005857-q1`): message-passing-fits-realtime-sync
 - Positions seen by the extractor (`b-sb21-f008390-q3`): doesnt-matter-at-small-scale (boringcactus / Melody)
 
-### `large-pr-split`
-
-**Question.** Should a large contribution land as one PR or be split into small, independently mergeable PRs?
-
-- Grouping: Same decision in two repositories.
-- Teams: a, b · members (context): `a-02-f000993-q1` (f000993, ml); `b-sb08-f002518-q2` (f002518, ml, core)
-- Domains: core, ml
-- Concepts: refactor scope; code review process; engineering culture; contribution review process; PR granularity
-- Positions:
-  - `large-pr-split--split-into-small-prs` — Split before merging
-    - **ivarflakstad** · Source `f002518` · date 2026-06-21 · locator comment 2026-06-21T09:32:07Z — reviewing one huge combined branch is hard and risky; better to treat it as a development hub and extract small isolated PRs for merging Quote: "I think having this branch as the hub where backwards cuda compatibility is developed - and then extract only the required code into isolated PRs is a good way to get the improvements merged." [`b-sb08-f002518-c3`, team b]
-- Positions seen by the extractor (`a-02-f000993-q1`): ship-as-one-large-PR (PR author, opened "mainly to instigate discussion"), break-into-smaller-chunks (reviewer, unattributed)
-- Positions seen by the extractor (`b-sb08-f002518-q2`): split-into-small-isolated-prs (ivarflakstad)
-
 ### `library-auth-opinionated-vs-unopinionated`
 
 **Question.** Should a networking library impose an authentication scheme for its infrastructure (relays), or stay unopinionated and let operators choose?
 
-- Grouping: Two iroh sources on the same relay-authentication decision.
+- Grouping: Two iroh sources on the same relay-authentication decision. The audit found a10 carried two Positions in one Claim, and it is split into a10a and a10b (lead ruling).
 - Teams: a, b · members (context): `a-sT11-f004960-q1` (f004960, decentralized-iroh); `b-sR11-f004960-q1` (f004960, decentralized-iroh)
 - Domains: decentralized-iroh
 - Concepts: iroh relays; NAT traversal fallback; capability tokens; endpoint public keys; access control; API design; mechanism vs. policy
 - Positions:
-  - `library-auth-opinionated-vs-unopinionated--unopinionated-library-managed-default` — Library unopinionated; managed service authenticated by default
-    - **n0, inc. (Iroh Services), post by Rae McKelvey** · Source `f004960` · date 2026-07-30 · locator intro ("we've decided that managed relays on Iroh Services are now authenticated by default") and "The problem: a relay URL is a credential you can't revoke" — an open relay's URL ships in every client and leaks, so anyone can spend its finite bandwidth. Managed relays deployed from June 2026 onward require a signed, expiring, endpoint-bound token issued from the project's API key, while earlier relays stay open unless switched. For self-run relays, iroh leaves authentication to the operator Quote: "If the relay accepts anyone, then anyone who learns its URL can push traffic through it." (flag: voice-unverified (Rust connection in source: iroh Rust API code, `use iroh::Endpoint`)) [`a-sT11-f004960-c1`, team a]
+  - `library-auth-opinionated-vs-unopinionated--authenticated-managed-default` — The managed service authenticates relays by default (a10a, split from a10)
+    - **n0, inc. (Iroh Services), post by Rae McKelvey** · Source `f004960` · date 2026-07-30 · locator intro ("we've decided that managed relays on Iroh Services are now authenticated by default") and "The problem: a relay URL is a credential you can't revoke" — an open relay's URL ships in every client and leaks, so anyone can spend its finite bandwidth. Managed relays deployed from June 2026 onward require a signed, expiring, endpoint-bound token issued from the project's API key, while earlier relays stay open unless switched. For self-run relays, iroh leaves authentication to the operator Quote: "If the relay accepts anyone, then anyone who learns its URL can push traffic through it." (flag: voice-unverified (Rust connection in source: iroh Rust API code, `use iroh::Endpoint`)) [`a-sT11-f004960-c1a`, team a]
+  - `library-auth-opinionated-vs-unopinionated--unopinionated-library` — The library stays unopinionated; operators choose the scheme for self-hosted relays (a10b, split from a10)
+    - **n0, inc. (Iroh Services), post by Rae McKelvey** · Source `f004960` · date 2026-07-30 · locator intro ("we've decided that managed relays on Iroh Services are now authenticated by default") and "The problem: a relay URL is a credential you can't revoke" — an open relay's URL ships in every client and leaks, so anyone can spend its finite bandwidth. Managed relays deployed from June 2026 onward require a signed, expiring, endpoint-bound token issued from the project's API key, while earlier relays stay open unless switched. For self-run relays, iroh leaves authentication to the operator Quote: "If the relay accepts anyone, then anyone who learns its URL can push traffic through it." (flag: voice-unverified (Rust connection in source: iroh Rust API code, `use iroh::Endpoint`)) [`a-sT11-f004960-c1b`, team a]
     - **Rae McKelvey (iroh / n0)** · Source `f004960` · date 2026-07-30 · locator "The problem: a relay URL is a credential you can't revoke" section — self-run relays are untouched — "you can build your own authentication scheme" — while managed relays now default to API-key-scoped tokens Quote: "iroh is unopinionated about that" [`b-sR11-f004960-c1`, team b]
 - Positions seen by the extractor (`a-sT11-f004960-q1`): authenticated by default (managed relays); open relay (pre-June-2026 default, kept for existing deployments); library stays unopinionated, operator builds auth
 - Positions seen by the extractor (`b-sR11-f004960-q1`): library stays unopinionated by default, ships an opinionated managed option alongside it
@@ -1490,21 +1523,6 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`b-sR08-f003587-q2`): into-must-consume-self
 - Positions seen by the extractor (`b-sb22-f009236-q1`): bare-verb naming would be clearer and more consistent with `Clone`/`Borrow` (jvcmarcenes); the `to_`/`as_`/`into_` convention from the Rust API Guidelines is the correct, deliberate choice here (steffahn); `to_owned` is fine as-is because a bare verb like `own` would misdescribe an operation that copies into a new representation rather than "owning" anything (jrose)
 
-### `batteries-included-web-framework`
-
-**Question.** Should a Rust backend be built on an opinionated, batteries-included framework (Rails/Django/Spring-style), or by composing minimal libraries (axum, sqlx) yourself?
-
-- Grouping: Same framework-versus-composition decision, one voiced as ecosystem need, one as a framework's pitch.
-- Teams: b · members (context): `b-sT09-f005314-q1` (f005314, web, distributed); `b-sb19-f005872-q1` (f005872, web)
-- Domains: distributed, web
-- Concepts: convention over configuration; plugin system; component registry; procedural macros (`#[component]`, `#[auto_config]`); axum; sqlx; toml configuration; web framework scope; actix-web; Leptos; Yew; Dioxus; "wire it up yourself"
-- Positions:
-  - `batteries-included-web-framework--batteries-included` — Use or build a convention-over-configuration, batteries-included framework
-    - **summer-rs project (github.com/spring-rs/spring-rs, README now titled summer-rs; no individual maintainer named in the source)** · Source `f005314` · date 2024-08-17 (frame date; the README revision read is undated, describes crate `summer` 0.4) · locator README intro paragraph, § Features, § component macros — the framework puts convention over configuration, following Spring Boot, and offers an extensible plugin system over Rust crates. It claims ease of use through a concise API and optional procedural macros. The `#[component]` macro removes the need to implement the Plugin trait by hand. Quote: "summer-rs is an application framework that emphasizes convention over configuration, inspired by Java's SpringBoot" (flag: voice-unverified) [`b-sT09-f005314-c1`, team b]
-    - **Nicole Tietz-Sokolskaya** · Source `f005872` · date 2024-10-02 · locator § "Imagining the future I want" — existing minimalist frameworks (actix-web, axum) and SPA frameworks (Yew, Leptos, Dioxus) each require substantial manual wiring (routing, templates, auth, DB, admin, etc.); the ecosystem needs one integrated toolkit instead, which she is starting to build ("newt") Quote: "I'd much rather have a single web framework that handles it all, with clean upgrade instructions between versions." [`b-sb19-f005872-c1`, team b]
-- Positions seen by the extractor (`b-sT09-f005314-q1`): convention-over-configuration framework (summer-rs)
-- Positions seen by the extractor (`b-sb19-f005872-q1`): needs-batteries-included-framework (Nicole Tietz-Sokolskaya)
-
 ### `compile-time-vs-runtime-switches`
 
 **Question.** Should test-only or staging behaviour be switched at compile time (Cargo features, `#[cfg]`, compile-time env vars) or at runtime (env vars, API options)?
@@ -1647,7 +1665,6 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions:
   - `lts-release-channel--support-old-lines` — Keep older lines supported (LTS train, backport the fix)
     - **Alex Crichton** · Source `f002937` · date 2025-04-22 · locator "Wasmtime LTS Releases" article, paragraphs 2-4 (bytecodealliance.org/articles/wasmtime-lts) — Wasmtime previously supported each monthly release for only 2 months, forcing embedders to track upstream closely for security fixes; Wasmtime now designates every 12th release an LTS release, guaranteed 24 months of API-compatible security patches (no backported features), so users can upgrade yearly instead of monthly while still receiving guaranteed security fixes Quote: "This rate of change can be too fast for users so Wasmtime now supports LTS releases." [`b-sR06-f002937-c1`, team b]
-    - **Mettwasser** · Source `f002501` · date 2025-01-10 · locator comment 2025-01-10T15:44:55Z — master has too many breaking changes to compile the app; asks for a branch based on 0.13.2 Quote: "Could you make a branch that is based on `0.13.2`?" (flag: voice-unverified) [`b-sT05-f002501-c2`, team b]
   - `lts-release-channel--upgrade-instead` — No backport; upgrade
     - **kaplanelad** · Source `f002501` · date 2025-01-10 · locator comment 2025-01-10T16:08:08Z — points to loco upgrade guide for axum breaking changes; declines applying the CORS fix to 0.13.x Quote: "Unfortunately, I can't apply this fix to version 0.13.x. It's recommended to upgrade" (flag: voice-unverified) [`b-sT05-f002501-c1`, team b]
 - Positions seen by the extractor (`b-sR06-f002937-q1`): "adopt a formal LTS release train, decoupled from the fast release cadence" (Alex Crichton / Wasmtime)
@@ -1864,20 +1881,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **The Spin Project (Fermyon / CNCF Spin, institution)** · Source `f004809` · date 2026-06-15 · locator sections "WASI Preview 3: stabilized and supported long-term" / "Async everywhere: Spin's host interfaces are now async" — WASIp3's async model, previously experimental and opt-in, is now the default for new applications, and Spin's own host interfaces (KV, SQLite, Postgres, Redis, outbound HTTP) were rewritten to be async so handlers get real concurrency instead of blocking Quote: "WASIp3 is now the default platform for new applications... we've asyncified Spin's host interfaces so I/O-heavy handlers actually get concurrency instead of blocking the instance." [`b-sR10-f004809-c1`, team b]
 - Positions seen by the extractor (`b-sR10-f004809-q1`): async-by-default
 
-### `async-executor-with-timing-critical-dma`
-
-**Question.** Is an async executor (embassy) safe to use around timing-critical DMA display output, or does it cause the glitches?
-
-- Teams: b · members (context): `b-sT05-f002499-q3` (f002499, embedded)
-- Domains: embedded
-- Concepts: embassy; async on bare metal; flash/PSRAM bus contention
-- Positions:
-  - `async-executor-with-timing-critical-dma--p1` — esp-hal dpi does not work well under embassy
-    - **yanshay** · Source `f002499` · date 2026-02-02 · locator comment 2026-02-02T19:47:24Z — identical code works in sync program; embassy task layout and Timer awaits shift the image; concludes a low-level clock/interrupt interaction Quote: "dpi with esp-hal is doesn't seem to be functional for embassy apps" (flag: voice-unverified) [`b-sT05-f002499-c6`, team b]
-  - `async-executor-with-timing-critical-dma--p2` — cause is bus bandwidth, not the async runtime
-    - **Dominaezzz** · Source `f002499` · date 2026-02-02 · locator comments 2026-02-02T17:31:48Z, 2026-02-02T20:24:42Z — PSRAM bandwidth starvation; embassy's scheduler executing from flash steals bandwidth from DMA Quote: "I won't be surprised if it's due to the scheduler code executing from flash" (flag: voice-unverified) [`b-sT05-f002499-c7`, team b]
-- Positions seen by the extractor (`b-sT05-f002499-q3`): dpi does not work well with embassy; cause is flash-bandwidth contention, not async per se
-
 ### `async-io-with-sync-storage`
 
 **Question.** When your chosen async I/O library (e.g. quinn for QUIC) is paired with a storage/database layer that only offers a synchronous API (as with embedded databases like redb, rocksdb, sled, sqlite), should you treat that combination as an avoidable architecture mismatch to design around from the outset — including avoiding constructs like `LocalSet` and `!Send` futures — or accept it as a practical necessity, since no viable async-native alternative exists and non-`Send` futures are often unavoidable when wrapping such resources?
@@ -1927,6 +1930,19 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `aya-vs-libbpf-rs--p1` — no-strong-preference-used-libbpf-rs-for-familiarity
     - **Lalit Basin** · Source `f011306` · date 2025-10-03 · locator [19:32]-[20:34] — Aya is pure Rust for both the kernel-space and user-space program with only experimental CO-RE support and no libbpf/BCC/kernel-header dependency; libbpf-rs wraps the C libbpf library, so the eBPF program is written in C/compiled with clang+LLVM while the user-space program is Rust, with CO-RE supported by default; he used libbpf-rs for the talk's examples "for no specific reason" Quote: "most of the examples which I'm going to talk here would be lib BPF using libf BPF RS for no specific reasons uh I know that there are I maintainers and developers probably sitting somewhere in the audience don't please don't judge me you guys are doing the awesome job" [`b-sb24-f011306-c2`, team b]
 - Positions seen by the extractor (`b-sb24-f011306-q2`): no-strong-preference-used-libbpf-rs-for-familiarity (Lalit Basin)
+
+### `batteries-included-web-framework`
+
+**Question.** Should a Rust backend be built on an opinionated, batteries-included framework (Rails/Django/Spring-style), or by composing minimal libraries (axum, sqlx) yourself?
+
+- Grouping: Same framework-versus-composition decision. The summer-rs Claim (strike b33) was re-homed to `choose-rust-for-a-domain`, so b-sT09-f005314-q1 stands here with no Claim.
+- Teams: b · members (context): `b-sb19-f005872-q1` (f005872, web)
+- Domains: web
+- Concepts: web framework scope; actix-web; axum; Leptos; Yew; Dioxus; "wire it up yourself"
+- Positions:
+  - `batteries-included-web-framework--batteries-included` — Use or build a convention-over-configuration, batteries-included framework
+    - **Nicole Tietz-Sokolskaya** · Source `f005872` · date 2024-10-02 · locator § "Imagining the future I want" — existing minimalist frameworks (actix-web, axum) and SPA frameworks (Yew, Leptos, Dioxus) each require substantial manual wiring (routing, templates, auth, DB, admin, etc.); the ecosystem needs one integrated toolkit instead, which she is starting to build ("newt") Quote: "I'd much rather have a single web framework that handles it all, with clean upgrade instructions between versions." [`b-sb19-f005872-c1`, team b]
+- Positions seen by the extractor (`b-sb19-f005872-q1`): needs-batteries-included-framework (Nicole Tietz-Sokolskaya)
 
 ### `become-tail-call-codegen`
 
@@ -2302,18 +2318,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Taylor and Tyler** · Source `f011312` · date 2025-10-03 · locator [19:27]-[25:34] — raw pointers force every reference-taking method (including all method calls, via `self`) to be unsafe; `Cell` assumes invariants C++ references don't provide (safe projection through `Option`/`Vec`, and `Sync`-safety for thread-safe C++ types); their proposed alternative is a new C++-style reference type in Rust where mutation-that-can-invalidate-a-reference is unsafe, but this needs new compiler features (generalized field projection, auto-referencing for custom reference types) that don't exist yet Quote: "None of these approaches are perfect, but with some help from the Rust compiler, we can begin to offer safer and more ergonomic APIs." [`b-sb24-f011312-c3`, team b]
 - Positions seen by the extractor (`b-sb24-f011312-q3`): none-satisfying-yet-add-native-cpp-reference-type (Taylor/Tyler)
 
-### `crate-license-choice`
-
-**Question.** Which license should a Rust crate carry: the ecosystem's dual MIT/Apache-2.0, or a single license?
-
-- Teams: b · members (context): `b-sT01-f000267-q1` (f000267, core)
-- Domains: core
-- Concepts: licensing; dual MIT OR Apache-2.0; code provenance
-- Positions:
-  - `crate-license-choice--p1` — dual MIT/Apache-2.0, MIT-only where code provenance requires
-    - **Zcash Foundation** · Source `f000267` · date 2026-09-27 (accessed; page undated) · locator § License — Zebra is dual-licensed MIT and Apache-2.0; some crates are MIT-only because part of their code came from MIT-licensed projects. Quote: "Some Zebra crates are distributed under the MIT license only, because some of their code was originally from MIT-licensed projects." (flag: voice-unverified) [`b-sT01-f000267-c1`, team b]
-- Positions seen by the extractor (`b-sT01-f000267-q1`): dual MIT/Apache-2.0 by default, MIT-only where code came from MIT-licensed projects (Zcash Foundation)
-
 ### `crdt-vs-coordination`
 
 **Question.** For a multi-actor collaborative system (humans and agents editing together), should convergence come from CRDTs or from a coordinating mechanism (locking, operational transform, a single authoritative server)?
@@ -2505,15 +2509,16 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `downstream-vendor-removed-api-vs-rework`
 
-**Question.** When a library removes a public trait in a major release (DataFusion dropping `SchemaAdapter`), should downstream vendor the removed trait or rework their integration, and does the migration cost count against the removal?
+**Question.** When a library removes a public API in a major release, should downstream vendor the removed piece or rework its integration, and does the migration cost count against the removal?
 
+- Grouping: Singleton. Strikes b28 and b29 (answering a different decision than release sequencing) are re-homed here; merge-v2 had already linked them to this Question, the second one in their source.
 - Teams: b · members (context): `b-sT07-f003809-q2` (f003809, core, distributed)
 - Domains: core, distributed
 - Concepts: breaking changes; semver majors; vendoring; downstream migration cost
 - Positions:
-  - `downstream-vendor-removed-api-vs-rework--p1` — replicate the dropped trait downstream as fallback
+  - `downstream-vendor-removed-api-vs-rework--vendor-removed-trait` — Replicate the dropped trait downstream as a fallback (a tentative plan; b28's second strike ground)
     - **comphead** · Source `f003809` · date 2026-01-06 · locator comments 2026-01-06T17:13:01Z, 2026-01-06T17:30:28Z — the SchemaAdapter removal lengthens Comet's upgrade; plan B is to copy SchemaAdapter into the Comet codebase Quote: "plan B is to replicate SchemaAdapter in Comet codebase" (flag: voice-unverified) [`b-sT07-f003809-c3`, team b]
-  - `downstream-vendor-removed-api-vs-rework--p2` — rework downstream; the cost falls on downstream's own misuse
+  - `downstream-vendor-removed-api-vs-rework--rework-downstream` — Rework downstream; the cost falls on downstream's own misuse
     - **adriangb** · Source `f003809` · date 2026-01-06 · locator comment 2026-01-06T17:17:48Z — Pydantic was hit by the same removal, but because of its own hacky dynamically generated columns filled by SchemaAdapter; offers to work through issues Quote: "that's mostly on us for doing *horrifying* things in the first place" (flag: voice-unverified) [`b-sT07-f003809-c4`, team b]
 - Positions seen by the extractor (`b-sT07-f003809-q2`): replicate the dropped trait in the downstream codebase as fallback; rework, the cost is on downstream's own hacky use
 
@@ -2837,18 +2842,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Sycamore** · Source `f005702` · date 2026-04-01 · locator front page, "Fine-Grained Reactivity" feature blurb — fine-grained reactivity is the right model, contrasted implicitly with vdom-diffing frameworks (e.g. Yew). Quote: "Sycamore's reactivity system is fine-grained, meaning that only the parts of your app that need to be updated will be." [`a-sR14-f005702-c1`, team a]
 - Positions seen by the extractor (`a-sR14-f005702-q1`): fine-grained-reactivity (Sycamore)
 
-### `first-class-references-vs-scoped-access`
-
-**Question.** Does most safe Rust need first-class, escapable references with lifetime annotations (`fn foo(x: T) -> &U`)? Or would scoped access, a closure taking the borrow (`fn foo<R>(x: T, action: impl FnOnce(&U) -> R) -> R`) or a yielding projection, cover nearly every use case, leaving the rest to localized unsafe?
-
-- Teams: a · members (context): `a-sT10-f004205-q1` (f004205, core)
-- Domains: core
-- Concepts: references; lifetimes; borrow checker; continuation-passing / closure-scoped access; HashMap::entry; language complexity
-- Positions:
-  - `first-class-references-vs-scoped-access--p1` — scoped access suffices
-    - **Alvae** · Source `f004205` · date 2026-02-06 · locator post @Alvae 2026-02-06T04:32:56Z, paragraphs 2–4 and the HashMap::entry paragraph; supporting post @Alvae 2026-02-06T10:16:22Z, last paragraph — rewriting a reference-returning Rust function as one that passes the borrow to a closure avoids escaping references in the vast majority of cases she has met in practice. The entry pattern, which many in the Rust community cite to justify first-class references, is expressible without them. In Rust, lifetime annotations cannot be ignored even by code that never uses references, because they surface in diagnostics Quote: "This transformation is sufficient to avoid the kind of escaping references that Rust offers in the vast majority of cases I have encountered in practice." (flag: voice-unverified (Rust connection in source: writes the Rust transformation and reports practice with such cases; also speaks for Hylo, "we're betting that Hylo does not need Rust-like references") Not logged under rules 8–9: - @dabrahams 2026-02-05T22:05:48Z makes the strongest statements on Rust: "the way lifetime annotations creep into the type system via generics is among the worst complexity effects they've had on Rust". He also says there is "a small corner of problems that Rust can solve safely, but only at a huge cost in language complexity". The source shows no Rust use, crate or role; he mentions only conversations "with Rust folks". - @Dmitriy_Ignatyev 2026-02-05T08:36:01Z compares Swift with Rust from "what I understand" and says "I’m not deeply experienced with Rust". No Rust use is shown, and his side concerns Swift's design. - All other posts argue Swift or Hylo design.) [`a-sT10-f004205-c1`, team a]
-- Positions seen by the extractor (`a-sT10-f004205-q1`): first-class references needed (the source attributes this to "many in the Rust community", no named Voice); scoped access suffices
-
 ### `fixed-point-loop-vs-event-retrigger`
 
 **Question.** Should a bounded, safety-first multi-pass graph algorithm favor a simple iterative fixed-point loop, or a more complex event-driven re-trigger design?
@@ -2865,11 +2858,12 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 **Question.** On eventually consistent storage, should referential integrity be enforced by database foreign keys or in application code?
 
+- Grouping: Singleton. Strike b31 (a D1 schema decision, not edge primitives vs VPS) is re-homed here; merge-v2 had already linked it to this Question, the second one in its source.
 - Teams: b · members (context): `b-sT07-f004166-q2` (f004166, cloud-workers, distributed)
 - Domains: cloud-workers, distributed
 - Concepts: eventual consistency; foreign keys; D1/SQLite
 - Positions:
-  - `foreign-keys-vs-app-integrity--p1` — drop foreign keys, enforce integrity in app code
+  - `foreign-keys-vs-app-integrity--app-enforced-integrity` — Drop foreign keys; enforce integrity in application code
     - **Nick Kuntz** · Source `f004166` · date 2026-01-27 · locator § D1 ("We learned one hard lesson") — D1's eventual consistency broke FK checks across sequential writes, so all FKs were removed Quote: "We removed all foreign keys and enforce referential integrity in application code." (flag: voice-unverified) [`b-sT07-f004166-c2`, team b]
 - Positions seen by the extractor (`b-sT07-f004166-q2`): drop foreign keys, enforce in application code
 
@@ -3073,18 +3067,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Klaehn** · Source `f004865` · date 2026-07-02 · locator "Basic setup" section — keep host and embedded (cross-compiled) code in fully separate, non-workspace Cargo projects when toolchains differ and a patched dependency is needed for one side only. Quote: "Note that we need different toolchains and want to keep the option to use a patch of iroh for the ESP32 variant, so the two directories are completely separate Rust projects. We do not use a workspace." [`a-sR14-f004865-c1`, team a]
 - Positions seen by the extractor (`a-sR14-f004865-q1`): separate-projects (Klaehn)
 
-### `hot-patch-explicit-hook`
-
-**Question.** Should dev-time hot-patching require an explicit hook in user code, or should tooling connect implicitly?
-
-- Teams: b · members (context): `b-sT05-f003044-q1` (f003044, frontend, web, desktop-cli-ui)
-- Domains: desktop-cli-ui, frontend, web
-- Concepts: subsecond; dioxus devtools; binary hot-patching
-- Positions:
-  - `hot-patch-explicit-hook--p1` — explicit devtools connection, not implicit
-    - **jkelleyrtp** · Source `f003044` · date 2025-05-25 · locator comment 2025-05-25T12:41:55Z — hotpatch ignored because the client never connected; user must call connect_subsecond() in main Quote: "we don't do this implicitly" (flag: voice-unverified) [`b-sT05-f003044-c1`, team b]
-- Positions seen by the extractor (`b-sT05-f003044-q1`): explicit connect_subsecond() call, no implicit connection
-
 ### `http-body-unknown-size`
 
 **Question.** When a response body's size cannot be determined without expensive computation, should an HTTP framework represent that as a distinct "unknown size" state, or default to treating it the same as a known-empty body?
@@ -3204,17 +3186,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **gbj** · Source `f003963` · date 2025-12-12 · locator comment 2025-12-12T20:16:51Z — argues the trait should also accept `Clone` key types, since cheaply-clonable types like `Arc<str>` are reasonable keys even though cloning large objects is not Quote: "And I would suggest allowing `Clone` key types as well: of course it's not a good idea to clone big objects around, but there are plenty of types like `Arc<str>` that would be reasonable to use as keys and are cheap to clone for this purpose." [`b-sb13-f003963-c4`, team b]
 - Positions seen by the extractor (`b-sb13-f003963-q2`): copy-only-keys (TiemenSch), allow-clone-keys (gbj)
 
-### `lambda-zip-vs-container-image`
+### `large-pr-split`
 
-**Question.** Should a Rust Lambda ship as a zipped `provided.al2` bootstrap built by cargo-lambda, or as a container image?
+**Question.** Should a large contribution land as one PR or be split into small, independently mergeable PRs?
 
-- Teams: a · members (context): `a-sT11-f007659-q2` (f007659, cloud-workers)
-- Domains: cloud-workers
-- Concepts: cargo-lambda; cross-compilation (zig); container images; deployment packaging
+- Grouping: Same decision in two repositories.
+- Teams: b · members (context): `b-sb08-f002518-q2` (f002518, ml, core)
+- Domains: core, ml
+- Concepts: contribution review process; PR granularity
 - Positions:
-  - `lambda-zip-vs-container-image--p1` — zip via cargo-lambda (default); container image only when needed
-    - **maahl (maahl.net)** · Source `f007659` · date 2023-11-05 · locator § "Cargo Lambda" and § "Dockerize the Lambda" — prefers Cargo Lambda for local runs, hot reload and arm64 zip builds, with a container image only "if, for some reason" it is required; reports a multi-stage build shrinking the image from 2.64 GB to 343 MB, and could not combine cargo-chef with cargo-lambda Quote: "The Rust runtime for Lambda is best interacted with using Cargo Lambda." (flag: voice-unverified) [`a-sT11-f007659-c2`, team a]
-- Positions seen by the extractor (`a-sT11-f007659-q2`): zip via cargo-lambda (default); container image (when needed)
+  - `large-pr-split--split-into-small-prs` — Split before merging
+    - **ivarflakstad** · Source `f002518` · date 2026-06-21 · locator comment 2026-06-21T09:32:07Z — reviewing one huge combined branch is hard and risky; better to treat it as a development hub and extract small isolated PRs for merging Quote: "I think having this branch as the hub where backwards cuda compatibility is developed - and then extract only the required code into isolated PRs is a good way to get the improvements merged." [`b-sb08-f002518-c3`, team b]
+- Positions seen by the extractor (`b-sb08-f002518-q2`): split-into-small-isolated-prs (ivarflakstad)
 
 ### `leaky-signal-abstraction-electrical-config`
 
@@ -3393,18 +3376,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `nextest-vs-custom-runner--p1` — custom test-runner wrapper over cargo-nextest
     - **Luca Casonato** · Source `f011092` · date 2024-02-13 · locator ~00:30:24-00:31:24 (wrapper description) and ~00:34:25-00:35:26 (Q&A on nextest) — built a custom wrapper around `cargo test` that builds test binaries on one machine, ships them to other machines as a zip, shards execution, and converts cargo's unstable JSON test output into JUnit XML; tried cargo-nextest first but rejected it because its different test-execution model (parallel processes) broke an assumption their own tests relied on — a global mutex used to hand out network ports one at a time — and fixing that would have taken more time than they had Quote: "we did actually try next test um but the problem with next test was that it changed too many other related things right like the way it runs its tests... that would cause our test [suite] to fail and we just didn't have the time" [`a-saL2-f011092-c1`, team a]
 - Positions seen by the extractor (`a-saL2-f011092-q1`): custom-wrapper-over-nextest (Luca Casonato)
-
-### `non-ascii-identifier-restrictions`
-
-**Question.** Should a language that accepts non-ASCII identifiers restrict them (UAX#31-style, no combining characters as identifier start) and warn on confusable identifiers, as rustc does with `confusable_idents` and `mixed_script_confusables`, or accept a broader character set?
-
-- Teams: a · members (context): `a-sT07-f002226-q1` (f002226, core)
-- Domains: core
-- Concepts: non-ASCII identifiers; UAX#31; UTS#55; confusable detection; lints; source-code security
-- Positions:
-  - `non-ascii-identifier-restrictions--p1` — restrict-and-lint-confusables
-    - **Karl** · Source `f002226` · date 2024-10-30 · locator post 2024-10-30T08:14, "Rust is ahead of us here" and the two rustc output blocks — identifiers should never interact typographically with surrounding text; Rust gets this right by rejecting U+3099 as an identifier start and by warning on look-alike and mixed-script identifiers by default, where Swift gives no warning Quote: "Rust is ahead of us here." (flag: voice-unverified — the only Rust connection in the source is Karl's own rustc runs (`src/main.rs`, `src/lib.rs` output) in this post; no crate, role or stated Rust use. The side is taken in a Swift Evolution review and names Rust's shipped design as the better one; tier 3 should judge whether that counts as a Position on a Rust decision. Left out: the rest of the review (test naming with raw identifiers, leading-digit enum cases, tuple `.0` vs `` .`0` ``, Unicode table versioning in the parser) is Swift design argued by Voices with no Rust connection in the source.) [`a-sT07-f002226-c1`, team a]
-- Positions seen by the extractor (`a-sT07-f002226-q1`): restrict-and-lint-confusables (Rust's shipped design, endorsed)
 
 ### `one-enum-vs-two-types`
 
@@ -3970,17 +3941,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Mordecai Emmanuel Etukudo** · Source `f011443` · date 2026-06-11 · locator ~01:10-02:10 — modern software education over-focuses on frameworks and abstractions and under-teaches how systems actually work (memory, concurrency, performance, tradeoffs); learning Rust forces students to confront ownership, memory, and error handling directly, concepts other languages abstract away Quote: "The modern software education... focus more on teaching people about framework and a lot of abstractions... it's not bad to use frameworks... but it's nice to understand what is going on behind the wood" [`a-sa26-f011443-c1`, team a]
 - Positions seen by the extractor (`a-sa26-f011443-q1`): teach-Rust-directly-in-the-academy (Mordecai Etukudo)
 
-### `tensor-container-uniform-type`
-
-**Question.** Should a generic tensor-container abstraction enforce a single uniform tensor type across backends, or allow different backends/precisions to coexist within the same container to support mixed-precision training and multi-backend graphs?
-
-- Teams: a · members (context): `a-02-f000993-q2` (f000993, ml)
-- Domains: ml
-- Concepts: generics; tensor containers; mixed precision; backend abstraction
-- Positions:
-  - no Claim in batch 1
-- Positions seen by the extractor (`a-02-f000993-q2`): enforce-uniform-type (implied by author's redesign attempts), allow-backend-flexibility (reviewer's stated goal, unattributed)
-
 ### `test-via-real-entry-point`
 
 **Question.** Should a test exercise a feature only by calling its internal methods directly against a bespoke test harness, or must at least one test dispatch the real keystroke/action through the actual UI entry point?
@@ -4146,17 +4106,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **eugineerd** · Source `f003716` · date 2025-10-20 · locator PR #21601, comment 2025-10-20T17:20:03Z — says correctness must be enforced either by marking the Relationship trait unsafe or by leaving RelationshipAccessor::relationship unsafe since the implementer can't be trusted; the shipped design leaves the accessor method unsafe rather than the trait Quote: "either mark `Relationship` trait unsafe and mention that `ENTITY_FIELD_OFFSET` must be correct to be safely implemented, or we'd have to leave `RelationshipAccessor::relationship` unsafe" [`a-sa07-f003716-c1`, team a]
     - **urben1680** · Source `f003716` · date 2025-10-20 · locator PR #21601, comment 2025-10-20T17:52:07Z — accepts the design where the derive macro is trusted to build a valid accessor and the unsafe contract lands on the caller/consuming method rather than the trait Quote: "Then I agree on the design here." [`a-sa07-f003716-c2`, team a]
 - Positions seen by the extractor (`a-sa07-f003716-q1`): unsafe-consuming-fn (eugineerd, shipped design; urben1680, agreed), unsafe-trait (eugineerd, raised as an alternative)
-
-### `url-crate-vs-rfc3986`
-
-**Question.** When a Rust project's forked dependency must serialize URIs per a spec that requires strict RFC3986 percent-encoding (here, LSP's `TextDocumentIdentifier`), should it use the widely-adopted `url` crate (WHATWG URL Standard, which does not percent-encode brackets) or switch to a stricter RFC3986-compliant crate like `fluent-uri`?
-
-- Teams: a · members (context): `a-sa03-f002356-q1` (f002356, desktop-cli-ui)
-- Domains: desktop-cli-ui
-- Concepts: URI/URL encoding standards (RFC3986 vs. WHATWG); LSP protocol compliance; forked-dependency maintenance burden; crate choice for spec conformance
-- Positions:
-  - no Claim in batch 1
-- Positions seen by the extractor (`a-sa03-f002356-q1`): commenter (unattributed) — Zed's `lsp-types` fork should upgrade to `fluent-uri` for spec-correct percent-encoding; the fork's existing choice (unattributed, inferred only from the fork's branch name `zed-main-no-url-changes`) — keep the `url` crate, for reasons not stated in this source
 
 ### `verify-crates-io-against-source`
 
@@ -4379,3 +4328,15 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `xcframework-tooling-vs-hand-built--p1` — use Apple's official `xcodebuild -create-xcframework` rather than hand-assembling the XCFramework directory
     - **Ian Wagner** · Source `f012237` · date 2024-12-04 · locator section "Generating the XCFramework", opening paragraph — XCFramework's on-disk structure is simple enough that some teams build it by hand, but Stadia Maps scripts `xcodebuild -create-xcframework` to combine the per-target static libraries, headers and module map instead of replicating that structure manually Quote: "Some teams actually do this by hand, since it's a relatively simple structure, but we'll stick to Apple's official tooling." [`a-sa27-f012237-c2`, team a]
 - Positions seen by the extractor (`a-sa27-f012237-q2`): use official `xcodebuild` tooling (Ian Wagner/Stadia Maps) vs. hand-assemble the XCFramework directory by hand (unnamed "some teams", described in source as viable given the format's simple structure)
+
+### `lambda-build-tooling`
+
+**Question.** Should Rust Lambdas be built and packaged with Cargo Lambda, or with a Docker-based toolchain?
+
+- Grouping: New, carried only by the re-homed Claim a12 (strike: it recommends the Cargo Lambda tool, Docker only "if you need" it; zip vs container image is never argued). No team logged this Question, so it has no crosswalk row.
+- Teams: none (re-homed Claim only) · members (context): 
+- Domains: none (no team-local member)
+- Concepts: none given
+- Positions:
+  - `lambda-build-tooling--cargo-lambda-by-default` — Cargo Lambda by default; Docker only when needed
+    - **maahl (maahl.net)** · Source `f007659` · date 2023-11-05 · locator § "Cargo Lambda" and § "Dockerize the Lambda" — prefers Cargo Lambda for local runs, hot reload and arm64 zip builds, with a container image only "if, for some reason" it is required; reports a multi-stage build shrinking the image from 2.64 GB to 343 MB, and could not combine cargo-chef with cargo-lambda Quote: "The Rust runtime for Lambda is best interacted with using Cargo Lambda." (flag: voice-unverified) [`a-sT11-f007659-c2`, team a]
