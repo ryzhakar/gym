@@ -443,3 +443,4 @@
 2026-09-27T09:25 | self | delegation | agent:t2-n1-r5..t2-n7-r5, sonnet: round 5 surveys, same prompt as round 4 with r=5; source-cache rule now in common.md
 2026-09-27T09:26 | self | decision | cache.py gains open mirrors (Europe PMC, CORE, OpenAlex oa_url, author preprints) and a headless-browser fallback for bot walls, kept only if cheap; a list of paywalled load-bearing DOIs is kept for the owner's own access (owner ruling)
 2026-09-27T09:26 | self | delegation | agent:t2-n5-r5..t2-n7-r5, sonnet: round 5 surveys, same prompt as round 4 with r=5 (t2-n1..n4-r5 launched 09:3x)
+2026-09-27T09:37 | agent:t2-n1-r5 | receipt | N1 round 5: 12 claims N1-r5-01..12, 4 new sources, 13 queries all new to the ledger, 9 found-but-unread; needs/n1-r5.md
