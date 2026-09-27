@@ -583,3 +583,4 @@
 2026-09-27T18:56 | self | decision | b-L1 skipped: its 19 rows sit in slices built after the attribution fix and were extracted with names; a-L2 extracts only f011069 and f011092 (a-21, a-22), the other two talks were completed from cache (decided under the 2026-09-26 handover)
 2026-09-27T18:56 | self | failure | a cd moved the harness working directory into the bundles directory — history/2026-09-26/failures.md (A cd moved the harness working directory)
 2026-09-27T18:56 | self | delegation | wave 4: r-x-a-s1-9, -10, -11 continued with a-26, a-27, a-28; r-x-b-s1-7, -8 continued with b-21, b-22; r-x-b-s1-9 new with b-23
+2026-09-27T18:58 | agent:r-x-a-s1-10 | receipt | slice a-27: 2 sources, 2 Questions, 2 Claims; last unit a-29
