@@ -682,3 +682,4 @@
 2026-09-27T19:53 | agent:r-xt-b-1 | receipt | third pass b-T04: 7 sources, 2 Questions, 2 Claims (iroh release notes); retired
 2026-09-27T19:53 | agent:r-xt-b-3 | receipt | third pass b-T10: 1 book product page; T09 Claims flagged voice-unverified; retired
 2026-09-27T19:53 | self | decision | books-courses frame rows are the book itself: a paywalled book read only through its product page is unreachable, an access gap (decided under the 2026-09-26 handover)
+2026-09-27T19:53 | agent:r-xt-a-3 | receipt | third pass a-T10: 8 sources, 1 Question, 1 Claim; last unit a-T11
