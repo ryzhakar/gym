@@ -312,3 +312,5 @@
 2026-09-27T03:46 | self | delegation | agent:t4-ai-access, opus: Tier 4 resolver on AI access during practice, resolve/ai-access-resolution.md
 2026-09-27T03:49 | agent:t2-breadth-r2 | receipt | needs/breadth-r2.md: 65 HN queries, 13 S1 sources; N6 found no documented CS-specific hyperfocus-channeling method (reported absence)
 2026-09-27T03:49 | self | failure | silence broken a fifteenth time at turn end
+2026-09-27T03:54 | agent:t4-ai-access | receipt | resolve/ai-access-resolution.md: both sides hold; moderator is whether the AI did the practice; 6 scope corrections (N3-r1-11 'retained', N7-r1-08 framing, N7-r1-09 S3→S2 causal); Tutor CoPilot end-of-year null; Barcaui 2025 d −0.68 at 45 days (abstract only); within-person 3-condition probe proposed
+2026-09-27T03:54 | self | decision | first-protocol.md stands for training start; the resolution's corrections flow into Stage B's evidence map, which replaces it
