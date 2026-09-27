@@ -95,3 +95,11 @@ What happened: to confirm r-scripts-fix, the orchestrator ran the draft check_ma
 Mechanism: the fix's verification was taken as a read, not as running a repeatable behavior; authority-check withholds worker-written behavior until the owner ratifies it.
 
 Correction: no further runs of scripts-draft by the orchestrator; drafts run only inside worker tests in recon until the owner ratifies them.
+
+## Seed leaked into saturation prompts
+
+What happened: after reading the seed probe's list of untouched seed blocks, the orchestrator wrote round-3 survey prompts naming sub-areas taken from that list (knowledge components for N2; unproductive struggle and interruption for N3).
+
+Mechanism: the plan withholds the seed from surveyors so that coverage measures independent search; the orchestrator relayed the seed's content through its own prompts, which the plan's anchoring control does not guard.
+
+Correction: the coverage figure for those blocks from round 3 on is reported as not independent; later round prompts take sub-areas only from PLAN §3 need definitions, never from seed-probe output.

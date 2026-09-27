@@ -332,3 +332,4 @@
 2026-09-27T04:09 | self | delegation | agent:t2-n1-r3, sonnet: saturation round 3 for n1, fresh queries, needs/n1-r3.md
 2026-09-27T04:09 | self | delegation | agent:t2-n2-r3, sonnet: saturation round 3 for n2, fresh queries, needs/n2-r3.md
 2026-09-27T04:09 | self | delegation | agent:t2-n3-r3, sonnet: saturation round 3 for n3, fresh queries, needs/n3-r3.md
+2026-09-27T04:09 | self | failure | round-3 prompts named sub-areas (knowledge components, unproductive struggle, interruption) learned from the seed probe; seed coverage for those blocks in round 3 is no longer an independent measure — history/2026-09-26/failures.md
