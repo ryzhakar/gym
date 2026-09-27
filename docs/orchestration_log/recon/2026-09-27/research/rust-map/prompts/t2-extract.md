@@ -28,3 +28,4 @@ Clarifications after the batch-1 audit (decided 2026-09-27 under the owner's 202
 7. Text that is a stub, redirect, login or bot page, or under ~1,500 characters for a page that should be long, is `unreachable`, never `read`.
 
 8. A declared Position states a decision with a reason or against a named alternative. Plain instructions or practice with no reason (install commands, dependency lists, "we use X") are practice, not a Claim.
+9. Voice bar at extraction: log a Claim when the source shows the Voice's Rust connection (self-reported Rust use, a crate, a Rust role, a Rust talk or post) and flag it `voice-unverified`; tier 3 verifies the track record and drops what fails. A Voice with no Rust connection in the source is never logged, and arguments from other language communities are never mapped onto Rust Questions.
