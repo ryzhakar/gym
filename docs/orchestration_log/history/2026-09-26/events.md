@@ -477,3 +477,4 @@
 2026-09-27T10:01 | self | commitment | no new launches until the owner settles the Rust slice process; running: cache-script (bundle rerun), t4-audit-r5
 2026-09-27T10:01 | owner | receipt | in conversation: the hold covers the Rust lane only; teaching runs to its finish
 2026-09-27T10:01 | self | commitment | hold narrowed: Rust launches wait for the settled slice process; teaching continues: audit r4-r5, then round 6 for open needs or map v3 (opus)
+2026-09-27T10:01 | agent:cache-script | receipt | bundles rebuilt: team a 152 kept of 168, 30 slices; team b 187 of 198, 34 slices; drops only no-text or thin
