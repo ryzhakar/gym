@@ -611,3 +611,5 @@
 2026-09-27T19:18 | agent:cache-script | receipt | send-back bundles: team a 90 of 92 rows kept, 16 slices R01-R16; team b 101 rows, 13 slices R01-R13; population matches the audit's counts
 2026-09-27T19:18 | self | delegation | send-back extraction, fresh sonnet agents, rolling 3 per team: r-xr-a-1..3 with a-R01..R03, r-xr-b-1..3 with b-R01..R03
 2026-09-27T19:20 | agent:r-xr-a-2 | receipt | send-back a-R01..: a-R02 1 source, nothing new under rules 6-7; next a-R04
+2026-09-27T19:20 | agent:t4-merge-b1 | receipt | batch-1 merge: 327 team-local Questions to 276 canonical, 518 Claims, 3 orphans; team a only 135, team b only 112, both 29; 16 uncertain merges flagged; merge/crosswalk-b1.csv
+2026-09-27T19:20 | self | decision | capture-recapture strata are each Question's own Domains, source hints kept for bias checks; a Question met by both teams in different source strata is one recapture (decided under the 2026-09-26 handover)
