@@ -127,3 +127,11 @@ What happened: the round-4 and round-5 dispatch prompts told surveyors to search
 Mechanism: fresh eyes were confused with fresh ground. Telling each round to avoid earlier angles guarantees that two rounds never catch the same source, and capture–recapture needs that overlap to estimate what is unseen. The OpenAlex exclusion was written as a budget fact and never re-checked against the field lists.
 
 Correction: rounds 6 and 7 run concurrently as independent full-population captures, with no avoid-lists and OpenAlex under backoff (prompts/round-6-7.md).
+
+## Book outputs overwrote team-b slice files
+
+What happened: team b's book-pass extractors were told to write `extract-b1-sB0{1,2,3}.md` and `readlog-b1-sB0{1,2,3}.csv`. On macOS's case-insensitive filesystem these are the same files as team b's original batch-1 slices `sb01`–`sb03`, so the originals were overwritten. The merger caught it.
+
+Mechanism: the book-pass prefix `sB` was chosen by case alone against the existing `sb` prefix, with no check against the filesystem's case folding.
+
+Correction: originals restored from commit a605d8e; book outputs moved to `bk01`–`bk03`. From now on, new prefixes differ by letters, not case.
