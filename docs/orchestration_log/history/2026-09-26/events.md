@@ -630,3 +630,4 @@
 2026-09-27T19:25 | agent:s-n3-r8 | receipt | N3 title screen: 3118 labeled, Y 1802; tally m=310, Chapman N=3591, 50% unseen
 2026-09-27T19:25 | agent:r-xr-b-3 | receipt | send-back b-R05: 13 sources, 8 overturned (11 Claims); last unit b-R09
 2026-09-27T19:26 | agent:r-xr-a-4 | receipt | send-back a-R10: bot-only PR, nothing new; next a-R12
+2026-09-27T19:26 | agent:r-xr-b-2 | receipt | send-back b-R07: 5 sources, nothing new confirmed; retired; r-xr-b-4 new with b-R10
