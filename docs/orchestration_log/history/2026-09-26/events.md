@@ -669,3 +669,5 @@
 2026-09-27T19:50 | agent:r-xt-a-1 | receipt | third pass a-T01: 4 sources; SE-0410 Swift thread mapped to 6 Questions, 12 Claims without Rust-track-record Voices; sent back to drop; next a-T02
 2026-09-27T19:50 | agent:r-xt-b-3 | receipt | third pass b-T08: 3 sources; Swift Codable thread Claims from a Voice without Rust track record, sent back to drop; next b-T09
 2026-09-27T19:50 | agent:r-xt-b-1 | receipt | third pass b-T01 revised to 1 Question, 1 Claim; b-T02: Swift thread, 1 Question, 3 Claims from self-declared Rust users, track records left to tier 3; next b-T03
+2026-09-27T19:50 | agent:r-xt-a-2 | receipt | third pass a-T05 revised to nothing new, a-T06 nothing new (Swift threads)
+2026-09-27T19:50 | self | decision | t2-extract.md rule 9: extractors log Claims from Voices whose Rust connection shows in the source, flagged voice-unverified for tier 3; no Rust connection, no Claim; same rule both teams (decided under the 2026-09-26 handover)
