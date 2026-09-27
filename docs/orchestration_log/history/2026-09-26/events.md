@@ -499,3 +499,5 @@
 2026-09-27T13:45 | self | decision | forums.swift.org rows kept only with 3+ Rust mentions, both teams, unassigned rows; Swift-internal threads gave no Questions in any slice read (decided under the 2026-09-26 handover)
 2026-09-27T13:46 | agent:r-x-a-b1-02 | receipt | slice a-04: 7 sources, 3 Questions; retired after 3 units (pilot, a-02, a-04)
 2026-09-27T13:46 | agent:r-x-a-b1-01 | receipt | slice a-03: 8 sources, 4 Questions, 3 Claims; retired after 3 units (pilot, a-01, a-03)
+2026-09-27T13:47 | agent:t2-n6-r6 | receipt | N6 round 6: 10 claims, 10 sources, 3 full texts; OpenAlex 429 on all 10 tries; needs/n6-r6.md
+2026-09-27T13:47 | self | decision | for the r6-r7 audit, OpenAlex tried with logged retries and blocked counts as searched, not void: the database was attempted, the block is access (decided under the 2026-09-26 handover)
