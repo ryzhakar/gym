@@ -547,3 +547,4 @@
 2026-09-27T15:03 | agent:r-x-a-s1-3 | receipt | slice a-13: 4 sources, 4 Questions, 8 Claims; retired; r-x-a-s1-7 new with a-16
 2026-09-27T15:04 | agent:r-x-b-s1-5 | receipt | slice b-11: 5 sources, 2 Questions, 8 Claims; next b-13
 2026-09-27T15:05 | agent:r-x-b-s1-4 | receipt | slice b-09: 12 sources, 8 Questions, 30 Claims; next b-14
+2026-09-27T15:05 | self | delegation | round 8 query writers: q-n1..n7-8a and q-n1..n7-8b, sonnet, one query file each per prompts/round-8.md
