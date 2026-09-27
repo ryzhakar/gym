@@ -637,3 +637,4 @@
 2026-09-27T19:27 | agent:r-xr-a-4 | receipt | send-back a-R12: 4 sources, nothing new confirmed; last unit a-R14
 2026-09-27T19:28 | agent:r-xr-a-5 | receipt | send-back a-R11: 6 sources, 2 overturned (3 Questions, 3 Claims); next a-R15
 2026-09-27T19:28 | agent:r-xr-b-3 | receipt | send-back b-R09: 6 sources, 3 overturned (4 Claims); retired; r-xr-b-5 new with b-R11
+2026-09-27T19:28 | agent:r-xr-b-1 | receipt | send-back b-R08: 10 sources, 6 overturned; retired
