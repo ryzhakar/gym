@@ -1,19 +1,20 @@
 # Merged Questions — batch 1
 
-Merger: t4-merge (opus), 2026-09-27. Inputs: every `team-a/extract-b1-*.md` (35 files, saL1 and saL2 included) and `team-b/extract-b1-*.md` (26 files); prior crosswalks: none (batch 1). Companion file: `merge/crosswalk-b1.csv`.
+Merger: t4-merge (opus), 2026-09-27. Inputs: every `team-a/extract-b1-*.md` (51 files: slices 01, 02, sa01–sa30, saL1, saL2, and send-back sR01–sR16) and `team-b/extract-b1-*.md` (39 files: sb01–sb26 and send-back sR01–sR13); prior crosswalks: none (batch 1). Team b's L1 bundle was skipped on purpose, by the lead's ruling. Companion file: `merge/crosswalk-b1.csv`.
 
 ## Counts
 
-- Team-local Questions: 327 (team a 175, team b 152). Team-local ids are assigned here, as `<team>-<slice>-<frame_id>-q<k>` in extract order; the extracts carry none.
-- Canonical Questions: 276. Found by team a only: 135. Team b only: 112. Both teams: 29.
-- Canonical Questions with more than one team-local id: 39 (29 cross-team, 10 within one team).
-- Claims placed: 518 under canonical Positions. 3 orphans, listed below.
+- Team-local Questions: 420 (team a 215, team b 205). Of these, 93 come from the send-back pass (team a 40, team b 53). Team-local ids are assigned here, as `<team>-<slice>-<frame_id>-q<k>` in extract order; the extracts carry none.
+- Canonical Questions: 350. Found by team a only: 167. Team b only: 152. Both teams: 31.
+- Canonical Questions with more than one team-local id: 47 (31 cross-team, 16 within one team).
+- The send-back pass added 74 new canonical Questions and extended 11 existing ones. Two canonical Questions became cross-team through it: `feature-flags-vs-separate-crates` and `paid-maintainers-for-infrastructure`.
+- Claims placed: 622 under canonical Positions. 4 orphans, listed below.
 
 ## Rules applied
 
-- Supersession: saL1 re-extracted f005360, f005454 and f005516 with commenter names restored, so its entries replace sa14's and sa15's for those three rows. saL2 does not re-extract anything: it continues f011069 and f011092 past the point where the earlier bundles cut off. Its entries are added to sa21's and sa22's, not substituted for them.
+- Supersession: saL1 re-extracted f005360, f005454 and f005516 with commenter names restored, so its entries replace sa14's and sa15's for those three rows. saL2 does not re-extract anything: it continues f011069 and f011092 past the point where the earlier bundles cut off. Its entries are added to sa21's and sa22's, not substituted for them. The send-back files (sR*) re-extract earlier Nothing-new rows. Each adds to its row and deletes none of the row's earlier entries. One send-back uses its own layout (team a sR14: `### Question —` headings with `- Position` and `- Claim` lines), and is parsed with the Claim date taken from the source header.
 - Same Question: two team-local Questions merge when competent practitioners would argue one decision whose options are the same kind of thing. The test is whether a practitioner could reasonably hold opposite Positions on the two. If one could, they stay separate. Shared keywords, a shared source or a shared shape (for example "ship now or wait") are not enough.
-- Claim to Question: in a source with one Question, a Claim goes to that Question. With several Questions, it goes to the Question whose `positions_seen` names its Position label, and 149 Claims were placed by reading them. A Claim whose Position answers no Question in its source is an orphan.
+- Claim to Question: in a source with one Question, a Claim goes to that Question. With several Questions, it goes to the Question whose `positions_seen` names its Position label, and 149 Claims were placed by reading them. A Claim whose Position answers no Question in its source is an orphan. For the send-back files, 14 Claims were placed by reading them.
 - Positions: in merged Questions, Positions are merged by hand into canonical `<question>--<slug>` ids. In single-member Questions, Claims with identical Position labels are grouped as `<question>--p<k>`. Positions an extractor saw but logged no Claim for are kept verbatim under "Positions seen by the extractor".
 
 ## Crosswalk shape
@@ -24,7 +25,7 @@ Columns: `batch, stratum, team, source_id, question_id, team_question_ids, sourc
 - `stratum` is each of the canonical Question's Domains: the union of the extractors' `domains_live` across its members. A mention yields one row per Domain, whichever source it came from (lead ruling 2026-09-27: a Question is one member of the population wherever a team met it, and Domains are where it is live).
 - `source_hint` is the source's `domain_hints` from `samples/batch-1-team-<t>.csv`, the sampling cells. It is kept for bias checks.
 - Since Domains are unioned, a mention also counts in Domains that only another member's extractor named. For example, team a's f001053 mention of `depend-vs-hand-roll` counts in `cloud-workers` because of a-saL2-f011092-q3.
-- `estimate.py --batch 1` runs cleanly on this file (541 rows).
+- `estimate.py --batch 1` runs cleanly on this file (740 rows).
 
 ## Merges I was unsure of
 
@@ -45,7 +46,21 @@ Each merge below stands in the crosswalk. The reason for doubt comes first.
 13. `library-error-type-opaque-vs-typed`: includes a-saL2-f011092-q6, which frames the choice by codebase maturity rather than by library boundary.
 14. `macro-vs-boilerplate`: includes "macros liberally or sparingly" (a-sa23-f011186-q3) alongside the Lambda-boilerplate macro posts.
 15. `immediate-vs-retained-gui` and `replace-battle-tested-c-with-rust`: in each, the teams' framings differ ("which fits" versus "does it matter"; codecs versus TLS).
-16. Within one team, no effect on m: `typestate-vs-runtime-checks` (b: HAL mode, HAL configuration, crypto key roles), `depend-vs-hand-roll` (a: four sources, including vendor SDK versus an internal wrapper), `oss-reuse-attribution-norms` (a), `externref-in-rust` (a, q1 with q2), `enum-vs-dyn-trait-closed-set` (a).
+16. Merges added by the send-back pass:
+    - `service-fault-isolation-degrade`: now also covers the iroh QUIC accept loop, which logs a failed connection and keeps serving (a-sR05-f001981-q1).
+    - `depend-vs-hand-roll`: adds the cargo-vet audit burden of the `tch` bindings tree (a-sR06-f002016-q1).
+    - `shared-mutable-state-vs-explicit-passing`: adds `Mutex` behind `&self` versus redesigning for `&mut` (a-sR07-f002155-q1).
+    - `macro-vs-boilerplate`: adds declarative macro versus function or derive (a-sR08-f003082-q1), and a macro that hides construction requirements (b-sR10-f004804-q2). The second brings in its first opposing Position.
+    - `library-panic`: adds burn's documented-panic dispute (b-sR10-f004573-q1) and Rhai's never-panic rule (b-sR12-f005421-q1).
+    - `silent-fallback-vs-explicit-error`: adds Leptos failing the build on a missing asset (b-sR10-f004706-q1).
+    - `wasm-vs-js-performance`: adds the Rust and WebAssembly book's "why Rust" (b-sR01-f000256-q1), which is broader than performance.
+    - `ai-authored-community-contributions`: adds Bevy's revised no-AI policy (b-sR11-f004993-q1) and AI proposals in a mentored contribution programme (b-sR13-f009740-q1).
+    - `human-written-code-standard`: now asks how much of one's own code may be AI-written. It adds light review for vibe-coded peripheral code (a-sR14-f004865-q2). The id is kept and the text widened.
+    - `networking-lib-core-scope`: adds iroh's minimal core with pluggable traits (a-sR11-f004170-q1).
+    - `feature-flags-vs-separate-crates`: a new cross-team Question (a-sR13-f004685-q2, b-sR12-f005120-q1).
+    - `paid-maintainers-for-infrastructure`: a new cross-team Question (a-sR15-f009751-q1, b-sR13-f009755-q1).
+    - Within team b: `async-drop-raii-vs-close` (three sources), `unstable-feature-gate-vs-wait` and `public-naming-brevity-vs-clarity`.
+17. Within one team, no effect on m: `typestate-vs-runtime-checks` (b: HAL mode, HAL configuration, crypto key roles), `depend-vs-hand-roll` (a: four sources, including vendor SDK versus an internal wrapper), `oss-reuse-attribution-norms` (a), `externref-in-rust` (a, q1 with q2), `enum-vs-dyn-trait-closed-set` (a).
 
 ## Considered and not merged
 
@@ -56,23 +71,72 @@ Each merge below stands in the crosswalk. The reason for doubt comes first.
 - `nightly-gate-feature-vs-cfg` (b) and `nightly-feature-autodetection` (a); `tower-middleware-vs-handler-helpers` (b) and `middleware-hook-vs-typestate` (a); `gui-custom-renderer-vs-native` (a) and `modular-engine-vs-monolithic` (b).
 - `memory-safe-language-moral-imperative` and `rust-broad-quality-improvement-over-c` (both b): the first asks whether the choice is ethical or economic, the second whether the technical merit is broad or narrow.
 - Ship-now-or-wait instances that share a shape but not the thing decided: `async-hook-cancellation-upfront`, `ergonomic-sugar-now-or-later`, `defer-multithreaded-encoding`, `wasi-path-workaround-vs-breaking-fix`, `web-wasm-target-workaround-vs-target`, `merge-expensive-feature-with-limits`, `ad-hoc-special-case-vs-general-mechanism`, `dedicated-design-vs-duplicate-now`.
+- Send-back pass: `internal-hazmat-api-for-performance` (a) and `threads-vs-simd-for-batch-work` (b) come from the same source (f003702) but decide different things. `cli-flags-mirror-familiar-tool` (a) and `cli-tool-single-vs-multi-protocol` (b) also share a source (f004947) with different decisions. The other pairs kept apart: `non-exhaustive-by-default` (a) and `enum-vs-struct-of-optionals-for-extension` (b); `closed-enum-vs-open-trait-for-policy` (b) and `enum-vs-dyn-trait-closed-set` (a), whose premises differ (extensible versus closed); `into-naming-must-consume` (b) and `to-owned-naming-convention` (b); `traits-as-inheritance-substitute` (a) and `oop-patterns-in-rust` (a); `ai-review-suggestions` (b) and `human-written-code-standard` (a).
 - `extract-single-use-function` (b, function level) and `platform-logic-module-vs-inline` (a, module level); `easy-mode-rust` and `lifetimes-on-structs`.
 
 ## Orphan Claims
 
 - `a-02-f000993-c1` (miestrode, 2024-02-25): argues TensorContainer needs a redesign. Its label does not answer either Question in f000993.
 - `b-sb23-f011233-c2` (Evgenii Seliverstov, 2025-02-26): plain mutex unless contention is high. It answers `mutex-vs-atomics`, and is shown there, but team b logged no Question for it in f011233, so it has no crosswalk row.
+- `a-sR13-f004685-c3` (iroh/n0, 2026-05-11): `non_exhaustive` by default. Its source's Questions do not cover it, so it is shown under `non-exhaustive-by-default` (team a, f004586), and has no crosswalk row.
 - `b-sb25-f011435-c3` (Nico, 2026-06-11): the system web view and Blitz stay as opt-in backends. It is closest to `gui-custom-renderer-vs-native`, a team-a Question, and is left unplaced.
 
 ## For later tiers
 
 - Where both teams logged the same Voice in the same source, four date pairs disagree: f005948 Eric Zhang (2024-03-14 a, 2024-03-20 b), f007736 Sam Van Overmeire (2024-01-10 a, 2024-01-17 b), f007797 Sam Van Overmeire (2024-02-16 a, 2024-02-21 b), and f008583 Tomas Tauber (2025-09-02 a, 2025-09-03 b). The claim-verify tier should settle them against the source.
-- f008777 is logged read in `team-a/readlog-b1-sa18.csv` (0 Questions), but `extract-b1-sa18.md` has no section for it.
-- `samples/bundles/b1-team-b-L1.txt` exists, but no `team-b/extract-b1-sbL1.md` does. If team b's L1 slice produces extracts, they merge into these ids as a batch-1 update.
 
 ## Canonical Questions
 
 Ordered by: found by both teams first, then by member count, then by id.
+
+### `macro-vs-boilerplate`
+
+**Question.** When is a macro (declarative or procedural) worth its indirection versus plain code (functions, derives, explicit boilerplate), and may a macro hide an API's less friendly requirements?
+
+- Teams: a, b · team-local ids: `a-sa17-f007736-q1` (f007736), `a-sa23-f011186-q3` (f011186), `b-sb20-f007736-q1` (f007736), `b-sb20-f007760-q1` (f007760), `a-sR08-f003082-q1` (f003082), `b-sR10-f004804-q2` (f004804)
+- Domains: cloud-workers, core, embedded, wasm
+- Concepts: macros (attribute macros; proc-macro); boilerplate; macros; procedural macros; attribute macros; boilerplate reduction; AWS SDK client setup; macros vs. functions; code generation; API ergonomics; ergonomics vs. transparency
+- Positions:
+  - `macro-vs-boilerplate--macros-sparingly` — Macros are powerful but should be used sparingly; prefer functions or derives, and boilerplate is usually an acceptable price
+    - **Sam Van Overmeire** · Source `f007736` · date 2024-01-10 · locator paragraph beginning "Before continuing: would you ever want to use a macro like this?" — Defaults against using an attribute macro to strip Lambda-handler boilerplate in real applications, since the boilerplate is usually minor or main() needs custom per-Lambda initialization anyway; reserves the macro for many simple Lambdas, low tolerance for boilerplate, or macro experimentation. Quote: "Before continuing: would you ever want to use a macro like this? For real applications: default to no." [`a-sa17-f007736-c1`, team a]
+    - **Adam** · Source `f011186` · date 2024-11-20 · locator ~00:11:27 — Rust's macro system is both one of its best and one of its worst features; very powerful but should be used carefully and in small amounts Quote: "I think macros are kind of like salt you want to use a little" [`a-sa23-f011186-c3`, team a]
+    - **Sam Van Overmeire** · Source `f007736` · date 2024-01-17 · locator paragraph beginning "Before continuing: would you ever want to use a macro like this?" — for most real applications either the boilerplate is tolerable or you'll want custom initialization code in `main` that a fully-generated `main` forecloses; the macro pays off mainly if you have many simple Lambdas, a very low tolerance for boilerplate, or want to experiment with macros and serverless Quote: "For real applications: default to no." [`b-sb20-f007736-c1`, team b]
+    - **Sam Van Overmeire** · Source `f007760` · date 2024-01-31 · locator paragraph beginning "As a reminder: in the previous blog post" — reiterating the prior post's stance while extending the macro to auto-initialize AWS SDK clients found among the handler's parameters — still frames the macro as useful only for callers with many simple, client-only Lambdas Quote: "A bit of boilerplate is acceptable when this helps you retain the flexibility to customize your main function, adding any (initialization) code you require." [`b-sb20-f007760-c1`, team b]
+    - **fitzgen (Bytecode Alliance / Wasmtime core, `arbitrary` crate author)** · Source `f003082` · date 2025-06-12 · locator PR #10924 review comments — reviewing a macro used to produce a fixed empty-value sequence, argued it should just be `TableOps::default()` derived on the type, and that if the sequence were needed in several places it should be a function rather than a macro Quote: "if we did want to create this particular sequence in a bunch of places we should just use a function rather than a macro" [`a-sR08-f003082-c1`, team a]
+  - `macro-vs-boilerplate--macros-may-hide-complexity` — A macro may hide an API's unfriendly construction requirements
+    - **bugadani (esp-hal maintainer, PR author)** · Source `f004804` · date 2026-06-15 · locator PR description, 2026-06-15T17:07:50Z — the new reference type makes constructing DMA buffers less friendly directly, but that friction is absorbed by the existing macros so end users don't see it Quote: "It makes constructing buffers a bit less friendly, but that's hidden from us by the macros currently." [`b-sR10-f004804-c3`, team b]
+- Positions seen by the extractor (`a-sa17-f007736-q1`): macro-not-worth-it-by-default (with a narrow exception)
+- Positions seen by the extractor (`a-sa23-f011186-q3`): use-sparingly-("like salt") (Adam)
+- Positions seen by the extractor (`b-sb20-f007736-q1`): default to no for real applications — only worthwhile with many very simple Lambdas, a low tolerance for boilerplate, or wanting to experiment with macros (Sam Van Overmeire)
+- Positions seen by the extractor (`b-sb20-f007760-q1`): same as f007736 — worthwhile mainly when you have many simple Lambdas or only need AWS clients with sensible defaults; a bit of boilerplate is otherwise an acceptable price for main-function flexibility (Sam Van Overmeire)
+- Positions seen by the extractor (`a-sR08-f003082-q1`): prefer function/derive over a macro absent a real codegen need
+- Positions seen by the extractor (`b-sR10-f004804-q2`): macros-may-hide-complexity
+
+### `ai-authored-community-contributions`
+
+**Question.** Is AI-generated text or code acceptable in Rust community contributions (forum proposals, PRs and review replies, mentored-program proposals, newsletters), and how should a project police it?
+
+- Teams: a, b · team-local ids: `a-sa29-f013224-q2` (f013224), `b-sb15-f004721-q1` (f004721), `b-sb20-f007942-q1` (f007942), `b-sR11-f004993-q1` (f004993), `b-sR13-f009740-q1` (f009740)
+- Domains: core, other, wasm
+- Concepts: AI-generated content; forum norms; authenticity/tone; moderation rules; AI-assisted contribution norms; governance; code review process; AI-assisted/machine-written content; community norms; AI-assisted Rust; contribution norms
+- Positions:
+  - `ai-authored-community-contributions--acceptable-if-substance-is-own` — Acceptable when the substance is the contributor's own and the model only handles composition
+    - **jasn-armstrng** · Source `f013224` · date 2024-03-04T13:47:53Z · locator forum post, 2024-03-04T13:47:53.039Z — defends having used an LLM to write the original post, explaining that writing this kind of communication isn't a personal strength, that he supplied the points himself, and seeing no issue with that division of labor Quote: "I gave it my points and it did the rest. Why would you assume that my thought process and prompt was that casual?" [`a-sa29-f013224-c5`, team a]
+  - `ai-authored-community-contributions--acceptable-if-marked` — Assistance itself is not the problem; unmarked AI content is
+    - **steffahn** · Source `f013224` · date 2024-03-04T13:26:21Z · locator forum post, 2024-03-04T13:26:21.593Z — cites the forum's rules against machine-generated content, noting clearly marked AI content rarely causes trouble, while unmarked, low-effort AI spam is what the rule is meant to prevent Quote: "clearly marked AI-generated content is generally not going to bring you into much of any trouble" [`a-sa29-f013224-c6`, team a]
+  - `ai-authored-community-contributions--human-must-stay-accountable` — Acceptable only with the human author demonstrably in the loop and accountable, per project policy
+    - **alexcrichton** · Source `f004721` · date 2026-05-23 · locator PR #13459, comment 2026-05-23T15:42:24Z — tells the PR author to read the Bytecode Alliance's AI tool use policy, flags that the PR description reads as a large wall of AI-generated text, and stresses the author must stay personally in the loop on all communication because they own and are responsible for the change Quote: "Notably this looks like a very large wall of text generated by an AI. Please ensure that you are yourself in the loop on all communication because you, after all, own this change and are responsible for it." [`b-sb15-f004721-c1`, team b]
+  - `ai-authored-community-contributions--manage-through-review-not-ban` — A real problem, but manage it through normal review and policy, not an outright ban
+    - **Carter Anderson (@cart, Bevy creator and Project Lead)** · Source `f004993` · date 2026-08-10 · locator "AI Policy #" section — the strict "no-AI" policy adopted this year "solved many problems but created many others" (toxic witch hunts, incentivized lying to maintainers, unenforceable), so the community (led by @alice-i-cecile) is drafting a replacement Quote: "solved many problems but created many others (including fostering toxic witch hunts, incentivizing lying to maintainers, enforcement was a hard / impossible task)" [`b-sR11-f004993-c1`, team b]
+    - **Jakub Beránek, on behalf of the Rust Project mentorship team** · Source `f009740` · date 2026-04-30 · locator paragraph on the 96 submitted proposals — "Like many other GSoC organizations this year, we somewhat struggled with some AI-generated proposals and low-quality contributions generated using AI agents, but it stayed manageable." Quote: "we somewhat struggled with some AI-generated proposals ... but it stayed manageable" [`b-sR13-f009740-c1`, team b]
+  - `ai-authored-community-contributions--reject-ai-authored-content` — AI-composed community content is undesirable: it erases the author's voice, or readers do not want it
+    - **jdahlstrom** · Source `f013224` · date 2024-03-04T12:46:37Z · locator forum posts 2024-03-02T18:18:23.273Z and 2024-03-04T12:46:37.433Z — identifies the original proposal's style as obviously LLM-written and, when the author defended the practice, says he'd be more impressed if the message hadn't read as ">90% written by ChatGPT" prompted toward a predetermined conclusion Quote: "It has such an obvious style that I can't even imagine the amount of eye-rolling going on amongst teachers and TAs grading student work these days" [`a-sa29-f013224-c4`, team a]
+    - **Rust GameDev Working Group** · Source `f007942` · date 2024-06-05 · locator section "Survey Results #" — after surveying 52 readers on how to improve the newsletter, the WG reports that readers are generally positive about it, are content with its frequency, but explicitly do not want anything in it generated by AI Quote: "Readers do not want anything in the newsletter generated by AI." [`b-sb20-f007942-c1`, team b]
+- Positions seen by the extractor (`a-sa29-f013224-q2`): acceptable when the substance/points are the poster's own and the LLM only handles composition (jasn-armstrng, defending the OP) vs. objectionable because it erases the poster's voice/tone and reads as argument-first rationalization (jdahlstrom; 2e71828) vs. rule-based middle position: unmarked AI content is the problem the forum's rules target, clearly marked AI content is broadly tolerated (steffahn, citing the forum's own rules against machine-generated content)
+- Positions seen by the extractor (`b-sb15-f004721-q1`): human-must-stay-in-the-loop-per-policy
+- Positions seen by the extractor (`b-sb20-f007942-q1`): readers surveyed by the Rust GameDev newsletter reject AI-generated newsletter content (Rust GameDev Working Group, reporting a reader survey)
+- Positions seen by the extractor (`b-sR11-f004993-q1`): strict no-AI policy tried and being revised; personal anti-AI stance
+- Positions seen by the extractor (`b-sR13-f009740-q1`): treat it as a real but manageable quality-control problem, rather than grounds for an outright ban
 
 ### `library-error-type-opaque-vs-typed`
 
@@ -94,44 +158,46 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`b-sb10-f003188-q2`): concrete-errors-over-anyhow (ramfox)
 - Positions seen by the extractor (`b-sb10-f003222-q1`): concrete-errors-over-anyhow (rklaehn)
 
-### `macro-vs-boilerplate`
+### `library-panic`
 
-**Question.** When is a (procedural) macro worth its indirection to remove boilerplate, versus writing the code out, and should macros be used liberally or sparingly?
+**Question.** Should a library ever panic (ad hoc bailouts, `unwrap` on invalid configuration, invalid input to a numeric op), or return `Result` and reserve panics for narrow, documented or control-flow-contingent cases?
 
-- Teams: a, b · team-local ids: `a-sa17-f007736-q1` (f007736), `a-sa23-f011186-q3` (f011186), `b-sb20-f007736-q1` (f007736), `b-sb20-f007760-q1` (f007760)
-- Domains: cloud-workers, core
-- Concepts: macros (attribute macros; proc-macro); boilerplate; macros; procedural macros; attribute macros; boilerplate reduction; AWS SDK client setup
+- Teams: a, b · team-local ids: `a-sa21-f011069-q3` (f011069), `b-sb05-f001512-q1` (f001512), `b-sR10-f004573-q1` (f004573), `b-sR12-f005421-q1` (f005421)
+- Domains: core, embedded, ml
+- Concepts: panics; error handling; control flow; embedded HAL API design; docs-as-contract; library design guarantees
 - Positions:
-  - `macro-vs-boilerplate--macros-sparingly` — Macros are powerful but should be used sparingly; boilerplate is usually an acceptable price
-    - **Sam Van Overmeire** · Source `f007736` · date 2024-01-10 · locator paragraph beginning "Before continuing: would you ever want to use a macro like this?" — Defaults against using an attribute macro to strip Lambda-handler boilerplate in real applications, since the boilerplate is usually minor or main() needs custom per-Lambda initialization anyway; reserves the macro for many simple Lambdas, low tolerance for boilerplate, or macro experimentation. Quote: "Before continuing: would you ever want to use a macro like this? For real applications: default to no." [`a-sa17-f007736-c1`, team a]
-    - **Adam** · Source `f011186` · date 2024-11-20 · locator ~00:11:27 — Rust's macro system is both one of its best and one of its worst features; very powerful but should be used carefully and in small amounts Quote: "I think macros are kind of like salt you want to use a little" [`a-sa23-f011186-c3`, team a]
-    - **Sam Van Overmeire** · Source `f007736` · date 2024-01-17 · locator paragraph beginning "Before continuing: would you ever want to use a macro like this?" — for most real applications either the boilerplate is tolerable or you'll want custom initialization code in `main` that a fully-generated `main` forecloses; the macro pays off mainly if you have many simple Lambdas, a very low tolerance for boilerplate, or want to experiment with macros and serverless Quote: "For real applications: default to no." [`b-sb20-f007736-c1`, team b]
-    - **Sam Van Overmeire** · Source `f007760` · date 2024-01-31 · locator paragraph beginning "As a reminder: in the previous blog post" — reiterating the prior post's stance while extending the macro to auto-initialize AWS SDK clients found among the handler's parameters — still frames the macro as useful only for callers with many simple, client-only Lambdas Quote: "A bit of boilerplate is acceptable when this helps you retain the flexibility to customize your main function, adding any (initialization) code you require." [`b-sb20-f007760-c1`, team b]
-- Positions seen by the extractor (`a-sa17-f007736-q1`): macro-not-worth-it-by-default (with a narrow exception)
-- Positions seen by the extractor (`a-sa23-f011186-q3`): use-sparingly-("like salt") (Adam)
-- Positions seen by the extractor (`b-sb20-f007736-q1`): default to no for real applications — only worthwhile with many very simple Lambdas, a low tolerance for boilerplate, or wanting to experiment with macros (Sam Van Overmeire)
-- Positions seen by the extractor (`b-sb20-f007760-q1`): same as f007736 — worthwhile mainly when you have many simple Lambdas or only need AWS clients with sensible defaults; a bit of boilerplate is otherwise an acceptable price for main-function flexibility (Sam Van Overmeire)
+  - `library-panic--no-ad-hoc-panics` — No ad hoc panics; only control-flow-contingent ones
+    - **Aleksandr Petrosyan** · Source `f011069` · date 2023-11-15 · locator ~00:32:20-00:32:40 — Used a panic as an ad hoc short-circuit to bail out of a search after too long, but states he considers ad hoc panics bad practice, preferring panics reserved for specific cases tied to control flow — while explicitly flagging that other Rust practitioners may disagree with him. Quote: "I don't think that having ad hoc panics in your code is a good idea... maybe experts of about Rust will tell me otherwise, but I don't like panics in my code which are ad hoc." [`a-sa21-f011069-c5`, team a]
+  - `library-panic--never-panic-return-result` — Never panic on invalid input; signal failure through `Result`/`Option` or constructors that return `Result`
+    - **MabezDev** · Source `f001512` · date 2024-06-11 · locator comment 2024-06-11T10:24:37Z — constructors should return Result rather than unwrap/panic internally Quote: "We shouldn't unwrap here, let's make new and friends fallible I think" [`b-sb05-f001512-c1`, team b]
+    - **Rhai project (rhaiscript maintainers)** · Source `f005421` · date 2025-01-17 · locator README section "Protected against attacks", sub-item "_Don't Panic_ guarantee" — Rhai treats any panic reaching the host application as a bug in Rhai itself, not an acceptable outcome, and is coded under that guarantee Quote: "_Don't Panic_ guarantee - Any panic is a bug. Rhai subscribes to the motto that a library should never panic the host system, and is coded with this in mind." [`b-sR12-f005421-c1`, team b]
+  - `library-panic--prevent-via-explicit-check` — Prevent the invalid case with an explicit check before it can panic
+    - **softmaximalist (PR author, burn contributor)** · Source `f004573` · date 2026-04-19 · locator PR review comment, 2026-04-19T18:47:03Z — rather than let a quantized input fail deep inside LU decomposition, add an explicit TensorCheck that rejects it up front with a clear message Quote: "Hence, I have added a tensor check to reject a quantized input tensor." [`b-sR10-f004573-c2`, team b]
+  - `library-panic--panic-fine-if-documented` — Panicking is fine if the condition is documented
+    - **antimora (Tracel AI / burn maintainer)** · Source `f004573` · date 2026-04-21 · locator PR review comment, 2026-04-21T14:39:58Z — the QFloat panic path is acceptable but must be listed in the function's `# Panics` docs so a user isn't surprised by it Quote: "The `# Panics` list should include the QFloat case (added in the new `TensorCheck::det` at check.rs:1403-1409). Right now a user hitting it gets a panic with no heads-up from the docs." [`b-sR10-f004573-c1`, team b]
+- Positions seen by the extractor (`a-sa21-f011069-q3`): no-ad-hoc-panics-only-control-flow-contingent
+- Positions seen by the extractor (`b-sb05-f001512-q1`): fallible-constructors (MabezDev)
+- Positions seen by the extractor (`b-sR10-f004573-q1`): panic-is-fine-if-documented, prevent-via-explicit-check
+- Positions seen by the extractor (`b-sR12-f005421-q1`): never-panic (this source), panic-is-fine-if-documented (burn, prior batch), prevent-via-explicit-check (burn, prior batch)
 
-### `ai-authored-community-contributions`
+### `wasm-vs-js-performance`
 
-**Question.** Is AI-generated text acceptable in Rust community contributions (forum proposals, PR descriptions and review replies, newsletters), and if so under what authorship and accountability conditions?
+**Question.** Should browser code be written in Rust compiled to WebAssembly rather than JavaScript, and when does it pay once boundary costs count: only for heavy compute with minimal interop, or broadly?
 
-- Teams: a, b · team-local ids: `a-sa29-f013224-q2` (f013224), `b-sb15-f004721-q1` (f004721), `b-sb20-f007942-q1` (f007942)
-- Domains: core, other, wasm
-- Concepts: AI-generated content; forum norms; authenticity/tone; moderation rules; AI-assisted contribution norms; governance; code review process; AI-assisted/machine-written content; community norms
+- Teams: a, b · team-local ids: `a-sa26-f011460-q1` (f011460), `a-sa26-f011460-q2` (f011460), `b-sb19-f005699-q1` (f005699), `b-sR01-f000256-q1` (f000256)
+- Domains: frontend, wasm, web
+- Concepts: WebAssembly; JavaScript performance; FFI; FFI design; string marshaling; wasm-bindgen boundary cost; serde-wasm-bindgen; JIT compilation; algorithmic complexity vs language choice; garbage collection/runtime overhead; JS interop; binary size
 - Positions:
-  - `ai-authored-community-contributions--acceptable-if-substance-is-own` — Acceptable when the substance is the contributor's own and the model only handles composition
-    - **jasn-armstrng** · Source `f013224` · date 2024-03-04T13:47:53Z · locator forum post, 2024-03-04T13:47:53.039Z — defends having used an LLM to write the original post, explaining that writing this kind of communication isn't a personal strength, that he supplied the points himself, and seeing no issue with that division of labor Quote: "I gave it my points and it did the rest. Why would you assume that my thought process and prompt was that casual?" [`a-sa29-f013224-c5`, team a]
-  - `ai-authored-community-contributions--acceptable-if-marked` — Assistance itself is not the problem; unmarked AI content is
-    - **steffahn** · Source `f013224` · date 2024-03-04T13:26:21Z · locator forum post, 2024-03-04T13:26:21.593Z — cites the forum's rules against machine-generated content, noting clearly marked AI content rarely causes trouble, while unmarked, low-effort AI spam is what the rule is meant to prevent Quote: "clearly marked AI-generated content is generally not going to bring you into much of any trouble" [`a-sa29-f013224-c6`, team a]
-  - `ai-authored-community-contributions--human-must-stay-accountable` — Acceptable only with the human author demonstrably in the loop and accountable, per project policy
-    - **alexcrichton** · Source `f004721` · date 2026-05-23 · locator PR #13459, comment 2026-05-23T15:42:24Z — tells the PR author to read the Bytecode Alliance's AI tool use policy, flags that the PR description reads as a large wall of AI-generated text, and stresses the author must stay personally in the loop on all communication because they own and are responsible for the change Quote: "Notably this looks like a very large wall of text generated by an AI. Please ensure that you are yourself in the loop on all communication because you, after all, own this change and are responsible for it." [`b-sb15-f004721-c1`, team b]
-  - `ai-authored-community-contributions--reject-ai-authored-content` — AI-composed community content is undesirable: it erases the author's voice, or readers do not want it
-    - **jdahlstrom** · Source `f013224` · date 2024-03-04T12:46:37Z · locator forum posts 2024-03-02T18:18:23.273Z and 2024-03-04T12:46:37.433Z — identifies the original proposal's style as obviously LLM-written and, when the author defended the practice, says he'd be more impressed if the message hadn't read as ">90% written by ChatGPT" prompted toward a predetermined conclusion Quote: "It has such an obvious style that I can't even imagine the amount of eye-rolling going on amongst teachers and TAs grading student work these days" [`a-sa29-f013224-c4`, team a]
-    - **Rust GameDev Working Group** · Source `f007942` · date 2024-06-05 · locator section "Survey Results #" — after surveying 52 readers on how to improve the newsletter, the WG reports that readers are generally positive about it, are content with its frequency, but explicitly do not want anything in it generated by AI Quote: "Readers do not want anything in the newsletter generated by AI." [`b-sb20-f007942-c1`, team b]
-- Positions seen by the extractor (`a-sa29-f013224-q2`): acceptable when the substance/points are the poster's own and the LLM only handles composition (jasn-armstrng, defending the OP) vs. objectionable because it erases the poster's voice/tone and reads as argument-first rationalization (jdahlstrom; 2e71828) vs. rule-based middle position: unmarked AI content is the problem the forum's rules target, clearly marked AI content is broadly tolerated (steffahn, citing the forum's own rules against machine-generated content)
-- Positions seen by the extractor (`b-sb15-f004721-q1`): human-must-stay-in-the-loop-per-policy
-- Positions seen by the extractor (`b-sb20-f007942-q1`): readers surveyed by the Rust GameDev newsletter reject AI-generated newsletter content (Rust GameDev Working Group, reporting a reader survey)
+  - `wasm-vs-js-performance--wasm-wins-broadly` — Rust/Wasm pays broadly (performance, size, incremental adoption), even for small string-heavy functions with a hand-tuned boundary
+    - **Andrew Jakubowicz and co-presenter (Canva)** · Source `f011460` · date 2026-06-11 · locator ~01:10 — articles claiming Rust FFI is too slow, that Wasm should be reserved for the heaviest compute, and that JavaScript is fast enough, are myths the talk sets out to bust with benchmarks Quote: "we're going to be sharing how to design your Rust FFI so that it's fast... Rust and WebAssembly can be blazingly fast for a variety of applications... and that JavaScript is not always fast enough" [`a-sa26-f011460-c1`, team a]
+    - **co-presenter ("Taj"/"Touch"/unclear)** · Source `f011460` · date 2026-06-11 · locator ~18:28-19:29 — after hand-optimizing a hex-color-parsing function (pre-allocating memory, skipping UTF-16→UTF-8 conversion, packing bits), the Wasm version beat the JavaScript control by roughly 2x despite the function being "very hostile" to Wasm (string copy, minimal computation, allocation on return) Quote: "if WebAssembly is competitive here, then maybe the blanket advice to use WebAssembly on only heavy compute is too simple" [`a-sa26-f011460-c2`, team a]
+    - **Rust and WebAssembly Book (rustwasm.github.io, unmaintained)** · Source `f000256` · date undated (living document) · locator chapter "Why Rust and WebAssembly?" § "Low-Level Control with High-Level Ergonomics" — JS's dynamic typing and GC pauses make Web performance unreliable; Rust gives low-level control without that non-determinism, ships no runtime so .wasm stays small, and lets teams port only hot-path JS functions rather than rewrite everything. Quote: "Rust gives programmers low-level control and reliable performance." [`b-sR01-f000256-c1`, team b]
+  - `wasm-vs-js-performance--compute-bound-only` — Wasm only for compute-bound work with minimal interop
+    - **Thesys Engineering Team** · Source `f005699` · date 2026-03-20 · locator § "When WASM Actually Helps" / "Key Takeaways" — WASM wins only for compute-bound work with rare boundary crossings (image/video, crypto, physics, porting existing C/C++ libs); it loses for parsing structured text into JS objects and for frequently-called functions on small inputs, because the serialization/boundary tax dominates and V8's JIT closes the raw-compute gap Quote: "The Rust parsing itself was never the slow part. The overhead was entirely in the boundary" [`b-sb19-f005699-c1`, team b]
+- Positions seen by the extractor (`a-sa26-f011460-q1`): no-Rust+Wasm-beats-JS-more-broadly (Andrew Jakubowicz / co-presenter), contrasted against a blanket claim they attribute to unnamed articles ("JavaScript is fast enough")
+- Positions seen by the extractor (`a-sa26-f011460-q2`): Wasm-competitive-even-for-small-functions-with-hand-tuned-FFI (Andrew Jakubowicz)
+- Positions seen by the extractor (`b-sb19-f005699-q1`): wasm-only-for-compute-bound-minimal-interop (Thesys Engineering Team)
+- Positions seen by the extractor (`b-sR01-f000256-q1`): rust-for-perf-and-size-and-no-rewrite
 
 ### `http-error-status-in-result`
 
@@ -191,22 +257,43 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`b-sb05-f001512-q3`): config-struct-consolidation (MabezDev), many-constructors-status-quo-criticized (jessebraham)
 - Positions seen by the extractor (`b-sb10-f003222-q2`): with-opts-plus-convenience-wrappers (rklaehn)
 
-### `wasm-vs-js-performance`
+### `shared-mutable-state-vs-explicit-passing`
 
-**Question.** When does compiling Rust to WebAssembly beat plain JavaScript in the browser once boundary costs count: only for heavy compute with minimal interop, or broadly?
+**Question.** Should shared mutable state be exposed through interior-mutable shared handles (`Rc<RefCell<_>>`, `Arc<Mutex<_>>`, a `Mutex` behind `&self`), or threaded explicitly through parameters, `&mut` access, context arguments and return values?
 
-- Teams: a, b · team-local ids: `a-sa26-f011460-q1` (f011460), `a-sa26-f011460-q2` (f011460), `b-sb19-f005699-q1` (f005699)
-- Domains: frontend, wasm, web
-- Concepts: WebAssembly; JavaScript performance; FFI; FFI design; string marshaling; wasm-bindgen boundary cost; serde-wasm-bindgen; JIT compilation; algorithmic complexity vs language choice
+- Teams: a, b · team-local ids: `a-sa06-f003414-q2` (f003414), `b-sb04-f001022-q1` (f001022), `a-sR07-f002155-q1` (f002155)
+- Domains: core, desktop-cli-ui, embedded
+- Concepts: interior mutability; API design; ownership; RefCell; borrow panics; event loop; context-passing pattern; Arc; Sync bounds; ownership design
 - Positions:
-  - `wasm-vs-js-performance--wasm-wins-broadly` — Wasm beats "JS is fast enough" broadly, even for small string-heavy functions with a hand-tuned boundary
-    - **Andrew Jakubowicz and co-presenter (Canva)** · Source `f011460` · date 2026-06-11 · locator ~01:10 — articles claiming Rust FFI is too slow, that Wasm should be reserved for the heaviest compute, and that JavaScript is fast enough, are myths the talk sets out to bust with benchmarks Quote: "we're going to be sharing how to design your Rust FFI so that it's fast... Rust and WebAssembly can be blazingly fast for a variety of applications... and that JavaScript is not always fast enough" [`a-sa26-f011460-c1`, team a]
-    - **co-presenter ("Taj"/"Touch"/unclear)** · Source `f011460` · date 2026-06-11 · locator ~18:28-19:29 — after hand-optimizing a hex-color-parsing function (pre-allocating memory, skipping UTF-16→UTF-8 conversion, packing bits), the Wasm version beat the JavaScript control by roughly 2x despite the function being "very hostile" to Wasm (string copy, minimal computation, allocation on return) Quote: "if WebAssembly is competitive here, then maybe the blanket advice to use WebAssembly on only heavy compute is too simple" [`a-sa26-f011460-c2`, team a]
-  - `wasm-vs-js-performance--compute-bound-only` — Wasm only for compute-bound work with minimal interop
-    - **Thesys Engineering Team** · Source `f005699` · date 2026-03-20 · locator § "When WASM Actually Helps" / "Key Takeaways" — WASM wins only for compute-bound work with rare boundary crossings (image/video, crypto, physics, porting existing C/C++ libs); it loses for parsing structured text into JS objects and for frequently-called functions on small inputs, because the serialization/boundary tax dominates and V8's JIT closes the raw-compute gap Quote: "The Rust parsing itself was never the slow part. The overhead was entirely in the boundary" [`b-sb19-f005699-c1`, team b]
-- Positions seen by the extractor (`a-sa26-f011460-q1`): no-Rust+Wasm-beats-JS-more-broadly (Andrew Jakubowicz / co-presenter), contrasted against a blanket claim they attribute to unnamed articles ("JavaScript is fast enough")
-- Positions seen by the extractor (`a-sa26-f011460-q2`): Wasm-competitive-even-for-small-functions-with-hand-tuned-FFI (Andrew Jakubowicz)
-- Positions seen by the extractor (`b-sb19-f005699-q1`): wasm-only-for-compute-bound-minimal-interop (Thesys Engineering Team)
+  - `shared-mutable-state-vs-explicit-passing--explicit-passing` — No implicit shared mutable state; pass context, `&mut` and changes explicitly, redesigning ownership if needed
+    - **ConradIrwin** · Source `f003414` · date 2025-10-28 · locator comment 2025-10-28T01:59:12Z — objects to a `Buffer` containing an `Arc<Mutex<>>` that lets callers change encoding without the buffer knowing; wants the encoding passed/returned explicitly instead Quote: "I don't like that the Buffer contains an Arc<Mutex<>> that allows callers to change the encoding without the buffer knowing" [`a-sa06-f003414-c2`, team a]
+    - **romgrk** · Source `f001022` · date 2024-03-02 · locator PR #8632, comment 2024-03-02T18:19:01Z — floats passing a `cx` context down the stack, mirroring the pattern the rest of the codebase already uses, as a way to sidestep the reentrant-borrow panic entirely, alongside noting that Warp's Rust UI blog describes hitting the same `RefCell`/`borrow_mut` crash class in production Quote: "the rest of the codebase seems to be using the pattern of passing a `cx` context down the stack, which avoids this kind of issue" [`b-sb04-f001022-c2`, team b]
+    - **Yatekii** · Source `f002155` · date 2024-12-03 · locator comment "I dont think the Mutex is necessary as the sequences are held on the session which should then go into the mutex. Not internally." — rather than adding a `Mutex` inside the type to satisfy a `Sync` bound, move the mutable state to the owning `Session` and access it there Quote: "I dont think the Mutex is necessary as the sequences are held on the session which should then go into the mutex." [`a-sR07-f002155-c1`, team a]
+    - **Yatekii** · Source `f002155` · date 2024-12-19 · locator comment "Ah, I disregarded that fact. I would prefer no Arc 🤔 Maybe we can reevaluate in the future." — prefers avoiding Arc-based shared ownership for this type even after conceding the immediate `Sync` constraint requires it, wanting to revisit the design later Quote: "I would prefer no Arc 🤔 Maybe we can reevaluate in the future." [`a-sR07-f002155-c2`, team a]
+  - `shared-mutable-state-vs-explicit-passing--rc-refcell-doubtful` — More `Rc<RefCell>` sharing is doubtful as a fix
+    - **romgrk** · Source `f001022` · date 2024-03-02 · locator PR #8632, comment 2024-03-02T18:19:01Z — retracts an earlier suggestion to turn the client state fields into `Rc<RefCell<_>>`s, since dispatching an action from inside an active borrow (e.g. a key press changing the keyboard-focused window) would still panic; the only approach that currently works is cloning whatever refs are needed before dropping the state and then dispatching Quote: "Actually I'm not sure that would work." [`b-sb04-f001022-c1`, team b]
+- Positions seen by the extractor (`a-sa06-f003414-q2`): no implicit shared mutable state, make changes explicit in the type signature
+- Positions seen by the extractor (`b-sb04-f001022-q1`): rc-refcell-doubtful, context-passing-preferred
+- Positions seen by the extractor (`a-sR07-f002155-q1`): prefer-redesign-over-mutex-or-arc (Yatekii)
+
+### `silent-fallback-vs-explicit-error`
+
+**Question.** When required input, context or an embedded resource is missing or ambiguous, should code silently fall back to a plausible default, or fail explicitly (error, panic, failed build) so the cause surfaces?
+
+- Teams: a, b · team-local ids: `a-sa14-f005079-q5` (f005079), `b-sb03-f000669-q1` (f000669), `b-sR10-f004706-q1` (f004706)
+- Domains: core, frontend, web
+- Concepts: fail-loud vs. silent fallback; explicit error handling; surprising behavior; panics; Option/unwrap; error handling; context/dependency injection; defaults; build-time vs runtime failure
+- Positions:
+  - `silent-fallback-vs-explicit-error--explicit-failure` — Surface the failure: return an error, let the panic stand or fail the build, and fix the root cause
+    - **alexcrichton** · Source `f005079` · date 2026-09-10 · locator comment 2026-09-10T22:28:43Z — asks whether the code should return an error if multiple TCP sockets are listed, rather than silently using the first, since that could cause odd behavior if the first one happens to be the wrong one Quote: "Should this perhaps return an error if there are multiple TCP sockets listed? Because otherwise using the first feels like it might lead to odd behavior" [`a-sa14-f005079-c6`, team a]
+    - **simolus3** · Source `f005079` · date 2026-09-11 · locator comment 2026-09-11T10:19:47Z — made the multiple-socket case an error, and also made it an error to have no usable socket at all, reasoning it would be surprising for `--systemd-listenfd` to silently fall back to wasmtime listening itself because of a mismatched environment variable Quote: "it might be surprising to explicitly indicate that inherited sockets are requested with `--systemd-listenfd` only to then have wasmtime listen itself because of a mismatched environment variable that's ignored" [`a-sa14-f005079-c7`, team a]
+    - **gbj** · Source `f000669` · date 2024-03-29 · locator issue #2112, comment 2024-03-29T14:49:12Z — worried the `unwrap_or_default()` fix "mostly *hides* the problem rather than fixing it," since a server function that actually sets `ResponseOptions` would silently fail to have its header/status applied; prefers finding and fixing the real cause (a disposed Runtime), to be revisited in 0.7 Quote: "I'm concerned that the solution ... mostly *hides* the problem rather than fixing it" [`b-sb03-f000669-c2`, team b]
+    - **gbj (Greg Johnston, Leptos creator)** · Source `f004706` · date 2026-09-18 · locator PR review comment, 2026-09-18T18:13:56Z — an `allow_missing = true` option that lets the build succeed and then 404 at request time is a bad default, because it converts a build-time problem into a silent runtime one Quote: "`allow_missing = true` seems bad because it allows for a successful build → 404 rather than a build failure." [`b-sR10-f004706-c1`, team b]
+  - `silent-fallback-vs-explicit-error--silent-default` — Fall back to a safe default
+    - **glademiller** · Source `f000669` · date 2024-03-06 · locator issue #2112, comment 2024-03-06T15:53:46Z — proposes patching leptos-axum so the missing-context `.unwrap()` becomes `use_context::<ResponseOptions>().unwrap_or_default().0`, as a workaround for the panic, for callers not using `ResponseOptions` to modify the response Quote: "the workaround I am using at the moment is to patch leptos-axum by changing this line ... to let res_options = use_context::<ResponseOptions>().unwrap_or_default().0;" [`b-sb03-f000669-c1`, team b]
+- Positions seen by the extractor (`a-sa14-f005079-q5`): return an explicit error rather than silently picking the first of several candidates, and error out rather than silently falling back to normal listening when the flag was explicitly requested but no usable input was found
+- Positions seen by the extractor (`b-sb03-f000669-q1`): silent-default-workaround, surface-and-fix-root-cause
+- Positions seen by the extractor (`b-sR10-f004706-q1`): fail-the-build
 
 ### `default-features-minimal-vs-inclusive`
 
@@ -248,6 +335,21 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **porky11** · Source `f009292` · date 2026-01-16 · locator reply, 2026-01-16T20:01:40.626Z — derive_more already covers this well; the core language/std should stay minimal and leave most conveniences to libraries, which is the point of having a package manager. Quote: "No need to have it in the core fo the language. That's kind of the point of the Rust package manager, that the core language includes the important things while most things are outsourced to libraries." [`a-sa19-f009292-c6`, team a]
 - Positions seen by the extractor (`a-sa19-f009292-q1`): support-fieldwise-derive; oppose-semantics-too-ambiguous; oppose-prefer-delegation-mechanism; ecosystem-crates-suffice
 - Positions seen by the extractor (`b-sb22-f009292-q1`): add it, mirroring how `#[derive(Clone)]` already works and eliminating "pointless busywork" for the unambiguous cases (vangata-ve, echoed by DragonDev1906's "useful in most cases" framing); reject or heavily qualify it, because most real wrapper types needing these traits (complex numbers, quaternions, matrices, and especially affine-space types like points, `Instant`, geographic coordinates) have non-field-wise or outright meaningless field-wise semantics (2e71828, jdahlstrom)
+
+### `feature-flags-vs-separate-crates`
+
+**Question.** Should optional library functionality live behind Cargo feature flags in one crate, or be split into separate crates (a workspace or separate repositories)?
+
+- Teams: a, b · team-local ids: `a-sR13-f004685-q2` (f004685), `b-sR12-f005120-q1` (f005120)
+- Domains: core, decentralized-iroh, ml
+- Concepts: crate structure; modularity; release cadence; workspaces; crate splitting; feature flags; compile/link footprint
+- Positions:
+  - `feature-flags-vs-separate-crates--split-into-separate-crates` — Split optional functionality into separate crates
+    - **iroh/n0 (Friedel Ziegelmayer & Rüdiger Klaehn, post authors)** · Source `f004685` · date 2026-05-11 · locator § "Sometimes things have to move out" — `DhtAddressLookup`, `MdnsAddressLookup` and `AccessLimit` were moved out of the `iroh` crate into their own crates/repos to allow independent versioning and release schedules and to reduce the number of optional features in the main crate Quote: "This allows us to have a different versioning and release schedule for these components. It is also helpful to reduce the number of optional features in iroh." [`a-sR13-f004685-c2`, team a]
+    - **Arthur Zucker / Hugging Face tokenizers team** · Source `f005120` · date 2026-09-21 · locator table row "workspace split" / "Progress Towards V1" — the single tokenizers crate became a workspace so `tk-encode` is the only required runtime piece and `tk-serialize`, `tk-convert`, `tk-train` are linked only when an application actually needs them Quote: "one crate became a workspace: tk-encode is the required runtime, and tk-serialize, tk-convert and tk-train are linked only when an application needs them." [`b-sR12-f005120-c1`, team b]
+  - `feature-flags-vs-separate-crates--feature-flags-in-one-crate` — Keep one crate with feature flags (seen, no Claim) (no Claim in batch 1)
+- Positions seen by the extractor (`a-sR13-f004685-q2`): split-into-separate-crates (iroh)
+- Positions seen by the extractor (`b-sR12-f005120-q1`): split-into-workspace
 
 ### `heap-profiling-default`
 
@@ -307,21 +409,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `large-pr-split--land-as-one` — Land as one large PR (seen, PR author; no Claim) (no Claim in batch 1)
 - Positions seen by the extractor (`a-02-f000993-q1`): ship-as-one-large-PR (PR author, opened "mainly to instigate discussion"), break-into-smaller-chunks (reviewer, unattributed)
 - Positions seen by the extractor (`b-sb08-f002518-q2`): split-into-small-isolated-prs (ivarflakstad)
-
-### `library-panic`
-
-**Question.** Should a library ever panic (ad hoc bailouts, `unwrap` on invalid configuration), or return `Result` and reserve panics for narrow, control-flow-contingent cases?
-
-- Teams: a, b · team-local ids: `a-sa21-f011069-q3` (f011069), `b-sb05-f001512-q1` (f001512)
-- Domains: core, embedded
-- Concepts: panics; error handling; control flow; embedded HAL API design
-- Positions:
-  - `library-panic--no-ad-hoc-panics` — No ad hoc panics; only control-flow-contingent ones
-    - **Aleksandr Petrosyan** · Source `f011069` · date 2023-11-15 · locator ~00:32:20-00:32:40 — Used a panic as an ad hoc short-circuit to bail out of a search after too long, but states he considers ad hoc panics bad practice, preferring panics reserved for specific cases tied to control flow — while explicitly flagging that other Rust practitioners may disagree with him. Quote: "I don't think that having ad hoc panics in your code is a good idea... maybe experts of about Rust will tell me otherwise, but I don't like panics in my code which are ad hoc." [`a-sa21-f011069-c5`, team a]
-  - `library-panic--fallible-constructors` — Constructors return `Result` instead of panicking on invalid configuration
-    - **MabezDev** · Source `f001512` · date 2024-06-11 · locator comment 2024-06-11T10:24:37Z — constructors should return Result rather than unwrap/panic internally Quote: "We shouldn't unwrap here, let's make new and friends fallible I think" [`b-sb05-f001512-c1`, team b]
-- Positions seen by the extractor (`a-sa21-f011069-q3`): no-ad-hoc-panics-only-control-flow-contingent
-- Positions seen by the extractor (`b-sb05-f001512-q1`): fallible-constructors (MabezDev)
 
 ### `mutex-vs-atomics`
 
@@ -387,6 +474,21 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `pac-crate-per-chip-vs-shared--separate-crate-per-chip` — A separate PAC crate per chip (seen, no Claim) (no Claim in batch 1)
 - Positions seen by the extractor (`a-sa01-f001838-q1`): reviewer (unattributed) — one shared PAC crate per chip family, gated by features, is easier to release and maintain; CBJamo (PR author) — initially organizing per chip, then adopting the shared-crate approach once shown it was feasible
 - Positions seen by the extractor (`b-sb06-f001838-q1`): single-crate-with-features, separate-crate-per-chip
+
+### `paid-maintainers-for-infrastructure`
+
+**Question.** Should critical Rust infrastructure rely on volunteer maintainers, or be sustained by dedicated, foundation- or corporate-funded paid maintainers?
+
+- Teams: a, b · team-local ids: `a-sR15-f009751-q1` (f009751), `b-sR13-f009755-q1` (f009755)
+- Domains: core
+- Concepts: open-source funding models; maintainer burnout; project governance; OSS sustainability; maintainer funding; governance
+- Positions:
+  - `paid-maintainers-for-infrastructure--fund-paid-maintainers` — Paid maintenance improves focus and sustainability; fund dedicated maintainers
+    - **Alejandra González (@blyxyas)** · Source `f009751` · date 2026-08-26 · locator bio section "Alejandra González (@blyxyas)" — being funded lets her put her full effort into the project without financial anxiety, directly boosting her productivity Quote: "Funding is the system that helps me pour my heart into a project without worrying about making ends meet. Having those needs met is a game-changer and boosts my productivity." [`a-sR15-f009751-c1`, team a]
+    - **Jonas Böttiger (@joboet)** · Source `f009751` · date 2026-08-26 · locator bio section "Jonas Böttiger (@joboet)" — funding removes the tradeoff between doing the maintenance work he loves and taking a better-paid job elsewhere Quote: "Getting funding for my work is a dream come true. It will allow me to continue doing the thing I love instead of worrying about whether I should rather invest all that time in a money-earning job with much less positive impact on the world around me." [`a-sR15-f009751-c2`, team a]
+    - **Jakub Beránek, on behalf of the Rust Funding team** · Source `f009755` · date 2026-09-22 · locator "Why Cargo?" section — the Cargo team "struggled with meeting its maintenance demands" after members left or lost funding, so the Funding team used Leadership Council and AWS money to open a new full-time Maintainer in Residence position; explicitly framed as partial relief, not a full fix Quote: "Even though we know that a single full-time maintainer will not completely solve the maintenance struggles of the Cargo team, we hope that it will improve the situation" [`b-sR13-f009755-c1`, team b]
+- Positions seen by the extractor (`a-sR15-f009751-q1`): paid-maintenance-improves-focus-and-sustainability (Alejandra González, Jonas Böttiger, Gen Li)
+- Positions seen by the extractor (`b-sR13-f009755-q1`): fund a full-time paid Maintainer in Residence via the Rust Foundation Maintainers Fund plus corporate donations (AWS)
 
 ### `porting-to-rust-safety`
 
@@ -491,39 +593,6 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`a-sa15-f005948-q1`): ownership-and-pattern-matching-aid-correctness-at-scale
 - Positions seen by the extractor (`b-sb19-f005948-q1`): worth-it-for-edge-case-heavy-infra (Eric Zhang / Modal)
 
-### `shared-mutable-state-vs-explicit-passing`
-
-**Question.** Should shared mutable state be exposed through interior-mutable shared handles (`Rc<RefCell<_>>`, `Arc<Mutex<_>>`), or threaded explicitly through parameters, context arguments and return values?
-
-- Teams: a, b · team-local ids: `a-sa06-f003414-q2` (f003414), `b-sb04-f001022-q1` (f001022)
-- Domains: core, desktop-cli-ui
-- Concepts: interior mutability; API design; ownership; RefCell; borrow panics; event loop; context-passing pattern
-- Positions:
-  - `shared-mutable-state-vs-explicit-passing--explicit-passing` — No implicit shared mutable state; pass context and changes explicitly
-    - **ConradIrwin** · Source `f003414` · date 2025-10-28 · locator comment 2025-10-28T01:59:12Z — objects to a `Buffer` containing an `Arc<Mutex<>>` that lets callers change encoding without the buffer knowing; wants the encoding passed/returned explicitly instead Quote: "I don't like that the Buffer contains an Arc<Mutex<>> that allows callers to change the encoding without the buffer knowing" [`a-sa06-f003414-c2`, team a]
-    - **romgrk** · Source `f001022` · date 2024-03-02 · locator PR #8632, comment 2024-03-02T18:19:01Z — floats passing a `cx` context down the stack, mirroring the pattern the rest of the codebase already uses, as a way to sidestep the reentrant-borrow panic entirely, alongside noting that Warp's Rust UI blog describes hitting the same `RefCell`/`borrow_mut` crash class in production Quote: "the rest of the codebase seems to be using the pattern of passing a `cx` context down the stack, which avoids this kind of issue" [`b-sb04-f001022-c2`, team b]
-  - `shared-mutable-state-vs-explicit-passing--rc-refcell-doubtful` — More `Rc<RefCell>` sharing is doubtful as a fix
-    - **romgrk** · Source `f001022` · date 2024-03-02 · locator PR #8632, comment 2024-03-02T18:19:01Z — retracts an earlier suggestion to turn the client state fields into `Rc<RefCell<_>>`s, since dispatching an action from inside an active borrow (e.g. a key press changing the keyboard-focused window) would still panic; the only approach that currently works is cloning whatever refs are needed before dropping the state and then dispatching Quote: "Actually I'm not sure that would work." [`b-sb04-f001022-c1`, team b]
-- Positions seen by the extractor (`a-sa06-f003414-q2`): no implicit shared mutable state, make changes explicit in the type signature
-- Positions seen by the extractor (`b-sb04-f001022-q1`): rc-refcell-doubtful, context-passing-preferred
-
-### `silent-fallback-vs-explicit-error`
-
-**Question.** When required input or context is missing or ambiguous, should code silently fall back to a plausible default, or fail with an explicit error or panic so the cause surfaces?
-
-- Teams: a, b · team-local ids: `a-sa14-f005079-q5` (f005079), `b-sb03-f000669-q1` (f000669)
-- Domains: core, web
-- Concepts: fail-loud vs. silent fallback; explicit error handling; surprising behavior; panics; Option/unwrap; error handling; context/dependency injection; defaults
-- Positions:
-  - `silent-fallback-vs-explicit-error--explicit-failure` — Surface the failure: return an error or let the panic stand, and fix the root cause
-    - **alexcrichton** · Source `f005079` · date 2026-09-10 · locator comment 2026-09-10T22:28:43Z — asks whether the code should return an error if multiple TCP sockets are listed, rather than silently using the first, since that could cause odd behavior if the first one happens to be the wrong one Quote: "Should this perhaps return an error if there are multiple TCP sockets listed? Because otherwise using the first feels like it might lead to odd behavior" [`a-sa14-f005079-c6`, team a]
-    - **simolus3** · Source `f005079` · date 2026-09-11 · locator comment 2026-09-11T10:19:47Z — made the multiple-socket case an error, and also made it an error to have no usable socket at all, reasoning it would be surprising for `--systemd-listenfd` to silently fall back to wasmtime listening itself because of a mismatched environment variable Quote: "it might be surprising to explicitly indicate that inherited sockets are requested with `--systemd-listenfd` only to then have wasmtime listen itself because of a mismatched environment variable that's ignored" [`a-sa14-f005079-c7`, team a]
-    - **gbj** · Source `f000669` · date 2024-03-29 · locator issue #2112, comment 2024-03-29T14:49:12Z — worried the `unwrap_or_default()` fix "mostly *hides* the problem rather than fixing it," since a server function that actually sets `ResponseOptions` would silently fail to have its header/status applied; prefers finding and fixing the real cause (a disposed Runtime), to be revisited in 0.7 Quote: "I'm concerned that the solution ... mostly *hides* the problem rather than fixing it" [`b-sb03-f000669-c2`, team b]
-  - `silent-fallback-vs-explicit-error--silent-default` — Fall back to a safe default
-    - **glademiller** · Source `f000669` · date 2024-03-06 · locator issue #2112, comment 2024-03-06T15:53:46Z — proposes patching leptos-axum so the missing-context `.unwrap()` becomes `use_context::<ResponseOptions>().unwrap_or_default().0`, as a workaround for the panic, for callers not using `ResponseOptions` to modify the response Quote: "the workaround I am using at the moment is to patch leptos-axum by changing this line ... to let res_options = use_context::<ResponseOptions>().unwrap_or_default().0;" [`b-sb03-f000669-c1`, team b]
-- Positions seen by the extractor (`a-sa14-f005079-q5`): return an explicit error rather than silently picking the first of several candidates, and error out rather than silently falling back to normal listening when the flag was explicitly requested but no usable input was found
-- Positions seen by the extractor (`b-sb03-f000669-q1`): silent-default-workaround, surface-and-fix-root-cause
-
 ### `thiserror-display-loses-context`
 
 **Question.** Does `thiserror`'s default `{}` Display, which drops the source chain, leave a real diagnostic gap that needs `anyhow`/`eyre` or the alternate `{:#}` format?
@@ -554,11 +623,11 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `depend-vs-hand-roll`
 
-**Question.** Should a project depend on an existing third-party crate or SDK for a component, or hand-roll or vendor its own implementation?
+**Question.** Should a project depend on an existing third-party crate, bindings tree or SDK for a component, or hand-roll or vendor its own implementation?
 
-- Teams: a · team-local ids: `a-02-f001053-q1` (f001053), `a-sa04-f002865-q1` (f002865), `a-sa14-f005079-q2` (f005079), `a-saL2-f011092-q3` (f011092)
-- Domains: cloud-workers, core, distributed, embedded
-- Concepts: persistent/immutable data structures; library adoption; build-vs-buy; dependency management; intrusive data structures; unsafe code; embedded executors; miri; loom; dependency vendoring; protocol stability; supply chain; vendor SDKs; ecosystem maturity; cloud integrations
+- Teams: a · team-local ids: `a-02-f001053-q1` (f001053), `a-sa04-f002865-q1` (f002865), `a-sa14-f005079-q2` (f005079), `a-saL2-f011092-q3` (f011092), `a-sR06-f002016-q1` (f002016)
+- Domains: cloud-workers, core, distributed, embedded, ml
+- Concepts: persistent/immutable data structures; library adoption; build-vs-buy; dependency management; intrusive data structures; unsafe code; embedded executors; miri; loom; dependency vendoring; protocol stability; supply chain; vendor SDKs; ecosystem maturity; cloud integrations; supply-chain auditing (`cargo vet`); dependency-tree size; FFI bindings crates
 - Positions:
   - `depend-vs-hand-roll--depend-on-existing` — Depend on the existing, tested crate
     - **Bojan Serafimov** · Source `f001053` · date 2024-03-01 · locator "Rust Persistent Data Structures (RPDS) to the rescue" / "Conclusion" sections — rather than hand-roll a balanced 2D segment tree with lazy propagation, the team reached for the `rpds` crate to build a copy-on-write layer map, crediting it over more popular alternatives Quote: "There are more popular persistent data structure libraries in Rust, but this one deserves a lot more credit for its clean API, correct results (!!!), and more than good enough performance." [`a-02-f001053-c1`, team a]
@@ -567,10 +636,30 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Dirbaio** · Source `f002865` · date 2025-04-01 · locator PR comment ("Some concerns") — objects to adding `cordyceps` as a dependency for something as foundational as the executor, preferring the data structures stay self-contained and in-tree so the project can change them without cross-repo coordination, keeping the abstraction surface minimal Quote: "I don't think we should add `cordyceps` as a dep, I'd prefer to keep the data structures self-contained for something as foundational as the executor. Having it all in-tree means we can make changes as needed without having to coordinate across repos, and less abstraction means it's clearer what's going on in this case IMO." [`a-sa04-f002865-c2`, team a]
     - **alexcrichton** · Source `f005079` · date 2026-09-08 · locator comment 2026-09-08T14:23:10Z — asks whether the thin crate implementing the systemd listen-fd protocol could just be vendored directly, since the protocol is set externally and unlikely to change much Quote: "The implementation in this crate looks pretty thin -- would it be possible to vendor the implementation here?" [`a-sa14-f005079-c3`, team a]
     - **Luca Casonato** · Source `f011092` · date 2024-02-13 · locator ~00:26:21-00:28:24 — describes the Rust vendor-SDK ecosystem as a weak point — AWS's SDK exists but doesn't retry S3 uploads correctly, GCP has no official Rust SDK (its in-progress one went dormant), Azure's is not yet ready, Stripe has no first-party SDK — so the team builds and maintains its own small internal "mini SDKs" (types plus retry handling) for cloud storage, IAM, secrets, Let's Encrypt, npm registry access, and GitHub Quote: "there's one thing that kind of sucks right now in [Rust] though which is the story around third party integrations and like third party SDKs... our experience with this is that you end up building a lot of little mini SDKs" [`a-saL2-f011092-c3`, team a]
+  - `depend-vs-hand-roll--dependency-audit-burden-too-high` — The supply-chain auditing burden of a large dependency tree outweighs the reuse
+    - **abrown** · Source `f002016` · date 2024-09-20 · locator PR #9234, comment 2024-09-20T00:30:47Z — posts the full `cargo vet` diff/inspect list generated by the new dependency tree (`tch`, `torch-sys`, `ndarray`, `zip`, `cipher`, etc., some entries thousands of lines) and characterizes the situation as excessive. Quote: "The `cargo vet` situation is a bit much:" [`a-sR06-f002016-c1`, team a]
 - Positions seen by the extractor (`a-02-f001053-q1`): adopt-existing-crate (author/Neon), hand-roll-bespoke-structure (same source's own rejected "failed attempt" path)
 - Positions seen by the extractor (`a-sa04-f002865-q1`): adopt-external-tested-dependency (PR author), keep-self-contained-hand-rolled (reviewer)
 - Positions seen by the extractor (`a-sa14-f005079-q2`): vendor the implementation directly, since the underlying protocol documented by a third party is unlikely to change and the existing crate's implementation looked thin
 - Positions seen by the extractor (`a-saL2-f011092-q3`): build-lean-internal-wrapper-SDKs (Luca Casonato)
+- Positions seen by the extractor (`a-sR06-f002016-q1`): "the auditing burden from this dependency tree is excessive" (abrown)
+
+### `async-drop-raii-vs-close`
+
+**Question.** Without async `Drop`, should async resources keep RAII cleanup (with best-effort `Drop` and workarounds such as cancel tokens), or require callers to call an explicit async `close`/`shutdown`?
+
+- Teams: b · team-local ids: `b-sb17-f005159-q2` (f005159), `b-sR10-f004423-q1` (f004423), `b-sR10-f004741-q1` (f004741)
+- Domains: core, decentralized-iroh, distributed
+- Concepts: RAII; `Drop`; async cleanup; cancel tokens; blocking-safe channels; async runtimes; Drop; resource lifecycle
+- Positions:
+  - `async-drop-raii-vs-close--preserve-raii-with-workarounds` — Keep RAII, working around the missing async Drop
+    - **Rüdiger Klaehn** · Source `f005159` · date 2024-07-31 · locator article body, "Drop" section — refuses to abandon RAII for async resources; instead builds cleanup on cancel tokens or blocking-safe/force-send queues so `Drop` can still trigger a clean shutdown Quote: "I refuse to give up on RAII. I might provide an async shutdown function that tries to do a gentle shutdown. But every entity should also attempt to clean up on Drop." [`b-sb17-f005159-c2`, team b]
+  - `async-drop-raii-vs-close--explicit-close-required` — Require an explicit async close; `Drop` is best effort only
+    - **dignifiedquire (iroh/n0 computer)** · Source `f004423` · date 2026-03-16 · locator section "2. Changes to Endpoint closing" / "Endpoint Lifecycle Improvements" — Endpoint no longer attempts best-effort graceful close on drop; callers must await endpoint.close() explicitly, or resources close ungracefully and an error is logged Quote: "Starting with this release, the Endpoint no longer attempts to close connections gracefully when dropped. To gracefully close the endpoint, always await endpoint.close() before dropping the last instance of an endpoint or terminating your application." [`b-sR10-f004423-c1`, team b]
+    - **Friedel Ziegelmayer & Rüdiger Klaehn (iroh/n0 computer)** · Source `f004741` · date 2026-05-27 · locator section "⚡ Faster Endpoint::close" — explicit endpoint.close() is now cheaper too — shutdown skips the draining period when possible, reinforcing close as the primary, first-class shutdown path rather than relying on drop Quote: "Shutdown now skips the draining period when it can. Closing is near-instant when the peer already closed remotely, and roughly one RTT otherwise if there is no packet loss." [`b-sR10-f004741-c1`, team b]
+- Positions seen by the extractor (`b-sb17-f005159-q2`): preserve-raii-with-workarounds (Rüdiger Klaehn); give-up-raii-manual-close is named as an available alternative but not attributed to anyone advocating it
+- Positions seen by the extractor (`b-sR10-f004423-q1`): explicit-close-required
+- Positions seen by the extractor (`b-sR10-f004741-q1`): explicit-close-required (continued practice)
 
 ### `typestate-vs-runtime-checks`
 
@@ -644,6 +733,21 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`b-sb20-f007678-q2`): prefer copying data across the boundary over sharing it, for memory-safety and simplicity, accepting the performance cost (Emily Dixon)
 - Positions seen by the extractor (`b-sb22-f008914-q2`): prefer borrowed references (`&str`) over owned/copied types (`String`) at the JNI boundary to avoid conversion overhead — in tension with f007678's stated preference for copying data across FFI boundaries for safety/simplicity (Chayan Mistry)
 
+### `human-written-code-standard`
+
+**Question.** How much of a project's own code may be AI-written, and how much review does such code need before shipping?
+
+- Teams: a · team-local ids: `a-sa15-f005821-q2` (f005821), `a-sR14-f004865-q2` (f004865)
+- Domains: core, embedded, web
+- Concepts: ai-assisted-rust; authorship-norms
+- Positions:
+  - `human-written-code-standard--human-written-only` — Hold important work to a human-written-only standard
+    - **Matt Keeter** · Source `f005821` · date 2026-04-05 · locator opening paragraphs, linking to his earlier post "Experimenting with LLMs" — states plainly, as a personal standard rather than an argued position, that all the tail-call code and the blog post itself are human-written, after an earlier LLM-assisted port "proved controversial" Quote: "I'm pleased to declare that all of the tail-call code is human-written... (This blog post is also entirely human-written, per my personal standards)" [`a-sa15-f005821-c2`, team a]
+  - `human-written-code-standard--light-review-for-peripheral-code` — Letting a model write a peripheral component with only a brief check is acceptable
+    - **Klaehn** · Source `f004865` · date 2026-07-02 · locator "A proper GUI" section — acceptable to let an LLM write a whole peripheral component (a JS/WASM GUI) you lack expertise in, and ship it after only a brief check, rather than deep review — ties to the AI-assisted-Rust candidate Question already flagged in rust.md § Findings. Quote: "I am not a javascript developer, so the WASM GUI is vibe coded. I just briefly checked it." [`a-sR14-f004865-c2`, team a]
+- Positions seen by the extractor (`a-sa15-f005821-q2`): human-written-only-as-personal-standard
+- Positions seen by the extractor (`a-sR14-f004865-q2`): light-touch-for-peripheral-code (Klaehn)
+
 ### `jni-layer-rust-vs-cpp`
 
 **Question.** For an Android app calling a shared Rust library, should the JNI-facing binding layer be written in Rust or in C++?
@@ -673,6 +777,20 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **jacko.io** · Source `f007608` · date 2023-10-25 · locator footnote to the paragraph beginning "Playing with these examples is educational" in section "Part Two: Borrowing" — while experimenting with borrow-checker fights builds useful intuition, the actionable takeaway when you get stuck is to keep lifetime parameters off your struct definitions Quote: "a good rule of thumb is to avoid putting lifetime parameters on structs" [`b-sb20-f007608-c2`, team b]
 - Positions seen by the extractor (`b-sb20-f007364-q1`): embrace lifetime parameters deliberately, rewriting an owned `Value` enum as `Value<'a>` with `Borrowed`/`Owned` variants, to eliminate a measured bottleneck (howardjohn) — conflicts with f007608 below, which states the opposite rule of thumb
 - Positions seen by the extractor (`b-sb20-f007608-q2`): avoid lifetime parameters on structs as a rule of thumb (jacko.io) — conflicts with f007364 above, which embraces them for a measured performance win
+
+### `networking-lib-core-scope`
+
+**Question.** Should a foundational networking library bundle many built-in protocols, transports and backends in its core, or keep a minimal core and push the rest into optional layers behind pluggable traits?
+
+- Teams: a · team-local ids: `a-sa02-f002124-q1` (f002124), `a-sR11-f004170-q1` (f004170)
+- Domains: decentralized-iroh, distributed
+- Concepts: library scope; minimalism vs batteries-included; protocol layering; API surface; custom transports; trait objects; feature flags; dependency weight
+- Positions:
+  - `networking-lib-core-scope--minimal-core-pluggable` — Narrow the core; optional protocols and pluggable trait-based extensions outside it
+    - **ramfox** · Source `f002124` · date 2024-10-01 · locator opening section / "Docs are disabled by default" — iroh's maintainers deliberately shrank the library's default scope, disabling the higher-level "Docs" sync feature by default and reframing it as a separate protocol layered on the core networking primitive, restating an earlier decision that iroh's networking stack is "what iroh is" and everything else is a custom protocol Quote: "We're doubling down on iroh's networking stack as 'what iroh is' and describing everything else as a custom protocol." [`a-sa02-f002124-c1`, team a]
+    - **Rüdiger Klaehn** · Source `f004170` · date 2026-01-27 · locator section "What are iroh custom transports anyway?" — iroh will not build every candidate transport (WebTransport, Bluetooth, Tor, InfiniBand, ...) into the core; adding them all would create a maze of feature flags and drag in dependencies most users don't need, so the library exposes `CustomTransport`/`CustomEndpoint`/`CustomSender` traits for users to plug in only what they need Quote: "we do not want to add additional transports to the iroh codebase. That would make the code very complex with a maze of feature flags, add a lot of dependencies that most of our customers don't need" [`a-sR11-f004170-c1`, team a]
+- Positions seen by the extractor (`a-sa02-f002124-q1`): narrow-core-scope-by-default (author/iroh maintainers)
+- Positions seen by the extractor (`a-sR11-f004170-q1`): minimal-core-plus-pluggable-traits (Rüdiger Klaehn)
 
 ### `object-graph-representation`
 
@@ -706,6 +824,34 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **hecrj** · Source `f003025` · date 2025-06-02 · locator comment @hecrj 2025-06-02T02:49:06Z — producers of open source are not entitled to control over branding or how their code is reused; forking and improving others' code is the essence of open source, not a breach of it Quote: "I don't think 'producers' of open source should be entitled to anything; the same way 'consumers' aren't either. This is the real beauty of open source—a gift with no expectations." [`a-sa05-f003025-c7`, team a]
 - Positions seen by the extractor (`a-sa13-f004772-q4`): branding-and-coordination-matter, no-entitlement-forking-is-core-of-oss
 
+### `public-naming-brevity-vs-clarity`
+
+**Question.** Should a public-facing name (crate, type, command) favor brevity and memorability, or explicit clarity?
+
+- Teams: b · team-local ids: `b-sR04-f001515-q1` (f001515), `b-sR04-f001617-q1` (f001617)
+- Domains: decentralized-iroh, desktop-cli-ui
+- Concepts: API naming; public interface design; tooling/extension naming
+- Positions:
+  - `public-naming-brevity-vs-clarity--clarity-over-brevity` — Name for clarity over brevity
+    - **dignifiedquire** · Source `f001515` · date 2024-05-24 · locator § "The MagicEndpoint is dead, long live the Endpoint" — renamed the public type `MagicEndpoint` to plain `Endpoint`, reasoning that a fun/evocative name became a liability once it got too long, even though the team liked it. Quote: "Fun names are great, but sometimes they get in the way, and while we all loved MagicEndpoint as a name, it just became too long." [`b-sR04-f001515-c1`, team b]
+    - **osiewicz** · Source `f001617` · date 2024-06-19 · locator PR #13253, comment 2024-06-19T11:34:20Z — declined a suggestion to shorten the language-server's name to the abbreviation "scls", preferring to spell out "snippets" so users can infer what the name means. Quote: "I think it makes sense to spell out `snippets` explicitly in the name to make it a bit easier on the users." [`b-sR04-f001617-c1`, team b]
+- Positions seen by the extractor (`b-sR04-f001515-q1`): rename-for-clarity-over-fun-brevity
+- Positions seen by the extractor (`b-sR04-f001617-q1`): name-for-clarity-over-brevity
+
+### `service-fault-isolation-degrade`
+
+**Question.** In a long-running service, should a failure in one unit (a request, a session, an incoming connection) propagate and stop the process or loop, or be contained, logged and degraded so the service keeps serving?
+
+- Teams: a · team-local ids: `a-sa14-f004985-q3` (f004985), `a-sR05-f001981-q1` (f001981)
+- Domains: cloud-workers, decentralized-iroh, distributed, wasm
+- Concepts: fault handling; panic containment; resilience by design; error handling; accept loops; async I/O
+- Positions:
+  - `service-fault-isolation-degrade--contain-and-continue` — Contain faults at every boundary; log and keep serving
+    - **Celso Martinho, Ruskin Constant, Rui Figueira, and Luís Duarte** · Source `f004985` · date 2026-08-06 · locator § Design decisions / Exception handling — commit as a design rule, before writing code, that any failure degrades to a blank frame or missing element rather than crashing the session, since the browser must render hostile, unreliable pages without ever dropping the one it's holding Quote: "any failure degrades to a blank frame or a missing element, never a dead session" [`a-sa14-f004985-c3`, team a]
+    - **matheus23 (iroh maintainer, n0)** · Source `f001981` · date 2024-09-04 · locator "API Changes" section — `Incoming::accept` can fail for benign network reasons; such failures should be logged and passed over, not treated as fatal Quote: "don't treat errors there as fatal" [`a-sR05-f001981-c1`, team a]
+- Positions seen by the extractor (`a-sa14-f004985-q3`): commit up front to catching faults at every boundary and degrading to a blank frame or missing element, never a dead session
+- Positions seen by the extractor (`a-sR05-f001981-q1`): non-fatal, log-and-continue
+
 ### `trust-microbenchmarks`
 
 **Question.** How far should Rust practitioners trust microbenchmark comparisons, especially ones presented without chance of rebuttal or with the presenter's own shortcuts?
@@ -720,6 +866,20 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **bstrie (attribution hedged by the poster themselves: "I'm pretty sure it's @bstrie")** · Source `f012469` · date 2015-07-17 · locator post by @carols10cents dated 2015-07-17T01:06:52Z, citing "33:52 of Rusty Radio Episode 2" — benchmarks are a special category of lie, always risky to cite Quote: "I know that benchmarks are, always, generally, dangerous to quote because they're a special type of lie" [`a-sa28-f012469-c2`, team a]
 - Positions seen by the extractor (`a-sa25-f011413-q5`): single position voiced in this source — "microbenchmarks are inherently misleading by default, distrust them, especially your own"; no opposing voice quoted here
 - Positions seen by the extractor (`a-sa28-f012469-q1`): this source only adds further instances of "distrust microbenchmarks by default" (no opposing voice found here either)
+
+### `unstable-feature-gate-vs-wait`
+
+**Question.** When part of a library's API is not ready for stabilization, should it ship behind an explicit "unstable" feature flag alongside the stable release, or should the release wait?
+
+- Teams: b · team-local ids: `b-sR10-f004423-q2` (f004423), `b-sR10-f004741-q2` (f004741)
+- Domains: core, decentralized-iroh, distributed
+- Concepts: feature flags; API stability; semver
+- Positions:
+  - `unstable-feature-gate-vs-wait--ship-gated-unstable` — Ship it behind an unstable feature flag
+    - **dignifiedquire (iroh/n0 computer)** · Source `f004423` · date 2026-03-16 · locator section "Custom Transports" / "Current status" — the custom-transport API ships now but stays behind an unstable feature flag and is declared unstable even past the 1.0 stabilization line Quote: "As the name suggests, the custom transport API is unstable and will remain so for some time even after iroh 1.0 is released." [`b-sR10-f004423-c2`, team b]
+    - **Friedel Ziegelmayer & Rüdiger Klaehn (iroh/n0 computer)** · Source `f004741` · date 2026-05-27 · locator section "🛣️ Configurable path selection" — the new PathSelector trait and its types ship now but stay behind the unstable-custom-transports flag and are explicitly excluded from the 1.0 stability guarantee Quote: "The trait and the new types are gated behind the unstable-custom-transports feature. Keep in mind that this means they are not covered by the 1.0 stability guarantees and may break in future releases." [`b-sR10-f004741-c2`, team b]
+- Positions seen by the extractor (`b-sR10-f004423-q2`): ship-gated-unstable
+- Positions seen by the extractor (`b-sR10-f004741-q2`): ship-gated-unstable
 
 ### `ad-hoc-special-case-vs-general-mechanism`
 
@@ -789,6 +949,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Steve Klabnik** · Source `f009104` · date 2026-09-21 · locator "I'm okay with named parameters now" section — attributes his change of mind to coding agents — since he is "not typing myself anymore," the verbosity cost of named arguments no longer weighs against their call-site clarity benefit, and reasons the clarity gain is if anything larger for an agent reading the call site than for a human, while explicitly noting he hasn't run real evals on this Quote: "what changed my opinion is coding agents, actually... 'What's good for humans is true for agents' strikes again." [`a-sa18-f009104-c3`, team a]
 - Positions seen by the extractor (`a-sa18-f009104-q2`): agents-shift-calculus-toward-explicit-named-syntax
 
+### `ai-review-suggestions`
+
+**Question.** Should a Rust practitioner follow an AI code-review tool's suggestions by default, or evaluate them critically before acting?
+
+- Teams: b · team-local ids: `b-sR08-f003550-q1` (f003550)
+- Domains: ml
+- Concepts: AI-assisted Rust; code review; tooling trust
+- Positions:
+  - `ai-review-suggestions--p1` — critically-evaluate-not-blindly-follow
+    - **laggui** · Source `f003550` · date 2025-09-19 · locator PR #3743, review comment 2025-09-19T19:54:02Z — dismisses a Copilot review comment telling the author to avoid `&3` as unnecessary noise (passing a reference to a literal is fine), and redirects attention to a real bug the AI reviewer missed — an unsupported vectorization size on some cubecl backends. Quote: "You didn't need to follow Copilot's advice here 😄 passing &3 is fine." [`b-sR08-f003550-c1`, team b]
+- Positions seen by the extractor (`b-sR08-f003550-q1`): critically-evaluate-not-blindly-follow
+
 ### `api-schema-spec-first-vs-code-first`
 
 **Question.** should an API's schema be hand-authored or generated from the server's own code (spec-first vs code-first)?
@@ -801,17 +973,17 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Adam (surname unconfirmed; self-ID only)** · Source `f011186` · date 2024-11-20 · locator ~00:10:56 — don't hand-write the OpenAPI spec or rely on a programmer-maintained one; have the API server generate it, since a generated spec is provably in sync with the server that produced it Quote: "a better idea is don't hand write the spec don't rely on a programmer spec instead have your API server generate the spec" [`a-sa23-f011186-c1`, team a]
 - Positions seen by the extractor (`a-sa23-f011186-q1`): code-first/generate-from-server (Adam)
 
-### `async-drop-raii-vs-close`
+### `async-by-default-host-interfaces`
 
-**Question.** When an async resource needs cleanup, should Rust code preserve RAII (`Drop`-based cleanup) even though `Drop` cannot be `async`, working around it with cancel tokens and blocking-safe queues, or should it give up RAII and require callers to manually invoke an async `close()`/`shutdown()` method?
+**Question.** Should a framework's host/runtime interfaces be async by default, or should async stay an opt-in path alongside a synchronous default?
 
-- Teams: b · team-local ids: `b-sb17-f005159-q2` (f005159)
-- Domains: decentralized-iroh
-- Concepts: RAII; `Drop`; async cleanup; cancel tokens; blocking-safe channels
+- Teams: b · team-local ids: `b-sR10-f004809-q1` (f004809)
+- Domains: cloud-workers, wasm, web
+- Concepts: async runtimes; concurrency model
 - Positions:
-  - `async-drop-raii-vs-close--p1` — preserve-raii-with-workarounds
-    - **Rüdiger Klaehn** · Source `f005159` · date 2024-07-31 · locator article body, "Drop" section — refuses to abandon RAII for async resources; instead builds cleanup on cancel tokens or blocking-safe/force-send queues so `Drop` can still trigger a clean shutdown Quote: "I refuse to give up on RAII. I might provide an async shutdown function that tries to do a gentle shutdown. But every entity should also attempt to clean up on Drop." [`b-sb17-f005159-c2`, team b]
-- Positions seen by the extractor (`b-sb17-f005159-q2`): preserve-raii-with-workarounds (Rüdiger Klaehn); give-up-raii-manual-close is named as an available alternative but not attributed to anyone advocating it
+  - `async-by-default-host-interfaces--p1` — async-by-default
+    - **The Spin Project (Fermyon / CNCF Spin, institution)** · Source `f004809` · date 2026-06-15 · locator sections "WASI Preview 3: stabilized and supported long-term" / "Async everywhere: Spin's host interfaces are now async" — WASIp3's async model, previously experimental and opt-in, is now the default for new applications, and Spin's own host interfaces (KV, SQLite, Postgres, Redis, outbound HTTP) were rewritten to be async so handlers get real concurrency instead of blocking Quote: "WASIp3 is now the default platform for new applications... we've asyncified Spin's host interfaces so I/O-heavy handlers actually get concurrency instead of blocking the instance." [`b-sR10-f004809-c1`, team b]
+- Positions seen by the extractor (`b-sR10-f004809-q1`): async-by-default
 
 ### `async-hook-cancellation-upfront`
 
@@ -839,6 +1011,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **rklaehn** · Source `f005307` · date 2024-08-06 · locator lobste.rs/s/7rtvnp, comment 2024-08-06T06:41:54-05:00 — as the blog post's author and an iroh maintainer, responds "what is the alternative?" — every in-process database they evaluated (rocksdb, redb, sled, sqlite) has a synchronous API, so the mismatch isn't a foreseeable design error, and non-`Send` futures are often unavoidable when a future must capture a non-`Send` database/transaction handle Quote: "What is the alternative? ... They *all* have a sync api." [`b-sb18-f005307-c2`, team b]
 - Positions seen by the extractor (`b-sb18-f005307-q1`): incompatible-deps-should-be-avoided, sync-storage-is-unavoidable-given-available-options
 
+### `async-rust-production-ready`
+
+**Question.** Is async Rust production-ready today given its known gaps?
+
+- Teams: b · team-local ids: `b-sR01-f000233-q2` (f000233)
+- Domains: core
+- Concepts: async runtimes; async traits; streams; async destructors
+- Positions:
+  - `async-rust-production-ready--p1` — reliable-despite-rough-edges
+    - **Rust Async Book (async-book, rust-lang.github.io)** · Source `f000233` · date undated (living document) · locator § "Development of Async Rust", paragraph 1 — stable async is reliable and performant and used in production at large tech companies, though ergonomics (not reliability) are rough around async iterators/streams, async in traits, and async destruction. Quote: "Async Rust ... is reliable and performant. It is used in production in some of the most demanding situations at the largest tech companies." [`b-sR01-f000233-c2`, team b]
+- Positions seen by the extractor (`b-sR01-f000233-q2`): reliable-despite-rough-edges
+
 ### `async-transport-asyncread-vs-sink-stream`
 
 **Question.** For a custom async I/O transport abstraction in Rust that must work across several carriers (raw TCP, TLS, WebSocket-wrapped tunnel), should the abstraction be built against the tokio-style `AsyncRead`/`AsyncWrite` traits, or against the `Sink`/`Stream` traits that most existing async WebSocket libraries expose?
@@ -850,6 +1034,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `async-transport-asyncread-vs-sink-stream--p1` — build the transport abstraction against `AsyncRead`/`AsyncWrite`, not `Sink`/`Stream`
     - **Cloudflare (Hyperdrive team)** · Source `f002236` · date 2024-10-25 · locator article body, "The way we accomplish this..." section — States that available OSS WebSocket-over-async libraries built on `Sink`/`Stream` did not jointly satisfy `Send`, `Sync`, `Unpin` together with `AsyncRead`/`AsyncWrite`, so Hyperdrive wrote its own translation layer to keep its entire custom Postgres handler generic over `AsyncRead`/`AsyncWrite` streams instead. Quote: "The primary reason is that Hyperdrive operates across multiple threads (thanks to the tokio runtime), and so we rely on our connections to also handle Send, Sync, and Unpin. None of the available solutions had all five traits handled." [`a-sa03-f002236-c1`, team a]
 - Positions seen by the extractor (`a-sa03-f002236-q1`): Cloudflare (Hyperdrive team) — standardize the whole handler on `AsyncRead`/`AsyncWrite` and write a custom WebSocket-to-`AsyncRead`/`AsyncWrite` translation layer; existing OSS WebSocket-over-async libraries (unnamed) — built on the `Sink`/`Stream` paradigm instead
+
+### `async-vs-threads`
+
+**Question.** When should a Rust practitioner reach for async instead of threads?
+
+- Teams: b · team-local ids: `b-sR01-f000233-q1` (f000233)
+- Domains: distributed, embedded, other, web
+- Concepts: async runtimes; threads; concurrency; cancellation
+- Positions:
+  - `async-vs-threads--p1` — async-for-io-wait-and-no-os
+    - **Rust Async Book (async-book, rust-lang.github.io)** · Source `f000233` · date undated (living document; no revision date on page) · locator § "What is Async Programming and why would you do it?", paragraph 2 — async fits systems handling many concurrent tasks that spend most of their time waiting (e.g. client responses, IO), and also fits microcontrollers with very limited memory and no OS-provided threads. Quote: "This makes async programming a good fit for systems which need to handle very many concurrent tasks and where those tasks spend a lot of time waiting" [`b-sR01-f000233-c1`, team b]
+- Positions seen by the extractor (`b-sR01-f000233-q1`): async-for-io-wait-and-no-os
 
 ### `aya-vs-libbpf-rs`
 
@@ -902,6 +1098,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `behavioral-equivalence-testing-method--p3` — heuristic-guided-rl-search-preferred
     - **Aleksandr Petrosyan** · Source `f011069` · date 2023-11-15 · locator ~00:20:30-00:23:00 — Concludes the right approach is a heuristic-constrained ("tame," Markov-process) reinforcement-learning-style search biased toward human-plausible inputs, rather than fixed test cases or unconstrained fuzzing — treating "the exploit stays reachable within human-plausible effort" as the correctness criterion instead of exact input/output matching; implemented with the Rurel crate. Quote: "we want to have a Markov process, which should hint to you that we're talking about reinforcement learning at some point." [`a-sa21-f011069-c3`, team a]
 - Positions seen by the extractor (`a-sa21-f011069-q1`): unit-and-integration-tests-insufficient, naive-property-based-testing-insufficient, heuristic-guided-rl-search-preferred
+
+### `benchmark-colocation-with-crate`
+
+**Question.** When a function moves to a different crate in a multi-crate Rust workspace, should its benchmark move with it, using `git mv` to preserve file history?
+
+- Teams: a · team-local ids: `a-sR04-f001096-q2` (f001096)
+- Domains: core, ml
+- Concepts: workspace/crate organization; benchmarks; git history
+- Positions:
+  - `benchmark-colocation-with-crate--p1` — colocate-benchmark-with-owning-crate
+    - **LaurentMazare** · Source `f001096` · date 2025-01-13 · locator comment "I think moving the benchmark to `candle-nn` would be good, (do it with `git mv` so as to preserve history)." — a benchmark should live in the crate that defines the function it measures; use `git mv` on relocation to preserve file history Quote: "I think moving the benchmark to `candle-nn` would be good, (do it with `git mv` so as to preserve history)." [`a-sR04-f001096-c2`, team a]
+- Positions seen by the extractor (`a-sR04-f001096-q2`): colocate-benchmark-with-owning-crate
 
 ### `bitflags-vs-generated-variants`
 
@@ -983,6 +1191,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Luciano Mammino** · Source `f008906` · date 2026-05-03 · locator section "What did we trade?" — a hand-rolled `LogFuture<F>` with `pin-project` avoids all per-request heap allocation at the cost of ~30 extra lines, an extra struct, and a new dependency; in Lambda that allocation "is irrelevant," so the boxed-async shape is the idiomatic default, and hand-rolling is reserved for a tight loop on a busy server Quote: "Down: zero heap allocations per request... In Lambda, that is irrelevant. In a tight loop on a busy server, it can matter." [`b-sb22-f008906-c2`, team b]
 - Positions seen by the extractor (`b-sb22-f008906-q2`): box it — the one allocation per request is negligible in Lambda and the ergonomic win is worth it; reach for the hand-rolled poll'd future only in a tight loop on a busy server where that allocation would matter (Luciano Mammino)
 
+### `breaking-rename-for-vocabulary`
+
+**Question.** Should a library perform a broad breaking rename across its whole public API to align vocabulary with its current mental model, or keep legacy names for compatibility?
+
+- Teams: b · team-local ids: `b-sR08-f003731-q2` (f003731)
+- Domains: decentralized-iroh
+- Concepts: API naming; breaking changes; semver; vocabulary consistency
+- Positions:
+  - `breaking-rename-for-vocabulary--p1` — rename-for-vocabulary-consistency-pre-1.0
+    - **ramfox** · Source `f003731` · date 2025-10-22 · locator § "Changing from Node to Endpoint everywhere" — dropped "node" from iroh's vocabulary project-wide (`NodeAddr`→`EndpointAddr`, `node_id`→`endpoint_id`, etc.), reasoning that the term was a holdover from an earlier, broader project scope, and that pre-1.0 is the right moment to align vocabulary with the current mental model despite the breaking change this causes. Quote: "We've officially made the decision to remove the word "node" from our vocabulary... In preparation for 1.0, that has been rectified." [`b-sR08-f003731-c2`, team b]
+- Positions seen by the extractor (`b-sR08-f003731-q2`): rename-for-vocabulary-consistency-pre-1.0
+
 ### `build-tool-cargo-subcommand-vs-standalone`
 
 **Question.** Should ecosystem build tooling that outgrows Cargo's scope ship as a `cargo` subcommand, or as an independent CLI / cargo-replacement?
@@ -999,6 +1219,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **janhohenheim** · Source `f003025` · date 2025-06-01 · locator comment @janhohenheim 2025-06-01T11:49:48Z — cargo's limitations and slow development cycle led Bevy to design its CLI as a cargo wrapper/replacement rather than a subcommand Quote: "The frustrations with cargo's limitations and its glacial development cycle has led this very project to design the Bevy CLI alpha as a cargo replacement / wrapper and not a subcommand." [`a-sa05-f003025-c4`, team a]
     - **BD103** · Source `f003025` · date 2025-06-01 · locator comment @BD103 2025-06-01T19:12:02Z — Bevy-specific needs (asset handling, default index.html for the web feature) don't fit a general-purpose stable tool like Cargo; better to build 3rd-party tools on top of Cargo than have Cargo grow narrow features Quote: "it's less that Cargo is lacking features and more that certain features are too specific to be included in a standard Rust distribution." [`a-sa05-f003025-c5`, team a]
 - Positions seen by the extractor (`a-sa05-f003025-q1`): cargo-subcommand, standalone-or-replacement
+
+### `builtin-package-manager-effect`
+
+**Question.** Does a language's built-in, first-party package manager (like Cargo) meaningfully change engineering practice compared to bolted-on/ecosystem-only dependency management (as in C/C++)?
+
+- Teams: a · team-local ids: `a-sR15-f008241-q2` (f008241)
+- Domains: core
+- Concepts: package management; dependency ecosystem; tooling
+- Positions:
+  - `builtin-package-manager-effect--p1` — builtin-package-manager-changes-practice
+    - **gregstoll** · Source `f008241` · date 2025-01-08 · locator section "Maybe…Rust?" — didn't even think to look for a C/C++ library with `f16`/bfloat support, because even if one existed they'd have had to vendor its source; running `cargo add half` was trivially easy by comparison, which they read as evidence that a good builtin package manager matters Quote: "I think this is an example of why having a good builtin package manager matters; even if I had found a C/C++ one I would have had to copy its source into my project or something. […] But just running cargo add half is so easy!" [`a-sR15-f008241-c2`, team a]
+- Positions seen by the extractor (`a-sR15-f008241-q2`): builtin-package-manager-changes-practice (gregstoll)
 
 ### `c-maintainers-rust-bindings-duty`
 
@@ -1080,6 +1312,30 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `cli-output-overwrite-default--p2` — default-timestamp-to-avoid-silent-overwrite
     - **bugadani** · Source `f004160` · date 2026-02-26 · locator comment 2026-02-26T08:51:24Z — recommends timestamping the output filename, by default or at least from the second run onward, so a new profile does not silently replace an old one Quote: "I think a passable strategy is to save the profile with the timestamp in the filename, either by default, or only for the second file and later." [`b-sb13-f004160-c4`, team b]
 - Positions seen by the extractor (`b-sb13-f004160-q2`): default-overwrite-latest-output (KingCol13), default-timestamp-to-avoid-silent-overwrite (bugadani)
+
+### `cli-tool-single-vs-multi-protocol`
+
+**Question.** Should a debugging CLI for a protocol specialize narrowly, one tool per protocol, or bundle several related protocols into one tool?
+
+- Teams: b · team-local ids: `b-sR11-f004947-q1` (f004947)
+- Domains: desktop-cli-ui
+- Concepts: CLI design; tool scope
+- Positions:
+  - `cli-tool-single-vs-multi-protocol--p1` — one CLI should cover every privacy protocol a team operates (OHTTP, CONNECT proxying, MASQUE, Privacy Pass), rather than a narrow tool per protocol
+    - **Hannah Wang, Ben Yang, Fisher Darling (Cloudflare)** · Source `f004947` · date 2026-07-27 · locator "Why build our own tool?" section — existing OHTTP-only tools (Thomson's Rust implementation, Wood's Go implementation) were useful but narrow; pvcli's differentiator is combining OHTTP, CONNECT proxying, MASQUE and Privacy Pass in one place Quote: "nothing combines OHTTP, CONNECT proxying, MASQUE and Privacy Pass (coming soon) all in one place" [`b-sR11-f004947-c1`, team b]
+- Positions seen by the extractor (`b-sR11-f004947-q1`): broad multi-protocol tool
+
+### `closed-enum-vs-open-trait-for-policy`
+
+**Question.** Should an extensible policy/configuration surface (e.g. connection access control) be expressed as a closed enum, or as an open trait?
+
+- Teams: b · team-local ids: `b-sR10-f004741-q3` (f004741)
+- Domains: core, decentralized-iroh, distributed
+- Concepts: traits; enums; extensibility; API design
+- Positions:
+  - `closed-enum-vs-open-trait-for-policy--p1` — trait-over-enum
+    - **Friedel Ziegelmayer & Rüdiger Klaehn (iroh/n0 computer)** · Source `f004741` · date 2026-05-27 · locator section "🔐 Pluggable relay access control" — the closed `AccessConfig` enum was replaced by an open `AccessControl` trait with `on_connect`/`on_disconnect` hooks, so embedders can implement arbitrary policy rather than choosing among enum variants Quote: "The relay's access control has been redesigned. The AccessConfig enum is gone, replaced by an AccessControl trait with on_connect and on_disconnect hooks." [`b-sR10-f004741-c3`, team b]
+- Positions seen by the extractor (`b-sR10-f004741-q3`): trait-over-enum
 
 ### `cloud-lock-in-source`
 
@@ -1257,6 +1513,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Ivan Nikulin** · Source `f005604` · date 2023-03-02 · locator "Technology choice" section — states Oxy is deliberately built on top of existing open-source crates (hyper, tokio) rather than reinventing them, prioritizing faster iteration and battle-tested code, while contributing fixes back upstream; two of the team are now core maintainers of tokio/hyper Quote: "We intentionally tried to stand on the shoulders of the giants with this project and avoid reinventing the wheel." [`a-sa15-f005604-c1`, team a]
 - Positions seen by the extractor (`a-sa15-f005604-q1`): reuse-and-consolidate-on-ecosystem-crates, keep-separate-for-differing-objectives
 
+### `const-generics-unify-specializations`
+
+**Question.** When several hand-written data structures are near-duplicate specializations differing only by array length/arity (e.g. a 2-stride vs. 3-stride zip), should they be unified into one type parameterized by a const generic, or kept as separate hand-specialized versions?
+
+- Teams: b · team-local ids: `b-sR12-f005085-q2` (f005085)
+- Domains: core, ml
+- Concepts: const generics; monomorphization; code duplication
+- Positions:
+  - `const-generics-unify-specializations--p1` — unify-via-const-generics
+    - **antimora (Tracel AI / burn maintainer)** · Source `f005085` · date 2026-09-08 · locator PR review comment, 2026-09-08T21:11:40Z — `Zip3Nest` is `ZipNest` with a third stride array threaded through, and the two have already drifted from each other inside this same PR; a `Nest<const N: usize>` would cover both with identical codegen since it monomorphizes Quote: "Stepping back, `Zip3Nest` is `ZipNest` with a third stride array threaded through every line, and the two have already drifted inside this PR... A `Nest<const N: usize>` would cover both, and `CollapsedLayout` at N=1, with identical codegen since it monomorphizes. Not blocking, but the drift is already real rather than hypothetical." [`b-sR12-f005085-c2`, team b]
+- Positions seen by the extractor (`b-sR12-f005085-q2`): unify-via-const-generics
+
 ### `const-serialized-asset-format`
 
 **Question.** For compile-time-generated serialized data embedded via a macro (an asset descriptor built with `const` Rust and serialized at compile time), should the wire format be made valid/human-readable JSON, kept as the current bespoke binary format, or switched to an established binary serde format like postcard?
@@ -1301,6 +1569,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **cfallin** · Source `f005000` · date 2026-08-13 · locator comment @cfallin 2026-08-13T15:57:51Z — even with the O(1) fix, still prefers not taking on the coupling to `VMContext`'s internal layout and the added delicate logic for what is a niche use case, and again asks whether `Func::eq`/`Func::hash` plus an external algorithm could work instead. Quote: "I think that is still the sort of complexity that we would rather not take on if we don't have to... This is a whole lot of new functionality instead for a niche use-case." [`b-sb16-f005000-c5`, team b]
     - **smarcd** · Source `f005000` · date 2026-08-13 · locator comment @smarcd 2026-08-13T16:10:07Z — agrees the layout coupling isn't worth it, drops `debug_function_index`, and implements `Func::eq`/`Func::hash` as pointer-identity equality instead, letting the debugger build its own index map. Quote: "That's a fair concern — coupling to `VMContext`'s internal layout is more entanglement than this is worth. I dropped `debug_function_index` and pushed `Func::eq`/`Func::hash` instead, per your suggestion." [`b-sb16-f005000-c6`, team b]
 - Positions seen by the extractor (`b-sb16-f005000-q1`): narrow-purpose-built-debug-accessor (smarcd, initial and revised), prefer-generic-decoupled-primitive (alexcrichton, cfallin)
+
+### `cow-for-allocation-visibility`
+
+**Question.** When an allocation-avoiding type like `Cow<str>` would only save a negligible amount of work, should a Rust programmer still prefer it over a plain `String`, for the sake of making allocations visible in the code?
+
+- Teams: a · team-local ids: `a-sR15-f008241-q1` (f008241)
+- Domains: core, web
+- Concepts: `Cow`; allocation; idiomatic Rust
+- Positions:
+  - `cow-for-allocation-visibility--p1` — prefer-cow-for-allocation-visibility-even-at-negligible-gain
+    - **gregstoll** · Source `f008241` · date 2025-01-08 · locator section "Step 2: Adding 16-bit float support", paragraph on the `Cow<&str>` commit — switched query parsing from `String` to `std::borrow::Cow<&str>`; likes that Rust makes allocations visible, which pushes them to avoid allocations even when the performance impact is minuscule Quote: "I really like how obvious Rust makes it when you're doing allocations and that makes me want to avoid them, even when the performance impact is minuscule." [`a-sR15-f008241-c1`, team a]
+- Positions seen by the extractor (`a-sR15-f008241-q1`): prefer-cow-for-allocation-visibility-even-at-negligible-gain (gregstoll)
 
 ### `cpp-binding-tool-choice`
 
@@ -1358,6 +1638,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Ltrlg** · Source `f009334` · date 2026-04-22 · locator comment ~21 — a version with a serious security vulnerability should be yanked outright, not merely soft-deprecated, since yanking is proportionate to serious risk Quote: "In this case that version really should be yanked ... If the vulnerability can be qualified as 'serious' then yanking is not 'way too alarmist'" [`b-sb23-f009334-c5`, team b]
 - Positions seen by the extractor (`b-sb23-f009334-q1`): new dedicated deprecate mechanism needed; existing tools (yank for serious cases, badges.maintenance for the rest) already suffice
 
+### `crdt-vs-coordination`
+
+**Question.** For a multi-actor collaborative system (humans and agents editing together), should convergence come from CRDTs or from a coordinating mechanism (locking, operational transform, a single authoritative server)?
+
+- Teams: b · team-local ids: `b-sR11-f005071-q1` (f005071)
+- Domains: distributed
+- Concepts: CRDTs; distributed state; concurrent editing
+- Positions:
+  - `crdt-vs-coordination--p1` — convergence for a multi-actor, human-and-agent live document should come from CRDTs rather than a coordinating or locking mechanism
+    - **Nathan Sobo (Zed founder)** · Source `f005071` · date 2026-09-01 · locator "The dependency tree exists today" section — lists CRDTs, "formalized in 2011," as "the center of Zed's own work for the past decade," letting a Delta worktree be "edited by several people and agents on different continents at once" with no coordination step Quote: "Convergence without coordination." [`b-sR11-f005071-c1`, team b]
+- Positions seen by the extractor (`b-sR11-f005071-q1`): CRDTs, no coordination required
+
 ### `current-thread-runtime-for-blocking`
 
 **Question.** Is it acceptable practice to run blocking synchronous I/O (e.g. database calls) inside a dedicated single-threaded ("current_thread") Tokio runtime on its own OS thread, or does limiting a Tokio runtime to a single thread carry negative internal ramifications that make this an anti-pattern except when no other OS threads are available?
@@ -1381,6 +1673,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `custom-allocator-restart-persistence--p1` — custom-allocator-for-restart-persistence
     - **Graham King** · Source `f005836` · date 2024-01-17 · locator § opening / "An allocator backed by persistent memory" — combining systemd's FD store, `memfd_create`, and a custom Rust `Allocator` lets an object's backing memory survive a `systemctl restart`, as an alternative to his own prior practice of serializing state to Redis or a temp file on restart Quote: "We are going to stitch three things together to make Rust objects that survive program restart." [`b-sb19-f005836-c1`, team b]
 - Positions seen by the extractor (`b-sb19-f005836-q1`): custom-allocator-for-restart-persistence (Graham King)
+
+### `custom-bytes-type-vs-vec-u8`
+
+**Question.** At an API boundary where allocation strategy matters (e.g. future backend-managed/pinned memory), should owned byte buffers be typed as `Vec<u8>` or a custom wrapper type?
+
+- Teams: b · team-local ids: `b-sR08-f003587-q3` (f003587)
+- Domains: ml
+- Concepts: buffer/allocator abstraction; API design; GPU memory
+- Positions:
+  - `custom-bytes-type-vs-vec-u8--p1` — custom-bytes-type-over-vec-u8-at-boundaries
+    - **nathanielsimard** · Source `f003587` · date 2025-10-09 · locator PR #3792, review comment 2025-10-09T13:32:53Z — asks that owned buffer types at the store's API boundary use `burn_common::Bytes` rather than `Vec<u8>`, while leaving borrowed `&[u8]`/`&mut [u8]` as-is, so a future backend-managed allocation strategy (e.g. pinned GPU memory) can be substituted later. Quote: "We should replace all instances of `Vec<u8>` by `burn_common::Bytes`, `&[u8]` and `&mut [u8]` are OK" [`b-sR08-f003587-c3`, team b]
+- Positions seen by the extractor (`b-sR08-f003587-q3`): custom-bytes-type-over-vec-u8-at-boundaries
 
 ### `custom-wasm-target-vs-wasi`
 
@@ -1427,6 +1731,44 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **antimora** · Source `f002567` · date 2025-05-02 · locator comment @antimora 2025-05-02T18:44:04Z — after an offline discussion, decided to keep PyTorch and SafeTensors doc sections separate (same format/language) rather than merge them now, calling it easier for the time being. Quote: "We discussed offline to keep two sections separate but have the same format and language between the two... For now it seems it's easier to have two." [`b-sb09-f002567-c5`, team b]
 - Positions seen by the extractor (`b-sb09-f002567-q1`): dedicated-decoupled-recorder-from-the-start (antimora), duplicate-now-refactor-later (wandbrandon), reduce-duplication-before-merge (laggui)
 
+### `dedicated-test-for-overlapping-case`
+
+**Question.** When a new macro feature's behavior largely overlaps existing generic tests, should reviewers ask for a dedicated test of the new case anyway, or is that redundant?
+
+- Teams: a · team-local ids: `a-sR01-f000538-q2` (f000538)
+- Domains: web
+- Concepts: test coverage; proc-macro testing
+- Positions:
+  - `dedicated-test-for-overlapping-case--p1` — a new prop-label feature should get its own dedicated test even where the new code path overlaps generic behavior
+    - **cecton** · Source `f000538` · date 2023-11-06 · locator PR #3509, comment 2023-11-06T14:58:24Z — asks the author to add a test covering `Option<AttrValue>` prop values specifically for the new dynamic-prop-label path. Quote: "Maybe you can add a test to make sure this case also works?" [`a-sR01-f000538-c2`, team a]
+  - `dedicated-test-for-overlapping-case--p2` — a dedicated test for behavior already covered by more general, feature-independent tests is unnecessary
+    - **kirillsemyonkin** · Source `f000538` · date 2023-11-06 · locator PR #3509, comment 2023-11-06T15:34:46Z — questions the value of the requested test, arguing optional-value handling is already exercised by tests not specific to dynamic props. Quote: "Optional values for properties are supposed to be already tested by more general tests that are not inherent to dynamic props." [`a-sR01-f000538-c3`, team a]
+- Positions seen by the extractor (`a-sR01-f000538-q2`): "add a dedicated test for the new case" (cecton); "redundant — already covered by more general tests" (kirillsemyonkin)
+
+### `dedupe-transitive-dependency-versions`
+
+**Question.** Should a Rust library actively chase down and eliminate duplicate transitive dependency versions (e.g., two copies of `rustls`) in its dependency tree?
+
+- Teams: a · team-local ids: `a-sR05-f001981-q2` (f001981)
+- Domains: core, decentralized-iroh
+- Concepts: dependency management; crate ecosystem bloat; semver
+- Positions:
+  - `dedupe-transitive-dependency-versions--p1` — actively reduce duplicated transitive dependencies by upgrading
+    - **matheus23 (iroh maintainer, n0)** · Source `f001981` · date 2024-09-04 · locator "🤝 Transitive dependencies" section — upgrading iroh's `quinn` dependency was valued because it let iroh drop duplicated copies of shared dependencies, shrinking its overall dependency footprint Quote: "we were generally able to reduce duplicated dependencies" [`a-sR05-f001981-c2`, team a]
+- Positions seen by the extractor (`a-sR05-f001981-q2`): actively reduce duplication via upgrades
+
+### `defensive-guards-for-unlikely-failures`
+
+**Question.** how much defensive engineering (RAII/type-level guards) is warranted against a failure mode judged unlikely to occur in practice
+
+- Teams: a · team-local ids: `a-sR14-f007341-q1` (f007341)
+- Domains: frontend, web
+- Concepts: none given
+- Positions:
+  - `defensive-guards-for-unlikely-failures--p1` — guard-even-theoretical-leaks
+    - **Moss** · Source `f007341` · date 2026-02-09 · locator "Polish" section — worth adding an RAII (`Drop`-based) guard for a resource-leak path he judges may never actually occur, over leaving it unhandled — appeals to Value: correctness over minimal/pragmatic effort. Quote: "this is a problem in theory and may not ever occur in practice, but I figured it would be best to guard for this using some good old-fashioned RAII." [`a-sR14-f007341-c1`, team a]
+- Positions seen by the extractor (`a-sR14-f007341-q1`): guard-even-theoretical-leaks (Moss)
+
 ### `defer-multithreaded-encoding`
 
 **Question.** When a resource (a Metal command buffer/lock) needs coordinated access from multiple threads, should the implementation wait on the lock (with a timeout) now, or defer multithreaded encoding until single-threaded use has proven the design?
@@ -1438,6 +1780,30 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `defer-multithreaded-encoding--p1` — defer-multithreading-decision
     - **Narsil** · Source `f000569` · date 2023-12-15 · locator PR #1318, comment 2023-12-15T11:24:19Z — in multithreaded encoding we'd need to decide whether to wait on the lock with a timeout (since deadlocks could happen); okay with delaying that decision until the single-threaded implementation has proven its worth, since multithreaded command encoding doesn't yet show much benefit Quote: "I think I'm ok delaying this decision when the current implem for single threaded as proven it's worth" [`b-sb03-f000569-c1`, team b]
 - Positions seen by the extractor (`b-sb03-f000569-q1`): defer-multithreading-decision
+
+### `dependency-upgrade-regression-handling`
+
+**Question.** When a transitive dependency upgrade trades one bug for another, should you pin to the older broken version, ship with the new regression, or hold the release?
+
+- Teams: b · team-local ids: `b-sR04-f001749-q2` (f001749)
+- Domains: desktop-cli-ui
+- Concepts: dependency version pinning; semver upgrades; regression management
+- Positions:
+  - `dependency-upgrade-regression-handling--p1` — never-ship-a-known-crash-prefer-soft-guardrails
+    - **emilk** · Source `f001749` · date 2024-07-23 · locator PR #4849, comment 2024-07-23T13:27:16Z — rejects shipping a version that always crashes on exit on macOS as a tradeoff; between that, shipping with a narrower crash on one feature path (with a guardrail steering users away from it), and blocking the release on an upstream fix, treats the always-crash option as off the table. Quote: "Having eframe always crash on exit on Mac is not an option imho." [`b-sR04-f001749-c2`, team b]
+- Positions seen by the extractor (`b-sR04-f001749-q2`): never-ship-a-known-crash-prefer-soft-guardrails
+
+### `deprecate-gradually-vs-break`
+
+**Question.** When retiring a legacy compatibility path, should maintainers break it immediately or deprecate it gradually with warnings?
+
+- Teams: b · team-local ids: `b-sR11-f005050-q2` (f005050)
+- Domains: wasm
+- Concepts: breaking changes; deprecation policy; semver
+- Positions:
+  - `deprecate-gradually-vs-break--p1` — a deprecated compatibility shim (WAGI) should be phased out with warnings and migration time, not removed outright
+    - **The Spin Project** · Source `f005050` · date 2026-08-26 · locator "A heads-up on WAGI" section — 4.1 starts printing deprecation warnings and drops WAGI examples from the repo, but existing WAGI components keep running Quote: "this is the start of a gradual, managed deprecation, not a break" [`b-sR11-f005050-c2`, team b]
+- Positions seen by the extractor (`b-sR11-f005050-q2`): gradual, warned deprecation over an immediate break
 
 ### `desktop-webview-ipc-vs-single-context`
 
@@ -1467,6 +1833,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `docs-as-rust-vs-markdown--p3` — downgrade-to-plain-markdown-plus-custom-component-delimiters
     - **Madoshakalaka** · Source `f004399` · date 2026-04-11 · locator comment @Madoshakalaka 2026-04-11T08:52:48Z — after researching mdx-capable crates, decides to drop mdx/Rust-source authoring in favor of plain Markdown with a custom comment-delimiter convention for embedding Yew components. Quote: "I think we should downgrade all our mdx to plain markdown files. And invent our own way to embed Yew components instead." [`b-sb14-f004399-c4`, team b]
 - Positions seen by the extractor (`b-sb14-f004399-q1`): docs-as-rust-source-for-compile-time-checks-and-dedup (Madoshakalaka, initial design), keep-markdown-for-authoring-ergonomics (WorldSEnder), downgrade-to-plain-markdown-plus-custom-component-delimiters (Madoshakalaka, revised after feedback)
+
+### `doctests-must-compile`
+
+**Question.** Should code blocks embedded in Rust doc comments be required to compile as doctests, or is it acceptable to leave illustrative snippets non-compiling?
+
+- Teams: a · team-local ids: `a-sR07-f002347-q1` (f002347)
+- Domains: core
+- Concepts: doctests; documentation conventions
+- Positions:
+  - `doctests-must-compile--p1` — require-all-blocks-to-compile
+    - **BD103** · Source `f002347` · date 2024-12-17 · locator comment on CI failures (2024-12-17T17:43:35Z) — Bevy's convention requires every doc-comment code block to be valid, compiling Rust because the project treats them as unit tests too Quote: "We require all code blocks to be valid Rust, since we treat them as unit tests as well." [`a-sR07-f002347-c1`, team a]
+- Positions seen by the extractor (`a-sR07-f002347-q1`): require-all-blocks-to-compile (BD103)
 
 ### `dyn-compatibility-rules-relaxation`
 
@@ -1582,6 +1960,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Amos (fasterthanlime)** · Source `f011413` · date 2026-06-11 · locator [08:11]-[10:12] — Serde needs an explicit `#[serde(with = ...)]` annotation to serialize `Vec<u8>` as raw bytes instead of a numeric sequence, because Rust has no stable (or nightly-safe) specialization to detect the element type automatically; a reflection-based serializer can inspect the concrete element type at runtime and pick the right encoding without any annotation Quote: "it would be nice if Serde was actually able to like do that for us without the annotation, right? But that would mean... you would have to specialize on the T... which is not a thing in Rust stable and should not be a thing in Rust nightly either." [`b-sb24-f011413-c2`, team b]
 - Positions seen by the extractor (`b-sb24-f011413-q2`): reflection-avoids-the-missing-annotation-problem (Amos)
 
+### `embedded-async-vs-run-to-completion`
+
+**Question.** Should real-time/embedded Rust frameworks model concurrency with async/await tasks rather than classical run-to-completion/interrupt-only tasks?
+
+- Teams: a · team-local ids: `a-sR01-f000227-q2` (f000227)
+- Domains: embedded
+- Concepts: async/await; static allocation; Futures; SRP run-to-completion requirement
+- Positions:
+  - `embedded-async-vs-run-to-completion--p1` — async/await task modeling, compiled to static per-priority executors, is preferable to manual sub-task/state-machine splitting for real-time embedded work
+    - **RTIC project (rtic.rs maintainers, unnamed individually)** · Source `f000227` · date unknown (living document, no publish/version date given) · locator § "RTIC into the Future" — the maintainers argue async/await brings "improved ergonomics" over manual sub-task splitting, is compatible with SRP because the compiler forbids awaiting while holding a resource, and avoids dynamic allocation (which would panic on OOM) by using compile-time-generated static executors. Quote: "So with the technical stuff out of the way, what does async/await bring to the table? The answer is - improved ergonomics!" [`a-sR01-f000227-c2`, team a]
+- Positions seen by the extractor (`a-sR01-f000227-q2`): "async/await, statically compiled, improves ergonomics without violating SRP or requiring dynamic allocation" (RTIC project)
+
 ### `embedded-crash-policy-kernel-vs-supervisor`
 
 **Question.** In an embedded OS kernel, should crash-recovery policy (restart strategy, backoff, giving up) be hardcoded into the kernel, or left to an application-defined supervisor task?
@@ -1654,6 +2044,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Oakchris1955** · Source `f007213` · date 2025-07-26 · locator section "The solution" — instead of two constructors (one for read-only, one for read-write), keep one constructor and one `sync_fn` field defaulted to `None`; only impls bound on `Read + Write + Seek` can set it to `Some`, which fixes a bug where RWFile writes silently failed to sync Quote: "Instead of using 2 constructors, one for a RO filesystem and another for a R/W filesystem, we use one for both cases." [`b-sb20-f007213-c1`, team b]
 - Positions seen by the extractor (`b-sb20-f007213-q1`): runtime-checked optional field (`sync_fn: Option<SyncFn>`) set only from impls gated on the stronger bound, single constructor for both RO/RW cases (Oakchris1955)
 
+### `encapsulate-invariant-check-method`
+
+**Question.** Should a safety/dense-storage invariant that several call sites rely on be duplicated inline as ad hoc boolean expressions, or encapsulated as one named method on the owning type that states the contract?
+
+- Teams: b · team-local ids: `b-sR12-f005085-q1` (f005085)
+- Domains: core, ml
+- Concepts: encapsulation; invariants; unsafe; maintainability
+- Positions:
+  - `encapsulate-invariant-check-method--p1` — encapsulate-as-named-method
+    - **antimora (Tracel AI / burn maintainer)** · Source `f005085` · date 2026-09-08 · locator PR review comment, 2026-09-08T21:11:40Z — the same dense/non-broadcast check is duplicated verbatim at two call sites gating `storage_mut()`, so drift between them would silently produce a bad write instead of a compile error; it should be a single method on `Layout` that documents the actual contract Quote: "This is duplicated verbatim at `ops/gather_scatter.rs:18`. Both copies gate `storage_mut()`, so a drift between them is a bad write rather than a compile error... Reads better as a single method on `Layout` carrying the actual contract." [`b-sR12-f005085-c1`, team b]
+- Positions seen by the extractor (`b-sR12-f005085-q1`): encapsulate-as-named-method
+
 ### `encode-invariant-in-representation`
 
 **Question.** Should a type's representation encode an invariant directly (e.g. storing `log2(page_size)` instead of the raw value) to make invalid states unrepresentable, rather than validating separately at each use site?
@@ -1665,6 +2067,31 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `encode-invariant-in-representation--p1` — encode-invariant-in-representation
     - **fitzgen** · Source `f001582` · date 2024-06-10 · locator PR description, 2024-06-10T20:15:41Z — storing log2(page_size) instead of the raw page size cuts down on invalid states and the assertions needed elsewhere Quote: "In general, we store the log2(page_size) rather than the page size directly. This helps cut down on invalid states and properties we need to assert." [`b-sb05-f001582-c1`, team b]
 - Positions seen by the extractor (`b-sb05-f001582-q1`): encode-invariant-in-representation (fitzgen)
+
+### `enum-vs-bool-for-state`
+
+**Question.** Should a piece of state with more than two meaningful outcomes be represented as a bool (with special-cased checks layered around it) or as a named enum?
+
+- Teams: b · team-local ids: `b-sR08-f003531-q1` (f003531)
+- Domains: desktop-cli-ui
+- Concepts: enums; boolean blindness; state/API design; type-safety
+- Positions:
+  - `enum-vs-bool-for-state--p1` — enum-over-bool-for-tri-state-clarity
+    - **MrSubidubi** · Source `f003531` · date 2025-10-10 · locator PR #38102, review comment 2025-10-10T21:34:30Z — instead of adding another special-cased check around the existing `serialize_dirty_buffers` boolean, suggests changing it to a named enum (`Always`/`Dirty`/`Never`) for readability. Quote: "Could we perhaps fix the logic above instead or change `self.serialize_dirty_buffers` to be an enum instead ... With that, this might be more readable and understandable, what do you think?" [`b-sR08-f003531-c1`, team b]
+    - **im-lunex** · Source `f003531` · date 2025-10-16 · locator PR #38102, comment 2025-10-16T09:45:09Z — implemented the suggested `SerializationMode` enum in place of the boolean flag and judges it the safer, clearer choice. Quote: "The use of enum was the right decision - so neater and more secure." [`b-sR08-f003531-c2`, team b]
+- Positions seen by the extractor (`b-sR08-f003531-q1`): enum-over-bool-for-tri-state-clarity
+
+### `enum-vs-struct-of-optionals-for-extension`
+
+**Question.** When a type may need to represent additional variants in the future (e.g. new transport kinds), should it be modeled as a `#[non_exhaustive]` enum of variants, or as a struct with independent optional fields per kind?
+
+- Teams: b · team-local ids: `b-sR08-f003731-q1` (f003731)
+- Domains: decentralized-iroh
+- Concepts: enums; `#[non_exhaustive]`; API extensibility; semver
+- Positions:
+  - `enum-vs-struct-of-optionals-for-extension--p1` — non-exhaustive-enum-over-struct-of-optionals
+    - **ramfox** · Source `f003731` · date 2025-10-22 · locator § "Future proofing: Introducing TransportAddr" — replaced two independent fields (an optional relay URL and a set of socket addresses) with a single `#[non_exhaustive] enum TransportAddr { Relay(RelayUrl), Ip(SocketAddr) }`, so future transport kinds (e.g. WebRTC) can be added as new variants without another breaking change. Quote: "To combine them, and to allow for additions in the future, they are now represented as variants on a TransportAddr" [`b-sR08-f003731-c1`, team b]
+- Positions seen by the extractor (`b-sR08-f003731-q1`): non-exhaustive-enum-over-struct-of-optionals
 
 ### `epoll-vs-io-uring`
 
@@ -1715,6 +2142,30 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `error-enum-scope-module-vs-function--p1` — scope error enums per-function, not per-module
     - **dig, b5, and ramfox (iroh team)** · Source `f005149` · date 2025-08-22 · locator § Concrete-error writing guidelines / Error enums are scoped to functions not modules — describe starting with one big per-module enum, finding it unwieldy, and moving to a nested/scoped hierarchy (e.g. `DialError` inside `ConnectError`) with names descriptive of the failure surface Quote: "Lean toward error enum names that are descriptive of the error, when logical" [`a-sa14-f005149-c2`, team a]
 - Positions seen by the extractor (`a-sa14-f005149-q2`): lean toward small, descriptively-named, per-function error enums (e.g. `ConnectError`, `ParseError`) over one catch-all per-module enum, because the name alone then communicates the failure surface
+
+### `explicit-vs-convenience-memory-defaults`
+
+**Question.** Should a language's memory-model default favor explicitness/performance (opt into convenience, as Rust's move/borrow-by-default with Cow/Rc as opt-in) or convenience (opt into performance, as Swift's copy-on-write-by-default with ownership as opt-in)?
+
+- Teams: b · team-local ids: `b-sR12-f005668-q1` (f005668)
+- Domains: core, swift-interop
+- Concepts: ownership; borrowing; Cow; defaults; ergonomics vs. performance
+- Positions:
+  - `explicit-vs-convenience-memory-defaults--p1` — domain-dependent-tradeoff
+    - **nmn (nmn.sh blog author)** · Source `f005668` · date 2026-01-31 · locator section "Convenience has its costs" — neither default is simply better; Rust's performance-first default suits systems, embedded, compilers and browser engines, Swift's convenience-first default suits UI, servers and parts of compilers/operating systems, and the author expects the overlap between the two to grow over time Quote: "I would say both languages have their uses. Rust is better for systems and embedded programming... Swift is better for writing UI and servers and some parts of compilers and operating systems. Over time I expect to see the overlap get bigger." [`b-sR12-f005668-c1`, team b]
+- Positions seen by the extractor (`b-sR12-f005668-q1`): domain-dependent-tradeoff
+
+### `explicit-vs-implicit-indirection`
+
+**Question.** Should indirection for a recursive data type be explicit (the programmer writes `Box<T>`) or implicit (a compiler-inferred/annotated indirection, as Swift's `indirect` keyword)?
+
+- Teams: b · team-local ids: `b-sR12-f005668-q2` (f005668)
+- Domains: core, swift-interop
+- Concepts: recursive types; Box; indirection; enums
+- Positions:
+  - `explicit-vs-implicit-indirection--p1` — explicit-favorably-framed
+    - **nmn (nmn.sh blog author)** · Source `f005668` · date 2026-01-31 · locator section "Rust's compiler catches problems. Swift's compiler solves some of them" — contrasting Rust's `Box<TreeNode<T>>` for a recursive enum with Swift's `indirect` keyword, the author frames Rust's requirement to write the indirection explicitly as forcing the programmer to confront the problem directly, versus Swift handling it more automatically Quote: "This makes the problem explicit and forces you to deal with it directly, Swift is a little more, automatic." [`b-sR12-f005668-c2`, team b]
+- Positions seen by the extractor (`b-sR12-f005668-q2`): explicit-favorably-framed
 
 ### `expose-fixed-array-vs-wrapper-type`
 
@@ -1888,6 +2339,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **eggyal** · Source `f009316` · date 2026-03-12 · locator linked rust-lang/rust issue (opened 2026-03-10), cited 2026-03-12T06:00:48.747Z — Filed an I-unsound bug showing nightly's experimental `final` associated functions behave inconsistently with `dyn Trait` dispatch (an `assert_ne!` on `TypeId::of` via `dyn Trait` fails), confirming the vtable/soundness concern is a live, unresolved implementation problem rather than a purely theoretical one. Quote: "`final` methods should work the same as without it (if it works without it)" [`a-sa19-f009316-c5`, team a]
 - Positions seen by the extractor (`a-sa19-f009316-q1`): support-final-methods; skeptical-limited-value-vs-free-functions; final-methods-need-vtable-for-soundness
 
+### `fine-grained-reactivity-vs-vdom`
+
+**Question.** should a Rust web UI framework use fine-grained (signal-based) reactivity or virtual-DOM diffing
+
+- Teams: a · team-local ids: `a-sR14-f005702-q1` (f005702)
+- Domains: frontend, web
+- Concepts: none given
+- Positions:
+  - `fine-grained-reactivity-vs-vdom--p1` — fine-grained-reactivity
+    - **Sycamore** · Source `f005702` · date 2026-04-01 · locator front page, "Fine-Grained Reactivity" feature blurb — fine-grained reactivity is the right model, contrasted implicitly with vdom-diffing frameworks (e.g. Yew). Quote: "Sycamore's reactivity system is fine-grained, meaning that only the parts of your app that need to be updated will be." [`a-sR14-f005702-c1`, team a]
+- Positions seen by the extractor (`a-sR14-f005702-q1`): fine-grained-reactivity (Sycamore)
+
 ### `fixed-point-loop-vs-event-retrigger`
 
 **Question.** Should a bounded, safety-first multi-pass graph algorithm favor a simple iterative fixed-point loop, or a more complex event-driven re-trigger design?
@@ -1923,6 +2386,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `frontend-e2e-pure-rust-vs-js--p1` — pure-rust-e2e-no-js-deps
     - **Madoshakalaka** · Source `f004367` · date 2026-03-05 · locator PR description 2026-03-05T15:54:42Z — builds SSR hydration E2E tests as a pure-Rust `wasm-bindgen-test` harness specifically so the project avoids adding non-Rust E2E dependencies like Playwright, Cypress or Selenium Quote: "This is a pure-Rust E2E testing approach that requires no non-Rust dependencies like Playwright, Cypress, or Selenium." [`b-sb13-f004367-c1`, team b]
 - Positions seen by the extractor (`b-sb13-f004367-q1`): pure-rust-e2e-no-js-deps (Madoshakalaka; its-the-shrimp and futursolo's stances are reported second-hand in this source, not independently quoted)
+
+### `frontend-hook-naming`
+
+**Question.** What naming convention should Rust reactive-frontend-framework hooks use, given no established convention exists across the ecosystem?
+
+- Teams: a · team-local ids: `a-sR07-f002271-q2` (f002271)
+- Domains: frontend
+- Concepts: hook naming conventions; API naming
+- Positions:
+  - `frontend-hook-naming--p1` — use_-prefixed-noun-phrase
+    - **lukechu10** · Source `f002271` · date 2024-11-03 · locator comment on router.rs (2024-11-03T22:54:24Z) — acknowledging no precise convention exists, proposes naming query/hash accessor hooks with a `use_<noun>` pattern (`use_search_query`, `use_location_hash`) Quote: "Although there isn't really a precise convention here, I think the hook would be better named `use_search_query` instead." [`a-sR07-f002271-c2`, team a]
+- Positions seen by the extractor (`a-sR07-f002271-q2`): use_-prefixed-noun-phrase (lukechu10)
 
 ### `fullstack-reactive-complexity-essential`
 
@@ -2050,6 +2525,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Quanyi Ma** · Source `f011178` · date 2024-11-18 · locator ~06:14-11:22 — argues centralized hosts like GitHub can unilaterally access all data or use it for AI training/deletion, so his project (Mega, built in Rust) stores Git objects in a database (mirroring how Google's Piper and Meta's Sapling scale monorepos) and layers a GTM-based P2P network on top so repositories can be cloned/pushed without a single central node Quote: "being centralized ... can access all data and can take action like ... training AI or deleting projects" [`b-sb23-f011178-c1`, team b]
 - Positions seen by the extractor (`b-sb23-f011178-q1`): replace file-based Git storage with a database-backed engine and decentralize the hosting layer over a P2P network, in Rust, to avoid single-vendor control and scale to monorepo sizes
 
+### `global-statics-vs-per-request-state`
+
+**Question.** Under a concurrent-instance execution model, should shared state use global statics/OnceCell, or be scoped per-request with explicit synchronization?
+
+- Teams: b · team-local ids: `b-sR10-f004809-q2` (f004809)
+- Domains: cloud-workers, wasm
+- Concepts: shared state; concurrency; statics
+- Positions:
+  - `global-statics-vs-per-request-state--p1` — prefer-per-request-scoped-state
+    - **The Spin Project (Fermyon / CNCF Spin, institution)** · Source `f004809` · date 2026-06-15 · locator section "Heads up on global state" — since one instance can now serve concurrent in-flight requests, code that used static/module-level/OnceCell "global" state must be audited and moved to per-request state or explicit synchronization Quote: "Audit any static, module-level, or OnceCell state and reach for per-request state or explicit synchronization where needed." [`b-sR10-f004809-c2`, team b]
+- Positions seen by the extractor (`b-sR10-f004809-q2`): prefer-per-request-scoped-state
+
 ### `gpu-async-await-vs-dsl`
 
 **Question.** For structured concurrent GPU programming, is it better to reuse an existing general-purpose language's async/await abstraction (Rust's `Future`/async-await) than to adopt a purpose-built DSL/compiler stack (JAX, Triton, NVIDIA CUDA Tile)?
@@ -2128,6 +2615,20 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **smarcd** · Source `f005000` · date 2026-08-14 · locator comment @smarcd 2026-08-14T05:14:00Z — discovers that one candidate identity-key field (`wasm_call`) starts as `None` and is filled in place later, so it can't safely be used alone as a hash/identity key (it would collide two never-imported functions, and change a function's own key mid-lifetime); keeps `(vmctx, array_call)` plus `type_index` instead. Quote: "Two never-imported host functions both read `wasm_call = None`, so they'd collide... Even a single `Func`'s key would change over the store's lifetime as it flips `None → Some`, which breaks `HashMap` use outright." [`b-sb16-f005000-c9`, team b]
 - Positions seen by the extractor (`b-sb16-f005000-q2`): implement-standard-traits-on-bare-handle (smarcd, initial), store-scoped-explicit-methods (cfallin, smarcd revised)
 
+### `hard-dependency-vs-interface-decoupling`
+
+**Question.** Should a HAL crate that needs allocator callback functions (e.g. `esp-wifi` needing `free_internal_heap`/`allocate_from_internal_ram`) take a hard Cargo dependency on the crate that implements them (e.g. `esp-alloc`), or keep the two crates decoupled behind a plain function-based interface any allocator can supply?
+
+- Teams: a · team-local ids: `a-sR06-f001989-q1` (f001989)
+- Domains: embedded
+- Concepts: crate coupling; global allocator; feature flags
+- Positions:
+  - `hard-dependency-vs-interface-decoupling--p1` — `esp-wifi` should not take a hard dependency on `esp-alloc`; the two free functions should stay a plain interface so `esp-wifi` doesn't need a new release whenever `esp-alloc` releases
+    - **bjoernQ** · Source `f001989` · date 2024-09-06 · locator PR #2099, comment 2024-09-06T09:38:15Z — explains the design choice was driven by wanting to avoid forcing a release of `esp-wifi` on every `esp-alloc` release. Quote: "I wanted to avoid a hard dependency in `esp-wifi` to not require a new release whenever `esp-alloc` gets a release." [`a-sR06-f001989-c1`, team a]
+  - `hard-dependency-vs-interface-decoupling--p2` — a hard dependency from `esp-wifi` on `esp-alloc` is acceptable as long as it sits behind a feature flag, preserving an opt-out for users supplying their own allocator
+    - **MabezDev** · Source `f001989` · date 2024-09-06 · locator PR #2099, comment 2024-09-06T11:10:19Z — pushes back on avoiding the dependency outright, proposing instead that the allocator-callback functions move into `esp-wifi` behind an `esp-alloc` feature. Quote: "Imo, the hard dependency is fine as we can add it behind a feature in esp-wifi." [`a-sR06-f001989-c2`, team a]
+- Positions seen by the extractor (`a-sR06-f001989-q1`): "avoid the hard dependency, keep it an interface" (bjoernQ); "a hard dependency behind a feature flag is fine" (MabezDev)
+
 ### `hook-api-pointer-vs-address`
 
 **Question.** Should a low-level allocator-hook API pass the raw pointer type (`*mut u8`) through to callbacks, or reduce it to an address (`usize`) since only the address is needed?
@@ -2141,6 +2642,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `hook-api-pointer-vs-address--p2` — an address is sufficient information for the hook
     - **bugadani** · Source `f004512` · date 2026-04-01 · locator comment 2026-04-01T20:06:56Z — responds to renkenono's pointer-type objection by saying they aren't sure what more information the hook would need beyond the address Quote: "I'm not entirely sure what information you need other than the pointer's address" [`a-sa11-f004512-c3`, team a]
 - Positions seen by the extractor (`a-sa11-f004512-q2`): keep the pointer type to avoid loss of information, the caller shouldn't alter it anyway; vs. an address is all the information a tracking hook actually needs
+
+### `host-and-embedded-cargo-layout`
+
+**Question.** Cargo project layout when combining a host crate and an embedded/different-toolchain crate
+
+- Teams: a · team-local ids: `a-sR14-f004865-q1` (f004865)
+- Domains: embedded
+- Concepts: none given
+- Positions:
+  - `host-and-embedded-cargo-layout--p1` — separate-projects
+    - **Klaehn** · Source `f004865` · date 2026-07-02 · locator "Basic setup" section — keep host and embedded (cross-compiled) code in fully separate, non-workspace Cargo projects when toolchains differ and a patched dependency is needed for one side only. Quote: "Note that we need different toolchains and want to keep the option to use a patch of iroh for the ESP32 variant, so the two directories are completely separate Rust projects. We do not use a workspace." [`a-sR14-f004865-c1`, team a]
+- Positions seen by the extractor (`a-sR14-f004865-q1`): separate-projects (Klaehn)
 
 ### `hot-patch-vs-dwarf-debugging`
 
@@ -2166,18 +2679,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `http-body-unknown-size--p2` — cautious-narrow-fix
     - **davidpdrsn (axum maintainer)** · Source `f004637` · date 2026-05-02 · locator axum issue #3741, comment 2026-05-02T12:49:09Z — resists making `()` default to an unknown body size because it could silently change behavior for unrelated responses; wants a fix that works for users unfamiliar with axum's APIs rather than one requiring them to opt in explicitly Quote: "Changing `()` to have an unknown body size feels too broad to me. I worry that might impact other responses using `()` that don't care about HEAD requests." [`a-sa12-f004637-c2`, team a]
 - Positions seen by the extractor (`a-sa12-f004637-q1`): distinguish-unknown-from-zero (lorenzleutgeb, proposed Body::unknown()), collapse-to-known-zero (status quo, http_body_util::Empty)
-
-### `human-written-code-standard`
-
-**Question.** When a project's code is partly produced with LLM assistance in earlier iterations, should a specific piece of performance-critical work be held to a "human-written only" personal standard?
-
-- Teams: a · team-local ids: `a-sa15-f005821-q2` (f005821)
-- Domains: core
-- Concepts: ai-assisted-rust; authorship-norms
-- Positions:
-  - `human-written-code-standard--p1` — human-written-only-as-personal-standard
-    - **Matt Keeter** · Source `f005821` · date 2026-04-05 · locator opening paragraphs, linking to his earlier post "Experimenting with LLMs" — states plainly, as a personal standard rather than an argued position, that all the tail-call code and the blog post itself are human-written, after an earlier LLM-assisted port "proved controversial" Quote: "I'm pleased to declare that all of the tail-call code is human-written... (This blog post is also entirely human-written, per my personal standards)" [`a-sa15-f005821-c2`, team a]
-- Positions seen by the extractor (`a-sa15-f005821-q2`): human-written-only-as-personal-standard
 
 ### `impl-trait-syntax-reuse`
 
@@ -2234,6 +2735,30 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **kevincox** · Source `f009196` · date 2024-08-16 · locator reply, 2024-08-16T13:23:59.223Z — Wants an Instant minimum/maximum (or equivalent) to support saturating arithmetic in a token-bucket rate limiter, where moving a timestamp below the representable minimum should saturate rather than panic. Quote: "For my use case it is preferable to saturate." [`a-sa19-f009196-c4`, team a]
 - Positions seen by the extractor (`a-sa19-f009196-q1`): oppose-instant-extrema-fraught; instant-extrema-fraught-prefer-saturating-ops; support-instant-bound-for-saturating-arithmetic
 
+### `internal-hazmat-api-for-performance`
+
+**Question.** When a crate's public API doesn't support an operation needed for performance (here, batch-hashing many small blobs with BLAKE3's SIMD `hash_many`), should a practitioner reach into the crate's internal/"hazmat" API and accept unchecked, precondition-violating footguns (silently wrong results rather than a panic on some platforms) for a large speedup, or stay within the safe public API and accept lower throughput?
+
+- Teams: a · team-local ids: `a-sR09-f003702-q1` (f003702)
+- Domains: core, decentralized-iroh
+- Concepts: internal/hazmat API access; unchecked preconditions; SIMD (`Platform::hash_many`); performance vs. API safety guarantees
+- Positions:
+  - `internal-hazmat-api-for-performance--p1` — it is worth bypassing BLAKE3's public API and using its internal `Platform::hash_many` SIMD entry point to batch-hash many small blobs, even though the internal function has unchecked preconditions that silently produce wrong results (rather than panicking) on real SIMD platforms
+    - **Rüdiger Klaehn (n0, iroh/iroh-blobs)** · Source `f003702` · date 2025-10-15 · locator § "Using the internal platform API" and the note under § "Putting it all together" — after finding the public BLAKE3 API has no support for hashing multiple independent blobs at once, the author repurposes the internal, precondition-checked-only-outside `hash_many` SIMD entry point to get a 17x combined SIMD+rayon speedup over sequential hashing, explicitly noting the internal function will silently produce wrong results if its constraints (chunk count a multiple of `MAX_SIMD_DEGREE`, chunk length a multiple of `BLOCK_LEN`) are violated on a real SIMD platform, versus panicking on the portable fallback. Quote: "This is to be expected since we are using an internal API and preconditions are checked further outside." [`a-sR09-f003702-c1`, team a]
+- Positions seen by the extractor (`a-sR09-f003702-q1`): "worth reaching into the internal API and accepting the footgun for the speedup" (Rüdiger Klaehn / n0)
+
+### `into-naming-must-consume`
+
+**Question.** Should a method be named `into_foo` only when it actually consumes `self` (Rust's `into_`/`as_`/`to_` naming convention), or can `into_` be used more loosely?
+
+- Teams: b · team-local ids: `b-sR08-f003587-q2` (f003587)
+- Domains: ml
+- Concepts: naming conventions; ownership semantics
+- Positions:
+  - `into-naming-must-consume--p1` — into-must-consume-self
+    - **nathanielsimard** · Source `f003587` · date 2025-10-09 · locator PR #3792, review comments 2025-10-09T12:33:22Z and 2025-10-09T13:27:11Z — objects to a method using `into_`-style naming that doesn't actually take ownership of `self`, insisting the name should match the ownership signature and proposing a rename. Quote: "The naming isn't correct here, into should consume a self. Maybe `from_mapped_value`" [`b-sR08-f003587-c2`, team b]
+- Positions seen by the extractor (`b-sR08-f003587-q2`): into-must-consume-self
+
 ### `io-safety-op-placement-in-main`
 
 **Question.** When an operation must run before any other file descriptor could occupy a reused slot (an I/O-safety hazard), must it happen at the very start of `main()`, or is "early enough, with nothing intervening" sufficient?
@@ -2247,6 +2772,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `io-safety-op-placement-in-main--p2` — exact placement doesn't need to be enforced as long as nothing intervenes
     - **alexcrichton** · Source `f005079` · date 2026-09-08 · locator comment 2026-09-08T18:52:06Z — pushes back that it isn't worth contorting the CLI to guarantee this happens literally at the start of `fn main`, since Wasmtime controls all CLI entrypoints and the current placement during startup/CLI processing is fine Quote: "I wouldn't sweat this too much. I don't think it's worth contorting Wasmtime's CLI to make it apparent that this is happening right as `fn main` starts" [`a-sa14-f005079-c2`, team a]
 - Positions seen by the extractor (`a-sa14-f005079-q1`): it must run at the very start of `main` to guarantee no other fd takes the missing slot first, vs. don't over-engineer visible placement — anywhere during startup/CLI processing is fine as long as nothing happens in between
+
+### `jit-code-alignment`
+
+**Question.** What function/code alignment should a JIT-style code generator use to avoid wasting instruction-fetch bandwidth?
+
+- Teams: b · team-local ids: `b-sR04-f001401-q1` (f001401)
+- Domains: wasm
+- Concepts: code generation; cache-line alignment; instruction fetch; JIT compilation
+- Positions:
+  - `jit-code-alignment--p1` — 32-byte-default-reasonable
+    - **cfallin (Chris Fallin)** · Source `f001401` · date 2024-05-14 · locator issue comment, 2024-05-14T17:03:22Z — the CPU frontend fetches aligned 32B/64B chunks, so a function starting mid-chunk wastes fetch bandwidth; he suspects 32-byte function alignment (Cranelift/Wasmtime x86-64 currently uses 16-byte) would be a more reasonable default in general. Quote: "I suspect a 32B function alignment would be a pretty reasonable default in general" [`b-sR04-f001401-c1`, team b]
+- Positions seen by the extractor (`b-sR04-f001401-q1`): 32-byte-default-reasonable
 
 ### `js-tooling-in-rust`
 
@@ -2291,6 +2828,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **dist1ll** · Source `f005360` · date 2024-10-15 · locator reply, 2024-10-15T13:13:15-05:00 — Concedes Rust "might not be there yet" for full language-level security, but argues it already solved the hardest combined problem (safety plus performance) needed to make a high-performance library-OS design viable, with missing pieces like capabilities/effects systems emerging next. Quote: "Rust might not be there yet, but it solved some of the hardest problems (safety + performance) that make a high-performance libOS not a total nightmare." [`a-saL1-f005360-c5`, team a]
 - Positions seen by the extractor (`a-saL1-f005360-q2`): language-safety-insufficient-for-untrusted-code; language-safety-a-major-step-toward-safe-libos
 
+### `leaky-signal-abstraction-electrical-config`
+
+**Question.** Should an embedded HAL's peripheral-signal abstraction expose electrical-configuration details (drive strength, pull resistors, input/output mode) on the signal type itself, even though this leaks device-specific configuration into what is meant to be a clean peripheral-routing abstraction?
+
+- Teams: a · team-local ids: `a-sR06-f002005-q1` (f002005)
+- Domains: embedded
+- Concepts: peripheral abstraction; leaky abstraction; GPIO signal routing
+- Positions:
+  - `leaky-signal-abstraction-electrical-config--p1` — the peripheral-signal abstraction is a leaky one that ideally wouldn't exist, but is kept for convenience
+    - **bugadani** · Source `f002005` · date 2024-09-10 · locator PR #2128, comment 2024-09-10T08:14:33Z — says peripheral I/O ideally shouldn't need to know about drive strength, pull resistors or input/output mode, and calls the current design a leaky abstraction visible in the null methods `DummyPin`/`Level` must carry. Quote: "Peripheral I/O shouldn't, in an ideal world, care about GPIO drive strength, pull resistors, input/output mode, and this leaky abstraction really shows in the random null methods we must have on DummyPin/Level now." [`a-sR06-f002005-c1`, team a]
+- Positions seen by the extractor (`a-sR06-f002005-q1`): "current design is a regretted but accepted leaky abstraction" (bugadani)
+
 ### `libc-direct-vs-rustix`
 
 **Question.** For low-level syscall-adjacent operations (fcntl, fstat, getsockname, socket options), should code call into libc directly with manual unsafe blocks, or use a safe-wrapper crate?
@@ -2303,6 +2852,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **alexcrichton** · Source `f005079` · date 2026-09-09 · locator comments 2026-09-09T04:26:50Z; 2026-09-09T04:27:52Z; 2026-09-09T04:28:26Z; 2026-09-09T04:29:20Z — repeatedly suggests replacing raw/manual syscall handling (fcntl, fstat, getsockname, socket options) with the corresponding `rustix` safe-wrapper functions Quote: "Could this use `rustix::io::fcntl_setfd` with error handling?" [`a-sa14-f005079-c4`, team a]
 - Positions seen by the extractor (`a-sa14-f005079-q3`): prefer a safe-wrapper crate's (`rustix`) equivalent functions over raw manual libc calls, even for small one-off operations
 
+### `library-auth-opinionated-vs-unopinionated`
+
+**Question.** Should a networking library dictate a specific authentication scheme for its own infrastructure, or stay unopinionated and let operators build their own?
+
+- Teams: b · team-local ids: `b-sR11-f004960-q1` (f004960)
+- Domains: decentralized-iroh
+- Concepts: API design; mechanism vs. policy
+- Positions:
+  - `library-auth-opinionated-vs-unopinionated--p1` — iroh itself stays unopinionated about relay authentication, leaving the scheme to whoever self-hosts a relay; token-based auth is an opinionated default only for the managed iroh Services offering
+    - **Rae McKelvey (iroh / n0)** · Source `f004960` · date 2026-07-30 · locator "The problem: a relay URL is a credential you can't revoke" section — self-run relays are untouched — "you can build your own authentication scheme" — while managed relays now default to API-key-scoped tokens Quote: "iroh is unopinionated about that" [`b-sR11-f004960-c1`, team b]
+- Positions seen by the extractor (`b-sR11-f004960-q1`): library stays unopinionated by default, ships an opinionated managed option alongside it
+
 ### `lightweight-clones-in-language`
 
 **Question.** should Rust adopt a lightweight/automatic-clone mechanism (e.g. reference-counted "generational box" ergonomics) for callback-heavy UI code, trading some compile-time guarantees for runtime checks?
@@ -2314,6 +2875,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `lightweight-clones-in-language--p1` — add lightweight/automatic clone ergonomics to Rust itself
     - **Jonathan Kelly** · Source `f011305` · date 2025-10-03 · locator ~15:06-16:09 — proposed a Rust project goal adding lightweight clones for types like reference-counted smart pointers, prototyped as "generational box"; acknowledges it is contested Quote: "this is a controversial change in the Rust language. Not everyone may agree, but in my opinion, this is critical to the success of high-level Rust" / "Opinions were divided" [`a-sa26-f011305-c3`, team a]
 - Positions seen by the extractor (`a-sa26-f011305-q3`): add-lightweight-clones-to-Rust (Jonathan Kelley, proposed as a project goal); opposed-or-skeptical (unnamed — Kelley states "not everyone may agree" and "opinions were divided" without naming the dissenters)
+
+### `lint-allow-broad-vs-narrow`
+
+**Question.** When a macro-generated code path (e.g. `#[tracing::instrument]` reaching a value only through a trait method) triggers a false-positive unused/dead-code lint, should the fix be a broad `#![allow(unused)]` or a narrowly scoped allow on the specific item?
+
+- Teams: a · team-local ids: `a-sR11-f003983-q1` (f003983)
+- Domains: core, ml
+- Concepts: macros; trait dispatch; lints
+- Positions:
+  - `lint-allow-broad-vs-narrow--p1` — broad-allow-when-linter-blind-to-trait-indirection
+    - **crutcher** · Source `f003983` · date 2025-12-15 · locator comment 2025-12-15T20:40:52Z — the blanket `#[allow(unused)]` stays because the compiler's lint can't see that `TensorMetadata` trait operations are being consumed via `#[tracing::instrument]`, so item-level allows would misfire Quote: "Because the rust linter isn't smart enough to understand that `TensorMetadata` trait operations are being used by `#[tracing::instrument]`" [`a-sR11-f003983-c1`, team a]
+- Positions seen by the extractor (`a-sR11-f003983-q1`): broad-allow-when-linter-blind-to-trait-indirection (crutcher)
 
 ### `lld-default-linker`
 
@@ -2343,6 +2916,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `llm-doc-edits-reproducibility--p3` — declare-model-prompt-and-clean-env
     - **MabezDev** · Source `f004997` · date 2026-08-12 · locator comment @MabezDev 2026-08-12T13:34:07Z — argues that to merge this kind of LLM-driven doc pass, the project must declare which model was used (since each model has its own "taste"), declare the exact prompt (wording changes the results), and run the update in a clean environment to avoid picking up incidental local agent rules. Quote: "We must declare what model we run this with. Each model has its own interpretation of the rules and its own \"taste\"... We need to declare the prompt we run with this... we should run these updates in a clean env." [`b-sb16-f004997-c3`, team b]
 - Positions seen by the extractor (`b-sb16-f004997-q1`): declare-model-prompt-and-clean-env (MabezDev), adopt-controlled-language-standard-ASD-STE100 (bugadani)
+
+### `lts-release-channel`
+
+**Question.** Should a fast-moving Rust ecosystem project (monthly feature releases) also commit to a formal long-term-support channel with a guaranteed multi-year security-fix window, or leave downstream stability entirely to users tracking upstream closely?
+
+- Teams: b · team-local ids: `b-sR06-f002937-q1` (f002937)
+- Domains: core, wasm
+- Concepts: release cadence; semver/API compatibility; security-fix support windows; ecosystem maintenance burden
+- Positions:
+  - `lts-release-channel--p1` — adopt a formal LTS release train, decoupled from the fast release cadence
+    - **Alex Crichton** · Source `f002937` · date 2025-04-22 · locator "Wasmtime LTS Releases" article, paragraphs 2-4 (bytecodealliance.org/articles/wasmtime-lts) — Wasmtime previously supported each monthly release for only 2 months, forcing embedders to track upstream closely for security fixes; Wasmtime now designates every 12th release an LTS release, guaranteed 24 months of API-compatible security patches (no backported features), so users can upgrade yearly instead of monthly while still receiving guaranteed security fixes Quote: "This rate of change can be too fast for users so Wasmtime now supports LTS releases." [`b-sR06-f002937-c1`, team b]
+- Positions seen by the extractor (`b-sR06-f002937-q1`): "adopt a formal LTS release train, decoupled from the fast release cadence" (Alex Crichton / Wasmtime)
 
 ### `macro-ide-tooling`
 
@@ -2385,6 +2970,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **alandekok** · Source `f005743` · date 2026-06-02 · locator comment at 2026-06-02T12:36:53-05:00 — correctness/safety outcomes are driven by who funds the work, not by language choice alone; citing unfunded xz-utils maintenance Quote: "Correctness and safety is an _economic_ choice.  No one is funding fixes to xz utils.  Yet people are making millions of dollars off of it." [`b-sb19-f005743-c2`, team b]
 - Positions seen by the extractor (`b-sb19-f005743-q1`): reject-moral-framing (toastal, mtset, alandekok, duncan_bayne, hobbified), economic-choice (alandekok)
 
+### `memory-safety-and-resource-leaks`
+
+**Question.** Do Rust's compile-time memory-safety guarantees protect a program against resource leaks, such as leaked async tasks and threads?
+
+- Teams: a · team-local ids: `a-sR07-f002341-q1` (f002341)
+- Domains: core, distributed
+- Concepts: memory safety guarantees; resource leaks; async task lifecycle
+- Positions:
+  - `memory-safety-and-resource-leaks--p1` — safety-does-not-prevent-leaks
+    - **Arqu** · Source `f002341` · date 2024-11-19 · locator "The Nitty Gritty" section, memory-issues paragraph — Rust's memory-safety guarantees address memory corruption, not leaks; the team leaked tokio tasks and threads in production and only found them through load testing and profiling Quote: "Rust's memory safety guarantees do not mitigate memory leaks" [`a-sR07-f002341-c1`, team a]
+- Positions seen by the extractor (`a-sR07-f002341-q1`): safety-does-not-prevent-leaks (Arqu)
+
 ### `memory-safety-design-priority`
 
 **Question.** Did Rust's design correctly prioritize memory safety as its one "hard problem," and is that tradeoff fair against other capabilities (e.g., metaprogramming/expressiveness) that consequently matured more slowly?
@@ -2426,6 +3023,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **ickshonpe** · Source `f003126` · date 2025-06-19 · locator comment @ickshonpe 2025-06-19T09:25:27Z — even with the batching fixes, most users will not read the docs closely enough to avoid the performance cliff, and the implementation still has visible artifact bugs under transform/rotation Quote: "I'm feeling very negative about it now, even with all the improvements that have been made... most users aren't going to carefully read the docs for text outlines." [`a-sa05-f003126-c3`, team a]
     - **alice-i-cecile** · Source `f003126` · date 2025-06-19 · locator comment @alice-i-cecile 2025-06-19T00:58:08Z — reluctant to merge something this inefficient and rough; asks whether an offline font-preprocessing/baking approach could substitute, and ultimately wants a proper SDF-based text rendering solution instead Quote: "I'm really reluctant to merge something this slow and jank, even though I appreciate that it's better than it could have been." [`a-sa05-f003126-c4`, team a]
 - Positions seen by the extractor (`a-sa05-f003126-q1`): ship-with-documented-limits, hold-for-proper-solution
+
+### `metal-vs-cpu-priority-candle`
+
+**Question.** Should GPU (Metal) backend work be prioritized ahead of further CPU/quantization optimization in candle?
+
+- Teams: b · team-local ids: `b-sR01-f000464-q2` (f000464)
+- Domains: ml
+- Concepts: GPU backends; roadmap prioritization
+- Positions:
+  - `metal-vs-cpu-priority-candle--p1` — prioritize-metal-next
+    - **LaurentMazare** · Source `f000464` · date 2023-10-06 · locator issue comment, 2023-10-06T09:20:02Z — Metal/GPU support is the top engineering priority for candle's next major push, ahead of further quantized-CPU work. Quote: "Metal support is at the top of the priority list for the next large thing" [`b-sR01-f000464-c2`, team b]
+- Positions seen by the extractor (`b-sR01-f000464-q2`): prioritize-metal-next
 
 ### `middleware-hook-vs-typestate`
 
@@ -2516,18 +3125,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **ysalitrynskyi** · Source `f004772` · date 2026-08-18 · locator comment @ysalitrynskyi 2026-08-18T21:51:50Z — complies by deleting the narrating comments across the touched files Quote: "Removed the duplicate and stripped the narrating comments across the files these changes touch." [`a-sa13-f004772-c6`, team a]
 - Positions seen by the extractor (`a-sa13-f004772-q3`): no-narrating-comments, comments-explain-behavior
 
-### `networking-lib-core-scope`
-
-**Question.** Should a foundational networking/infra library keep expanding its default surface area to bundle more built-in functionality as part of "core", or aggressively narrow its core scope to a minimal primitive and push everything else out as optional, non-default protocol layers?
-
-- Teams: a · team-local ids: `a-sa02-f002124-q1` (f002124)
-- Domains: decentralized-iroh, distributed
-- Concepts: library scope; minimalism vs batteries-included; protocol layering; API surface
-- Positions:
-  - `networking-lib-core-scope--p1` — narrow-core-scope-by-default
-    - **ramfox** · Source `f002124` · date 2024-10-01 · locator opening section / "Docs are disabled by default" — iroh's maintainers deliberately shrank the library's default scope, disabling the higher-level "Docs" sync feature by default and reframing it as a separate protocol layered on the core networking primitive, restating an earlier decision that iroh's networking stack is "what iroh is" and everything else is a custom protocol Quote: "We're doubling down on iroh's networking stack as 'what iroh is' and describing everything else as a custom protocol." [`a-sa02-f002124-c1`, team a]
-- Positions seen by the extractor (`a-sa02-f002124-q1`): narrow-core-scope-by-default (author/iroh maintainers)
-
 ### `new-features-on-old-editions`
 
 **Question.** When a new language capability doesn't interact with a prior edition's changed semantics, should it be made available on older Rust editions too, or should the edition boundary gate all new capabilities regardless of whether they actually interact with anything that changed?
@@ -2592,6 +3189,31 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `nightly-gate-feature-vs-cfg--p1` — rustflags-cfg-gate
     - **alexcrichton** · Source `f002033` · date 2024-09-16 · locator PR #9251, comment 2024-09-16T15:40:18Z — recommends gating the tail-call code with `#[cfg(pulley_tail_call)]` set via `RUSTFLAGS`, rather than a Cargo feature, because a Cargo feature gets force-enabled by the "test with all features enabled" CI job even when the compiler in use is stable; this also lets the PR land, checked only by a dedicated nightly `cargo check` job, before upstream rustc codegen support for `become` exists Quote: "with a Cargo feature controlling this it unfortunately doesn't play well with our \"test with all features enabled\" in CI well because it enables the feature when a stable compiler is in use." [`b-sb06-f002033-c1`, team b]
 - Positions seen by the extractor (`b-sb06-f002033-q1`): rustflags-cfg-gate
+
+### `no-std-serialization-format`
+
+**Question.** Which serialization format should a Rust library pick for a data format that needs no-std support?
+
+- Teams: b · team-local ids: `b-sR08-f003587-q1` (f003587)
+- Domains: embedded, ml
+- Concepts: serialization format choice; no-std; MessagePack; CBOR
+- Positions:
+  - `no-std-serialization-format--p1` — cbor-over-messagepack-for-no-std
+    - **antimora** · Source `f003587` · date 2025-10-10 · locator PR #3792, comment 2025-10-10T14:21:49Z — switched the new format's metadata serialization from MessagePack (`rmp-serde`) to CBOR (`ciborium`) because `rmp-serde` isn't no-std compatible and its upstream project has been inactive for over a year, while CBOR is an IETF-standardized, Serde-recommended, no-std-capable format that also preserves enum variant information. Quote: "I switched from MessagePack to CBOR for metadata serialization due to rmp-serde's limitations" [`b-sR08-f003587-c1`, team b]
+- Positions seen by the extractor (`b-sR08-f003587-q1`): cbor-over-messagepack-for-no-std
+
+### `non-exhaustive-by-default`
+
+**Question.** Should public enums and structs in an API heading toward 1.0 default to `#[non_exhaustive]`, accepting the wildcard match arm it forces on callers?
+
+- Teams: a · team-local ids: `a-sR13-f004586-q2` (f004586)
+- Domains: core, decentralized-iroh
+- Concepts: API stability; semver; non_exhaustive
+- Positions:
+  - `non-exhaustive-by-default--non-exhaustive-by-default` — Default to `#[non_exhaustive]`
+    - **iroh/n0 (dignifiedquire, post author)** · Source `f004586` · date 2026-04-17 · locator § "Breaking Changes", multiple types marked `#[non_exhaustive]` (`iroh::DirectAddrType`, `iroh::address_lookup::mdns::DiscoveryEvent`) — newly public/changed types are marked non-exhaustive so future variants can be added without a breaking change Quote: none (structural, not prose declaration) [`a-sR13-f004586-c2`, team a]
+    - **iroh/n0 (Friedel Ziegelmayer & Rüdiger Klaehn, post authors)** · Source `f004685` · date 2026-05-11 · locator § "Non-exhaustive structs and enums" — restates and extends the 0.98 non_exhaustive Position — `PathEvent` and `IncomingLocalAddr` are marked non-exhaustive specifically to allow future variants without breaking the public API, requiring callers to add a wildcard match arm Quote: "PathEvent and IncomingLocalAddr are both #[non_exhaustive], so the compiler requires you to handle the case of variants we may add later." [`a-sR13-f004685-c3`, team a]
+- Positions seen by the extractor (`a-sR13-f004586-q2`): non_exhaustive-by-default (iroh)
 
 ### `nonnull-in-ffi-params`
 
@@ -2669,6 +3291,44 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **felipebalbi** · Source `f004055` · date 2026-01-07 · locator comment @felipebalbi 2026-01-07T19:35:31Z — treats a missing PAC accessor as a bug to be fixed in the PAC itself rather than worked around with manual bit ops Quote: "PAC gives you accessors for these bits, if it doesn't, let me know so we can patch the PAC as that would be a bug." [`a-sa09-f004055-c2`, team a]
 - Positions seen by the extractor (`a-sa09-f004055-q1`): typed-pac-preferred, raw-manual-bitops
 
+### `parser-combinator-vs-generator`
+
+**Question.** Should Rust developers write parsers with a combinator library (nom) rather than a grammar-based generator (pest, lalrpop) or a hand-rolled recursive-descent parser?
+
+- Teams: b · team-local ids: `b-sR13-f007973-q1` (f007973)
+- Domains: core, desktop-cli-ui
+- Concepts: parser combinators; zero-copy parsing; error reporting
+- Positions:
+  - `parser-combinator-vs-generator--p1` — nom-style parser combinators are the effective way to build parsers in Rust: small composable functions, no unnecessary allocation, and richer error reporting via VerboseError/context than a naive hand-rolled parser would give you
+    - **Nazmul Idris (r3bl_tui maintainer)** · Source `f007973` · date 2023-02-20 · locator "Getting to know nom using lots of examples" section — "nom is very efficient and fast, it does not allocate memory when parsing if it doesn't have to, and it makes it very easy for you to do the same"; the article goes on to show context/convert_error as the way to get human-readable error messages out of a combinator chain Quote: "nom is very efficient and fast, it does not allocate memory when parsing if it doesn't have to" [`b-sR13-f007973-c1`, team b]
+- Positions seen by the extractor (`b-sR13-f007973-q1`): combinators (nom) as the idiomatic, efficient choice
+
+### `per-dtype-constant-match-vs-metadata`
+
+**Question.** When a generic numeric algorithm needs a per-dtype constant (e.g. a singularity epsilon), should the value be hardcoded via an exhaustive match on the dtype, or derived generically from the type's own metadata (a trait method)?
+
+- Teams: b · team-local ids: `b-sR10-f004573-q2` (f004573)
+- Domains: core, ml
+- Concepts: generics; traits; exhaustive match; floating-point
+- Positions:
+  - `per-dtype-constant-match-vs-metadata--p1` — derive-from-metadata-generally-better
+    - **antimora (Tracel AI / burn maintainer)** · Source `f004573` · date 2026-04-21 · locator PR review comment, 2026-04-21T14:45:21Z — hardcoded per-dtype epsilon constants should be replaced by a generic accessor on the dtype's own precision metadata, since it is self-documenting and handles all float dtypes including Flex32 uniformly Quote: "`burn_std::FloatDType::finfo()` would be a strict improvement over the hardcoded constants here... self-documenting, dtype-correct, and Flex32 falls out for free." [`b-sR10-f004573-c3`, team b]
+  - `per-dtype-constant-match-vs-metadata--p2` — reject-metadata-for-this-specific-use
+    - **antimora (Tracel AI / burn maintainer)** · Source `f004573` · date 2026-04-21 · locator PR review comment, 2026-04-21T14:45:23Z — for this particular pivot-replacement site, machine epsilon is the wrong semantic quantity regardless of dtype, so the exact-zero check should stay rather than switch to finfo Quote: "On whether to use `finfo` here instead: I'd say no... the pivot-replacement here is better off staying exact-zero." [`b-sR10-f004573-c4`, team b]
+- Positions seen by the extractor (`b-sR10-f004573-q2`): derive-from-metadata-generally-better, reject-metadata-for-this-specific-use
+
+### `persistent-collections-cheap-clone`
+
+**Question.** Should Rust's collections behave like true persistent (structural-sharing) values with cheap clone, rather than accepting the current model where clone is a full deep copy?
+
+- Teams: b · team-local ids: `b-sR13-f008801-q1` (f008801)
+- Domains: core
+- Concepts: ownership; persistent data structures; RRB trees
+- Positions:
+  - `persistent-collections-cheap-clone--p1` — Rust would benefit from persistent, structural-sharing vector types (RRB trees) that make clone cheap (O(log n) path-copying) instead of the O(n) deep copy that ordinary owned collections force today
+    - **Araz Abishov** · Source `f008801` · date 2026-02-12 · locator opening paragraphs, before "A quick intro to persistent vectors" — "Ownership means you must clone a vector if you want to keep using it after passing it somewhere else. As Niko Matsakis pointed out, Rust collections already behave like values; they just have an expensive clone. What if that clone could be nearly free?" — this framing motivates building pvec-rs Quote: "Rust collections already behave like values; they just have an expensive clone." [`b-sR13-f008801-c1`, team b]
+- Positions seen by the extractor (`b-sR13-f008801-q1`): persistent/structural-sharing collections are worth building for Rust
+
 ### `pin-for-non-relocatable-cpp-types`
 
 **Question.** For C++ types that cannot be relocated via a simple memcpy (self-referential types, e.g. small-string-optimized `std::string`), should Rust FFI bindings represent them using `Pin`, given Rust's general assumption that all types are memcpy-movable?
@@ -2692,6 +3352,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `platform-logic-module-vs-inline--p1` — keep platform-specific logic inline rather than a separate abstraction
     - **alexcrichton** · Source `f005079` · date 2026-09-09 · locator comment 2026-09-09T04:31:28Z — prefers keeping all `serve.rs`-related code in `serve.rs`, marking the helper `unsafe` with a `// SAFETY` comment at the call site, over introducing a separate module with more `#[cfg]`s to validate Quote: "Personally I would prefer to keep all the `serve.rs`-related code in `serve.rs` and avoid extra abstractions here (which have more #[cfg] which is more to validate, etc)." [`a-sa14-f005079-c5`, team a]
 - Positions seen by the extractor (`a-sa14-f005079-q4`): keep it inline in the using file, mark the helper function `unsafe`, and place a clear `// SAFETY` comment at the call site, rather than introducing a separate module with more `#[cfg]`s to validate
+
+### `pluggable-crypto-backend`
+
+**Question.** Should a Rust networking crate hard-depend on one crypto/TLS backend, or expose the backend as a pluggable provider?
+
+- Teams: a · team-local ids: `a-sR13-f004586-q1` (f004586)
+- Domains: core, decentralized-iroh
+- Concepts: dependency injection; feature flags; TLS backend selection
+- Positions:
+  - `pluggable-crypto-backend--p1` — pluggable-by-default
+    - **iroh/n0 (dignifiedquire, post author)** · Source `f004586` · date 2026-04-17 · locator § "Pluggable Crypto Backends" — iroh 0.98 makes the TLS crypto provider swappable via feature flags (`ring` default, `aws-lc-rs` alternative, or a fully custom provider), because a hard-pinned `ring` dependency breaks on platforms where it can't build or where an org mandates a FIPS-certified backend Quote: "It's a problem if you're on a platform where ring doesn't build, if your org mandates a FIPS-certified backend like aws-lc-rs" [`a-sR13-f004586-c1`, team a]
+- Positions seen by the extractor (`a-sR13-f004586-q1`): pluggable-by-default (iroh)
 
 ### `plugin-system-mechanism`
 
@@ -2822,6 +3494,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **lake** · Source `f005743` · date 2026-06-02 · locator comment at 2026-06-02T13:04:24-05:00 — reads the (quoted, unnamed) source article as calling the community to sideline collaborative/inclusive decision-making in favor of faster "progress"; contrasts with frustration over long-stalled nightly-only APIs and floats wanting a BDFL model Quote: "We must learn to recognize when having a consensus is more important than having the right consensus, and in these cases, to pick progress over stagnation." [`b-sb19-f005743-c9`, team b]
 - Positions seen by the extractor (`b-sb19-f005743-q5`): process-speed-risks-exclusion (lake)
 
+### `project-priorities-communication`
+
+**Question.** How should an open-source Rust project's priorities be decided and communicated to its community?
+
+- Teams: b · team-local ids: `b-sR11-f004993-q2` (f004993)
+- Domains: core
+- Concepts: governance; roadmaps
+- Positions:
+  - `project-priorities-communication--p1` — project direction should be communicated through a lightweight, non-authoritative "Goals" system (staffed/unstaffed as a focus signal) rather than a fixed roadmap or the prior ad hoc culture
+    - **Carter Anderson (@cart, Bevy creator and Project Lead)** · Source `f004993` · date 2026-08-10 · locator "Bevy Project Goals #" section — the initial rollout felt "dictatorial" because staffed/unstaffed was framed as active/inactive; loosened so any approved Goal can get a Working Group even unstaffed, while staffing still signals leadership focus Quote: "This is notably not a 'roadmap' ... This is also not authoritative." [`b-sR11-f004993-c2`, team b]
+- Positions seen by the extractor (`b-sR11-f004993-q2`): lightweight, non-authoritative "Goals" signal instead of a fixed roadmap or ad hoc "build first, yell for attention"
+
 ### `properties-syntax`
 
 **Question.** Should Rust support "properties" (field-access syntax that silently compiles to a getter/setter method call, as in Python/C#/Swift)?
@@ -2848,6 +3532,20 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **haricot** · Source `f002518` · date 2025-10-25 · locator comment 2025-10-25T10:29:20Z — compiling only for the build host's compute capability may break portability across systems with multiple different GPUs Quote: "the current build script only compiles for the compute capacity active on the build host, which may break portability across heterogeneous multi-GPU systems, it seems." [`b-sb08-f002518-c2`, team b]
 - Positions seen by the extractor (`b-sb08-f002518-q1`): compile-for-build-host-only (ivarflakstad), needs-portable-multi-arch-support (haricot, raised as a concern)
 
+### `pump-events-timeout-poll`
+
+**Question.** When an external caller drives a Rust windowing event loop via `pump_events` with a timeout, should any non-negative `Some(duration)` timeout force `ControlFlow::Poll`, or only a zero-duration timeout?
+
+- Teams: a · team-local ids: `a-sR08-f002685-q1` (f002685)
+- Domains: desktop-cli-ui
+- Concepts: event loop control flow; windowing; async/external-loop integration
+- Positions:
+  - `pump-events-timeout-poll--p1` — any `Some(duration)` timeout passed to `pump_events` should force `ControlFlow::Poll`
+    - **sigmaSd** · Source `f002685` · date 2025-02-20 · locator GitHub issue comment, 2025-02-20T10:24 — proposed broadening the workaround so that every non-nil duration, not just zero, forces Poll Quote: "any duration as long that its Some, should make the controlflow Poll" [`a-sR08-f002685-c1`, team a]
+  - `pump-events-timeout-poll--p2` — special-case only `Duration::ZERO` to force `ControlFlow::Poll`; leave other durations to winit's own handling
+    - **tronical (Olivier Goffart, Slint co-founder/maintainer)** · Source `f002685` · date 2025-02-20 · locator GitHub issue comment, 2025-02-20T13:08 — reconsidered the broader fix and narrowed the workaround to only the zero-duration case, reasoning it doesn't make sense to return `Wait` when a nonzero duration like `Some(2s)` was explicitly requested — that should be winit's own responsibility to handle correctly Quote: "I'll do this workaround only for `Zero`... I'll leave it to the winit implementation to handle that correctly" [`a-sR08-f002685-c2`, team a]
+- Positions seen by the extractor (`a-sR08-f002685-q1`): any-Some-duration forces Poll (sigmaSd); only-Zero forces Poll (tronical)
+
 ### `pure-rust-crypto-stopgap`
 
 **Question.** When targeting an unusual/constrained platform where the standard C-backed crypto backend won't build, is it acceptable to reach for a pure-Rust crypto implementation as a stopgap, even knowing a hardware-accelerated backend would be the "right" choice for production?
@@ -2859,6 +3557,30 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `pure-rust-crypto-stopgap--p1` — pure-Rust crypto backend as an acceptable stopgap, not the end state
     - **Rüdiger Klaehn** · Source `f004471` · date 2026-03-24 · locator § Crypto provider — explains that both `ring` and `aws-lc-rs` fail on Xtensa because they wrap C code with platform-specific assembly; since rustls providers are pluggable, forks a pure-Rust backend (`rustls-rustcrypto`) down to only the two primitives iroh needs (disabling RSA, disabling certificate verification for the relay connection) to fit the binary-size budget, while stating hardware-accelerated crypto "would be the right thing to do for a production system" Quote: "The latter would be the right thing to do for a production system, but for now we are going to just do a pure rust version." [`a-sa11-f004471-c1`, team a]
 - Positions seen by the extractor (`a-sa11-f004471-q1`): ship a minimal pure-Rust crypto backend (fork of `rustls-rustcrypto`, algorithms feature-gated down to the bare minimum) now, while naming hardware-accelerated as the correct long-term answer
+
+### `quantization-speedup-candle`
+
+**Question.** Does quantization reliably speed up inference in candle, or only for some model architectures?
+
+- Teams: b · team-local ids: `b-sR01-f000464-q1` (f000464)
+- Domains: ml
+- Concepts: quantization; memory-bound vs compute-bound kernels; matmul backends; Apple Accelerate
+- Positions:
+  - `quantization-speedup-candle--p1` — quantization-helps-memory-bound-only
+    - **LaurentMazare** · Source `f000464` · date 2023-10-08 · locator issue comment, 2023-10-08T11:39:13Z — T5's cross-attention involves much larger matmuls than llama/mistral, making it compute- rather than memory-bound on M1/M2; quantization's usual speedup comes from being memory-bound, so it's hard to beat Apple Accelerate (possibly Neural-Engine-backed) here even after tuning min/max-len parameters. Quote: "my guess would be that it's much less memory bound in this case and in this case it's pretty hard to outperform the work done by apple on accelerate" [`b-sR01-f000464-c1`, team b]
+- Positions seen by the extractor (`b-sR01-f000464-q1`): quantization-helps-memory-bound-only
+
+### `query-engine-batching-parallelism`
+
+**Question.** Should a Rust vectorized query engine process rows fully sequentially in large batches (cache-friendly, low interpretation overhead), fully in parallel per-row, or partition data into parallel batched streams?
+
+- Teams: a · team-local ids: `a-sR08-f003580-q1` (f003580)
+- Domains: core, distributed
+- Concepts: vectorized execution; query engine architecture; partitioning
+- Positions:
+  - `query-engine-batching-parallelism--p1` — partition-based batch execution (vectorized batches within a partition, parallelized across partitions) captures the benefits of both fully-sequential and fully-parallel row processing
+    - **Yevgen Safronov, Nikita Lapkov, Jérôme Schneider (Cloudflare, R2 SQL)** · Source `f003580` · date 2025-09-25 · locator "Apache DataFusion" section — contrasted a fully-sequential "tight loop" (cache-friendly, low interpretation overhead) against fully-parallel per-row processing (better core utilization), and endorsed DataFusion's partition model as achieving both at once Quote: "DataFusion's architecture allows us to achieve a balance on this scale, reaping benefits from both ends." [`a-sR08-f003580-c1`, team a]
+- Positions seen by the extractor (`a-sR08-f003580-q1`): hybrid partition-based batching (DataFusion's model, endorsed by Cloudflare's R2 SQL team)
 
 ### `rate-limit-middleware-vs-gateway`
 
@@ -2909,6 +3631,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **fitzgen** · Source `f001582` · date 2024-06-11 · locator comment 2024-06-11T16:35:49Z — eager vs. lazy default computation doesn't matter much here since LLVM can likely optimize it away, but the change is worth making for reader clarity Quote: "I think it probably doesn't matter much either way in this case, since there isn't anything here that could prevent LLVM from cleaning this up itself" [`b-sb05-f001582-c2`, team b]
 - Positions seen by the extractor (`b-sb05-f001582-q2`): readability-over-manual-optimization-when-backend-cleans-up (fitzgen)
 
+### `reduction-accumulation-precision`
+
+**Question.** Should numeric reductions in a Rust ML kernel (e.g. softmax) accumulate in a higher-precision type than the input/output dtype?
+
+- Teams: a · team-local ids: `a-sR04-f001096-q1` (f001096)
+- Domains: ml
+- Concepts: numeric precision; reduction kernels; GPU kernels
+- Positions:
+  - `reduction-accumulation-precision--p1` — accumulate-in-float-for-precision
+    - **ivarflakstad** · Source `f001096` · date 2025-01-13 · locator comment "Should probably accumulate with float in softmax to preserve precision. Shouldn't affect performance at all." — numeric reductions should accumulate in float32 even when the surrounding tensors are lower precision, to avoid precision loss, at negligible performance cost Quote: "Should probably accumulate with float in softmax to preserve precision." [`a-sR04-f001096-c1`, team a]
+- Positions seen by the extractor (`a-sR04-f001096-q1`): accumulate-in-float-for-precision
+
 ### `reflection-security-risk`
 
 **Question.** Does giving Rust code reflection-like or dynamic-loading capability introduce a security/soundness risk category that Rust's design has otherwise avoided?
@@ -2922,6 +3656,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `reflection-security-risk--p2` — rust-lacks-reflection-and-that-closes-off-a-footgun-class
     - **vitalyd — track record uncertain in this source (recurring, substantive technical poster; no confirmed authored crate/book found here); logged with this caveat** · Source `f012469` · date 2017-09-12 · locator post by @vitalyd dated 2017-09-12T12:52:15Z — distinguishes a Java/Struts-style deserialization RCE footgun (enabled by reflection + dynamic class loading) from Rust, where the same outcome would require someone to deliberately build a serde-serializable type to do it — not an accidental byproduct of a language feature Quote: "Rust doesn't have dynamic class loading and reflection, but someone could build a serde serializable type to do custom remote command/process execution. It would be deliberate and not some oversight though, but still possible given enough will." [`a-sa28-f012469-c8`, team a]
 - Positions seen by the extractor (`a-sa28-f012469-q4`): half-joking unease that a trait "implemented by all types" is inherently suspicious (durka42, 2015, weak evidentiary weight — see caveat) vs. a serious technical claim that Rust's *absence* of reflection/dynamic class loading closes off a whole footgun category that Java-style systems (e.g. Struts) have to guard against explicitly (vitalyd, 2017)
+
+### `reject-connections-before-handshake`
+
+**Question.** Should an async network server reject invalid/unauthenticated incoming connections before or after the handshake completes?
+
+- Teams: a · team-local ids: `a-sR13-f004586-q3` (f004586)
+- Domains: decentralized-iroh, distributed
+- Concepts: async runtimes; QUIC; connection handling
+- Positions:
+  - `reject-connections-before-handshake--p1` — reject-early
+    - **iroh/n0 (dignifiedquire, post author)** · Source `f004586` · date 2026-04-17 · locator § "Rate Limiting in the Router" — the router gained an `incoming_filter` hook so a public endpoint can accept/reject/retry an incoming connection by address, endpoint ID, or ALPN before the handshake finishes, because rejecting early is far cheaper than accepting then closing Quote: "Rejecting early is much cheaper than closing the connection after it's established... Benchmarks on the PR show ~30x throughput for address-based rejection vs. accepting and closing." [`a-sR13-f004586-c3`, team a]
+- Positions seen by the extractor (`a-sR13-f004586-q3`): reject-early (iroh)
 
 ### `repository-layer-sub-crates`
 
@@ -2958,6 +3704,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `repr-packed-vs-byte-array--p1` — avoid-repr-packed-use-byte-array-getters
     - **Zaidoon Abd Al Hadi** · Source `f005113` · date 2026-09-18 · locator article body, "Storage improvements" section — rejects the tempting `#[repr(packed)]` shortcut to shrink the `Point` struct as "controversial for good reasons," and instead stores the hash/index pair as a raw `[u8; 6]` with getter methods, which compiles to the same layout without exposing misaligned references Quote: "You (meaning me) might be tempted to use #[repr(packed)], but that is controversial for good reasons. A safer but less readable solution is to store the hash and index as raw byte array and access them with getters. Both methods compile to the same thing." [`b-sb17-f005113-c1`, team b]
 - Positions seen by the extractor (`b-sb17-f005113-q1`): avoid-repr-packed-use-byte-array-getters (Zaidoon Abd Al Hadi)
+
+### `required-signals-vs-option-pins`
+
+**Question.** When a driver constructor takes a set of GPIO/peripheral signals, should each signal be a required explicit value (even a placeholder like `Level::Low`), or should `Option<PIN>` be allowed so unused signals can be omitted?
+
+- Teams: a · team-local ids: `a-sR06-f002005-q2` (f002005)
+- Domains: embedded
+- Concepts: driver constructor API design; `Option<PIN>` vs required value
+- Positions:
+  - `required-signals-vs-option-pins--p1` — driver constructors should require an explicit signal value for every input/output rather than accepting `Option<PIN>`
+    - **Dominaezzz** · Source `f002005` · date 2024-09-09 · locator PR #2128, comment 2024-09-09T21:56:59Z — argues that once the PR lands, no driver should accept `Option<PIN>`; users should set every signal explicitly, mainly to prevent a previous driver's signal settings from lingering. Quote: "once this PR lands no drivers should be `Option<PIN>`, imo users should explicitly set each signal to something even if it's `Level::{Low, High}`." [`a-sR06-f002005-c2`, team a]
+- Positions seen by the extractor (`a-sR06-f002005-q2`): "require an explicit value for every signal, no `Option<PIN>`" (Dominaezzz)
 
 ### `restrict-external-construction`
 
@@ -2998,6 +3756,20 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **KingCol13** · Source `f004160` · date 2026-01-25 · locator PR description 2026-01-25T20:35:34Z — chose a simpler frame-pointer-only unwinder over the existing DWARF-based unwind machinery because the general implementation does more than needed and is far slower for this purpose Quote: "this may be more work since `probe-rs`'s unwind does more than is needed for this purpose and hence is ~100x slower than this frame pointer unwind." [`b-sb13-f004160-c2`, team b]
 - Positions seen by the extractor (`b-sb13-f004160-q1`): prefer-reuse-existing-unwind-logic (bugadani), prefer-purpose-built-implementation-for-performance (KingCol13)
 
+### `roadmap-performance-vs-features`
+
+**Question.** Should a project's roadmap prioritize performance-focused effort over new-capability work when both compete for the same limited contributor time?
+
+- Teams: b · team-local ids: `b-sR04-f001724-q1` (f001724)
+- Domains: core
+- Concepts: project roadmap prioritization; contributor time allocation; performance engineering
+- Positions:
+  - `roadmap-performance-vs-features--p1` — perf-first-for-a-quarter
+    - **ozankabak** · Source `f001724` · date 2024-07-13 · locator issue comment, 2024-07-13T09:20:20Z — DataFusion is already in good shape on extensibility/customizability, so the project should dedicate one or two quarters specifically to performance rather than new features. Quote: "It would be great to have one or two quarters where we focus on perf." [`b-sR04-f001724-c1`, team b]
+  - `roadmap-performance-vs-features--p2` — feature-work-also-serves-perf
+    - **notfilippo** · Source `f001724` · date 2024-07-14 · locator issue comment, 2024-07-14T17:55:14Z — argues his in-progress logical-types proposal is not purely a feature detour, since it would itself improve performance (late materialization for REE arrays/string views); still agrees to rescope it to be easier to manage given the perf-quarter push. Quote: "I would argue that introducing proper support for logical types would benefit performance, especially in late materialization for REE arrays and string views." [`b-sR04-f001724-c2`, team b]
+- Positions seen by the extractor (`b-sR04-f001724-q1`): perf-first-for-a-quarter, feature-work-also-serves-perf
+
 ### `rpc-error-detail-vs-flat-outcome`
 
 **Question.** Should an RPC failure response be a `Result<T, E>` carrying a detailed error, or a flat enum exposing only coarse, intentionally limited outcomes?
@@ -3009,6 +3781,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `rpc-error-detail-vs-flat-outcome--p1` — flat outcome enum over `Result<T, E>` for RPC responses
     - **Rüdiger Klaehn** · Source `f003590` · date 2025-09-26 · locator § RPC protocol / KV store protocol — explains the DHT's `SetResponse` is a plain enum rather than `Result<(), SetError>` because serializing detailed errors is often painful and because failure specifics like stack traces are "nobody's business"; the enum only tells the caller enough to decide whether retrying makes sense Quote: "you have to be aware that serializing detailed errors is sometimes a big pain" [`a-sa06-f003590-c1`, team a]
 - Positions seen by the extractor (`a-sa06-f003590-q1`): use a flat outcome enum (e.g. `ErrFull`, `ErrInvalid`) instead of `Result<(), SetError>`, deliberately omitting fine-grained error detail
+
+### `rtic-is-an-rtos`
+
+**Question.** Is RTIC (and a hardware-scheduled, compile-time-analyzed concurrency model generally) an RTOS, or is it a concurrency framework rather than an operating system?
+
+- Teams: a · team-local ids: `a-sR01-f000227-q1` (f000227)
+- Domains: embedded
+- Concepts: RTIC; RTOS; Stack Resource Policy (SRP); hardware-accelerated scheduling
+- Positions:
+  - `rtic-is-an-rtos--p1` — RTIC is a hardware-accelerated RTOS
+    - **RTIC project (rtic.rs maintainers, unnamed individually)** · Source `f000227` · date unknown (living document, no publish/version date given) · locator § "Is RTIC an RTOS?" — from the maintainers' own view RTIC is a hardware-accelerated RTOS because it uses hardware (e.g. NVIC on Cortex-M) rather than a software kernel to perform scheduling. Quote: "RTIC is a hardware accelerated RTOS that utilizes the hardware such as the NVIC on Cortex-M MCUs, CLIC on RISC-V etc. to perform scheduling, rather than the more classical software kernel." [`a-sR01-f000227-c1`, team a]
+- Positions seen by the extractor (`a-sR01-f000227-q1`): "hardware-accelerated RTOS" (RTIC project); "concurrency framework, no software kernel" (unattributed community view, no named Voice — not a Claim)
 
 ### `runtime-checkable-precondition-result-vs-unsafe`
 
@@ -3198,6 +3982,20 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **parasyte** · Source `f013214` · date 2024-01-10 · locator reply timestamped 2024-01-10T18:33:17 — cites a session where Ark: Survival Ascended crashed three times and topped out near 45 FPS despite an unsafe/unmanaged-heavy implementation, to argue relaxed memory safety isn't a performance free lunch; states a personal preference for "a 10% perf hit (40 FPS) for a memory safe implementation that doesn't crash," and separately reports deliberately abandoning an early Bevy game project after three months as a "fail fast" call once its immaturity became clear, later moving to Godot Quote: "Personally, I would prefer a 10% perf hit (40 FPS) for a memory safe implementation that doesn't crash." [`b-sb26-f013214-c4`, team b]
 - Positions seen by the extractor (`b-sb26-f013214-q2`): a demanding, highly concurrent 3D client is fully achievable in 100% safe Rust with no `unsafe` (John_Nagle); a measurable performance cost for memory safety is an acceptable, even preferable, trade — "playing loose with safety" is not a free lunch for performance either, evidenced by a shipped title with safety-linked crashes (parasyte)
 
+### `safe-wrapper-soundness-scope`
+
+**Question.** When a type wraps an unsafe operation and is labeled "safe," must that safety guarantee hold under every generic instantiation/composition, or is a narrower guarantee acceptable if the common case is sound?
+
+- Teams: b · team-local ids: `b-sR10-f004804-q1` (f004804)
+- Domains: core, embedded
+- Concepts: unsafe; soundness; generics; type-level safety guarantees
+- Positions:
+  - `safe-wrapper-soundness-scope--p1` — overpromising-is-unsound
+    - **Dominaezzz (esp-hal reviewer)** · Source `f004804` · date 2026-06-15 · locator PR review comment, 2026-06-15T21:09:39Z — calling the new reference type "safely useable" overpromises, since a composition such as boxing it with external-memory backing is not actually safe to use Quote: "\"safely useable\" is too vague and I feel it over promises a bit... Example of over promising, `Box<InternalMemory<[DmaDescriptor; 10]>, ExternalMemory>` is not safe to use." [`b-sR10-f004804-c1`, team b]
+  - `safe-wrapper-soundness-scope--p2` — pragmatic-judgment-call-acceptable
+    - **bugadani (esp-hal maintainer, PR author)** · Source `f004804` · date 2026-06-17 · locator PR review comment, 2026-06-17T07:36:32Z — without a full proof, a cache writeback is judged safe enough in practice for this type's current alignment guarantees, given invalidate isn't called on these paths Quote: "Wishy-washy, but a cache writeback is generally a safe operation as far as I can tell, and we don't call invalidate on these I think. So I think we're fine with the DmaDescriptor alignment in this type, at this time." [`b-sR10-f004804-c2`, team b]
+- Positions seen by the extractor (`b-sR10-f004804-q1`): overpromising-is-unsound, pragmatic-judgment-call-acceptable
+
 ### `same-state-transition-trigger`
 
 **Question.** For a component that triggers on a state-machine transition matching a predicate, should a transition into the same state the entity is already in be treated as a no-op (never triggering), or should it be allowed to trigger, to support "reload" style use cases?
@@ -3229,6 +4027,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Nadrieril** · Source `f009123` · date 2023-12-05 · locator reply, 2023-12-05T13:43:01.887Z — Suggests an explicit naming mechanism so the implicit scoped-impl behavior desugars from something writable, making the proposal easier to explain even if users rarely write the explicit form. Quote: "I would suggest that you provide an explicit mechanism to specify a type along with explicitly chosen impls." [`a-sa19-f009123-c3`, team a]
 - Positions seen by the extractor (`a-sa19-f009123-q1`): anonymous-impls-required-for-coherence; named-impls-for-clarity
 
+### `scratch-buffer-vs-per-call-alloc`
+
+**Question.** In a hot loop, should working memory be a caller-owned scratch buffer reused across calls, or freshly allocated per call for simplicity?
+
+- Teams: b · team-local ids: `b-sR12-f005120-q2` (f005120)
+- Domains: core, ml
+- Concepts: allocation; buffer reuse; hot-path performance
+- Positions:
+  - `scratch-buffer-vs-per-call-alloc--p1` — caller-owned-scratch-buffer
+    - **Arthur Zucker / Hugging Face tokenizers team** · Source `f005120` · date 2026-09-21 · locator section "The Merge Loop" — the previous implementation allocated fresh memory and a new priority queue per pre-token; v1 instead reuses a scratch buffer owned by the caller so the merge loop never touches the allocator Quote: "v1 reuses a scratch buffer owned by the caller, removing those repeated allocations... the merge working set lives in a caller-owned scratch buffer; the loop never touches the allocator." [`b-sR12-f005120-c2`, team b]
+- Positions seen by the extractor (`b-sR12-f005120-q2`): caller-owned-scratch-buffer
+
 ### `scratch-register-type-enforced`
 
 **Question.** When a temporary/scratch register must cross a function boundary, should its safe use be enforced by the type system (dedicated types, exclusive access), or left to convention and reviewer discipline?
@@ -3255,17 +4065,17 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Amos (fasterthanlime)** · Source `f011413` · date 2026-06-11 · locator ~00:04:00–00:05:00 — rather than generating a new derive for every new trait/behavior, crates should ship structural data about their types once, and build behaviors generically over that data Quote: "the idea of many crates building upon a singular derive is, in my opinion, sound. We just have to kind of adjust our strategy... we might consider shipping data about our types" [`a-sa25-f011413-c3`, team a]
 - Positions seen by the extractor (`a-sa25-f011413-q2`): "centralizing on one derive is sound in principle, the strategy just needs adjusting (ship type data instead of more code)" vs. the joking-but-pointed framing of that same centralization as a de facto monopoly ("cornered the entire market")
 
-### `service-fault-isolation-degrade`
+### `share-via-combinator-vs-separate-impls`
 
-**Question.** In a long-running service that must never crash on hostile/untrusted input, should a component let a failure propagate and crash the process, or should every boundary catch faults and degrade to a safe, empty default?
+**Question.** When two operations are logically distinct (a local op returning a `Tensor` vs. a collective op returning a `{PeerId: Tensor}` map) but share underlying logic, should the crate share code via a combinator abstraction or keep them separately implemented?
 
-- Teams: a · team-local ids: `a-sa14-f004985-q3` (f004985)
-- Domains: cloud-workers, wasm
-- Concepts: fault handling; panic containment; resilience by design
+- Teams: a · team-local ids: `a-sR11-f003983-q2` (f003983)
+- Domains: distributed, ml
+- Concepts: code duplication; abstraction boundaries; collective/distributed tensor ops
 - Positions:
-  - `service-fault-isolation-degrade--p1` — catch faults at every boundary, never let a session die
-    - **Celso Martinho, Ruskin Constant, Rui Figueira, and Luís Duarte** · Source `f004985` · date 2026-08-06 · locator § Design decisions / Exception handling — commit as a design rule, before writing code, that any failure degrades to a blank frame or missing element rather than crashing the session, since the browser must render hostile, unreliable pages without ever dropping the one it's holding Quote: "any failure degrades to a blank frame or a missing element, never a dead session" [`a-sa14-f004985-c3`, team a]
-- Positions seen by the extractor (`a-sa14-f004985-q3`): commit up front to catching faults at every boundary and degrading to a blank frame or missing element, never a dead session
+  - `share-via-combinator-vs-separate-impls--p1` — extract-a-shared-combinator-even-if-unexposed
+    - **crutcher** · Source `f003983` · date 2025-12-12 · locator comment 2025-12-12T20:24:57Z — `reduce_sum` (local) and `all_reduce_sum` (collective) are different operations, but the duplication between them is real and worth solving with an internal op-combinator library, even if that library never reaches end users Quote: "we probably want a local op-combinator library to avoid that duplication, even if those ops aren't shared to users" [`a-sR11-f003983-c2`, team a]
+- Positions seen by the extractor (`a-sR11-f003983-q2`): extract-a-shared-combinator-even-if-unexposed (crutcher)
 
 ### `shared-hw-resource-refcount-vs-raii`
 
@@ -3306,6 +4116,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **David Vin (Felgo)** · Source `f011133` · date 2024-07-01 · locator "so should you switch to slint" (closing section, ~23:37) — having reimplemented an existing QML demo app in Slint from scratch, he argues Slint's build-time-checked, Rust-native, easily cross-compiled model is worth the tradeoff against QML's more mature multimedia/3D/testing tooling and Qt's licensing costs, especially for embedded targets Quote: "for me it seems that the slint is the best toolkit currently for rust" [`b-sb23-f011133-c1`, team b]
 - Positions seen by the extractor (`b-sb23-f011133-q1`): adopt Slint for new Rust-based GUI work because compile-time error catching, portability and escaping Qt licensing/lock-in outweigh its current feature gaps
 
+### `sound-lifetime-erasure-in-callbacks`
+
+**Question.** When an external callback API erases a reference's lifetime so it can be stored for later, how should the resulting unsafe surface be structured to stay sound?
+
+- Teams: b · team-local ids: `b-sR04-f001749-q1` (f001749)
+- Domains: desktop-cli-ui
+- Concepts: unsafe; lifetimes; aliasing; FFI/callback integration
+- Positions:
+  - `sound-lifetime-erasure-in-callbacks--p1` — thread-local-scoped-storage-over-raw-pointer-cast
+    - **ArthurBrussee** · Source `f001749` · date 2024-07-26 · locator PR #4849, comment 2024-07-26T01:00:25Z — the prior integration cast away an `&ActiveEventLoop`'s lifetime to store it for a later callback, which he judged unsound (possible aliased mutable reference, no real outlives guarantee from winit); replaced it with a thread-local holding the pointer only for the paint call's duration — still `unsafe`, but easier to reason about. Quote: "That's really not allowed! At any point there might be an aliased mutable reference, and the comment about how the lifetime outlives the callback doesnt really make sense to me - winit is free to do what it wants!" [`b-sR04-f001749-c1`, team b]
+- Positions seen by the extractor (`b-sR04-f001749-q1`): thread-local-scoped-storage-over-raw-pointer-cast
+
 ### `speculative-from-impls`
 
 **Question.** When you can foresee wanting another blanket `From` impl for a type later, should you add related conversions now speculatively, or hold off to avoid a breaking compile error for downstream users when you do add it?
@@ -3332,6 +4154,30 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `spi-hardware-cs-in-spibus--p2` — support-both-type-level-distinction
     - **bogdan-petru** · Source `f004055` · date 2026-02-05 · locator comment @bogdan-petru 2026-02-05T04:50:38Z — converges on marker types (`HardwareCs`, `NoCs`) so `SpiBus` is implemented only for the no-hardware-CS variant, while a separate constructor still exposes hardware CS for callers who want it Quote: "The SpiBus trait is now only implemented for Spi<..., NoCs>, following embedded-hal semantics where SpiBus represents exclusive bus access without CS management." [`a-sa09-f004055-c5`, team a]
 - Positions seen by the extractor (`a-sa09-f004055-q2`): software-cs-via-spidevice, hardware-cs-in-spibus, support-both-type-level-distinction
+
+### `state-accessor-and-stream-split`
+
+**Question.** Should a Rust crate's live-state accessor and its change-notification stream be one overloaded API or two separate primitives?
+
+- Teams: a · team-local ids: `a-sR13-f004685-q1` (f004685)
+- Domains: core, decentralized-iroh
+- Concepts: API design; async streams; ownership/lifetimes
+- Positions:
+  - `state-accessor-and-stream-split--p1` — split-into-two-primitives
+    - **iroh/n0 (Friedel Ziegelmayer & Rüdiger Klaehn, post authors)** · Source `f004685` · date 2026-05-11 · locator § "Path observation API redesign" — the single `PathWatcher` primitive tried to serve both "what are the paths right now" and "tell me when paths change," so it was replaced by `Connection::paths()` (a lifetime-bound borrowed snapshot) and `Connection::path_events()` (a `'static` event stream), each answering one question Quote: "went through PathWatcher, a single primitive that tried to serve two very different consumers: code that wants \"what are the paths right now?\" and code that wants \"tell me when paths change\"" [`a-sR13-f004685-c1`, team a]
+- Positions seen by the extractor (`a-sR13-f004685-q1`): split-into-two-primitives (iroh)
+
+### `static-verification-no-panic-mechanism`
+
+**Question.** How should a Rust project statically verify a property like "this function never panics" or "this function never calls unvalidated code" across a codebase: clippy lints, a new effect-type system, a link-time hack, a cfg-forked standard library, or a custom compiler driver?
+
+- Teams: b · team-local ids: `b-sR12-f005169-q1` (f005169)
+- Domains: core, embedded
+- Concepts: static verification; panics; effect systems; monomorphization; custom lints; safety-critical certification
+- Positions:
+  - `static-verification-no-panic-mechanism--p1` — custom-compiler-driver-post-mono
+    - **Jynn (Ferrous Systems, Ferrocene team)** · Source `f005169` · date 2026-04-08 · locator section "What have we learned?" (whole post walks the alternatives it rejects: clippy lints, effect-type systems, link-time no_panic hack, cfg-forked std) — for certifying that validated `core` functions only call other validated functions (generalizable to "never panics"), clippy lints don't recurse into dependencies and only cover hard-coded library types; an effect-type system would require a new language; a link-time hack is optimization-dependent, has no async support, breaks under `panic = "abort"`/no_std, and is unsafe to use in library crates; cfg-forking the standard library affects every consumer and breaks tooling. A custom rustc driver with a post-monomorphization MIR pass was the most accurate approach and is what Ferrocene now ships and certifies against Quote: "For Ferrocene, the most accurate approach was to write a custom rustc driver which uses a post-monomorphization pass to detect all resolved function calls." [`b-sR12-f005169-c1`, team b]
+- Positions seen by the extractor (`b-sR12-f005169-q1`): custom-compiler-driver-post-mono
 
 ### `synthetic-canary-vs-tracing`
 
@@ -3381,6 +4227,30 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **SomeoneToIgnore** · Source `f004772` · date 2026-08-07 · locator comment @SomeoneToIgnore 2026-08-07T22:48:19Z — notes that even after a gesture-handling fix, "nothing tests the actual gesture" — the toggle/switch tests still drive the methods directly rather than the deferred mouse-event path itself Quote: "nothing tests the actual gesture: the toggle/switch tests drive the methods directly, the deferred up-out path itself has zero coverage." [`a-sa13-f004772-c4`, team a]
 - Positions seen by the extractor (`a-sa13-f004772-q2`): test-via-real-entry-point, test-via-internal-methods
 
+### `threads-vs-simd-for-batch-work`
+
+**Question.** When batch-hashing many small blobs (or a similar compute-bound batch workload), should you use thread-level parallelism (rayon), instruction-level parallelism (SIMD), or both, and when does each apply?
+
+- Teams: b · team-local ids: `b-sR08-f003702-q1` (f003702)
+- Domains: decentralized-iroh, ml
+- Concepts: parallelism (SIMD vs. threads); rayon; BLAKE3; compute-bound batching
+- Positions:
+  - `threads-vs-simd-for-batch-work--p1` — simd-for-small-batches-combine-with-threads-for-large-batches
+    - **Rüdiger Klaehn** · Source `f003702` · date 2025-10-15 · locator § "Combining instruction level parallelism and thread level parallelism" — SIMD alone is a good choice for a small batch — decent speedup, stays on one core, doesn't disturb the rest of the program — but for a large batch where the whole machine is available, combining SIMD with rayon's thread-level parallelism gives peak throughput (measured 17x over sequential, 2.1x over rayon alone). Quote: "Instruction level parallelism alone is frequently a good choice if you have a small batch of blobs to hash. You get a decent speed up but only use one CPU, and don't affect other parts of your program... For peak performance we can combine instruction level parallelism and thread level parallelism." [`b-sR08-f003702-c1`, team b]
+- Positions seen by the extractor (`b-sR08-f003702-q1`): simd-for-small-batches-combine-with-threads-for-large-batches
+
+### `tiered-checked-unchecked-apis`
+
+**Question.** Should a high-performance Rust client API expose multiple tiers of the same builder operation — an unchecked/positional fast path alongside a checked/named-field safe path — rather than one safe-by-default interface?
+
+- Teams: a · team-local ids: `a-sR16-f012642-q1` (f012642)
+- Domains: core, distributed
+- Concepts: API design; ergonomics vs. performance; unchecked/checked accessors
+- Positions:
+  - `tiered-checked-unchecked-apis--p1` — offer-tiered-apis
+    - **Jiachun Feng (Co-Founder, Greptime)** · Source `f012642` · date 2025-07-30 · locator § "Three Insert Approaches" — the bulk-stream row builder deliberately exposes three ways to build the same row — a positional "Fast API" for best performance, a "Safe API" that validates field names, and an "Indexed API" balancing the two — so callers pick their own safety/performance tradeoff rather than the crate picking one for them Quote: "Fast API: Best performance, positional values / Safe API: Validates field names / Indexed API: Uses index for balance of safety and speed" [`a-sR16-f012642-c1`, team a]
+- Positions seen by the extractor (`a-sR16-f012642-q1`): offer-tiered-apis (Greptime)
+
 ### `timer-instant-overflow-panic`
 
 **Question.** When a scheduled timer/interval's next wake time would overflow the maximum representable `Instant`, should the runtime panic or silently never become ready again?
@@ -3425,6 +4295,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **mattya** · Source `f005360` · date 2024-10-13 · locator reply, 2024-10-13T08:47:00-05:00 — Distinguishes Tokio/Hyper (both very fast) from Axum, which adds its own routing/extractor overhead on top; recommends using Hyper and Tower directly when complex path routing isn't needed. Quote: "Tokio and Hyper are both very fast, but this is using Axum which adds its own overhead... If you don't need complex path routing and 'extractors'... it's probably better to use Hyper and Tower directly." [`a-saL1-f005360-c8`, team a]
     - **kornel** · Source `f005360` · date 2024-10-13 · locator reply, 2024-10-13T09:11:28-05:00 — Expresses surprise/disappointment at Axum's overhead, noting Actix-Web previously topped benchmarks while also providing routing and extractors, so he hadn't expected Axum to differ much. Quote: "Oh, that's disappointing. Actix-Web used to be a benchmark-topping framework while having routing and extractors, so I didn't expect Axum to differ much." [`a-saL1-f005360-c9`, team a]
 - Positions seen by the extractor (`a-saL1-f005360-q3`): tokio-competitive-out-of-the-box; axum-framework-overhead-hurts-raw-performance
+
+### `totokens-intermediate-tokenstream`
+
+**Question.** In a `ToTokens` impl for a proc-macro AST enum, should each arm call `to_tokens` on the matched variant directly, or is it acceptable to build an intermediate `TokenStream` and feed it into the outer one?
+
+- Teams: a · team-local ids: `a-sR01-f000538-q1` (f000538)
+- Domains: core, web
+- Concepts: proc-macro; `ToTokens`; `TokenStream`
+- Positions:
+  - `totokens-intermediate-tokenstream--p1` — avoid building a temporary `TokenStream` in a `ToTokens` impl; match on the enum and call `to_tokens` on the matched arm directly
+    - **its-the-shrimp** · Source `f000538` · date 2025-05-04 · locator PR #3509, comment 2025-05-04T12:20:47Z — suggests rewriting the `impl ToTokens` so each match arm calls `to_tokens` on its inner value directly, rather than constructing a `TokenStream` from one variant and feeding it into another. Quote: "to avoid allocating a temporary TokenStream just to feed it into another TokenStream" [`a-sR01-f000538-c1`, team a]
+- Positions seen by the extractor (`a-sR01-f000538-q1`): "match each variant and call `to_tokens` directly, avoid the intermediate allocation" (its-the-shrimp)
 
 ### `tower-middleware-vs-handler-helpers`
 
@@ -3474,6 +4356,19 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Dhruv Ahuja** · Source `f012940` · date 2026-03-11 · locator section "State of Logging and OpenTelemetry" — notes the OpenTelemetry Rust project bridges existing loggers (rather than mandating its own API) but recommends `tracing` for new applications because its Span concept aligns with OTel spans; the demo app follows this, using `tracing` throughout instead of a plain logging crate Quote: "the project recommends using tracing for new Rust applications" [`a-sa29-f012940-c1`, team a]
 - Positions seen by the extractor (`a-sa29-f012940-q1`): tracing-first from the start, per the OpenTelemetry Rust project's own stated recommendation (Dhruv Ahuja) vs. the described status-quo pattern of scaffolding with "the language's preferred logging libraries" first and retrofitting OTel via bridge libraries later (described in-source as the general, unnamed default)
 
+### `trait-default-methods-vs-major-bump`
+
+**Question.** When adding new methods to a public trait, should you give them default implementations to avoid a breaking change, or bump the major version?
+
+- Teams: b · team-local ids: `b-sR08-f003540-q1` (f003540)
+- Domains: other
+- Concepts: trait evolution; semver; default trait methods; API stability
+- Positions:
+  - `trait-default-methods-vs-major-bump--p1` — default-impls-to-avoid-breaking-change
+    - **milenkovicm** · Source `f003540` · date 2025-09-19 · locator issue comment, 2025-09-19T15:47:59Z — added default implementations for two new `FunctionRegistry` trait methods so they would not trigger a backward-incompatible change in the 50.1.0 minor release, planning to make them required (unimplemented) only in the next major version. Quote: "I have provided default implementation for those two methods for now, so they do not trigger backward incompatible change. will revert them back to unmplemented methods for df 51 release" [`b-sR08-f003540-c1`, team b]
+    - **alamb** · Source `f003540` · date 2025-09-18 · locator issue comment, 2025-09-18T18:04:21Z — endorses adding the two new trait methods and shipping them in the 50.1.0 minor release rather than waiting for a major version bump. Quote: "I think adding two new methods and releasing `50.1.0` sounds good to me" [`b-sR08-f003540-c2`, team b]
+- Positions seen by the extractor (`b-sR08-f003540-q1`): default-impls-to-avoid-breaking-change
+
 ### `trait-error-open-custom-variant`
 
 **Question.** Should a public trait's associated error type be a closed, fully-enumerated set of variants, or include an open "custom"/user-extension variant so third-party implementors can propagate their own errors?
@@ -3499,6 +4394,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `trait-impl-boilerplate-mechanism--p2` — infer-associated-types
     - **scottmcm** · Source `f009292` · date 2025-09-08 · locator reply, 2025-09-08T23:27:35.279Z — Rather than new impl syntax, wants the compiler to infer associated types (e.g. `Iterator::Item`) from the method body, which would simplify implementing Add, Sub, IntoIterator and Deref without adding new surface syntax. Quote: "there's really no need... for me to have to write the type Item = i32; because it's the only possible thing given that next." [`a-sa19-f009292-c8`, team a]
 - Positions seen by the extractor (`a-sa19-f009292-q2`): new-impl-shorthand-syntax; infer-associated-types; ecosystem-crates-suffice
+
+### `traits-as-inheritance-substitute`
+
+**Question.** Is Rust's trait-based supertrait/subtrait polymorphism (no class inheritance) an adequate, ergonomic substitute for OOP-style inheritance, or does the required generic/trait-bound plumbing make it more verbose and confusing than an inheritance-based language?
+
+- Teams: a · team-local ids: `a-sR16-f012428-q1` (f012428)
+- Domains: core, desktop-cli-ui
+- Concepts: traits; generics; subtyping/variance; static vs. dynamic dispatch
+- Positions:
+  - `traits-as-inheritance-substitute--p1` — adequate-but-more-verbose
+    - **Nas (CEO/founder Rebel, author developerlife.com, maintainer of Rebel's Dewey crates)** · Source `f012428` · date 2025-03-26 · locator video ~[34:17]-[35:17] — modeling an OOP-style view/component hierarchy in Rust via supertrait/subtrait relationships (rather than inheritance) works, but doing it generically over the inner-storage type is a lot more work and, in his words, more verbose and confusing than the equivalent in Kotlin, Java or TypeScript Quote: "arguably it's more verbose and somewhat confusing especially if you're coming from something like cotlin or java or typescript" [`a-sR16-f012428-c1`, team a]
+- Positions seen by the extractor (`a-sR16-f012428-q1`): adequate-but-more-verbose (Nas)
 
 ### `type-erasure-vs-associated-type`
 
@@ -3647,6 +4554,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - no Claim in batch 1
 - Positions seen by the extractor (`a-sa03-f002356-q1`): commenter (unattributed) — Zed's `lsp-types` fork should upgrade to `fluent-uri` for spec-correct percent-encoding; the fork's existing choice (unattributed, inferred only from the fork's branch name `zed-main-no-url-changes`) — keep the `url` crate, for reasons not stated in this source
 
+### `verify-crates-io-against-source`
+
+**Question.** should crates.io-published bytes be checked against their source repository, and should such findings be released even incomplete
+
+- Teams: a · team-local ids: `a-sR14-f005287-q1` (f005287)
+- Domains: core
+- Concepts: none given
+- Positions:
+  - `verify-crates-io-against-source--p1` — verify-and-publish-raw
+    - **Kornel** · Source `f005287` · date 2024-06-16 · locator original post + reply to `@guenther`, 2024-06-16 — built a comparator between crates.io tarballs and their git repos across nearly all of crates.io, and released the raw dataset rather than withholding it for private review first. Quote: "I've compared nearly all Rust crates.io crates to contents of their git repositories. Here's a dump of this data... I'm releasing the data, because I don't have time to review it all." [`a-sR14-f005287-c1`, team a]
+- Positions seen by the extractor (`a-sR14-f005287-q1`): verify-and-publish-raw (Kornel)
+
 ### `warn-missing-edition`
 
 **Question.** Should rustc warn (or emit a note) whenever it is invoked without an explicit `--edition`, given how much edition-dependent behaviour has accumulated?
@@ -3698,6 +4617,18 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Andrew Jakubowicz** · Source `f011460` · date 2026-06-11 · locator ~25:39 — after surveying GitHub crates, found people mostly using serde-wasm-bindgen (more ergonomic, more allocation) for cold paths like config initialization, and wasm-bindgen getters/reflection (faster, less ergonomic) for hot paths Quote: "from serving some GitHub crates, I found people are mostly doing the like the right thing, basically. Using serde-wasm-bindgen for cold paths, config initialization, and then using wasm-bindgen getters... if they're needed" [`a-sa26-f011460-c3`, team a]
 - Positions seen by the extractor (`a-sa26-f011460-q3`): use-serde-for-cold-paths-getters-for-hot-paths (Andrew Jakubowicz, describing what he found practiced on GitHub)
 
+### `wasm-capabilities-explicit-vs-ambient`
+
+**Question.** Should a Wasm component sandbox grant capabilities by default (ambient authority), or require every capability — including for middleware and dependencies — to be explicitly listed?
+
+- Teams: b · team-local ids: `b-sR11-f005050-q1` (f005050)
+- Domains: wasm
+- Concepts: capability-based security; sandboxing; WASI
+- Positions:
+  - `wasm-capabilities-explicit-vs-ambient--p1` — middleware components get no ambient authority; every capability a middleware needs (e.g. an outbound host) must be explicitly listed in the trigger's inherit_configuration, exactly like any other component dependency
+    - **The Spin Project** · Source `f005050` · date 2026-08-26 · locator "Middleware doesn't get a free pass on capabilities" section — an auth middleware can reach an endpoint only because the underlying component grants that capability and the trigger explicitly inherits it; otherwise the middleware gets nothing Quote: "Middleware gets no ambient authority." [`b-sR11-f005050-c1`, team b]
+- Positions seen by the extractor (`b-sR11-f005050-q1`): explicit-only, no ambient authority, even for middleware
+
 ### `wasm-core-sum-types`
 
 **Question.** Should core Wasm eventually gain a primitive sum-type / tagged-union construct (with e.g. a `br_table`-like case-matching instruction), or is representing variants as `struct` subtyping trees in a shared `rec` group sufficient?
@@ -3711,6 +4642,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `wasm-core-sum-types--p2` — marginal-benefit-over-encoding
     - **rossberg** · Source `f003074` · date 2025-06-16 · locator comment @rossberg 2025-06-16T21:05:40Z — a custom type descriptor can already store an integer tag for `br_table` dispatch without wasting per-variant space, so primitive sum types would mainly save the trailing cast check, which requires substantial new Wasm machinery for limited additional gain Quote: "Saving the cast would essentially require adding a case construct to Wasm, which would be quite a bit of machinery. Other than that, sum types do not offer a hell lot of relevant generic optimisations" [`a-sa05-f003074-c5`, team a]
 - Positions seen by the extractor (`a-sa05-f003074-q2`): primitive-sum-types-worthwhile, marginal-benefit-over-encoding
+
+### `wasm-monolithic-vs-small-components`
+
+**Question.** Within one Wasm application, should logic be kept in a single monolithic component, or decoupled into several small components composed via WIT interfaces?
+
+- Teams: b · team-local ids: `b-sR11-f005053-q1` (f005053)
+- Domains: wasm
+- Concepts: component composition; WIT; modularity
+- Positions:
+  - `wasm-monolithic-vs-small-components--p1` — self-contained pieces of application logic (e.g. a classifier) should be split into their own Wasm component, composed into the app via a WIT interface and a declared spin.toml dependency, rather than living inline in the HTTP-triggered component
+    - **Thorsten Hans** · Source `f005053` · date 2026-08-27 · locator "Recap" section — decoupling the classification logic into its own component "kept the HTTP control flow lean, standard, and easy to maintain," with WIT files as "the single source of truth" for the boundary Quote: "By decoupling the core classification logic into its own Wasm component, we kept the HTTP control flow lean, standard, and easy to maintain" [`b-sR11-f005053-c1`, team b]
+- Positions seen by the extractor (`b-sR11-f005053-q1`): decouple into small, independently-versioned components
 
 ### `wasm-panic-unwind-vs-abort`
 
@@ -3747,6 +4690,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `wasm-undefined-symbols-error--p1` — remove --allow-undefined as the wasm-target default; undefined symbols should error at build time like on native platforms
     - **Alex Crichton** · Source `f009737` · date 2026-04-04 · locator "What's wrong with --allow-undefined?" section — the current default silently turns undefined/typo'd symbols into WebAssembly imports instead of producing a build error, which "kicks the can down the road" from where a mistake is introduced to where it surfaces (often as a confusing runtime failure); removing it aligns wasm with how all other platforms already behave, and existing intentional users can opt back in per-symbol Quote: "All native platforms consider undefined symbols to be an error by default, and thus by passing --allow-undefined rustc is introducing surprising behavior on WebAssembly targets." [`b-sb23-f009737-c1`, team b]
 - Positions seen by the extractor (`b-sb23-f009737-q1`): remove the historical --allow-undefined default so undefined symbols become build-time errors, with an explicit opt-in (`#[link(wasm_import_module = ...)]` or `-Clink-arg=--allow-undefined`) for the rare intentional case
+
+### `web-api-wrapper-raw-vs-rust-types`
+
+**Question.** When wrapping a browser Web API (e.g. `UrlSearchParams`) inside a Rust frontend-framework hook, should the API surface the raw web-sys type or convert it to an idiomatic Rust collection?
+
+- Teams: a · team-local ids: `a-sR07-f002271-q1` (f002271)
+- Domains: frontend, wasm
+- Concepts: web-sys/wasm-bindgen API wrapping; idiomatic API surface
+- Positions:
+  - `web-api-wrapper-raw-vs-rust-types--p1` — convert-to-rust-collection
+    - **lukechu10** · Source `f002271` · date 2024-11-03 · locator comment on router.rs (2024-11-03T22:58:52Z) — a hook exposing browser search params should return a `HashMap<String, String>` rather than the raw `UrlSearchParams` handle Quote: "we should return a `HashMap<String, String>` from search params to values" [`a-sR07-f002271-c1`, team a]
+- Positions seen by the extractor (`a-sR07-f002271-q1`): convert-to-rust-collection (lukechu10)
 
 ### `web-framework-actor-vs-tower`
 
@@ -3800,6 +4755,18 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `web-wasm-target-workaround-vs-target--p2` — ship the workaround now, a new target isn't realistic soon
     - **newpavlov** · Source `f003558` · date 2025-09-19 · locator comment 2025-09-19T12:53:59Z; 2025-09-19T13:06:16Z — says there has been zero progress on a Web WASM target in about 4 years, `getrandom` needs a solution that works with the current stable Rust and declared MSRV, and hypothetical language changes are out of scope for this issue Quote: "I don't have any hope for getting it anytime soon" [`a-sa06-f003558-c2`, team a]
 - Positions seen by the extractor (`a-sa06-f003558-q1`): push for a real `wasm32-web`/`wasm32-bindgen` target before adding more workarounds; vs. ship a workaround now because the target has seen no progress and must work on current stable/MSRV
+
+### `wit-export-direct-vs-interface`
+
+**Question.** When defining a Wasm component's WIT world, should a function be exported directly from the world, or wrapped inside a named interface that the world then exports?
+
+- Teams: a · team-local ids: `a-sR08-f003033-q1` (f003033)
+- Domains: wasm
+- Concepts: WIT; Wasm Component Model; API design
+- Positions:
+  - `wit-export-direct-vs-interface--p1` — wrap related functions inside a named interface and export the interface, rather than exporting a raw function from the world
+    - **Tim McCallum (Bytecode Alliance)** · Source `f003033` · date 2025-05-21 · locator "WIT" section — while a world can export a bare function directly, doing so isn't the recommended approach; wrapping functions in an interface is more modular, extensible, and matches how WIT is used in real multi-function components Quote: "the recommended best practice is to wrap related functions inside an interface, which you then export from your world" [`a-sR08-f003033-c1`, team a]
+- Positions seen by the extractor (`a-sR08-f003033-q1`): prefer wrapping in a named interface
 
 ### `work-stealing-vs-thread-per-core`
 
