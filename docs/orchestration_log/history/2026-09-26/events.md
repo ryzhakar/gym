@@ -355,3 +355,5 @@
 2026-09-27T04:45 | self | delegation | agent:t3-n7r3-a (N7-r3-04 first: R3 O2 adult delayed, plus 01, 02, 05), agent:t3-n7r3-b (06, 07, 08, 11, 03), sonnet verification
 2026-09-27T04:46 | agent:t2-n4-r3 | receipt | needs/n4-r3.md: 11 claims, 14 new sources (6 full texts); ConceptKT: correctness diagnosis 63–70% vs missing-concept diagnosis 2–17% Macro-F1 on the same data
 2026-09-27T04:46 | self | delegation | N4-r3-01, 02 (Deep Knowledge Tracing) added to t3-n7r3-b via SendMessage
+2026-09-27T04:47 | agent:t2-n6-r3 | receipt | needs/n6-r3.md: 11 claims, 8 new sources (5 full texts); Lally 2010 habit curve median 66 days, single lapse no material setback; R3 developer commit-time burst patterns
+2026-09-27T04:47 | self | delegation | agent:t3-n6r3-a, sonnet: verify N6-r3-01..04, 10, 11
