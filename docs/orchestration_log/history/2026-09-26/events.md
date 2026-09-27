@@ -326,3 +326,4 @@
 2026-09-27T04:03 | agent:t3-n6-a | receipt | N6-r2 six claims marked VERIFIED, four on abstracts only; sent back to re-mark abstract-only rows UNVERIFIABLE for consistency with the primary-text rule; two overstatements flagged (03, 04)
 2026-09-27T04:03 | self | decision | claims-status.csv is append-only; the last row per claim_id governs; synthesis prompts must say so
 2026-09-27T04:04 | agent:t3-n6-a | receipt | N6-r2-01, 04, 09 re-marked UNVERIFIABLE; N6-r2-03 stays VERIFIED, full text read from an archived author copy (my premise was wrong for it)
+2026-09-27T04:04 | self | delegation | agent:t2-n7-r2 (sonnet, transfer lens over N1–N6), agent:t4-we-pf (opus, worked examples vs productive failure), agent:t4-dp (opus, deliberate practice dispute); Stage B W8–W9
