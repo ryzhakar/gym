@@ -429,3 +429,4 @@
 2026-09-27T09:17 | self | delegation | agent:t3-n1r4, sonnet: verify N1-r4-01..04,06..10 (S>=3) per prompts/t3-verify.md
 2026-09-27T09:20 | agent:t2-n4-r4 | receipt | N4 round 4: 10 claims N4-r4-01..10, 12 new sources, 4 full texts, 8 abstract-only; flags McArthur 1990 (expert tutors barely diagnose) against diagnosis-centric AI-tutor claims for tier 4; needs/n4-r4.md
 2026-09-27T09:20 | self | delegation | agent:t3-n4r4, sonnet: verify N4-r4-08,09 (S>=3) per prompts/t3-verify.md
+2026-09-27T09:20 | agent:t3-n2r4 | receipt | N2 r4 verify: 0 VERIFIED, 1 REFUTED (N2-r4-07), 4 UNVERIFIABLE (paywalled or abstract-only)
