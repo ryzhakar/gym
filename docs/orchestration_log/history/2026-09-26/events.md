@@ -383,3 +383,11 @@
 2026-09-27T08:35 | self | decision | teaching deliverables kept durable by force-committing recon/2026-09-27/research/teaching/ (scratch, binds nothing; decided under the owner handover, ground: owner ruling 00:52, no escalations)
 2026-09-27T08:35 | self | failure | research halted on escalations the owner had ruled out — history/2026-09-26/failures.md
 2026-09-27T08:36 | self | decision | Rust batch 1 sampling: hint-less frame rows sample as the core cell (domain unknown until read; extractors assign domains_live); target strata plus core, English, ~200 per team; seed logged (decided, plan §7 S1)
+2026-09-27T08:36 | self | decision | teaching research continues past the round-3 map: owner ruling line 116 says done at saturation; the three-round cap governed only when the map ships. Round 4 runs with the found-DOI list (capture-recapture) and no blank grades (void-round fix)
+2026-09-27T08:36 | self | delegation | agent:t2-n1-r4, sonnet: saturation round 4 for N1
+2026-09-27T08:36 | self | delegation | agent:t2-n2-r4, sonnet: saturation round 4 for N2
+2026-09-27T08:36 | self | delegation | agent:t2-n3-r4, sonnet: saturation round 4 for N3
+2026-09-27T08:36 | self | delegation | agent:t2-n4-r4, sonnet: saturation round 4 for N4
+2026-09-27T08:36 | self | delegation | agent:t2-n5-r4, sonnet: saturation round 4 for N5
+2026-09-27T08:36 | self | delegation | agent:t2-n6-r4, sonnet: saturation round 4 for N6
+2026-09-27T08:36 | self | delegation | agent:t2-n7-r4, sonnet: saturation round 4 for N7
