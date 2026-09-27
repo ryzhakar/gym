@@ -647,3 +647,5 @@
 2026-09-27T19:33 | agent:r-xr-b-5 | receipt | send-back b-R11: 7 sources, 6 overturned (8 Questions, 8 Claims); next b-R13
 2026-09-27T19:34 | agent:s-n2-r8 | receipt | N2 title screen: 3166 labeled, Y 1414; tally m=254, Chapman N=2716, 48% unseen
 2026-09-27T19:35 | agent:r-xr-b-4 | receipt | send-back b-R12: 12 sources, 5 overturned (8 Questions, 8 Claims); retired
+2026-09-27T19:37 | agent:r-xr-b-5 | receipt | send-back b-R13: 10 sources, 4 overturned, 2 unreachable; team b send-back complete
+2026-09-27T19:37 | self | delegation | t4-merge-b1 continued: fold send-back extracts; t4-audit-b1 continued: audit the send-back pass; t4-merge2-b1 new (opus, fresh): full blind second merge of all batch-1 extracts for the 90% gate
