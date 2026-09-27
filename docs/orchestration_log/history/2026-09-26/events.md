@@ -339,3 +339,5 @@
 2026-09-27T04:22 | self | delegation | agent:t3-n2r3-a (N2-r3-01..05, 10), agent:t3-n2r3-b (N2-r3-06..08), sonnet verification
 2026-09-27T04:23 | agent:t4-we-pf | receipt | resolve/we-vs-pf-resolution.md: studies test different contrasts; six moderators (failure-phase quality, age, general vs specific skill, prior knowledge, outcome type, delay); corrections to N3-r1-02 subgroups, N3-r1-09 quote not in article (S2 R2 O1), N2-r1-10 figure removed, N3-r1-01 UNVERIFIABLE; ran python3 outside uv
 2026-09-27T04:23 | self | decision | evidence map launches when round 3 (N1, N3) and the N2-r3 verifications land, so the map reads complete rounds
+2026-09-27T04:24 | agent:t2-n1-r3 | receipt | needs/n1-r3.md: 12 claims, 16 sources (7 unreachable); instrument choice changes retention curves; construct-validity argument against unaided testing as AI enters target domains
+2026-09-27T04:24 | self | delegation | agent:t3-n1r3-a, sonnet: verify N1-r3-01..03, 05, 06, 07, 11, 12
