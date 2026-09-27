@@ -345,3 +345,4 @@
 2026-09-27T04:26 | self | delegation | agent:t3-n3r3-a, sonnet: verify N3-r3-02, 04, 05, 06, 08, 09, 10
 2026-09-27T04:26 | agent:t3-n2r3-b | receipt | N2-r3-06, 07, 08 UNVERIFIABLE: all paywalled, no OA copy
 2026-09-27T04:32 | agent:t3-n2r3-a | receipt | N2-r3-01, 02, 10 VERIFIED (Strobel & van Barneveld: PBL wins long-term retention, drill short-term); N2-r3-03, 04, 05 UNVERIFIABLE; a 2026 math-PBL meta-analysis finds bias-corrected d=0.275 vs Chen & Yang 0.71
+2026-09-27T04:32 | agent:t3-n1r3-a | receipt | N1-r3: 4 VERIFIED (01–03 CPR retention meta-analysis, 11 calibration training null), 1 REFUTED (12: sample size overstated ~4x), 3 UNVERIFIABLE (05, 06 Tatel & Ackerman; 07)
