@@ -488,3 +488,4 @@
 2026-09-27T13:41 | owner | receipt | in conversation: Rust slice process settled; teaching first, two lanes in parallel; resume crashed agents, never re-provision; keep records tight
 2026-09-27T13:41 | self | decision | Rust slice process and agent-reuse table settled as proposed (owner ruling)
 2026-09-27T13:41 | self | delegation | resumed via SendMessage: t2-n1..n7-r6, t2-n1..n7-r7, t3-r5-a
+2026-09-27T13:41 | self | delegation | Rust slice 1 extraction, 2 agents per team, 3 bundle slices each in sequence: r-x-a-b1-01, -02 resumed with a-01, a-02; r-x-b-s1-1, -2 (sonnet, new) with b-01, b-02
