@@ -461,3 +461,4 @@
 2026-09-27T09:51 | self | failure | said next steps without launching them: the bundle script and round-5 verification sat idle after the pilot report
 2026-09-27T09:51 | self | delegation | agent:t3-r5-a, -b, -c, sonnet: verify 33 round-5 S>=3 claims grouped by source (18 sources, 6 each), cache first
 2026-09-27T09:51 | self | delegation | agent:cache-script (continued): scripts/research/bundle.py, pre-filter off-subject and thin rows, one bundle file per extractor slice
+2026-09-27T09:58 | agent:t3-r5-a | receipt | r5 verify group A: 9 VERIFIED, 5 UNVERIFIABLE; N3-r5-07 marked UNVERIFIABLE though the full text contradicts it (p=0.197), sent back as REFUTED
