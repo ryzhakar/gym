@@ -679,3 +679,4 @@
 2026-09-27T19:52 | agent:r-xt-a-2 | receipt | third pass a-T07: 5 sources, 2 Questions, 2 Claims voice-unverified; last unit a-T08
 2026-09-27T19:52 | agent:r-xt-b-3 | receipt | third pass b-T09: 11 sources, 5 Questions, 5 Claims; last unit b-T10
 2026-09-27T19:52 | agent:r-xt-b-2 | receipt | third pass b-T06: 7 sources, nothing new; last unit b-T07
+2026-09-27T19:53 | agent:r-xt-b-1 | receipt | third pass b-T04: 7 sources, 2 Questions, 2 Claims (iroh release notes); retired
