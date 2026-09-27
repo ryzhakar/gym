@@ -422,3 +422,4 @@
 2026-09-27T09:15 | agent:t2-n3-r4 | receipt | N3 round 4: 12 claims, 11 sources graded, 4 full texts claimed of which some are ERIC abstracts treated as read; needs/n3-r4.md
 2026-09-27T09:15 | self | delegation | agent:t3-n3r4, sonnet: verify N3-r4-01..10 (S>=3) per prompts/t3-verify.md; abstract-only reads mark UNVERIFIABLE
 2026-09-27T09:16 | self | discovery | t2-n3-r4 truncated and re-appended sources.csv mid-round; checked: all round-4 rows of other surveyors present, 0 malformed rows, 526 sources, 225 claims
+2026-09-27T09:17 | agent:t2-n6-r4 | receipt | N6 round 4: 7 claims N6-r4-01..07, 8 new sources, 3 unreachable metadata-only; needs/n6-r4.md
