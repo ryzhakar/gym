@@ -708,3 +708,4 @@
 2026-09-27T23:56 | self | delegation | book extraction, sonnet: r-xb-a-1, -2 (a-B01, a-B02), r-xb-b-1..3 (b-B01..B03); cache-script continued: crawl rtic.rs whole
 2026-09-28T00:00 | agent:r-xb-b-1 | receipt | book pass b-B01: async-book read to the bundle's 150k cut, 9 Questions, 9 Claims; sent to read the rest from the cache
 2026-09-28T00:00 | agent:r-xb-a-1 | receipt | book pass a-B01: 3 books, 12 Questions, 12 Claims; rtic.rs still preface only, awaiting whole crawl
+2026-09-28T00:00 | agent:r-xb-a-2 | receipt | book pass a-B02: rustwasm book whole, 14 Questions, 18 Claims
