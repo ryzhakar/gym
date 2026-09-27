@@ -511,3 +511,4 @@
 2026-09-27T13:51 | agent:t2-n4-r6 | receipt | N4 round 6: 13 claims, 15 sources, 22 queries; OpenAlex daily budget exhausted mid-round; needs/n4-r6.md
 2026-09-27T13:51 | agent:t2-n1-r7 | receipt | N1 round 7: 10 claims, 9 sources, 6 full texts; OpenAlex never answered; needs/n1-r7.md
 2026-09-27T13:53 | agent:t2-n3-r7 | receipt | N3 round 7: 12 claims, 17 sources graded (5 new), 4 full texts; arXiv unreachable; needs/n3-r7.md
+2026-09-27T13:59 | agent:t2-n5-r7 | receipt | N5 round 7: 10 claims, 10 sources, 1 full text; needs/n5-r7.md
