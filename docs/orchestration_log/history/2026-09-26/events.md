@@ -623,3 +623,4 @@
 2026-09-27T19:22 | agent:r-xr-b-2 | receipt | send-back b-R02: Swift thread, nothing new confirmed; next b-R06
 2026-09-27T19:23 | agent:r-xr-a-3 | receipt | send-back a-R05: 3 sources, 1 overturned (iroh changelog, 2 Questions, 2 Claims); last unit a-R08
 2026-09-27T19:24 | agent:r-xr-a-1 | receipt | send-back a-R06: 5 sources, 3 overturned (4 Questions); last unit a-R09
+2026-09-27T19:24 | agent:r-xr-a-2 | receipt | send-back a-R07: 6 sources, 4 overturned (5 Questions, 6 Claims); retired; r-xr-a-4 new with a-R10
