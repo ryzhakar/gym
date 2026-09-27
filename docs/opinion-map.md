@@ -126,9 +126,11 @@ Interface details are settled later, in design iteration on real data (`docs/use
 
 ## Done and upkeep
 
-**Finished.** A subject's map counts as finished only when every Question in its scope passes every check in Bias controls; a pilot or partial pass is not finished.
+**Work in progress by default.** A subject's map is work in progress unless explicitly declared finished, and it is live while research keeps iterating on it; every entry shows whether it is provisional or checked (owner ruling 2026-09-27).
 
-**Change is data.** The map changes only through its data layer. Every published state of the data must pass the tests below.
+**Finished.** A map may be declared finished only when every Question in its scope passes every check in Bias controls; a pilot or partial pass is not finished.
+
+**Change is data.** The map changes only through its data layer. A map declared finished must pass the tests below in every state it is published in; a work-in-progress map runs them as they become available and shows the results (owner ruling 2026-09-27).
 
 Acceptance tests (the Deliberation test dropped, owner ruling 2026-09-26; how to set the tests up is open, `docs/user_deferred_items.md`):
 
