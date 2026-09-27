@@ -577,3 +577,4 @@
 2026-09-27T18:50 | agent:r-x-b-s1-6 | receipt | slice b-18: 11 sources, 4 Questions, 9 Claims; retired
 2026-09-27T18:51 | agent:r-x-b-s1-7 | receipt | slice b-19: 11 sources, 16 Questions, 20 Claims; waits for rebuilt b-21
 2026-09-27T18:52 | agent:r-x-b-s1-8 | receipt | slice b-20: 10 sources, 13 Questions, 13 Claims; waits for rebuilt b-21
+2026-09-27T18:52 | agent:r-x-a-s1-11 | receipt | slice a-25: 1 talk (Amos, facet), 5 Questions, 7 Claims; waits for rebuilt a-26
