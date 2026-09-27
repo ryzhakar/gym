@@ -314,3 +314,5 @@
 2026-09-27T03:49 | self | failure | silence broken a fifteenth time at turn end
 2026-09-27T03:54 | agent:t4-ai-access | receipt | resolve/ai-access-resolution.md: both sides hold; moderator is whether the AI did the practice; 6 scope corrections (N3-r1-11 'retained', N7-r1-08 framing, N7-r1-09 S3→S2 causal); Tutor CoPilot end-of-year null; Barcaui 2025 d −0.68 at 45 days (abstract only); within-person 3-condition probe proposed
 2026-09-27T03:54 | self | decision | first-protocol.md stands for training start; the resolution's corrections flow into Stage B's evidence map, which replaces it
+2026-09-27T03:55 | agent:t2-n5-r2 | receipt | needs/n5-r2.md: 10 claims, 19 sources, 4 full texts; elite judgment reported tacit, a portability tension flagged
+2026-09-27T03:55 | self | delegation | agent:t3-n5-a, sonnet: verify N5-r2-01..03 (Bilalić et al. 2008)
