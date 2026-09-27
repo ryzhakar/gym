@@ -730,3 +730,4 @@
 2026-09-28T00:26 | self | decision | batch-1 merge ships at 78.0% blind agreement, declared with map v0.1; ruling: a 'stopgap vs proper fix' instance is a Question when it names the concrete alternatives, else removed; the 4 reasonless singleton splits get a grouping reason or rejoin (decided under the 2026-09-26 handover)
 2026-09-28T00:27 | self | discovery | duplicate claim id a-saL1-f005516-c1 for two Voices in the fill inputs; merger checking all ids
 2026-09-28T00:30 | agent:t4-merge-b1 | receipt | final corrections: 10 stopgap Questions kept with concrete texts, 3 splits rejoined, 1 given a reason; 401 canonical Questions (a 168, b 180, both 51); Chapman unseen 25-49%; fill remap in merge-v3/fill-remap-b1.csv
+2026-09-28T00:30 | agent:t4-merge-b1 | receipt | no duplicate claim ids: sa15 and saL1 ids look alike; all 772 ids unique and matched to key
