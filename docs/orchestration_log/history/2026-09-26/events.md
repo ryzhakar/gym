@@ -652,3 +652,4 @@
 2026-09-27T19:40 | owner | receipt | in conversation: declare teaching research complete on sources and move on; let the running screener return, then take charge
 2026-09-27T19:40 | self | decision | teaching research complete on sources: collection stops at round 8, coverage estimates from round 8 ship as the map's declared gap; next map v3 (opus) from verified claims, supersedes owner ruling 'done at saturation' (owner ruling)
 2026-09-27T19:40 | self | commitment | tripwire cancelled: cron d1d70bd1 (round-8 OpenAlex pass) no longer needed
+2026-09-27T19:41 | agent:t4-merge-b1 | receipt | send-back folded: 350 canonical Questions from 420 team-local; a only 167, b only 152, both 31; Chapman unseen 36-67% per stratum
