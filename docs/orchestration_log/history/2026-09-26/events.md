@@ -666,3 +666,4 @@
 2026-09-27T19:48 | self | decision | t2-extract.md rule 8: a declared Position needs a reason or a named alternative; practice alone is no Claim; sent to all six third-pass extractors (decided under the 2026-09-26 handover)
 2026-09-27T19:49 | agent:r-xt-a-2 | receipt | third pass a-T05: 2 Swift Forums threads mapped onto Rust Questions (9 Questions, 25 Claims) from Voices without a Rust track record; sent back to drop them; next a-T06
 2026-09-27T19:49 | self | discovery | opus third pass over-corrects rule 6 into practice-as-Claim and Swift-to-Rust mapping; rule 8 and the Voice bar restated to all six
+2026-09-27T19:50 | agent:r-xt-a-1 | receipt | third pass a-T01: 4 sources; SE-0410 Swift thread mapped to 6 Questions, 12 Claims without Rust-track-record Voices; sent back to drop; next a-T02
