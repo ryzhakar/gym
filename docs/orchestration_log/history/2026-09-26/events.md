@@ -660,3 +660,5 @@
 2026-09-27T19:46 | self | delegation | agent:t4-adjud-b1, opus, fresh: adjudicate every grouping where merge/ and merge2/ disagree, write the final batch-1 crosswalk in estimate.py's columns
 2026-09-27T19:46 | agent:cache-script | receipt | third-pass bundles: team a 60 rows kept, 12 slices T01-T12; team b 49 rows, 10 slices T01-T10; send-back found content in 30 and 52 rows
 2026-09-27T19:46 | self | delegation | third pass, opus, fresh: r-xt-a-1..3 (a-T01..T12, 4 each), r-xt-b-1..3 (b-T01..T10, 4/3/3), slices sent in sequence
+2026-09-27T19:47 | agent:s-n1-r8 | receipt | N1 title screen: 3189 labeled, Y 1195; tally m=198, Chapman N=2439, 51% unseen; all 7 screens done
+2026-09-27T19:47 | self | delegation | agent:t5-map-v3, opus: teaching evidence map v3 per prompts/t5-map-v3.md
