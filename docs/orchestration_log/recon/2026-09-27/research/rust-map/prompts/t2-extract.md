@@ -24,5 +24,5 @@ Rules:
 End with a 3-sentence notification summary: sources read, unreachable, Questions and Claims logged.
 
 Clarifications after the batch-1 audit (decided 2026-09-27 under the owner's 2026-09-26 handover):
-6. A single Voice's declared Position on a decision Rust practitioners make differently is a Claim; log it with its Question even when nobody in the source disagrees. "Single-voice" or "no opposing view in this source" is never a reason for Nothing new.
+6. A single Voice's declared Position on a decision Rust practitioners make differently is a Claim; log it with its Question even when nobody in the source disagrees. "Single-voice" or "no opposing view in this source" is never a reason for Nothing new. A release note, changelog, README or tutorial that states a decision together with the alternative it replaced or rejected holds a declared Position.
 7. Text that is a stub, redirect, login or bot page, or under ~1,500 characters for a page that should be long, is `unreachable`, never `read`.
