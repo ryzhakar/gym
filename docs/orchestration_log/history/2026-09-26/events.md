@@ -320,3 +320,4 @@
 2026-09-27T03:57 | self | delegation | agent:t3-n6-a, sonnet: verify N6-r2-01, 03, 04, 09; 12 and 13 against existing Rohrer and Cepeda verifications
 2026-09-27T03:58 | agent:t2-n4-r2 | receipt | needs/n4-r2.md: 11 claims, 5 full texts; LLM misconception diagnosis strong in one deployment, collapses across languages; help-type classification reaches human agreement only after fine-tuning; no delayed-outcome evidence for diagnosis
 2026-09-27T03:58 | self | delegation | agent:t3-n4-a, sonnet: verify N4-r2-05, 06, 10
+2026-09-27T03:58 | self | delegation | agent:t3-seed-probe, sonnet: seed coverage and claim check after round 2, verify/seed-probe.md
