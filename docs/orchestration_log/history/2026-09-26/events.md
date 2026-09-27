@@ -728,3 +728,4 @@
 2026-09-28T00:21 | self | delegation | blind duplicate fill, sonnet: fill a r-fa-1..4, fill b r-fb-1..4, input files 01-04, 05-07, 08-10, 11-13 in sequence
 2026-09-28T00:26 | agent:t4-mcheck3-b1 | receipt | final merge check: 78.0% (CI 69-85) population agreement, 53.8% on non-singletons, 95.4% in-sample (inflated by singletons); checker sides with merge-v3 on 19 of 24 after reasons; 5 over-splits, 4 without a grouping reason; merge-check3/
 2026-09-28T00:26 | self | decision | batch-1 merge ships at 78.0% blind agreement, declared with map v0.1; ruling: a 'stopgap vs proper fix' instance is a Question when it names the concrete alternatives, else removed; the 4 reasonless singleton splits get a grouping reason or rejoin (decided under the 2026-09-26 handover)
+2026-09-28T00:27 | self | discovery | duplicate claim id a-saL1-f005516-c1 for two Voices in the fill inputs; merger checking all ids
