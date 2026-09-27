@@ -357,3 +357,5 @@
 2026-09-27T04:46 | self | delegation | N4-r3-01, 02 (Deep Knowledge Tracing) added to t3-n7r3-b via SendMessage
 2026-09-27T04:47 | agent:t2-n6-r3 | receipt | needs/n6-r3.md: 11 claims, 8 new sources (5 full texts); Lally 2010 habit curve median 66 days, single lapse no material setback; R3 developer commit-time burst patterns
 2026-09-27T04:47 | self | delegation | agent:t3-n6r3-a, sonnet: verify N6-r3-01..04, 10, 11
+2026-09-27T04:49 | agent:t2-n5-r3 | receipt | needs/n5-r3.md: 13 claims, 13 new sources, all abstract-only (publisher bot walls); N5 not saturated
+2026-09-27T04:49 | self | delegation | N5-r3-13 added to t3-n6r3-a via SendMessage; round 3 surveys all landed
