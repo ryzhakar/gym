@@ -323,3 +323,4 @@
 2026-09-27T03:58 | self | delegation | agent:t3-seed-probe, sonnet: seed coverage and claim check after round 2, verify/seed-probe.md
 2026-09-27T03:59 | agent:t3-n5-a | receipt | N5-r2-01 VERIFIED (scope corrected to CM-GM), N5-r2-02 REFUTED (surveyor invented a shared priming manipulation), N5-r2-03 VERIFIED; first refuted claim of the research
 2026-09-27T04:03 | agent:t3-n4-a | receipt | N4-r2-05, 06, 10 VERIFIED; R 3→2 for Lister; overstated certainty and one unreplicated sub-claim flagged
+2026-09-27T04:03 | agent:t3-n6-a | receipt | N6-r2 six claims marked VERIFIED, four on abstracts only; sent back to re-mark abstract-only rows UNVERIFIABLE for consistency with the primary-text rule; two overstatements flagged (03, 04)
