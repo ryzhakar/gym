@@ -634,3 +634,4 @@
 2026-09-27T19:27 | agent:t4-mcheck-b1 | receipt | batch-1 merge check: 58 of 66 sampled Questions agree (87.9%, 95% CI 77.9-93.7), below the 90% gate; 6 grouping calls differ; merge/merge-check-b1.md
 2026-09-27T19:27 | self | decision | the 90% gate stands as written: after the send-back extracts land, a full second blind merge (t4-mcheck-b1 continued, opus) runs over all batch-1 extracts, then an opus adjudicator settles every grouping the two merges disagree on; no post-hoc widening of the sample (decided under the 2026-09-26 handover)
 2026-09-27T19:27 | agent:r-xr-a-3 | receipt | send-back a-R08: 11 sources, 4 overturned (4 Questions, 5 Claims); retired; r-xr-a-6 new with a-R13
+2026-09-27T19:27 | agent:r-xr-a-4 | receipt | send-back a-R12: 4 sources, nothing new confirmed; last unit a-R14
