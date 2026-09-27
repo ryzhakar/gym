@@ -662,3 +662,5 @@
 2026-09-27T19:46 | self | delegation | third pass, opus, fresh: r-xt-a-1..3 (a-T01..T12, 4 each), r-xt-b-1..3 (b-T01..T10, 4/3/3), slices sent in sequence
 2026-09-27T19:47 | agent:s-n1-r8 | receipt | N1 title screen: 3189 labeled, Y 1195; tally m=198, Chapman N=2439, 51% unseen; all 7 screens done
 2026-09-27T19:47 | self | delegation | agent:t5-map-v3, opus: teaching evidence map v3 per prompts/t5-map-v3.md
+2026-09-27T19:48 | agent:r-xt-b-1 | receipt | third pass b-T01: Zebra landing page, 4 Questions from install practice; sent back to keep declarations only; next b-T02
+2026-09-27T19:48 | self | decision | t2-extract.md rule 8: a declared Position needs a reason or a named alternative; practice alone is no Claim; sent to all six third-pass extractors (decided under the 2026-09-26 handover)
