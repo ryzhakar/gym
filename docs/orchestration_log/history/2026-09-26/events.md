@@ -438,3 +438,6 @@
 2026-09-27T09:23 | agent:t3-n3r4 | receipt | N3 r4 verify: 3 VERIFIED (N3-r4-08,09,10), 0 REFUTED, 7 UNVERIFIABLE (3 abstract-only, 4 unreachable)
 2026-09-27T09:23 | agent:t3-n1r4 | receipt | N1 r4 verify: 5 VERIFIED (N1-r4-01..04,10), 4 UNVERIFIABLE (TATE 2024, JAMA IM 2013 closed)
 2026-09-27T09:24 | agent:t3-n4r4 | receipt | N4 r4 verify: 0 VERIFIED, 2 UNVERIFIABLE (N4-r4-08,09 Springer bot wall, login wall)
+2026-09-27T09:25 | agent:t3-n67r4 | receipt | N6/N7 r4 verify: 4 VERIFIED (N6-r4-05,06, N7-r4-07,08), 1 UNVERIFIABLE (N7-r4-03), N6-r4-05 R 1 to 0
+2026-09-27T09:25 | self | decision | round 4 teaching verification closed: r4 audit skipped, since rule 2 needs Found-DOIs lists from two rounds (r4, r5) and rule 1 already fails at r4 where new S>=3 sources landed; round 5 runs on unchanged instructions, audit after it covers r4-r5 (decided under the 2026-09-26 handover)
+2026-09-27T09:25 | self | delegation | agent:t2-n1-r5..t2-n7-r5, sonnet: round 5 surveys, same prompt as round 4 with r=5; source-cache rule now in common.md
