@@ -435,3 +435,4 @@
 2026-09-27T09:21 | self | decision | older agents not followed up: resuming each re-sends its full context for a save step, while /tmp already holds 156 of their PDFs; a script ingests those by DOI read from their text, the rest are fetched once on demand (decided under the 2026-09-26 handover)
 2026-09-27T09:21 | self | delegation | agent:cache-script, sonnet: write scripts/research/cache.py (get, ingest-tmp, fetch-csv), ingest /tmp PDFs, prefetch Rust batch 1; two genuine tries per source class
 2026-09-27T09:21 | agent:t3-n5r4 | receipt | N5 r4 verify: 5 VERIFIED, but N5-r4-07 rests on an abstract only; sent back to append UNVERIFIABLE; N5-r4-02 quote misattributed, contradiction confirmed in other wording
+2026-09-27T09:23 | agent:t3-n3r4 | receipt | N3 r4 verify: 3 VERIFIED (N3-r4-08,09,10), 0 REFUTED, 7 UNVERIFIABLE (3 abstract-only, 4 unreachable)
