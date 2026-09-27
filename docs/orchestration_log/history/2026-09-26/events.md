@@ -564,3 +564,4 @@
 2026-09-27T18:43 | agent:r-x-a-s1-7 | receipt | slice a-17: 10 sources, 6 Questions, 9 Claims; waits for rebuilt slices
 2026-09-27T18:44 | agent:search-script | receipt | search.py done: serial OpenAlex and Crossref, circuit breaker on OpenAlex budget, --db and --append; tested live
 2026-09-27T18:44 | self | delegation | round 8 Crossref pass: search.py run --db crossref over all 14 query files, background; OpenAlex pass after its daily budget resets
+2026-09-27T18:44 | agent:r-x-b-s1-4 | receipt | slice b-16: 8 sources, 3 Questions, 13 Claims; retired
