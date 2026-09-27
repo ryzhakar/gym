@@ -560,3 +560,4 @@
 2026-09-27T18:42 | self | delegation | resumed via SendMessage: cache-script, search-script, r-x-a-s1-6, -7, -8, r-x-b-s1-4, -6
 2026-09-27T18:42 | agent:r-x-b-s1-6 | receipt | slice b-15: 8 sources, 1 Question (AI-drafted PR and the Bytecode Alliance AI policy), 1 Claim; waits for rebuilt slices
 2026-09-27T18:43 | agent:r-x-a-s1-6 | receipt | slice a-18: 13 sources, 8 Questions, 9 Claims; last unit a-20
+2026-09-27T18:43 | agent:r-x-a-s1-8 | receipt | slice a-19: 6 sources (internals threads), 8 Questions, 30 Claims; waits for rebuilt a-21
