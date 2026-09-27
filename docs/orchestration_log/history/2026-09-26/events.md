@@ -344,3 +344,4 @@
 2026-09-27T04:26 | agent:t2-n3-r3 | receipt | needs/n3-r3.md: 10 claims, 10 new sources (6 full texts); observer-reactivity null result; N3 not saturated (all sources new)
 2026-09-27T04:26 | self | delegation | agent:t3-n3r3-a, sonnet: verify N3-r3-02, 04, 05, 06, 08, 09, 10
 2026-09-27T04:26 | agent:t3-n2r3-b | receipt | N2-r3-06, 07, 08 UNVERIFIABLE: all paywalled, no OA copy
+2026-09-27T04:32 | agent:t3-n2r3-a | receipt | N2-r3-01, 02, 10 VERIFIED (Strobel & van Barneveld: PBL wins long-term retention, drill short-term); N2-r3-03, 04, 05 UNVERIFIABLE; a 2026 math-PBL meta-analysis finds bias-corrected d=0.275 vs Chen & Yang 0.71
