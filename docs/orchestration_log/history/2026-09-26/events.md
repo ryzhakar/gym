@@ -568,3 +568,4 @@
 2026-09-27T18:45 | agent:r-x-a-s1-6 | receipt | slice a-20: 3 rust-lang.org posts, 4 Questions, 4 Claims; retired; team a frozen slices 01-20 all done
 2026-09-27T18:46 | agent:cache-script | receipt | lobste.rs and HN attribution fixed; bundles rebuilt: team a 21-32 plus L1 (11 hn-lobsters rows re-fetched), team b 17-34
 2026-09-27T18:46 | self | delegation | wave 3: r-x-a-s1-7, -8 continued with a-21, a-22; r-x-b-s1-5, -6 continued with b-17, b-18; new r-x-a-s1-9, -10 with a-23, a-24; new r-x-b-s1-7, -8 with b-19, b-20
+2026-09-27T18:49 | agent:r-x-a-s1-8 | receipt | slice a-22: 1 talk transcript cut short, 1 Question, 1 Claim; last unit a-L1 (lobste.rs rows re-extracted with names)
