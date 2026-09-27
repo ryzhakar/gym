@@ -543,3 +543,5 @@
 2026-09-27T15:01 | agent:r-x-b-s1-1 | receipt | slice b-06: 10 sources, 3 Questions, 4 Claims; retired after 3 units; r-x-b-s1-5 new with b-11
 2026-09-27T15:01 | agent:r-x-a-s1-4 | receipt | slice a-11: 8 sources, 8 Questions, 11 Claims; last unit a-14
 2026-09-27T15:01 | agent:r-x-a-s1-5 | receipt | slice a-12: 8 sources, 3 Questions, 4 Claims; retired after 4 units; r-x-a-s1-6 new with a-15
+2026-09-27T15:03 | agent:r-x-b-s1-3 | receipt | slice b-10: 7 sources, 5 Questions, 6 Claims; retired after 3 units; r-x-b-s1-6 new with b-12
+2026-09-27T15:03 | agent:r-x-a-s1-3 | receipt | slice a-13: 4 sources, 4 Questions, 8 Claims; retired; r-x-a-s1-7 new with a-16
