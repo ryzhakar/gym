@@ -723,3 +723,4 @@
 2026-09-28T00:16 | agent:t4-merge-b1 | receipt | operational-grain merge: 544 team-local to 405 canonical Questions (a 170, b 184, both 49), 768 Claims; Chapman unseen 25-51%, Chao1 35-89%; merge-v3/
 2026-09-28T00:16 | self | delegation | agent:t4-mcheck3-b1, opus, fresh: final blind 20% check of merge-v3 at operational grain; result ships with map v0.1
 2026-09-28T00:16 | self | delegation | t4-merge-b1 continued: blind fill inputs and key; prompts/t3-fill.md written
+2026-09-28T00:18 | agent:t4-merge-b1 | receipt | blind fill inputs: 13 files, 772 Claims over 405 Questions; 273 Questions list one Position only; sent back to add each Question's named alternatives as Positions
