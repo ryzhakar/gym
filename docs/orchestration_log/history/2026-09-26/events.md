@@ -505,3 +505,5 @@
 2026-09-27T13:48 | agent:t2-n1-r6 | receipt | N1 round 6: 11 claims, 9 sources, 6 full texts; OpenAlex blocked; 3 rows use axis 'skill_per_hour'; needs/n1-r6.md
 2026-09-27T13:48 | agent:t2-n2-r6 | receipt | N2 round 6: 10 claims, 7 sources, 2 full texts, 5 abstract-only; OpenAlex heavily limited; needs/n2-r6.md
 2026-09-27T13:49 | agent:t3-r5-a | receipt | ledger repaired (all 750 sources.csv lines parse to 17 fields); 63 unledgered Found DOIs graded, 16 at S>=3, 21 title-only; verify/found-dois-graded.md
+2026-09-27T13:49 | agent:t2-n4-r7 | receipt | N4 round 7: 10 claims, 11 sources, 9 abstract-only; needs/n4-r7.md
+2026-09-27T13:49 | agent:t2-n7-r6 | receipt | N7 round 6: 16 claims, 16 sources, 8 full texts; OpenAlex 8 of 9 queries exhausted retries; needs/n7-r6.md
