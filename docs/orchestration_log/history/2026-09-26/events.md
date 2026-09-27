@@ -586,3 +586,4 @@
 2026-09-27T18:58 | agent:r-x-a-s1-10 | receipt | slice a-27: 2 sources, 2 Questions, 2 Claims; last unit a-29
 2026-09-27T18:59 | agent:r-x-b-s1-7 | receipt | slice b-21: 7 sources, 9 Questions, 9 Claims; last unit b-24
 2026-09-27T19:00 | agent:r-x-b-s1-9 | receipt | slice b-23: 10 sources, 9 Questions, 14 Claims; two talk speakers confirmed from video pages; next b-25
+2026-09-27T19:01 | agent:r-x-b-s1-8 | receipt | slice b-22: 6 sources, 13 Questions, 20 Claims; last unit b-26 (team b's final slice)
