@@ -360,3 +360,4 @@
 2026-09-27T04:49 | agent:t2-n5-r3 | receipt | needs/n5-r3.md: 13 claims, 13 new sources, all abstract-only (publisher bot walls); N5 not saturated
 2026-09-27T04:49 | self | delegation | N5-r3-13 added to t3-n6r3-a via SendMessage; round 3 surveys all landed
 2026-09-27T04:50 | agent:t3-n7r3-a | receipt | N7-r3-01, 02 VERIFIED; N7-r3-04 REFUTED on misquoted denominators (core 13 vs 4 result holds), N7-r3-05 REFUTED (figure misattributed); corrected claim N7-r3-04c requested
+2026-09-27T04:51 | agent:t3-n7r3-b | receipt | N7-r3-03, 06, 07, 08, 11 VERIFIED from full text; N7-r3-06 O 1→0 (no unaided condition); N7-r3-08 venue unindexed; N4-r3-01, 02 re-sent
