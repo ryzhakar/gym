@@ -704,3 +704,5 @@
 2026-09-27T23:54 | self | decision | a capture needs a Question backed by a valid Claim: Claim-less Questions and members leave the crosswalk; a10 split into two Claims (decided under the 2026-09-26 handover)
 2026-09-27T23:56 | agent:t4-merge-b1 | receipt | claim-backed crosswalk: 271 canonical Questions (a 110, b 106, both 54), 687 Claims, 1378 rows; Chapman unseen 0-31%
 2026-09-27T23:56 | self | delegation | agent:t4-mcheck2-b1, opus, fresh: blind 20% merge check of merge-v2 under the decision-level test, 90% gate
+2026-09-27T23:56 | agent:cache-script | receipt | books fetched whole: 5 open books recovered (nogibjj, nalgebra via Wayback, rustwasm, async-book, zebra capped); Wayback query encoding bug fixed; book bundles team a B01-B02, team b B01-B03; rtic.rs front chapter only
+2026-09-27T23:56 | self | delegation | book extraction, sonnet: r-xb-a-1, -2 (a-B01, a-B02), r-xb-b-1..3 (b-B01..B03); cache-script continued: crawl rtic.rs whole
