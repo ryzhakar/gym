@@ -617,3 +617,4 @@
 2026-09-27T19:21 | agent:t4-merge-b1 | receipt | crosswalk restratified by Question Domains, 541 rows; estimate.py batch 1: Chapman unseen 30-64% per stratum, Chao1 57-84%, m 0-21; closure fails as expected after one batch
 2026-09-27T19:21 | agent:r-xr-a-3 | receipt | send-back a-R03: Swift thread, nothing new confirmed; next a-R05
 2026-09-27T19:22 | agent:r-xr-b-1 | receipt | send-back b-R01: 4 sources, 3 overturned (5 Questions, 5 Claims); next b-R04
+2026-09-27T19:22 | agent:r-xr-a-1 | receipt | send-back a-R01: 6 sources, 2 overturned (rtic.rs, yew PR 3509); team b fetched a sub-page of the rustwasm book the bundle held only as front matter, team a did not — asymmetry noted for the audit; next a-R06
