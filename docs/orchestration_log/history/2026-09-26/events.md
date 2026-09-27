@@ -502,3 +502,4 @@
 2026-09-27T13:47 | agent:t2-n6-r6 | receipt | N6 round 6: 10 claims, 10 sources, 3 full texts; OpenAlex 429 on all 10 tries; needs/n6-r6.md
 2026-09-27T13:47 | self | decision | for the r6-r7 audit, OpenAlex tried with logged retries and blocked counts as searched, not void: the database was attempted, the block is access (decided under the 2026-09-26 handover)
 2026-09-27T13:47 | agent:t2-n3-r6 | receipt | N3 round 6: 11 claims, 9 sources, 30 queries, 5 full texts; OpenAlex daily budget at zero; needs/n3-r6.md
+2026-09-27T13:48 | agent:t2-n1-r6 | receipt | N1 round 6: 11 claims, 9 sources, 6 full texts; OpenAlex blocked; 3 rows use axis 'skill_per_hour'; needs/n1-r6.md
