@@ -579,3 +579,4 @@
 2026-09-27T18:52 | agent:r-x-b-s1-8 | receipt | slice b-20: 10 sources, 13 Questions, 13 Claims; waits for rebuilt b-21
 2026-09-27T18:52 | agent:r-x-a-s1-11 | receipt | slice a-25: 1 talk (Amos, facet), 5 Questions, 7 Claims; waits for rebuilt a-26
 2026-09-27T18:53 | agent:r-x-a-s1-8 | receipt | slice a-L1: 3 lobste.rs threads re-extracted with names, 9 Questions, 27 Claims; retired
+2026-09-27T18:56 | agent:cache-script | receipt | subtitles fixed (settled cues, full transcripts), 19 of 23 videos re-fetched, 4 rate-limited; bundles rebuilt from a-26 and b-21; a-L2 holds 4 talks truncated in frozen slices
