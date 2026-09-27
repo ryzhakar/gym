@@ -712,3 +712,5 @@
 2026-09-28T00:00 | agent:r-xb-b-2 | receipt | book pass b-B02: rustwasm book whole, 12 Questions, 13 Claims
 2026-09-28T00:00 | agent:r-xb-b-3 | receipt | book pass b-B03: Zebra book to the bundle's 150k cut, 7 Questions, 7 Claims; sent to read the rest from the cache
 2026-09-28T00:03 | agent:r-xb-b-1 | receipt | book pass b-B01 completed from cache: async-book whole, 13 Questions, 14 Claims, internal runtime-recommendation conflict logged
+2026-09-28T00:03 | agent:cache-script | receipt | rtic.rs crawled whole, 28 chapters, 120k chars; two redirect and TOC bugs fixed; team a book bundles re-cut, rtic.rs now in a-B02
+2026-09-28T00:03 | self | delegation | r-xb-a-1 continued: rtic.rs whole, outputs sB04
