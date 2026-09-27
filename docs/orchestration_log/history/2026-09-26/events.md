@@ -565,3 +565,4 @@
 2026-09-27T18:44 | agent:search-script | receipt | search.py done: serial OpenAlex and Crossref, circuit breaker on OpenAlex budget, --db and --append; tested live
 2026-09-27T18:44 | self | delegation | round 8 Crossref pass: search.py run --db crossref over all 14 query files, background; OpenAlex pass after its daily budget resets
 2026-09-27T18:44 | agent:r-x-b-s1-4 | receipt | slice b-16: 8 sources, 3 Questions, 13 Claims; retired
+2026-09-27T18:45 | agent:r-x-a-s1-6 | receipt | slice a-20: 3 rust-lang.org posts, 4 Questions, 4 Claims; retired; team a frozen slices 01-20 all done
