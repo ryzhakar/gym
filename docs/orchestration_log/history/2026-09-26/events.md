@@ -628,3 +628,4 @@
 2026-09-27T19:25 | agent:r-xr-b-2 | receipt | send-back b-R06: 10 sources, 1 overturned (Wasmtime LTS); last unit b-R07
 2026-09-27T19:25 | agent:r-xr-b-1 | receipt | send-back b-R04: 7 sources, 5 overturned; last unit b-R08
 2026-09-27T19:25 | agent:s-n3-r8 | receipt | N3 title screen: 3118 labeled, Y 1802; tally m=310, Chapman N=3591, 50% unseen
+2026-09-27T19:25 | agent:r-xr-b-3 | receipt | send-back b-R05: 13 sources, 8 overturned (11 Claims); last unit b-R09
