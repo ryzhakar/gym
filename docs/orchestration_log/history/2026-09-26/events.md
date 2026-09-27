@@ -489,3 +489,4 @@
 2026-09-27T13:41 | self | decision | Rust slice process and agent-reuse table settled as proposed (owner ruling)
 2026-09-27T13:41 | self | delegation | resumed via SendMessage: t2-n1..n7-r6, t2-n1..n7-r7, t3-r5-a
 2026-09-27T13:41 | self | delegation | Rust slice 1 extraction, 2 agents per team, 3 bundle slices each in sequence: r-x-a-b1-01, -02 resumed with a-01, a-02; r-x-b-s1-1, -2 (sonnet, new) with b-01, b-02
+2026-09-27T13:42 | agent:t2-n5-r6 | receipt | N5 round 6: 11 claims, 7 sources, 6 full texts; needs/n5-r6.md
