@@ -432,6 +432,18 @@ def gh_repo_of(url: str):
     return owner, repo.removesuffix(".git"), kind, num
 
 
+def attributed(item: dict, login_path=("user", "login")) -> str:
+    """`@<login> · <created_at>:` + body, so an extractor can name a Claim's Voice
+    without an extra `gh api` / Discourse / reddit call. Empty string if there's no body."""
+    body = item.get("body") or ""
+    if not body:
+        return ""
+    login = item
+    for step in login_path:
+        login = (login or {}).get(step)
+    return f"@{login or 'unknown'} · {item.get('created_at', '')}:\n{body}"
+
+
 def route_github(url: str) -> Fetched:
     parsed = gh_repo_of(url)
     if not parsed:
@@ -441,8 +453,16 @@ def route_github(url: str) -> Fetched:
         thread_kind = "issues" if kind in ("issues",) else "issues"  # comments live under /issues/ for PRs too
         meta = json.loads(gh_api(f"repos/{owner}/{repo}/{thread_kind}/{num}"))
         comments = json.loads(gh_api(f"repos/{owner}/{repo}/issues/{num}/comments", ["--paginate"]) or "[]")
-        parts = [meta.get("title", ""), meta.get("body") or ""]
-        parts += [c.get("body") or "" for c in comments]
+        parts = [meta.get("title", ""), attributed(meta)]
+        parts += [attributed(c) for c in comments]
+        if kind in ("pull", "pulls"):  # inline code-review comments live on a separate endpoint
+            try:
+                review_comments = json.loads(
+                    gh_api(f"repos/{owner}/{repo}/pulls/{num}/comments", ["--paginate"]) or "[]"
+                )
+            except FetchError:
+                review_comments = []
+            parts += [attributed(c) for c in review_comments]
         return Fetched("\n\n---\n\n".join(p for p in parts if p), "gh-api-thread")
     meta = json.loads(gh_api(f"repos/{owner}/{repo}"))
     try:
@@ -476,7 +496,14 @@ def route_discourse(url: str) -> Fetched:
         except Exception:  # noqa: BLE001 - best effort; first page already has the gist
             break
     ordered = [have[i] for i in all_ids if i in have]
-    body = "\n\n---\n\n".join(html_to_text(p.get("cooked", "").encode()) for p in ordered)
+
+    def attributed_post(p: dict) -> str:
+        text = html_to_text(p.get("cooked", "").encode())
+        if not text:
+            return ""
+        return f"@{p.get('username', 'unknown')} · {p.get('created_at', '')}:\n{text}"
+
+    body = "\n\n---\n\n".join(t for t in (attributed_post(p) for p in ordered) if t)
     return Fetched(f"{data.get('title', '')}\n\n{body}", "discourse-json")
 
 
@@ -487,7 +514,10 @@ def route_reddit(url: str) -> Fetched:
             d = c.get("data", {})
             body = d.get("body") or d.get("selftext") or d.get("title", "")
             if body:
-                out.append(body)
+                created = d.get("created_utc")
+                when = (datetime.fromtimestamp(created, tz=timezone.utc).isoformat()
+                        if created else "")
+                out.append(f"@{d.get('author', 'unknown')} · {when}:\n{body}")
             out += walk((d.get("replies") or {}).get("data", {}).get("children", []))
         return out
 
