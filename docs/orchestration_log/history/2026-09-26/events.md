@@ -731,3 +731,4 @@
 2026-09-28T00:27 | self | discovery | duplicate claim id a-saL1-f005516-c1 for two Voices in the fill inputs; merger checking all ids
 2026-09-28T00:30 | agent:t4-merge-b1 | receipt | final corrections: 10 stopgap Questions kept with concrete texts, 3 splits rejoined, 1 given a reason; 401 canonical Questions (a 168, b 180, both 51); Chapman unseen 25-49%; fill remap in merge-v3/fill-remap-b1.csv
 2026-09-28T00:30 | agent:t4-merge-b1 | receipt | no duplicate claim ids: sa15 and saL1 ids look alike; all 772 ids unique and matched to key
+2026-09-28T00:31 | agent:r-fa-3 | receipt | fill a files 08-10 done; fill a remaining 03, 04, 07
