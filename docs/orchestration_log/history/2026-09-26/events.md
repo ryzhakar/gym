@@ -434,3 +434,4 @@
 2026-09-27T09:21 | self | decision | durable source cache at docs/orchestration_log/recon/cache/ (text per source + index.csv), rule appended to both researches' prompts/common.md; running agents keep their instructions (owner ruling)
 2026-09-27T09:21 | self | decision | older agents not followed up: resuming each re-sends its full context for a save step, while /tmp already holds 156 of their PDFs; a script ingests those by DOI read from their text, the rest are fetched once on demand (decided under the 2026-09-26 handover)
 2026-09-27T09:21 | self | delegation | agent:cache-script, sonnet: write scripts/research/cache.py (get, ingest-tmp, fetch-csv), ingest /tmp PDFs, prefetch Rust batch 1; two genuine tries per source class
+2026-09-27T09:21 | agent:t3-n5r4 | receipt | N5 r4 verify: 5 VERIFIED, but N5-r4-07 rests on an abstract only; sent back to append UNVERIFIABLE; N5-r4-02 quote misattributed, contradiction confirmed in other wording
