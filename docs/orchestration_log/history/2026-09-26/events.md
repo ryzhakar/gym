@@ -592,3 +592,4 @@
 2026-09-27T19:03 | tool:search.py | receipt | round 8 Crossref pass: 14 captures, 882-1889 distinct DOIs each, unscreened (Crossref returns 50 hits per query)
 2026-09-27T19:03 | self | decision | round 8 adds a relevance screen: per need, one screener labels the union of both captures' titles blind to capture; capture-recapture runs on relevant DOIs only; OpenAlex pass after its budget resets at 03:00 (decided under the 2026-09-26 handover)
 2026-09-27T19:03 | self | commitment | tripwire laid: one-shot cron at 03:07 Sep 28 starts the round-8 OpenAlex pass; session-only
+2026-09-27T19:03 | agent:r-x-a-s1-11 | receipt | slice a-30: 1 forum thread, 4 Questions, 7 Claims, Voices' track records unestablished; retired
