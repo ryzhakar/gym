@@ -306,3 +306,4 @@
 2026-09-27T03:41 | self | discovery | account usage limit halted every agent at 22:50 UTC (01:50 local) until 03:40; t5-first-protocol and t3-n2-a resumed via SendMessage; Stage B survey launches recorded at 01:50 had not dispatched and launch now
 2026-09-27T03:42 | agent:t3-n2-a | receipt | N1-r1-09 VERIFIED (S4 R1 O2)
 2026-09-27T03:42 | self | delegation | agents:t2-n4-r2, t2-n5-r2, t2-n6-r2, t2-breadth-r2 dispatched (sonnet), Stage B W6
+2026-09-27T03:42 | self | failure | silence broken a fourteenth time at turn end
