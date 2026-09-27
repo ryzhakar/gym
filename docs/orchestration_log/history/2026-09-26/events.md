@@ -470,3 +470,4 @@
 2026-09-27T09:59 | owner | receipt | in conversation: maps are work in progress unless explicitly declared otherwise, and live while research iterates
 2026-09-27T09:59 | self | decision | docs/opinion-map.md Done and upkeep corrected in place: maps are work in progress by default and live while research iterates; acceptance tests bind a map declared finished (owner ruling)
 2026-09-27T09:59 | self | decision | Rust lane repackaged as slices: each slice runs sample to compile and ships map v0.n with its coverage estimate; closure is a reported number, not a gate (owner ruling)
+2026-09-27T10:00 | self | discovery | bundle.py rust-mention filter falsely drops Rust sources (64 of 120 off-subject drops mention rust 1-2 times: candle, esp-hal, probe-rs, uniffi-rs, iroh); wave 1 held, rule loosened and bundles rebuilt
