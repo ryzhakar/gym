@@ -691,3 +691,5 @@
 2026-09-27T19:55 | self | decision | same-Question test redefined at the decision a practitioner faces: context variants of one trade-off are one Question, their contexts recorded as Domains and Positions, per the opinion map's domain-local Questions; batch 1 re-merged on this test with the third pass folded in, then a fresh blind 20% check against the 90% gate (decided under the 2026-09-26 handover)
 2026-09-27T19:57 | agent:r-xt-a-3 | receipt | third pass a-T12: 12 sources, 5 Questions, 5 Claims, 1 unreachable; retired; third pass complete both teams
 2026-09-27T19:57 | self | delegation | t4-audit-b1 continued: audit the third pass; t4-merge-b1 continued: re-merge all batch-1 extracts under the decision-level Question test into merge-v2/
+2026-09-27T23:42 | self | discovery | session limit at 20:00 stopped t4-merge-b1, t4-audit-b1 and t5-map-v3 mid-task; limit reset
+2026-09-27T23:42 | self | delegation | resumed via SendMessage: t4-merge-b1, t4-audit-b1, t5-map-v3
