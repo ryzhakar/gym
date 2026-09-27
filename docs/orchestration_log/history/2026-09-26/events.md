@@ -404,3 +404,5 @@
 2026-09-27T08:45 | self | failure | a cd moved the harness working directory a third time — history/2026-09-26/failures.md (A cd moved the harness working directory)
 2026-09-27T08:50 | owner | receipt | in conversation: all agents restorable; find an efficient way to finish without burning the limit
 2026-09-27T08:50 | self | decision | opus is orchestration-tier, placed only at knowledge-and-intelligence bottlenecks where a bad sonnet pass would decide the outcome (owner ruling)
+2026-09-27T08:53 | owner | receipt | in conversation: text at heartbeat end broke silence
+2026-09-27T08:53 | self | failure | heartbeat turn ended on text 'Nothing to act on.' while silent; silent turns end on tool results only
