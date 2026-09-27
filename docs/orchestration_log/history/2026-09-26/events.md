@@ -478,3 +478,5 @@
 2026-09-27T10:01 | owner | receipt | in conversation: the hold covers the Rust lane only; teaching runs to its finish
 2026-09-27T10:01 | self | commitment | hold narrowed: Rust launches wait for the settled slice process; teaching continues: audit r4-r5, then round 6 for open needs or map v3 (opus)
 2026-09-27T10:01 | agent:cache-script | receipt | bundles rebuilt: team a 152 kept of 168, 30 slices; team b 187 of 198, 34 slices; drops only no-text or thin
+2026-09-27T10:04 | owner | receipt | in conversation: reuse agents to pack more work into fewer longer-lived agents without compromising research integrity
+2026-09-27T10:04 | self | decision | agent reuse: continue an agent across units of the same role only where its memory cannot bias a measured independence (between teams, between rounds, writer vs judge); retire it near 150k context (owner ruling; boundaries decided under the 2026-09-26 handover)
