@@ -454,3 +454,5 @@
 2026-09-27T09:43 | agent:t2-n5-r5 | receipt | N5 round 5: 11 claims, 16 sources, 22 queries, 9 read in full or full abstract, 7 title-only; flags Greenberg 2016 double-counting Soucisse 2017; needs/n5-r5.md
 2026-09-27T09:44 | agent:r-x-a-b1-01 | receipt | team a b1-01: 15 rows, 10 read from cache, 5 unreachable; 3 Questions, 4 Claims; several cached texts thin stubs
 2026-09-27T09:44 | self | discovery | measured from transcripts: r-x-a-b1-01 45 calls, 30k output, 4.04M cache-read, 0.83M cache-write for 15 rows; round surveyors ~100 calls, ~12.5M cache-read each; context re-read per call dominates
+2026-09-27T09:46 | agent:t2-n6-r5 | receipt | N6 round 5: 10 claims, 8 sources, 5 full texts, 7 unreadable listed; needs/n6-r5.md
+2026-09-27T09:46 | self | decision | round-5 verification (33 claims S>=3) waits for cache.py's stub fix and mirrors: sources prefetched by script first, verifiers then grouped by source so each text is read once (decided under the 2026-09-26 handover)
