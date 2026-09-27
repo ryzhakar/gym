@@ -111,3 +111,11 @@ What happened: with both researches runnable, the orchestrator stopped and waite
 Mechanism: authority-check's rule that worker-written scripts wait for owner ratification was applied over the owner's later, explicit ruling (00:52) that there would be no more questions and every idle moment would go to driving the research; a later owner statement governs, and the orchestrator arbitrated against it.
 
 Correction: scripts ratified and run; teaching deliverables force-committed; open points decided under the handover and marked decided, never parked as questions.
+
+## Weekly limit burned by a 35-agent burst
+
+What happened: at 08:40 on 2026-09-27, 28 batch-1 extractors were launched: team A with 14 on sonnet, team B with 14 on opus. Seven round-4 teaching surveyors were already running. Within three minutes all 36 agents failed on the account's weekly limit, which resets on Sep 28 at 21:00 Kyiv time. They left nothing behind: no needs/n*-r4.md, no round-4 ledger rows, no team-a/ or team-b/ directory. The owner: "are all the opus launches justified in any sense????" and "you've just burned all my resources."
+
+Mechanism: the Rust plan's line 104 ("team B on opus … Cost difference is the price of a valid estimate") was obeyed without checking it. Two things argued against it. First, the plan's own line 59 says to upgrade on observed unreliability, not before. Second, agentic-delegation assigns extraction to sonnet. The independence the plan wanted already comes from different framings and disjoint samples. No check was made of the cumulative load before launching. Splitting the work into 15-row slices multiplied each agent's fixed costs by 28: its binding reads and context files.
+
+Correction: all work is paused, and nothing is relaunched without the owner's word. Before any dispatch, the cumulative running load is checked. The model is picked by work type, not by a plan's line. Slices are sized to cut fixed per-agent costs.

@@ -398,3 +398,7 @@
 2026-09-27T08:40 | agent:r-sample-b1 | receipt | batch 1 drawn: 198 rows per team, 18 per cell over 11 cells, overlap 17, seed 1786744536, frame sha verified; samples/batch-1*.csv
 2026-09-27T08:40 | self | delegation | agent:r-x-a-b1-01..14, sonnet: team a extractors, batch 1, 15 rows each (14th: rows 196-198), per prompts/t2-extract.md
 2026-09-27T08:40 | self | delegation | agent:r-x-b-b1-01..14, opus: team b extractors, batch 1, 15 rows each (14th: rows 196-198), per prompts/t2-extract.md
+2026-09-27T08:45 | owner | receipt | mid-turn in conversation: opus launches questioned; resources reported burned; pause ordered to take stock
+2026-09-27T08:45 | self | failure | weekly limit burned by a 35-agent burst, 14 of them opus — history/2026-09-26/failures.md
+2026-09-27T08:45 | self | discovery | stock at 08:4x: all 36 agents dead on the weekly limit (7 teaching r4 surveyors, 28 batch-1 extractors); none wrote output; teaching ledger unchanged at rounds 0–3; batch-1 samples intact
+2026-09-27T08:45 | self | failure | a cd moved the harness working directory a third time — history/2026-09-26/failures.md (A cd moved the harness working directory)
