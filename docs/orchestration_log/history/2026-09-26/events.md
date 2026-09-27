@@ -700,3 +700,5 @@
 2026-09-27T23:52 | self | decision | struck Claims dropped from the merge, except Claims struck only for answering a different decision, which are re-homed to the Question they answer (decided under the 2026-09-26 handover)
 2026-09-27T23:52 | agent:t5-map-v3 | receipt | evidence map v3: 464 claims, 135 verified, 103 with unaided outcome; Pareto set of 9, none dominant; biggest gap: no verified claim on adults learning a CS-adjacent skill unaided at 7+ days; synthesis/evidence-map-v3.md
 2026-09-27T23:52 | agent:t4-merge-b1 | receipt | decision-level re-merge: 484 team-local to 278 canonical Questions; a only 115, b only 108, both 55; Chapman unseen 0-31% per stratum, Chao1 19-63%; broad Questions choose-rust-for-a-domain, ship-stopgap, typestate inflate m; strikes pending; merge-v2/
+2026-09-27T23:54 | agent:t4-merge-b1 | receipt | strikes applied: 11 Claims dropped, 5 re-homed; 279 canonical Questions, 686 Claims; six Questions left Claim-less
+2026-09-27T23:54 | self | decision | a capture needs a Question backed by a valid Claim: Claim-less Questions and members leave the crosswalk; a10 split into two Claims (decided under the 2026-09-26 handover)
