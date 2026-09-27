@@ -687,3 +687,5 @@
 2026-09-27T19:54 | agent:r-xt-b-2 | receipt | third pass b-T07: 3 sources, 4 Questions, 6 Claims; retired; team b third pass complete
 2026-09-27T19:54 | agent:r-xt-a-2 | receipt | third pass a-T08: 7 sources, 4 Questions, 4 Claims; retired
 2026-09-27T19:55 | agent:r-xt-a-3 | receipt | third pass a-T11: 9 sources, 4 Questions, 4 Claims; final unit a-T12
+2026-09-27T19:55 | agent:t4-adjud-b1 | receipt | adjudication: merges agreed 87.9% of 420 items, 55.9% of co-grouped pairs; 48 of 49 disputes kept apart; 387 canonical Questions (a 177, b 184, both 26); Chapman unseen 38-75%; the strict same-Question test splits context variants of one trade-off, so the population may never close; merge-final/
+2026-09-27T19:55 | self | decision | same-Question test redefined at the decision a practitioner faces: context variants of one trade-off are one Question, their contexts recorded as Domains and Positions, per the opinion map's domain-local Questions; batch 1 re-merged on this test with the third pass folded in, then a fresh blind 20% check against the 90% gate (decided under the 2026-09-26 handover)
