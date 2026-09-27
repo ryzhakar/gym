@@ -189,12 +189,19 @@ def gh_api(path: str, extra: list[str] | None = None) -> str:
     return out.stdout.decode("utf-8", errors="replace")
 
 
-def wayback_fallback(url: str) -> str:
-    avail = http_get_json(f"https://archive.org/wayback/available?url={urllib.parse.quote(url)}")
+def wayback_snapshot_url(url: str) -> str:
+    # safe="": archive.org's availability endpoint silently returns no match if the url
+    # param's own '/' are left unescaped (quote()'s default safe='/') - confirmed by testing
+    # the same query both ways; fully encoding it is what actually matches a snapshot.
+    avail = http_get_json(f"https://archive.org/wayback/available?url={urllib.parse.quote(url, safe='')}")
     snap = avail.get("archived_snapshots", {}).get("closest", {}).get("url")
     if not snap:
         raise FetchError([f"wayback: no snapshot for {url}"])
-    return validate_page_text(html_to_text(http_get(snap)))
+    return snap
+
+
+def wayback_fallback(url: str) -> str:
+    return validate_page_text(html_to_text(http_get(wayback_snapshot_url(url))))
 
 
 # --- index --------------------------------------------------------------
@@ -687,6 +694,151 @@ def fetch_by_class_route(url: str, source_class: str) -> Fetched:
     return route_html(url)
 
 
+# --- books: for books-courses, the book is the source, not its front page ------------
+
+BOOK_MAX_PAGES = 60
+BOOK_MAX_CHARS = 400_000
+BOOK_LINK_RE = re.compile(rb'<a\s+[^>]*href="([^"#][^"]*)"[^>]*>(.*?)</a>', re.S)
+BOOK_TAG_STRIP_RE = re.compile(rb"<[^>]+>")
+
+
+class _BookPrintExtractor(_TextExtractor):
+    """Like _TextExtractor, but marks each mdBook chapter boundary. mdBook's print.html
+    concatenates the whole book as one page, one <h1> per chapter (plus a first, book-title
+    <h1> from the menu) - marking every <h1> this way satisfies the "## <chapter title>"
+    requirement without needing to separately track chapter names."""
+
+    def handle_starttag(self, tag, attrs):
+        super().handle_starttag(tag, attrs)
+        if tag == "h1":
+            self.chunks.append("## ")
+
+
+def mdbook_print_to_text(raw: bytes) -> str:
+    parser = _BookPrintExtractor()
+    parser.feed(raw.decode("utf-8", errors="replace"))
+    text = html.unescape("".join(parser.chunks))
+    lines = [ln.strip() for ln in text.splitlines()]
+    return "\n".join(ln for ln in lines if ln)
+
+
+def looks_like_a_book(raw: bytes) -> bool:
+    return raw.count(b"<h1") >= 3  # a lone 404/redirect page won't have this many
+
+
+def print_html_url(root_url: str) -> str:
+    return root_url.rstrip("/") + "/print.html"
+
+
+def try_fetch_book_print_page(root_url: str) -> bytes | None:
+    """mdBook sites publish a /print.html with the whole book on one page, in chapter
+    order - by far the simplest, fewest-requests way to get a book's full text. Tried
+    direct first, then via Wayback, for the given root and its www variant."""
+    candidates = [root_url]
+    parsed = urllib.parse.urlparse(root_url)
+    if not parsed.netloc.startswith("www."):
+        candidates.append(root_url.replace(parsed.netloc, "www." + parsed.netloc, 1))
+    for candidate in candidates:
+        target = print_html_url(candidate)
+        try:
+            raw = http_get(target)
+            if looks_like_a_book(raw):
+                return raw
+        except Exception:  # noqa: BLE001 - try the next candidate/route
+            pass
+        try:
+            raw = http_get(wayback_snapshot_url(target))
+            if looks_like_a_book(raw):
+                return raw
+        except Exception:  # noqa: BLE001 - try the next candidate
+            pass
+    return None
+
+
+def fetch_front_page_raw(root_url: str) -> tuple[bytes, str]:
+    """The book's front page, and the base URL chapter links were resolved against (a
+    Wayback snapshot URL if that's where the page came from - chapter links found on an
+    archived page are already absolute into the Wayback machine, so no rewriting is
+    needed)."""
+    parsed = urllib.parse.urlparse(root_url)
+    candidates = [root_url]
+    if not parsed.netloc.startswith("www."):
+        candidates.append(root_url.replace(parsed.netloc, "www." + parsed.netloc, 1))
+    tried = []
+    for candidate in candidates:
+        try:
+            return follow_client_redirect(candidate, http_get(candidate)), candidate
+        except Exception as e:  # noqa: BLE001 - direct fetch failed; try wayback next
+            tried.append(f"{candidate}: {e}")
+    try:
+        snap = wayback_snapshot_url(root_url)
+        return http_get(snap), snap
+    except Exception as e:  # noqa: BLE001 - exhausted; report every route tried
+        tried.append(f"wayback({root_url}): {e}")
+    raise FetchError(tried)
+
+
+def _no_port(url: str) -> str:
+    """Strip an explicit ':443'/':80'-style port before a '/' - a Wayback-archived page's
+    own URL sometimes carries one while its sibling links (resolved relative, without a
+    port) don't, which breaks a same-root prefix check that isn't port-blind."""
+    return re.sub(r":\d+(?=/)", "", url)
+
+
+def extract_same_root_links(raw: bytes, base_url: str) -> list[tuple[str, str]]:
+    """(absolute_url, link_text) for every <a> under the same path-root as base_url, in
+    document order, deduped - a book's table of contents when it has no print.html."""
+    root = _no_port(base_url.rstrip("/"))
+    seen: set[str] = {_no_port(base_url.split("#")[0].rstrip("/"))}
+    out = []
+    for m in BOOK_LINK_RE.finditer(raw):
+        href = m.group(1).decode(errors="replace").strip()
+        text = BOOK_TAG_STRIP_RE.sub(b"", m.group(2)).decode(errors="replace").strip()
+        if not href or not text:
+            continue
+        abs_url = urllib.parse.urljoin(base_url, href).split("#")[0].rstrip("/")
+        abs_url_normalized = _no_port(abs_url)
+        if not abs_url_normalized.startswith(root) or abs_url_normalized in seen:
+            continue
+        seen.add(abs_url_normalized)
+        out.append((abs_url, text))
+    return out
+
+
+def fetch_book(url: str) -> Fetched:
+    """The book is the source, not its front page: fetch the whole thing, front page
+    first, chapters after in table-of-contents order, capped at BOOK_MAX_PAGES fetches /
+    BOOK_MAX_CHARS total. Prefers a single /print.html request when the site is mdBook;
+    otherwise crawls the front page's own table-of-contents links."""
+    print_raw = try_fetch_book_print_page(url)
+    if print_raw is not None:
+        text = mdbook_print_to_text(print_raw)
+        if len(text) > BOOK_MAX_CHARS:
+            text = text[:BOOK_MAX_CHARS] + f"\n[... truncated at {BOOK_MAX_CHARS:,} chars ...]\n"
+        return Fetched(text, "book-print")
+
+    front_raw, base_url = fetch_front_page_raw(url)
+    front_text = html_to_text(front_raw)
+    links = extract_same_root_links(front_raw, base_url)[:BOOK_MAX_PAGES]
+
+    parts = [front_text]
+    total = len(front_text)
+    for chapter_url, title in links:
+        if total >= BOOK_MAX_CHARS:
+            break
+        try:
+            chapter_text = html_to_text(http_get(chapter_url))
+        except Exception:  # noqa: BLE001 - one missing chapter shouldn't sink the book
+            continue
+        piece = f"## {title}\n{chapter_text}"
+        parts.append(piece[:max(0, BOOK_MAX_CHARS - total)])
+        total += len(piece)
+    text = "\n\n".join(parts)
+    if len(text) > BOOK_MAX_CHARS:
+        text = text[:BOOK_MAX_CHARS] + f"\n[... truncated at {BOOK_MAX_CHARS:,} chars ...]\n"
+    return Fetched(text, "book-crawl")
+
+
 # --- subcommands ----------------------------------------------------------
 
 def cmd_get(doi_or_url: str) -> int:
@@ -785,6 +937,20 @@ def cmd_fetch_csv(csv_path: str, status_csv: str = DEFAULT_STATUS_CSV) -> int:
     return 0
 
 
+def cmd_fetch_book(url: str) -> int:
+    """books-courses: the book is the source. Fetches the whole book (print.html when the
+    site is mdBook, else a table-of-contents crawl) and saves it under the URL's own key,
+    same as a normal fetch - `get`/`fetch-csv` will pick it up as any other cache hit."""
+    try:
+        fetched = fetch_book(url)
+    except FetchError as e:
+        print(f"FAILED {url}: {'; '.join(e.tried)}", file=sys.stderr)
+        return 1
+    path = save_text(url_key(url), fetched.text, fetched.route, url)
+    print(path)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
@@ -796,6 +962,8 @@ def main(argv: list[str]) -> int:
         return cmd_ingest_tmp()
     if cmd == "fetch-csv" and rest:
         return cmd_fetch_csv(*rest[:2])
+    if cmd == "fetch-book" and rest:
+        return cmd_fetch_book(rest[0])
     print(__doc__)
     return 2
 
