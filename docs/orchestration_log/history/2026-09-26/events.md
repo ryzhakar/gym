@@ -580,3 +580,6 @@
 2026-09-27T18:52 | agent:r-x-a-s1-11 | receipt | slice a-25: 1 talk (Amos, facet), 5 Questions, 7 Claims; waits for rebuilt a-26
 2026-09-27T18:53 | agent:r-x-a-s1-8 | receipt | slice a-L1: 3 lobste.rs threads re-extracted with names, 9 Questions, 27 Claims; retired
 2026-09-27T18:56 | agent:cache-script | receipt | subtitles fixed (settled cues, full transcripts), 19 of 23 videos re-fetched, 4 rate-limited; bundles rebuilt from a-26 and b-21; a-L2 holds 4 talks truncated in frozen slices
+2026-09-27T18:56 | self | decision | b-L1 skipped: its 19 rows sit in slices built after the attribution fix and were extracted with names; a-L2 extracts only f011069 and f011092 (a-21, a-22), the other two talks were completed from cache (decided under the 2026-09-26 handover)
+2026-09-27T18:56 | self | failure | a cd moved the harness working directory into the bundles directory — history/2026-09-26/failures.md (A cd moved the harness working directory)
+2026-09-27T18:56 | self | delegation | wave 4: r-x-a-s1-9, -10, -11 continued with a-26, a-27, a-28; r-x-b-s1-7, -8 continued with b-21, b-22; r-x-b-s1-9 new with b-23
