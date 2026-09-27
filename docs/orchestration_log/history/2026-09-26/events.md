@@ -362,3 +362,4 @@
 2026-09-27T04:50 | agent:t3-n7r3-a | receipt | N7-r3-01, 02 VERIFIED; N7-r3-04 REFUTED on misquoted denominators (core 13 vs 4 result holds), N7-r3-05 REFUTED (figure misattributed); corrected claim N7-r3-04c requested
 2026-09-27T04:51 | agent:t3-n7r3-b | receipt | N7-r3-03, 06, 07, 08, 11 VERIFIED from full text; N7-r3-06 O 1→0 (no unaided condition); N7-r3-08 venue unindexed; N4-r3-01, 02 re-sent
 2026-09-27T04:51 | agent:t3-n7r3-a | receipt | corrected claims N7-r3-04c and N7-r3-05c written with verify files
+2026-09-27T04:53 | agent:t3-n7r3-b | receipt | N4-r3-01 VERIFIED (baseline label imprecise; Khajah et al. 2016 critique: extended BKT matches DKT), N4-r3-02 VERIFIED, S 3→1 (conceptual)
