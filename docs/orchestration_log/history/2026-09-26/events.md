@@ -414,3 +414,4 @@
 2026-09-27T08:57 | self | decision | opus also carries synthesis, beside merge, merge check, audit and fill adjudication (owner ruling)
 2026-09-27T09:08 | owner | receipt | in conversation: let the teaching round-4 surveyors finish on their standing instructions
 2026-09-27T09:08 | self | decision | t2-n1-r4..t2-n7-r4 resumed as launched, instructions unchanged; search.py leaves the teaching lane (owner ruling)
+2026-09-27T09:08 | self | delegation | t2-n1-r4..t2-n7-r4 resumed via SendMessage, instructions unchanged; heartbeat 6dc3aaed bounds the wait
