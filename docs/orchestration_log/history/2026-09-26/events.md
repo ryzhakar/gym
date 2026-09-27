@@ -463,3 +463,7 @@
 2026-09-27T09:51 | self | delegation | agent:cache-script (continued): scripts/research/bundle.py, pre-filter off-subject and thin rows, one bundle file per extractor slice
 2026-09-27T09:58 | agent:t3-r5-a | receipt | r5 verify group A: 9 VERIFIED, 5 UNVERIFIABLE; N3-r5-07 marked UNVERIFIABLE though the full text contradicts it (p=0.197), sent back as REFUTED
 2026-09-27T09:59 | agent:t3-r5-c | receipt | r5 verify group C: 4 VERIFIED (N6-r5-03,04,07,09; 09 mediator scope corrected), 4 UNVERIFIABLE (N4-r5-01,02 SSO-gated thesis; N6-r5-05,10 closed)
+2026-09-27T09:59 | agent:cache-script | receipt | cache.py (mirrors, headless-browser fallback, stub rejection; cache rescanned clean, 414 rows) and bundle.py done; batch-1 bundles: team a 105 kept of 168, 27 slices; team b 114 kept of 198, 28 slices; drops mostly off-subject
+2026-09-27T09:59 | agent:t3-r5-a | receipt | N3-r5-07 re-marked REFUTED
+2026-09-27T09:59 | self | decision | extraction wave 1: 6 slices per team, one sonnet agent per slice; rust-mention filter drops later sampled by the batch audit to catch false drops (decided under the 2026-09-26 handover)
+2026-09-27T09:59 | self | delegation | agent:r-x-a-b1-s01..s06 and r-x-b-b1-s01..s06, sonnet: extract bundle slices 01-06 per team per prompts/t2-extract.md
