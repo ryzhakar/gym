@@ -149,28 +149,47 @@ CLIENT_REDIRECT_RE = re.compile(
 )
 
 
-def follow_client_redirect(url: str, raw: bytes, timeout: int = 25, max_hops: int = 4) -> bytes:
-    """Given an already-fetched page, follow a chain of client-side redirects.
+def http_get_final_url(url: str, timeout: int = 25) -> tuple[bytes, str]:
+    """Like http_get, but also returns the URL actually reached after urllib follows any
+    real HTTP 3xx - needed when a *relative* client-side redirect target must be resolved
+    against where the page really ended up, not the URL it was originally requested at."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read(), resp.geturl()
+
+
+def follow_client_redirect(url: str, raw: bytes, timeout: int = 25, max_hops: int = 4) -> tuple[bytes, str]:
+    """Given an already-fetched page, follow a chain of client-side redirects. Returns the
+    page finally landed on, and its real URL - callers that need to resolve further
+    relative links (a book's own table-of-contents) must resolve them against that
+    returned URL, not the one originally requested.
 
     urllib already follows real HTTP 3xx; some sites (e.g. blog.rust-lang.org
-    without a trailing slash, or rtic.rs's two-hop stub-page chain) instead serve
+    without a trailing slash, or rtic.rs's multi-hop stub-page chain) instead serve
     a 200 page whose body redirects via JS or meta-refresh, which urllib cannot see.
+
+    Each hop's *relative* redirect target is resolved against the URL the previous hop
+    actually landed on (via http_get_final_url), not the URL it was requested at - rtic.rs's
+    own chain silently 404'd without this: requesting "/2" lands (after a real, invisible-here
+    HTTP redirect) on "/2/", and "book/en" resolved against "/2" instead of "/2/" points at the
+    wrong path entirely.
     """
     seen = {url}
     for _ in range(max_hops):
         m = CLIENT_REDIRECT_RE.search(raw)
         if not m:
-            return raw
+            return raw, url
         target = urllib.parse.urljoin(url, (m.group(1) or m.group(2)).decode())
         if target in seen:
-            return raw
+            return raw, url
         seen.add(target)
-        url, raw = target, http_get(target, timeout=timeout)
-    return raw
+        raw, url = http_get_final_url(target, timeout=timeout)
+    return raw, url
 
 
 def http_get_html(url: str, timeout: int = 25) -> bytes:
-    return follow_client_redirect(url, http_get(url, timeout=timeout), timeout=timeout)
+    raw, _final_url = follow_client_redirect(url, http_get(url, timeout=timeout), timeout=timeout)
+    return raw
 
 
 def pdf_to_text(pdf_path: Path) -> str:
@@ -265,7 +284,8 @@ def fetch_pdf_or_html(url: str) -> str:
             tf.write(raw)
             tf.flush()
             return pdf_to_text(Path(tf.name))
-    return validate_page_text(html_to_text(follow_client_redirect(url, raw)))
+    followed_raw, _final_url = follow_client_redirect(url, raw)
+    return validate_page_text(html_to_text(followed_raw))
 
 
 def unpaywall_route(doi: str) -> str:
@@ -767,7 +787,8 @@ def fetch_front_page_raw(root_url: str) -> tuple[bytes, str]:
     tried = []
     for candidate in candidates:
         try:
-            return follow_client_redirect(candidate, http_get(candidate)), candidate
+            raw, landed_url = http_get_final_url(candidate)
+            return follow_client_redirect(landed_url, raw)
         except Exception as e:  # noqa: BLE001 - direct fetch failed; try wayback next
             tried.append(f"{candidate}: {e}")
     try:
@@ -805,6 +826,25 @@ def extract_same_root_links(raw: bytes, base_url: str) -> list[tuple[str, str]]:
     return out
 
 
+NOSCRIPT_TOC_RE = re.compile(rb'<iframe[^>]*\bsrc="([^"]+)"')
+
+
+def extract_toc_links(front_raw: bytes, base_url: str) -> list[tuple[str, str]]:
+    """A book's table of contents, preferring a dedicated toc.html when the front page's
+    own sidebar is populated by JS and so carries no links in the raw HTML (recent mdBook:
+    `<nav id="mdbook-sidebar">populated by js</nav>`, with `<noscript><iframe src="toc.html">`
+    as the only static fallback - rtic.rs is exactly this case). Falls back to whatever
+    links the front page itself has otherwise."""
+    m = NOSCRIPT_TOC_RE.search(front_raw)
+    if m:
+        toc_url = urllib.parse.urljoin(base_url, m.group(1).decode())
+        try:
+            return extract_same_root_links(http_get(toc_url), base_url)
+        except Exception:  # noqa: BLE001 - fall through to the front page's own links
+            pass
+    return extract_same_root_links(front_raw, base_url)
+
+
 def fetch_book(url: str) -> Fetched:
     """The book is the source, not its front page: fetch the whole thing, front page
     first, chapters after in table-of-contents order, capped at BOOK_MAX_PAGES fetches /
@@ -819,7 +859,7 @@ def fetch_book(url: str) -> Fetched:
 
     front_raw, base_url = fetch_front_page_raw(url)
     front_text = html_to_text(front_raw)
-    links = extract_same_root_links(front_raw, base_url)[:BOOK_MAX_PAGES]
+    links = extract_toc_links(front_raw, base_url)[:BOOK_MAX_PAGES]
 
     parts = [front_text]
     total = len(front_text)
