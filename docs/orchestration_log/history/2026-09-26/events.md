@@ -484,3 +484,7 @@
 2026-09-27T10:12 | self | failure | round 4 and 5 dispatch lines ('avoiding the obvious', OpenAlex excluded) made rule 2 uncomputable and voided both rounds — history/2026-09-26/failures.md
 2026-09-27T10:12 | self | decision | rounds 6 and 7 run concurrently as two independent full-population captures per need (14 sonnet surveyors), OpenAlex with 429 backoff, every Found DOI graded, full text only for S>=3; rules per prompts/round-6-7.md (decided under the 2026-09-26 handover)
 2026-09-27T10:12 | self | delegation | agent:t2-n1..n7-r6 and t2-n1..n7-r7, sonnet: rounds 6 and 7 per prompts/round-6-7.md; agent:t3-r5-a (continued): repair sources.csv lines 565, 569, 576 and grade N7-r4's 45 unledgered Found DOIs plus N1/N6 round-5 ungraded DOIs
+2026-09-27T13:41 | self | discovery | session limit at 10:24 stopped the 14 round-6/7 surveyors and t3-r5-a mid-task; limit reset
+2026-09-27T13:41 | owner | receipt | in conversation: Rust slice process settled; teaching first, two lanes in parallel; resume crashed agents, never re-provision; keep records tight
+2026-09-27T13:41 | self | decision | Rust slice process and agent-reuse table settled as proposed (owner ruling)
+2026-09-27T13:41 | self | delegation | resumed via SendMessage: t2-n1..n7-r6, t2-n1..n7-r7, t3-r5-a
