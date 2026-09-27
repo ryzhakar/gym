@@ -649,3 +649,6 @@
 2026-09-27T19:35 | agent:r-xr-b-4 | receipt | send-back b-R12: 12 sources, 5 overturned (8 Questions, 8 Claims); retired
 2026-09-27T19:37 | agent:r-xr-b-5 | receipt | send-back b-R13: 10 sources, 4 overturned, 2 unreachable; team b send-back complete
 2026-09-27T19:37 | self | delegation | t4-merge-b1 continued: fold send-back extracts; t4-audit-b1 continued: audit the send-back pass; t4-merge2-b1 new (opus, fresh): full blind second merge of all batch-1 extracts for the 90% gate
+2026-09-27T19:40 | owner | receipt | in conversation: declare teaching research complete on sources and move on; let the running screener return, then take charge
+2026-09-27T19:40 | self | decision | teaching research complete on sources: collection stops at round 8, coverage estimates from round 8 ship as the map's declared gap; next map v3 (opus) from verified claims, supersedes owner ruling 'done at saturation' (owner ruling)
+2026-09-27T19:40 | self | commitment | tripwire cancelled: cron d1d70bd1 (round-8 OpenAlex pass) no longer needed
