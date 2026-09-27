@@ -569,3 +569,5 @@
 2026-09-27T18:46 | agent:cache-script | receipt | lobste.rs and HN attribution fixed; bundles rebuilt: team a 21-32 plus L1 (11 hn-lobsters rows re-fetched), team b 17-34
 2026-09-27T18:46 | self | delegation | wave 3: r-x-a-s1-7, -8 continued with a-21, a-22; r-x-b-s1-5, -6 continued with b-17, b-18; new r-x-a-s1-9, -10 with a-23, a-24; new r-x-b-s1-7, -8 with b-19, b-20
 2026-09-27T18:49 | agent:r-x-a-s1-8 | receipt | slice a-22: 1 talk transcript cut short, 1 Question, 1 Claim; last unit a-L1 (lobste.rs rows re-extracted with names)
+2026-09-27T18:49 | agent:r-x-a-s1-7 | receipt | slice a-21: 1 EuroRust talk cut at 150k chars, 3 Questions, 5 Claims; retired
+2026-09-27T18:49 | self | delegation | agent:cache-script (continued): subtitles to deduplicated text, re-cache talk rows, rebuild unassigned from a-26 and b-21, supplementary L2 for truncated frozen talks; r-x-a-s1-11 new with a-25
