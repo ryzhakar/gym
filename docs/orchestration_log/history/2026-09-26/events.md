@@ -436,3 +436,4 @@
 2026-09-27T09:21 | self | delegation | agent:cache-script, sonnet: write scripts/research/cache.py (get, ingest-tmp, fetch-csv), ingest /tmp PDFs, prefetch Rust batch 1; two genuine tries per source class
 2026-09-27T09:21 | agent:t3-n5r4 | receipt | N5 r4 verify: 5 VERIFIED, but N5-r4-07 rests on an abstract only; sent back to append UNVERIFIABLE; N5-r4-02 quote misattributed, contradiction confirmed in other wording
 2026-09-27T09:23 | agent:t3-n3r4 | receipt | N3 r4 verify: 3 VERIFIED (N3-r4-08,09,10), 0 REFUTED, 7 UNVERIFIABLE (3 abstract-only, 4 unreachable)
+2026-09-27T09:23 | agent:t3-n1r4 | receipt | N1 r4 verify: 5 VERIFIED (N1-r4-01..04,10), 4 UNVERIFIABLE (TATE 2024, JAMA IM 2013 closed)
