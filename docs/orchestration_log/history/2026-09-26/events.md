@@ -456,3 +456,4 @@
 2026-09-27T09:44 | self | discovery | measured from transcripts: r-x-a-b1-01 45 calls, 30k output, 4.04M cache-read, 0.83M cache-write for 15 rows; round surveyors ~100 calls, ~12.5M cache-read each; context re-read per call dominates
 2026-09-27T09:46 | agent:t2-n6-r5 | receipt | N6 round 5: 10 claims, 8 sources, 5 full texts, 7 unreadable listed; needs/n6-r5.md
 2026-09-27T09:46 | self | decision | round-5 verification (33 claims S>=3) waits for cache.py's stub fix and mirrors: sources prefetched by script first, verifiers then grouped by source so each text is read once (decided under the 2026-09-26 handover)
+2026-09-27T09:46 | agent:r-x-a-b1-02 | receipt | team a b1-02: 15 rows read from cache, 6 sources gave 7 Questions and 6 Claims; off-subject Swift threads in the frame
