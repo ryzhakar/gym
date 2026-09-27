@@ -343,3 +343,4 @@
 2026-09-27T04:24 | self | delegation | agent:t3-n1r3-a, sonnet: verify N1-r3-01..03, 05, 06, 07, 11, 12
 2026-09-27T04:26 | agent:t2-n3-r3 | receipt | needs/n3-r3.md: 10 claims, 10 new sources (6 full texts); observer-reactivity null result; N3 not saturated (all sources new)
 2026-09-27T04:26 | self | delegation | agent:t3-n3r3-a, sonnet: verify N3-r3-02, 04, 05, 06, 08, 09, 10
+2026-09-27T04:26 | agent:t3-n2r3-b | receipt | N2-r3-06, 07, 08 UNVERIFIABLE: all paywalled, no OA copy
