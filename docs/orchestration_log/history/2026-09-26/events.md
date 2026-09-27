@@ -720,3 +720,5 @@
 2026-09-28T00:06 | agent:r-xb-a-1 | receipt | book pass a-sB04: rtic.rs whole, 5 Questions, 6 Claims beyond the preface; book pass complete both teams
 2026-09-28T00:08 | agent:t4-merge-b1 | receipt | reported team-b book outputs overwrote original slices sb01-sb03
 2026-09-28T00:08 | self | failure | book-pass output names collided with team-b slices by case on a case-insensitive filesystem — history/2026-09-26/failures.md
+2026-09-28T00:16 | agent:t4-merge-b1 | receipt | operational-grain merge: 544 team-local to 405 canonical Questions (a 170, b 184, both 49), 768 Claims; Chapman unseen 25-51%, Chao1 35-89%; merge-v3/
+2026-09-28T00:16 | self | delegation | agent:t4-mcheck3-b1, opus, fresh: final blind 20% check of merge-v3 at operational grain; result ships with map v0.1
