@@ -391,3 +391,6 @@
 2026-09-27T08:36 | self | delegation | agent:t2-n5-r4, sonnet: saturation round 4 for N5
 2026-09-27T08:36 | self | delegation | agent:t2-n6-r4, sonnet: saturation round 4 for N6
 2026-09-27T08:36 | self | delegation | agent:t2-n7-r4, sonnet: saturation round 4 for N7
+2026-09-27T08:37 | agent:r-promote | receipt | scripts/map and maps/rust committed f616b4f; teaching deliverables force-committed a13cbdf
+2026-09-27T08:37 | owner | receipt | in conversation: compact before the round-4 agents land
+2026-09-27T08:37 | self | commitment | state for the next context: silence on (.claude/work-silently); open waits: t2-n1-r4..t2-n7-r4 (teaching saturation round 4, found-DOI lists, no blank grades), bounded by heartbeat 6dc3aaed; on landing: Tier 3 for new S≥3 claims, then audit r4 (prompts/audit.md with found-DOI capture-recapture), map v3 if a VERIFIED claim changed; Rust next: batch 1 sampling (scripts ratified, frame.csv sha 99ea45bb…, hint-less rows as core, ~200 per team, English), then team A (sonnet) and team B (opus) extractors per prompts/t2-extract.md, then merge, audit, verify, fill, compile, estimate per rust fable-plan.md §2; no owner questions, ever — decide under the handover and mark decided
