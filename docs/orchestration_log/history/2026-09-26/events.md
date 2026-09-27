@@ -359,3 +359,4 @@
 2026-09-27T04:47 | self | delegation | agent:t3-n6r3-a, sonnet: verify N6-r3-01..04, 10, 11
 2026-09-27T04:49 | agent:t2-n5-r3 | receipt | needs/n5-r3.md: 13 claims, 13 new sources, all abstract-only (publisher bot walls); N5 not saturated
 2026-09-27T04:49 | self | delegation | N5-r3-13 added to t3-n6r3-a via SendMessage; round 3 surveys all landed
+2026-09-27T04:50 | agent:t3-n7r3-a | receipt | N7-r3-01, 02 VERIFIED; N7-r3-04 REFUTED on misquoted denominators (core 13 vs 4 result holds), N7-r3-05 REFUTED (figure misattributed); corrected claim N7-r3-04c requested
