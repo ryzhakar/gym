@@ -584,3 +584,4 @@
 2026-09-27T18:56 | self | failure | a cd moved the harness working directory into the bundles directory — history/2026-09-26/failures.md (A cd moved the harness working directory)
 2026-09-27T18:56 | self | delegation | wave 4: r-x-a-s1-9, -10, -11 continued with a-26, a-27, a-28; r-x-b-s1-7, -8 continued with b-21, b-22; r-x-b-s1-9 new with b-23
 2026-09-27T18:58 | agent:r-x-a-s1-10 | receipt | slice a-27: 2 sources, 2 Questions, 2 Claims; last unit a-29
+2026-09-27T18:59 | agent:r-x-b-s1-7 | receipt | slice b-21: 7 sources, 9 Questions, 9 Claims; last unit b-24
