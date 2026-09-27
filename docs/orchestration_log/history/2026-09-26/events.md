@@ -327,3 +327,8 @@
 2026-09-27T04:03 | self | decision | claims-status.csv is append-only; the last row per claim_id governs; synthesis prompts must say so
 2026-09-27T04:04 | agent:t3-n6-a | receipt | N6-r2-01, 04, 09 re-marked UNVERIFIABLE; N6-r2-03 stays VERIFIED, full text read from an archived author copy (my premise was wrong for it)
 2026-09-27T04:04 | self | delegation | agent:t2-n7-r2 (sonnet, transfer lens over N1–N6), agent:t4-we-pf (opus, worked examples vs productive failure), agent:t4-dp (opus, deliberate practice dispute); Stage B W8–W9
+2026-09-27T04:09 | agent:t3-seed-probe | receipt | verify/seed-probe.md: 8 of 45 checkable seed citations found independently (18%), 4 at S≥2; two seed contradictions (Lee et al. 2026 inflation 118% not 75%; Sinha & Kapur mechanisms misparaphrased); untouched blocks in target/proxies, struggle/intervention, knowledge-component literature
+2026-09-27T04:09 | self | decision | seed coverage 18% fails saturation rule 3 (≥80%); Stage C rounds run with fresh agents and new query sets, never shown the seed; round 3 for N1, N2, N3 starts now in parallel with Stage B resolvers
+2026-09-27T04:09 | self | delegation | agent:t2-n1-r3, sonnet: saturation round 3 for n1, fresh queries, needs/n1-r3.md
+2026-09-27T04:09 | self | delegation | agent:t2-n2-r3, sonnet: saturation round 3 for n2, fresh queries, needs/n2-r3.md
+2026-09-27T04:09 | self | delegation | agent:t2-n3-r3, sonnet: saturation round 3 for n3, fresh queries, needs/n3-r3.md
