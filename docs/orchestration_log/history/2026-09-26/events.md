@@ -671,3 +671,5 @@
 2026-09-27T19:50 | agent:r-xt-b-1 | receipt | third pass b-T01 revised to 1 Question, 1 Claim; b-T02: Swift thread, 1 Question, 3 Claims from self-declared Rust users, track records left to tier 3; next b-T03
 2026-09-27T19:50 | agent:r-xt-a-2 | receipt | third pass a-T05 revised to nothing new, a-T06 nothing new (Swift threads)
 2026-09-27T19:50 | self | decision | t2-extract.md rule 9: extractors log Claims from Voices whose Rust connection shows in the source, flagged voice-unverified for tier 3; no Rust connection, no Claim; same rule both teams (decided under the 2026-09-26 handover)
+2026-09-27T19:51 | agent:r-xt-b-2 | receipt | third pass b-T05: 10 sources, 17 Questions, 28 Claims incl. off-scope entries, sent back; next b-T06
+2026-09-27T19:51 | agent:r-xt-a-1 | receipt | third pass a-T02: Zed product thread, nothing new; next a-T03
