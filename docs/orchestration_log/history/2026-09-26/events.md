@@ -369,3 +369,4 @@
 2026-09-27T05:08 | agent:t-audit-r3 | receipt | audit/saturation-r3.md: no need SATURATED (N3, N6, N7 OPEN; N1, N2, N4, N5 VOID-ROUND on ungraded paywalled rows); seed coverage fails all; SURVEYED backlog 5–19 per need
 2026-09-27T05:08 | self | discovery | plan defect: capture-recapture rule 2 is undefined by construction (m=0 everywhere) because sources.csv is append-only and re-found sources are never re-recorded per round; a valid estimate needs per-round found-DOI lists in the search logs
 2026-09-27T05:08 | self | delegation | agent:t5-map-v2, fable: evidence map v2 with audit as confidence section, synthesis/evidence-map-v2.md
+2026-09-27T05:09 | self | delegation | agent:r-t1-talks-zh-fix, sonnet: per-talk URLs for the zh conference talks frame; frame v2 union re-runs after
