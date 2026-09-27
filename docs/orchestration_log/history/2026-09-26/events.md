@@ -574,3 +574,4 @@
 2026-09-27T18:50 | agent:r-x-a-s1-10 | receipt | slice a-24: 1 talk, completed from the cache past the bundle cut, 2 Questions, 2 Claims; waits for rebuilt a-26
 2026-09-27T18:50 | agent:r-x-b-s1-5 | receipt | slice b-17: 6 sources, 7 Questions, 7 Claims; retired
 2026-09-27T18:50 | agent:r-x-a-s1-9 | receipt | slice a-23: 1 talk, completed from cache past the cut, 5 Questions, 5 Claims (Voice 'Adam', surname unconfirmed); waits for rebuilt a-26
+2026-09-27T18:50 | agent:r-x-b-s1-6 | receipt | slice b-18: 11 sources, 4 Questions, 9 Claims; retired
