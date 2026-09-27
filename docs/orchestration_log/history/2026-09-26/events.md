@@ -417,3 +417,5 @@
 2026-09-27T09:08 | self | delegation | t2-n1-r4..t2-n7-r4 resumed via SendMessage, instructions unchanged; heartbeat 6dc3aaed bounds the wait
 2026-09-27T09:15 | agent:t2-n5-r4 | receipt | N5 round 4: 10 claims N5-r4-01..10, 8 new sources, 13 queries, 3 full texts, 4 unreadable graded floor-conservative; needs/n5-r4.md
 2026-09-27T09:15 | self | delegation | agent:t3-n5r4, sonnet: verify N5-r4-01,02,03,04,07 (S>=3) per prompts/t3-verify.md
+2026-09-27T09:15 | agent:t2-n2-r4 | receipt | N2 round 4: 10 claims N2-r4-01..10, 8 new sources, 4 full texts, 4 abstract-only; needs/n2-r4.md
+2026-09-27T09:15 | self | delegation | agent:t3-n2r4, sonnet: verify N2-r4-01,02,07,09,10 (S>=3) per prompts/t3-verify.md
