@@ -512,3 +512,4 @@
 2026-09-27T13:51 | agent:t2-n1-r7 | receipt | N1 round 7: 10 claims, 9 sources, 6 full texts; OpenAlex never answered; needs/n1-r7.md
 2026-09-27T13:53 | agent:t2-n3-r7 | receipt | N3 round 7: 12 claims, 17 sources graded (5 new), 4 full texts; arXiv unreachable; needs/n3-r7.md
 2026-09-27T13:59 | agent:t2-n5-r7 | receipt | N5 round 7: 10 claims, 10 sources, 1 full text; needs/n5-r7.md
+2026-09-27T13:59 | self | delegation | round 6-7 verification: 73 S>=3 claims on 50 sources, 4 verifiers by source per verify/r67-assignment.md; t3-r5-b, t3-r5-c continued, t3-r67-d, t3-r67-e new (sonnet); N2-r7 pending
