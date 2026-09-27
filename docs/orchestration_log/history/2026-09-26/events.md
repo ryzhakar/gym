@@ -607,3 +607,4 @@
 2026-09-27T19:13 | self | delegation | agent:cache-script (continued): send-back bundles b1-team-{a,b}-R*.txt of nothing-new and stub rows, re-fetching stubs
 2026-09-27T19:13 | agent:s-n6-r8 | receipt | N6 title screen: 3174 labeled, Y 1640, N 1465, U 69; tally m=224, Chapman N=3867, 58% unseen
 2026-09-27T19:15 | agent:s-n7-r8 | receipt | N7 title screen: 3080 labeled via keyword rules after manual chunk review, Y 1301; tally m=144, Chapman N=3457, 62% unseen
+2026-09-27T19:15 | agent:s-n4-r8 | receipt | N4 title screen: 2296 labeled, Y 709, N 639, U 948; tally m=60, Chapman N=2427, 71% unseen
