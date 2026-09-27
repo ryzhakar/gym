@@ -587,3 +587,4 @@
 2026-09-27T18:59 | agent:r-x-b-s1-7 | receipt | slice b-21: 7 sources, 9 Questions, 9 Claims; last unit b-24
 2026-09-27T19:00 | agent:r-x-b-s1-9 | receipt | slice b-23: 10 sources, 9 Questions, 14 Claims; two talk speakers confirmed from video pages; next b-25
 2026-09-27T19:01 | agent:r-x-b-s1-8 | receipt | slice b-22: 6 sources, 13 Questions, 20 Claims; last unit b-26 (team b's final slice)
+2026-09-27T19:01 | agent:r-x-a-s1-11 | receipt | slice a-28: 1 TWiR quote thread cut at 150k chars (2018 of 2025), 5 Questions, 12 Claims; last unit a-30
