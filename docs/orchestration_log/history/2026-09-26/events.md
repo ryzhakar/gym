@@ -653,3 +653,6 @@
 2026-09-27T19:40 | self | decision | teaching research complete on sources: collection stops at round 8, coverage estimates from round 8 ship as the map's declared gap; next map v3 (opus) from verified claims, supersedes owner ruling 'done at saturation' (owner ruling)
 2026-09-27T19:40 | self | commitment | tripwire cancelled: cron d1d70bd1 (round-8 OpenAlex pass) no longer needed
 2026-09-27T19:41 | agent:t4-merge-b1 | receipt | send-back folded: 350 canonical Questions from 420 team-local; a only 167, b only 152, both 31; Chapman unseen 36-67% per stratum
+2026-09-27T19:41 | agent:t4-audit-b1 | receipt | send-back audit: team a FAIL (f004169), team b FAIL (f002233, f005312): release notes and READMEs stating a decision against the alternative it replaced still dismissed; batch-1 misses fixed; audit/audit-b1-sendback.md
+2026-09-27T19:41 | self | decision | a row whose fetch yields only a short front page, deeper pages not followed by rule, is an access gap, not an extraction miss (f000149)
+2026-09-27T19:41 | self | decision | third pass on rows still logged Nothing new, one fresh opus extractor per team, since the residual misses are judgment at a knowledge bottleneck (owner ruling on opus placement); rule 6 gains the example 'a release note or README stating a decision and the alternative it replaced' (decided under the 2026-09-26 handover)
