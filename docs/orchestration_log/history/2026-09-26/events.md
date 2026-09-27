@@ -552,3 +552,4 @@
 2026-09-27T15:06 | agent:r-x-a-s1-6 | receipt | slice a-15: 8 sources, 10 Questions, 9 Claims; lobste.rs capture lacks usernames; next a-18
 2026-09-27T15:06 | self | delegation | agent:cache-script (continued): lobste.rs and HN attribution, re-fetch hn-lobsters rows, rebuild unassigned bundles from a-21 and b-17, supplementary L1 bundles for frozen hn-lobsters rows
 2026-09-27T15:06 | agent:r-x-b-s1-6 | receipt | slice b-12: 11 sources, nothing new; next b-15
+2026-09-27T15:06 | agent:r-x-a-s1-4 | receipt | slice a-14: 10 sources, 20 Questions, 25 Claims; lobste.rs attribution recovered by live fetch; retired; r-x-a-s1-8 new with a-19
