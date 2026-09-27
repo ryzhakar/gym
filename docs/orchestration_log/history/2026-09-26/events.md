@@ -618,3 +618,5 @@
 2026-09-27T19:21 | agent:r-xr-a-3 | receipt | send-back a-R03: Swift thread, nothing new confirmed; next a-R05
 2026-09-27T19:22 | agent:r-xr-b-1 | receipt | send-back b-R01: 4 sources, 3 overturned (5 Questions, 5 Claims); next b-R04
 2026-09-27T19:22 | agent:r-xr-a-1 | receipt | send-back a-R01: 6 sources, 2 overturned (rtic.rs, yew PR 3509); team b fetched a sub-page of the rustwasm book the bundle held only as front matter, team a did not — asymmetry noted for the audit; next a-R06
+2026-09-27T19:22 | agent:r-xr-b-3 | receipt | send-back b-R03: 8 sources, 3 overturned (6 Claims); next b-R05
+2026-09-27T19:22 | agent:r-xr-a-2 | receipt | send-back a-R04: 8 sources, 1 overturned (2 Questions, 2 Claims); last unit a-R07
