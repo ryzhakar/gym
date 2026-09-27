@@ -409,3 +409,4 @@
 2026-09-27T08:54 | self | failure | silence broken again: answered a harness visible-output nudge with text; nudges get zero text
 2026-09-27T08:54 | self | failure | silence broken a third time: closing text after tool result
 2026-09-27T08:54 | self | failure | silence broken a fourth time: '(No text.)' is text
+2026-09-27T08:54 | owner | receipt | in conversation: silent turns send empty strings
