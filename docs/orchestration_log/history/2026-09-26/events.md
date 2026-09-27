@@ -473,3 +473,5 @@
 2026-09-27T10:00 | self | discovery | bundle.py rust-mention filter falsely drops Rust sources (64 of 120 off-subject drops mention rust 1-2 times: candle, esp-hal, probe-rs, uniffi-rs, iroh); wave 1 held, rule loosened and bundles rebuilt
 2026-09-27T10:00 | agent:t3-r5-b | receipt | r5 verify group B: 8 VERIFIED, 4 UNVERIFIABLE; N7-r5-03,09 S 3 to 2
 2026-09-27T10:00 | self | delegation | agent:t4-audit-r5, opus: saturation audit over rounds 4-5 per prompts/audit-r5.md, output audit/saturation-r5.md
+2026-09-27T10:01 | owner | receipt | in conversation: hold new launches until the updated Rust-lane process is settled
+2026-09-27T10:01 | self | commitment | no new launches until the owner settles the Rust slice process; running: cache-script (bundle rerun), t4-audit-r5
