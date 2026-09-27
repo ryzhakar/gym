@@ -372,3 +372,5 @@
 2026-09-27T05:09 | self | delegation | agent:r-t1-talks-zh-fix, sonnet: per-talk URLs for the zh conference talks frame; frame v2 union re-runs after
 2026-09-27T05:13 | agent:r-t1-talks-zh-fix | receipt | frame-conference-talks-zh.csv: 188 unique URLs (37 per-talk Bilibili links, 151 schedule anchors)
 2026-09-27T05:13 | self | delegation | agent:r-t1-union-v2b, sonnet: re-run non-English frame union with fixed zh talks
+2026-09-27T05:15 | agent:r-t1-union-v2b | receipt | frame-v2-nonen.csv rebuilt: 2248 in window, ids f013407–f015775, sha256 969e697f66488ab8b79e9dc11e76a84271b5764f684c11e740c1b34918a7f445; union script had stripped URL fragments, fixed
+2026-09-27T05:15 | self | decision | non-English frame v2 fixed at sha256 969e697f…; the English frame's union may also have merged fragment-only URL variants — checked at batch-1 sampling, not refixed (frame v1 stays fixed)
