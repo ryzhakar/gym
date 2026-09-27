@@ -601,3 +601,7 @@
 2026-09-27T19:04 | agent:r-x-a-s1-9 | receipt | slice a-L2: f011092 continuation 6 Questions and Claims, f011069 nothing new; retired; batch 1 extraction complete
 2026-09-27T19:05 | agent:search-script | receipt | screen-list and tally added; screen lists per need 2296-3189 DOIs, 35-48 already in the ledger
 2026-09-27T19:05 | self | delegation | agent:s-n1-r8..s-n7-r8, sonnet: title screen per need per prompts/round-8.md Screener
+2026-09-27T19:13 | agent:t4-audit-b1 | receipt | batch-1 audit: team a FAIL (f012428 single-voice Position dismissed, f000227 read over a redirect stub), team b FAIL (f002937 single-voice Position dismissed); phrase count finds single-voice dismissals in 11 of 97 team-a and 30 of 101 team-b nothing-new rows; audit/audit-b1.md
+2026-09-27T19:13 | self | decision | single-voice declared Positions are Claims at extraction; on-subject rows dropped for genuinely unfetchable text are access gaps, not extraction misses; stubs logged as read are misses; t2-extract.md rules 6-7 added (decided under the 2026-09-26 handover)
+2026-09-27T19:13 | self | decision | batch-1 send-back scoped to the rows the audit's failure mode covers: every nothing-new and read-over-stub row of both teams re-extracted by fresh agents under rules 6-7; rows that yielded Questions stand (decided under the 2026-09-26 handover)
+2026-09-27T19:13 | self | delegation | agent:cache-script (continued): send-back bundles b1-team-{a,b}-R*.txt of nothing-new and stub rows, re-fetching stubs
