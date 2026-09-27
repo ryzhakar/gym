@@ -640,3 +640,4 @@
 2026-09-27T19:28 | agent:r-xr-b-1 | receipt | send-back b-R08: 10 sources, 6 overturned; retired
 2026-09-27T19:29 | agent:r-xr-a-6 | receipt | send-back a-R13: 8 sources, 2 overturned (5 Questions, 6 Claims); next a-R16
 2026-09-27T19:31 | agent:r-xr-a-4 | receipt | send-back a-R14: 12 sources, 4 overturned (5 Questions, 5 Claims); retired
+2026-09-27T19:31 | agent:r-xr-a-5 | receipt | send-back a-R15: 14 sources, 2 overturned (3 Questions, 4 Claims); retired
