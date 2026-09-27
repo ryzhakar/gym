@@ -20,7 +20,11 @@ own truncated slice).
 
 Some slices are frozen (FROZEN_SLICE_MAX below) - already assigned and read by an extractor.
 Their manifest rows and slice files are left untouched; only unassigned rows are
-reclassified and packed into new slices numbered above the frozen range.
+reclassified and packed into new slices numbered above the frozen range. Exception: a frozen
+row of class=hn-lobsters (SUPPLEMENT_CLASS) whose cached text was refreshed after its slice
+was assigned gets a fresh copy written to a supplementary b1-{team}-L1.txt, and the manifest's
+slice column for that row is repointed at "L1" - the original numbered slice file is still
+left alone.
 
 Output: samples/bundles/b1-{team}-{jj}.txt (one file per slice, each source preceded by a
 `=== ROW n | id | url | date | class ===` header) and samples/bundles/b1-{team}-manifest.csv
@@ -40,7 +44,8 @@ STATUS_CSV = SAMPLES / "prefetch-b1-status.csv"
 BUNDLES = SAMPLES / "bundles"
 SLICE_TARGET_CHARS = 150_000
 EXCLUDED_DATA_ROWS = {"team-a": set(range(1, 31))}  # already extracted
-FROZEN_SLICE_MAX = {"team-a": 4, "team-b": 2}  # slices 1..N already assigned/read; never touched
+FROZEN_SLICE_MAX = {"team-a": 20, "team-b": 16}  # slices 1..N already assigned/read; never touched
+SUPPLEMENT_CLASS = "hn-lobsters"  # frozen rows of this class get a fresh copy in slice L1
 SWIFT_FORUM_HOST = "forums.swift.org"
 SWIFT_FORUM_MIN_MENTIONS = 3  # Swift-internal threads with a passing Rust mention read as noise
 
@@ -99,6 +104,12 @@ def classify(text: str | None, url: str, domain_subframe_hosts: set[str]) -> str
     return None
 
 
+def is_frozen_slice(slice_value: str, frozen_max: int) -> bool:
+    if slice_value == "L1":  # already-supplemented row from a frozen slice; stays frozen
+        return True
+    return bool(slice_value) and int(slice_value) <= frozen_max
+
+
 def load_frozen(team: str) -> dict[int, dict]:
     """Manifest rows already assigned to a frozen slice - read, untouched, never reclassified."""
     manifest_path = BUNDLES / f"b1-{team}-manifest.csv"
@@ -108,7 +119,7 @@ def load_frozen(team: str) -> dict[int, dict]:
     return {
         int(r["data_row"]): r
         for r in csv.DictReader(manifest_path.open(newline=""))
-        if r["slice"] and int(r["slice"]) <= frozen_max
+        if is_frozen_slice(r["slice"], frozen_max)
     }
 
 
@@ -148,8 +159,9 @@ def build(team: str) -> None:
 
     BUNDLES.mkdir(parents=True, exist_ok=True)
     for stale in BUNDLES.glob(f"b1-{team}-*.txt"):
-        if int(stale.stem.rsplit("-", 1)[-1]) > frozen_max:
-            stale.unlink()  # only non-frozen slice numbers are ever regenerated
+        suffix = stale.stem.rsplit("-", 1)[-1]
+        if suffix.isdigit() and int(suffix) > frozen_max:
+            stale.unlink()  # only non-frozen numbered slices are ever regenerated; L1 is separate
 
     slices: list[list[tuple[dict, str]]] = [[]]
     running = 0
@@ -179,6 +191,29 @@ def build(team: str) -> None:
         if entry["data_row"] not in frozen:
             entry["slice"] = row_to_slice.get(entry["data_row"], "")
 
+    # Frozen rows of SUPPLEMENT_CLASS: the frozen slice file is left alone, but its text may
+    # be stale (a defect fixed after that slice was assigned). Give an extractor a fresh copy
+    # in a supplementary slice L1, and repoint the manifest at it rather than the stale slice.
+    supplement_rows = [
+        (data_row, batch_rows[data_row - 1]) for data_row in frozen
+        if SUPPLEMENT_CLASS in batch_rows[data_row - 1]["class"].split(";")
+    ]
+    if supplement_rows:
+        fresh_chars = {}
+        supplement_path = BUNDLES / f"b1-{team}-L1.txt"
+        with supplement_path.open("w") as f:
+            for data_row, batch_row in sorted(supplement_rows):
+                status_row = status_by_id_url.get((batch_row["id"], batch_row["url"]), {})
+                text = load_text(status_row) or ""
+                fresh_chars[data_row] = len(text)
+                header = (f"=== ROW {data_row} | {batch_row['id']} | {batch_row['url']} | "
+                          f"{batch_row['date']} | {batch_row['class']} ===")
+                f.write(header + "\n" + text + "\n\n")
+        for entry in manifest:
+            if entry["data_row"] in fresh_chars:
+                entry["slice"] = "L1"
+                entry["chars"] = fresh_chars[entry["data_row"]]  # the frozen row's chars was stale
+
     manifest.sort(key=lambda e: int(e["data_row"]))
     manifest_path = BUNDLES / f"b1-{team}-manifest.csv"
     with manifest_path.open("w", newline="") as f:
@@ -192,7 +227,8 @@ def build(team: str) -> None:
     n_dropped = len(manifest) - n_kept
     print(f"{team}: {len(manifest)} rows total ({len(frozen)} frozen, {len(excluded)} excluded), "
           f"{n_kept} kept, {n_dropped} dropped ({swift_dropped} by the swift-forum rule), "
-          f"{n_new_slices} new slices (numbered {frozen_max + 1}+) -> {manifest_path}")
+          f"{n_new_slices} new slices (numbered {frozen_max + 1}+), "
+          f"{len(supplement_rows)} rows refreshed in slice L1 -> {manifest_path}")
 
 
 if __name__ == "__main__":

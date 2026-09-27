@@ -539,11 +539,37 @@ def route_reddit(url: str) -> Fetched:
     raise FetchError(tried)
 
 
+def route_hn(url: str) -> Fetched:
+    m = re.search(r"[?&]id=(\d+)", url)
+    if not m:
+        raise FetchError(["hn: no item id in url"])
+    data = http_get_json(f"https://hn.algolia.com/api/v1/items/{m.group(1)}")
+
+    def walk(node: dict) -> list[str]:
+        out = []
+        text = node.get("text")
+        if text:
+            out.append(attributed({"body": html_to_text(text.encode()), "user": node.get("author"),
+                                    "created_at": node.get("created_at")}, login_path=("user",)))
+        for child in node.get("children") or []:
+            out += walk(child)
+        return out
+
+    parts = [data.get("title", "")] + walk(data)
+    return Fetched("\n\n---\n\n".join(p for p in parts if p), "hn-algolia")
+
+
 def route_lobsters(url: str) -> Fetched:
     try:
         data = http_get_json(url.rstrip("/") + ".json")
-        parts = [data.get("title", ""), data.get("description", "")]
-        parts += [c.get("comment", "") for c in data.get("comments", [])]
+        parts = [data.get("title", ""),
+                 attributed({"body": data.get("description_plain", ""),
+                             "user": data.get("submitter_user"), "created_at": data.get("created_at")},
+                            login_path=("user",))]
+        parts += [attributed({"body": c.get("comment_plain", ""),
+                               "user": c.get("commenting_user"), "created_at": c.get("created_at")},
+                              login_path=("user",))
+                  for c in data.get("comments", [])]
         return Fetched("\n\n---\n\n".join(p for p in parts if p), "lobsters-json")
     except Exception as e:  # noqa: BLE001
         text = validate_page_text(html_to_text(http_get(url)))
@@ -592,6 +618,8 @@ def fetch_by_class_route(url: str, source_class: str) -> Fetched:
         return route_github(url)
     if d in ("youtube.com", "youtu.be"):
         return route_video(url)
+    if d == "news.ycombinator.com":
+        return route_hn(url)
     if "lobste.rs" in d:
         return route_lobsters(url)
     if "books-courses" in source_class and d in PAYWALLED_DOMAINS:
