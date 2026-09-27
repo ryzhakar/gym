@@ -606,3 +606,4 @@
 2026-09-27T19:13 | self | decision | batch-1 send-back scoped to the rows the audit's failure mode covers: every nothing-new and read-over-stub row of both teams re-extracted by fresh agents under rules 6-7; rows that yielded Questions stand (decided under the 2026-09-26 handover)
 2026-09-27T19:13 | self | delegation | agent:cache-script (continued): send-back bundles b1-team-{a,b}-R*.txt of nothing-new and stub rows, re-fetching stubs
 2026-09-27T19:13 | agent:s-n6-r8 | receipt | N6 title screen: 3174 labeled, Y 1640, N 1465, U 69; tally m=224, Chapman N=3867, 58% unseen
+2026-09-27T19:15 | agent:s-n7-r8 | receipt | N7 title screen: 3080 labeled via keyword rules after manual chunk review, Y 1301; tally m=144, Chapman N=3457, 62% unseen
