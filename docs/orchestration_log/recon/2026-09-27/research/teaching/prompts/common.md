@@ -25,3 +25,11 @@ Full text, the working route: `curl -s "https://api.unpaywall.org/v2/<DOI>?email
 ## Prime directive
 
 Evidence from primary sources, resolved citations, honest `full_text_read`. Report evidence, not conclusions. An unresolvable citation is not a citation.
+
+## Source cache (durable; owner ruling 2026-09-27)
+
+CACHE = /Users/ryzhakar/pp/gym/docs/orchestration_log/recon/cache/ — shared by every research and every round.
+1. Before fetching any source, look it up: `grep -i "<doi-or-url>" CACHE/index.csv`. A hit: read CACHE/<key>.txt; never fetch it again.
+2. After any successful fetch, save the full text before using it: key = DOI lowercased with `/` → `_`, or for a URL without DOI the first 12 hex of `sha1(url)`; text to CACHE/<key>.txt (pdftotext -layout for PDFs; readable text for HTML, transcripts for talks); append one row to CACHE/index.csv: `key,doi_or_url,route,fetched_at,agent,chars`.
+3. Once `scripts/research/cache.py` exists, use `uv run python /Users/ryzhakar/pp/gym/scripts/research/cache.py get <doi-or-url>` instead; it does 1–2 and prints the text path.
+4. Abstract-only text is saved as CACHE/<key>.abstract.txt with route `abstract`; it never counts as full text.
