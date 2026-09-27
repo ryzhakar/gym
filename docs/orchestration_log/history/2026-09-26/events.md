@@ -475,3 +475,5 @@
 2026-09-27T10:00 | self | delegation | agent:t4-audit-r5, opus: saturation audit over rounds 4-5 per prompts/audit-r5.md, output audit/saturation-r5.md
 2026-09-27T10:01 | owner | receipt | in conversation: hold new launches until the updated Rust-lane process is settled
 2026-09-27T10:01 | self | commitment | no new launches until the owner settles the Rust slice process; running: cache-script (bundle rerun), t4-audit-r5
+2026-09-27T10:01 | owner | receipt | in conversation: the hold covers the Rust lane only; teaching runs to its finish
+2026-09-27T10:01 | self | commitment | hold narrowed: Rust launches wait for the settled slice process; teaching continues: audit r4-r5, then round 6 for open needs or map v3 (opus)
