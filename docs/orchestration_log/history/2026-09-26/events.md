@@ -382,3 +382,4 @@
 2026-09-27T08:35 | self | decision | rust-map scripts-draft (sample.py, estimate.py, check_map.py, schema, seeds) ratified by the owner's word that blocking on them was a failure; promoted and run now (owner ruling)
 2026-09-27T08:35 | self | decision | teaching deliverables kept durable by force-committing recon/2026-09-27/research/teaching/ (scratch, binds nothing; decided under the owner handover, ground: owner ruling 00:52, no escalations)
 2026-09-27T08:35 | self | failure | research halted on escalations the owner had ruled out — history/2026-09-26/failures.md
+2026-09-27T08:36 | self | decision | Rust batch 1 sampling: hint-less frame rows sample as the core cell (domain unknown until read; extractors assign domains_live); target strata plus core, English, ~200 per team; seed logged (decided, plan §7 S1)
