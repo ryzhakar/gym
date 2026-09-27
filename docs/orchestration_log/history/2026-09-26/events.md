@@ -608,3 +608,5 @@
 2026-09-27T19:13 | agent:s-n6-r8 | receipt | N6 title screen: 3174 labeled, Y 1640, N 1465, U 69; tally m=224, Chapman N=3867, 58% unseen
 2026-09-27T19:15 | agent:s-n7-r8 | receipt | N7 title screen: 3080 labeled via keyword rules after manual chunk review, Y 1301; tally m=144, Chapman N=3457, 62% unseen
 2026-09-27T19:15 | agent:s-n4-r8 | receipt | N4 title screen: 2296 labeled, Y 709, N 639, U 948; tally m=60, Chapman N=2427, 71% unseen
+2026-09-27T19:18 | agent:cache-script | receipt | send-back bundles: team a 90 of 92 rows kept, 16 slices R01-R16; team b 101 rows, 13 slices R01-R13; population matches the audit's counts
+2026-09-27T19:18 | self | delegation | send-back extraction, fresh sonnet agents, rolling 3 per team: r-xr-a-1..3 with a-R01..R03, r-xr-b-1..3 with b-R01..R03
