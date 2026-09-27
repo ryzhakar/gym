@@ -1,28 +1,33 @@
-"""Build send-back bundles: batch-1 rows an extractor logged as "nothing new" that the
-audit (RECON/audit/audit-b1.md) sends back for re-extraction.
+"""Build re-extraction bundles for batch-1 rows still logged "nothing new".
 
-Usage: uv run python scripts/research/sendback.py <team-a|team-b>
+Usage: uv run python scripts/research/sendback.py <team-a|team-b> <pass-name>
+
+`pass-name` selects a round (see PASSES): "R", the first send-back the audit
+(RECON/audit/audit-b1.md) asked for, or "T", a third pass over rows still nothing-new after
+that send-back was re-extracted. Each pass writes its own samples/bundles/b1-{team}-{pass}NN.txt
+slices and b1-{team}-{pass}-manifest.csv, independent of the others.
 
 Population: merge every RECON/team-{team}/readlog-b1-*.csv entry by frame_id, across ALL
-files for that team (the original slices, the s-prefixed re-reads, and the L1/L2 supplements).
-Six team-a rows have an unquoted comma in `locator_span` (extra CSV fields); 18 team-b rows
-are missing the `minutes` column (one field short) - PARSE_ROW tolerates both, following the
-exact recipe in the audit's own `draw.py`. A frame_id sends back when every merged entry reads
-"yes" and its new_questions sum to 0 across all of them: an L1/L2 re-read that actually found
-content makes the sum nonzero, which is what excludes a row the audit calls "superseded" -
-no separate exclusion step is needed once every readlog file is merged in.
+files present for that team at run time (original slices, s-prefixed re-reads, L1/L2
+supplements, and - once they exist - sR* re-reads of the R pass). Six team-a rows have an
+unquoted comma in `locator_span` (extra CSV fields); 18 team-b rows are missing the `minutes`
+column (one field short) - PARSE_ROW tolerates both, following the exact recipe in the
+audit's own `draw.py`. A frame_id is still-nothing-new when every merged entry reads "yes"
+and its new_questions sum to 0 across all of them: an L1/L2 or sR* re-read that actually
+found content makes the sum nonzero, which is what excludes a row a later pass calls
+"superseded" - no separate exclusion step is needed once every readlog file is merged in,
+which is also why the R pass and the T pass share one population function: T's population is
+just R's, recomputed once sR* entries exist on disk to merge in.
 
-This reproduces the audit's own "nothing-new" population count exactly (team-a 92, team-b
-101) as a correctness check. team-a f000227 and team-b f012788 are confirmed already inside
-it (single yes/0 entries each) rather than added on top.
+This reproduced the R pass's population count exactly against the audit's own figures
+(team-a 92, team-b 101) as a correctness check.
 
 Re-fetches (via cache.fetch_by_class_route) any selected row whose current cached text is a
 bot/login stub or under 1,500 chars - a thin capture masquerading as "nothing new" is exactly
-what this send-back exists to correct (f000227's rtic.rs stub was already fixed in an earlier
-round and needs no further work here).
+what a send-back exists to correct.
 
-Output: samples/bundles/b1-team-{team}-R{nn}.txt (~150k-char slices, never splitting a
-source, same header format as bundle.py) and samples/bundles/b1-team-{team}-R-manifest.csv
+Output: samples/bundles/b1-team-{team}-{pass}{nn}.txt (~150k-char slices, never splitting a
+source, same header format as bundle.py) and samples/bundles/b1-team-{team}-{pass}-manifest.csv
 (slice,data_row,id,url,status,reason,chars).
 """
 import csv
@@ -38,7 +43,13 @@ SAMPLES = RECON / "samples"
 BUNDLES = SAMPLES / "bundles"
 STATUS_CSV = SAMPLES / "prefetch-b1-status.csv"
 SLICE_TARGET_CHARS = 150_000
-FORCED = {"team-a": "f000227", "team-b": "f012788"}  # confirmed already inside the population
+
+# Per pass: ids to drop from the population regardless of merge outcome (a "decided" exclusion,
+# not a fetch-quality one), and ids expected already inside the population as a sanity check.
+PASSES = {
+    "R": {"exclude": set(), "expect": {"team-a": "f000227", "team-b": "f012788"}},
+    "T": {"exclude": {"f000149"}, "expect": {}},  # f000149: access gap, decided - not resent
+}
 
 
 def parse_row(r: list[str]) -> tuple[str, str, str, str, str]:
@@ -102,11 +113,20 @@ def is_stub_or_thin(text: str | None) -> str | None:
     return None
 
 
-def build(team_arg: str) -> None:
+def build(team_arg: str, pass_name: str) -> None:
+    pass_config = PASSES[pass_name]
     team_letter = team_arg[-1]  # "team-a" -> "a"
     population = nothing_new_population(f"team-{team_letter}")
-    forced = FORCED[team_arg]
-    assert forced in population, f"{forced} expected inside the nothing-new population, wasn't"
+
+    # A soft check, not a hard invariant: `expected` held the first time this pass ran, but
+    # population membership is expected to shift once real extraction work lands (e.g. an
+    # sR* re-read moving a row's new_questions above 0 correctly drops it from later passes).
+    expected = pass_config["expect"].get(team_arg)
+    if expected and expected not in population:
+        print(f"note: {expected} no longer in the nothing-new population (expected the first "
+              f"time this pass ran; a later re-read likely found real content)")
+    for fid in pass_config["exclude"]:
+        population.pop(fid, None)
 
     batch_rows = list(csv.DictReader((SAMPLES / f"batch-1-{team_arg}.csv").open(newline="")))
     row_by_id = {r["id"]: (i, r) for i, r in enumerate(batch_rows, start=1)}
@@ -143,7 +163,7 @@ def build(team_arg: str) -> None:
 
     kept.sort(key=lambda rt: rt[0]["data_row"])
     BUNDLES.mkdir(parents=True, exist_ok=True)
-    for stale in BUNDLES.glob(f"b1-{team_arg}-R*.txt"):
+    for stale in BUNDLES.glob(f"b1-{team_arg}-{pass_name}*.txt"):
         stale.unlink()  # this bundle is fully rebuilt each run, unlike bundle.py's frozen slices
 
     slices: list[list[tuple[dict, str]]] = [[]]
@@ -160,7 +180,7 @@ def build(team_arg: str) -> None:
     for i, sl in enumerate(slices, start=1):
         if not sl:
             continue
-        path = BUNDLES / f"b1-{team_arg}-R{i:02d}.txt"
+        path = BUNDLES / f"b1-{team_arg}-{pass_name}{i:02d}.txt"
         with path.open("w") as f:
             for row, text in sl:
                 if len(text) > SLICE_TARGET_CHARS:
@@ -171,10 +191,11 @@ def build(team_arg: str) -> None:
                 row_to_slice[row["data_row"]] = i
 
     for entry in manifest:
-        entry["slice"] = f"R{row_to_slice[entry['data_row']]:02d}" if entry["data_row"] in row_to_slice else ""
+        entry["slice"] = (f"{pass_name}{row_to_slice[entry['data_row']]:02d}"
+                           if entry["data_row"] in row_to_slice else "")
 
     manifest.sort(key=lambda e: e["data_row"])
-    manifest_path = BUNDLES / f"b1-{team_arg}-R-manifest.csv"
+    manifest_path = BUNDLES / f"b1-{team_arg}-{pass_name}-manifest.csv"
     with manifest_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["slice", "data_row", "id", "url", "status", "reason", "chars"])
         w.writeheader()
@@ -184,10 +205,10 @@ def build(team_arg: str) -> None:
     n_slices = sum(1 for sl in slices if sl)
     n_kept = sum(1 for e in manifest if e["status"] == "kept")
     n_dropped = len(manifest) - n_kept
-    print(f"{team_arg}: {len(population)} nothing-new population, {len(manifest)} rows built, "
-          f"{refetched} re-fetched, {n_kept} kept, {n_dropped} dropped, "
-          f"{n_slices} slices -> {manifest_path}")
+    print(f"{team_arg} pass {pass_name}: {len(population)} nothing-new population, "
+          f"{len(manifest)} rows built, {refetched} re-fetched, {n_kept} kept, "
+          f"{n_dropped} dropped, {n_slices} slices -> {manifest_path}")
 
 
 if __name__ == "__main__":
-    build(sys.argv[1])
+    build(sys.argv[1], sys.argv[2])
