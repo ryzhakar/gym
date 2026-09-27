@@ -303,3 +303,4 @@
 2026-09-27T01:50 | self | delegation | agent:t2-n5-r2, sonnet: need survey n5 round 2, needs/n5-r2.md
 2026-09-27T01:50 | self | delegation | agent:t2-n6-r2, sonnet: need survey n6 round 2, needs/n6-r2.md
 2026-09-27T01:50 | self | delegation | agent:t2-breadth-r2, sonnet: breadth round 2 for N4, N5, N6, needs/breadth-r2.md
+2026-09-27T03:41 | self | discovery | account usage limit halted every agent at 22:50 UTC (01:50 local) until 03:40; t5-first-protocol and t3-n2-a resumed via SendMessage; Stage B survey launches recorded at 01:50 had not dispatched and launch now
