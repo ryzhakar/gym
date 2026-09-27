@@ -451,3 +451,4 @@
 2026-09-27T09:40 | agent:t2-n2-r5 | receipt | N2 round 5: 10 claims, 5 sources, 34 queries, 3 full texts; reports a cache.py fetch that saved a Cloudflare stub as text, corrected by hand
 2026-09-27T09:40 | self | discovery | cache.py saves bot-challenge pages as source text; sent back to cache-script to reject stubs and rescan the cache
 2026-09-27T09:40 | agent:t2-n4-r5 | receipt | N4 round 5: 10 claims, 7 sources, 15 queries, all abstract-only; needs/n4-r5.md
+2026-09-27T09:43 | agent:t2-n5-r5 | receipt | N5 round 5: 11 claims, 16 sources, 22 queries, 9 read in full or full abstract, 7 title-only; flags Greenberg 2016 double-counting Soucisse 2017; needs/n5-r5.md
