@@ -467,3 +467,6 @@
 2026-09-27T09:59 | agent:t3-r5-a | receipt | N3-r5-07 re-marked REFUTED
 2026-09-27T09:59 | self | decision | extraction wave 1: 6 slices per team, one sonnet agent per slice; rust-mention filter drops later sampled by the batch audit to catch false drops (decided under the 2026-09-26 handover)
 2026-09-27T09:59 | self | delegation | agent:r-x-a-b1-s01..s06 and r-x-b-b1-s01..s06, sonnet: extract bundle slices 01-06 per team per prompts/t2-extract.md
+2026-09-27T09:59 | owner | receipt | in conversation: maps are work in progress unless explicitly declared otherwise, and live while research iterates
+2026-09-27T09:59 | self | decision | docs/opinion-map.md Done and upkeep corrected in place: maps are work in progress by default and live while research iterates; acceptance tests bind a map declared finished (owner ruling)
+2026-09-27T09:59 | self | decision | Rust lane repackaged as slices: each slice runs sample to compile and ships map v0.n with its coverage estimate; closure is a reported number, not a gate (owner ruling)
