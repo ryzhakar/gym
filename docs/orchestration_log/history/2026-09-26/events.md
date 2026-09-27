@@ -321,3 +321,4 @@
 2026-09-27T03:58 | agent:t2-n4-r2 | receipt | needs/n4-r2.md: 11 claims, 5 full texts; LLM misconception diagnosis strong in one deployment, collapses across languages; help-type classification reaches human agreement only after fine-tuning; no delayed-outcome evidence for diagnosis
 2026-09-27T03:58 | self | delegation | agent:t3-n4-a, sonnet: verify N4-r2-05, 06, 10
 2026-09-27T03:58 | self | delegation | agent:t3-seed-probe, sonnet: seed coverage and claim check after round 2, verify/seed-probe.md
+2026-09-27T03:59 | agent:t3-n5-a | receipt | N5-r2-01 VERIFIED (scope corrected to CM-GM), N5-r2-02 REFUTED (surveyor invented a shared priming manipulation), N5-r2-03 VERIFIED; first refuted claim of the research
