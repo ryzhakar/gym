@@ -316,3 +316,5 @@
 2026-09-27T03:54 | self | decision | first-protocol.md stands for training start; the resolution's corrections flow into Stage B's evidence map, which replaces it
 2026-09-27T03:55 | agent:t2-n5-r2 | receipt | needs/n5-r2.md: 10 claims, 19 sources, 4 full texts; elite judgment reported tacit, a portability tension flagged
 2026-09-27T03:55 | self | delegation | agent:t3-n5-a, sonnet: verify N5-r2-01..03 (Bilalić et al. 2008)
+2026-09-27T03:56 | agent:t2-n6-r2 | receipt | needs/n6-r2.md: 13 claims; grit and consistency of interest weak predictors; Liebel et al. 2024 shows hyperfocus double-edged in developers; interruption-resumption literature routed to N3/N4
+2026-09-27T03:57 | self | delegation | agent:t3-n6-a, sonnet: verify N6-r2-01, 03, 04, 09; 12 and 13 against existing Rohrer and Cepeda verifications
