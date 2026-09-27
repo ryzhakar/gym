@@ -363,3 +363,5 @@
 2026-09-27T04:51 | agent:t3-n7r3-b | receipt | N7-r3-03, 06, 07, 08, 11 VERIFIED from full text; N7-r3-06 O 1→0 (no unaided condition); N7-r3-08 venue unindexed; N4-r3-01, 02 re-sent
 2026-09-27T04:51 | agent:t3-n7r3-a | receipt | corrected claims N7-r3-04c and N7-r3-05c written with verify files
 2026-09-27T04:53 | agent:t3-n7r3-b | receipt | N4-r3-01 VERIFIED (baseline label imprecise; Khajah et al. 2016 critique: extended BKT matches DKT), N4-r3-02 VERIFIED, S 3→1 (conceptual)
+2026-09-27T04:57 | agent:t3-n6r3-a | receipt | N6-r3-04 VERIFIED (fresh-start effect, O 0→1), N6-r3-11 VERIFIED (commit-time clustering); N6-r3-01..03 (Lally 2010) and 10 UNVERIFIABLE, paywalled
+2026-09-27T04:57 | self | delegation | agent:t-audit-r3, sonnet: saturation audit after round 3, audit/saturation-r3.md (computation shown, no script kept)
