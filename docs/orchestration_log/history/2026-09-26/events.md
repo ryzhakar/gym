@@ -549,3 +549,5 @@
 2026-09-27T15:05 | agent:r-x-b-s1-4 | receipt | slice b-09: 12 sources, 8 Questions, 30 Claims; next b-14
 2026-09-27T15:05 | self | delegation | round 8 query writers: q-n1..n7-8a and q-n1..n7-8b, sonnet, one query file each per prompts/round-8.md
 2026-09-27T15:06 | agent:r-x-a-s1-7 | receipt | slice a-16: 5 sources, 3 Questions, 6 Claims, 1 unreachable (domain now serves unrelated content); next a-17
+2026-09-27T15:06 | agent:r-x-a-s1-6 | receipt | slice a-15: 8 sources, 10 Questions, 9 Claims; lobste.rs capture lacks usernames; next a-18
+2026-09-27T15:06 | self | delegation | agent:cache-script (continued): lobste.rs and HN attribution, re-fetch hn-lobsters rows, rebuild unassigned bundles from a-21 and b-17, supplementary L1 bundles for frozen hn-lobsters rows
