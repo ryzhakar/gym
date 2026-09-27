@@ -64,9 +64,9 @@ Kept as one Question because the alternatives are concrete and the same:
 ## Counts
 
 - Team-local Questions in the crosswalk: 544 (team a 261, team b 283). The book pass adds 71 (team a 31, team b 40).
-- Canonical Questions: 405. 403 have captures, and 2 are carried only by re-homed Claims (`lambda-build-tooling`, `rust-for-backend-services-vs-jvm`). Of the 403: team a only 170, team b only 184, both 49. With more than one member: 77.
+- Canonical Questions: 401 after the corrections below. 399 have captures, and 2 are carried only by re-homed Claims (`lambda-build-tooling`, `rust-for-backend-services-vs-jvm`). Of the 399: team a only 168, team b only 180, both 51. With more than one member: 80.
 - The book pass makes 11 Questions two-team, mostly because both teams read the Rust and WebAssembly book (f000256, a shared sample row): `bounded-grid-universe`, `ffi-copy-vs-share`, `profile-before-optimizing`, `opt-level-z-vs-s`, `unchecked-unwrap-vs-safe-abort`, `generics-vs-dyn-for-abstraction`, `wasm-allocator-choice`, `library-io-factored-out`, `reproduce-wasm-bugs-natively`, `typed-wrapper-vs-raw-access` and `test-via-real-entry-point`.
-- Canonical ids: 322 from merge-final, 83 new.
+- Canonical ids: 318 from merge-final, 83 new.
 - Claims placed: 768 under team-local Questions, plus 2 re-homed onto Questions with no member. 5 orphans.
 
 ## Removed captures (Claim-less, as in merge-v2)
@@ -88,29 +88,77 @@ The reasons are the same as in merge-v2's "Removed captures" table. Every new bo
 
 - Columns: `batch, stratum, team, source_id, question_id, source_hint, team_local_id`.
 - `stratum` is the union of the canonical Question's Domains, per the lead's ruling.
-- The crosswalk has 1,103 rows (merge-v2: 1,378). Finer Questions carry fewer unioned Domains.
+- The crosswalk has 1,113 rows (merge-v2: 1,378). Finer Questions carry fewer unioned Domains.
 
 ## Estimate
 
 | stratum | n1 | n2 | m | seen | Chapman N̂ | unseen % | Chao1 N̂ | unseen % |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | cloud-workers | 30 | 17 | 9 | 38 | 54.8 | 30.7% | 94.3 | 59.7% |
-| core | 121 | 123 | 34 | 210 | 431.2 | 51.3% | 575.7 | 63.5% |
-| decentralized-iroh | 23 | 28 | 10 | 41 | 62.3 | 34.2% | 63.0 | 34.9% |
+| core | 122 | 123 | 36 | 209 | 411.2 | 49.2% | 537.9 | 61.1% |
+| decentralized-iroh | 23 | 28 | 10 | 41 | 62.3 | 34.2% | 59.4 | 30.9% |
 | desktop-cli-ui | 29 | 25 | 10 | 44 | 69.9 | 37.1% | 129.3 | 66.0% |
-| distributed | 34 | 40 | 15 | 59 | 88.7 | 33.5% | 128.1 | 54.0% |
+| distributed | 34 | 39 | 15 | 58 | 86.5 | 32.9% | 115.0 | 49.6% |
 | embedded | 49 | 37 | 16 | 70 | 110.8 | 36.8% | 188.2 | 62.8% |
-| frontend | 15 | 15 | 5 | 25 | 41.7 | 40.0% | 225.0 | 88.9% |
-| ml | 21 | 29 | 8 | 42 | 72.3 | 41.9% | 138.1 | 69.6% |
+| frontend | 16 | 16 | 7 | 25 | 35.1 | 28.8% | 106.0 | 76.4% |
+| ml | 21 | 29 | 8 | 42 | 72.3 | 41.9% | 117.0 | 64.1% |
 | other | 11 | 17 | 6 | 22 | 29.9 | 26.3% | 59.5 | 63.0% |
 | swift-interop | 6 | 4 | 2 | 8 | 10.7 | 25.0% | 20.5 | 61.0% |
-| wasm | 43 | 44 | 16 | 71 | 115.5 | 38.5% | 160.3 | 55.7% |
-| web | 40 | 29 | 12 | 57 | 93.6 | 39.1% | 145.9 | 60.9% |
+| wasm | 43 | 45 | 17 | 71 | 111.4 | 36.3% | 151.0 | 53.0% |
+| web | 41 | 28 | 13 | 56 | 86.0 | 34.9% | 136.2 | 58.9% |
 
 - Every stratum FAILs. The two-batch rule (2) and the audit/merge-check rule (3) fail by construction. Rule 4 (at least 10 Questions seen) fails for swift-interop, with 8.
-- Against merge-v2, m fell in every stratum (core 41→34, embedded 22→16), and the Chapman unseen fraction rose to 25–51%. The finer grain removes the broad Questions that were propping up m.
+- Against merge-v2, m fell in every stratum (core 41→36, embedded 22→16), and the Chapman unseen fraction rose to 25–49%. The finer grain removes the broad Questions that were propping up m.
 - Chao1 stays high because most Questions are singletons (f1 is large).
 - Much of the remaining m in `wasm` and `frontend` comes from the one book both teams read, f000256. That is a legitimate recapture: the same sampled source, extracted independently by both teams.
+
+## Corrections after the final merge check (lead ruling 2026-09-28)
+
+`merge-check3/merge-check-b1.md` agrees 78.0% on the population reading. Two corrections follow, with no re-merge.
+
+**1. The 10 singletons split from `ship-stopgap-now-vs-proper-fix`.** Each is kept only if its Claims name the concrete alternatives. All 10 do, so none is removed:
+
+| Question | concrete alternatives its Claims name |
+| --- | --- |
+| `polonius-scope-cut` | the datalog formulation (false positive on NLL problem case 3) vs the older comprehensive approach |
+| `wasi-path-workaround-vs-breaking-fix` | a user-space path workaround vs a breaking extension-API fix with versioning |
+| `web-wasm-target-workaround-vs-target` | getrandom feature plumbing vs a `wasm32-web`/`wasm32-bindgen` target |
+| `ship-polyfill-before-spec` | a WASI 0.3 async polyfill vs waiting for WASI 0.3's native async. The weakest: one Claim, one named alternative |
+| `pure-rust-crypto-stopgap` | rustls-rustcrypto vs `ring`/`aws-lc-rs` or a hardware-accelerated backend |
+| `embedded-interpreter-stopgap` | Boa inside the module vs a second isolate or native `eval` |
+| `merge-expensive-feature-with-limits` | capped widths (a Px1/Px2/Px3 enum) and a doc warning vs font baking or SDF text rendering |
+| `ad-hoc-special-case-vs-general-mechanism` | another special case like `lock_` vs landing the `custom`/external-printing mechanism first |
+| `land-hal-separate-now-vs-unified-later` | embassy-mcxa as its own crate vs inside embassy-nxp and the combined HAL |
+| `ffi-bindings-lag-pause-or-ship` | ship the Kotlin/Python/Swift/JS bindings every release vs pause them |
+
+Their Question texts are rewritten to name these concrete alternatives instead of the stopgap-vs-fix framing. Their ids and Position ids are unchanged.
+
+**2. The four splits the checker flagged as having no grouping reason:**
+
+- **S15**, raw web-sys vs wrapper type: rejoined. `web-api-wrapper-raw-vs-rust-types` (a-sR07-f002271-q1) merges into `wrap-third-party-types-in-public-api`, as the same choice at the API signature: expose the dependency's type, or one the crate controls. This makes that Question two-team.
+- **S56**, blocking work on `current_thread`: rejoined. `current-thread-runtime-for-blocking` (b-sb18-f005307-q2) merges into `blocking-work-in-async`, because a dedicated `current_thread` runtime is one of that choice's named mechanisms.
+- **S67**, enum vs bool/optional fields: kept joined, with a full Grouping reason. Both replace a primitive encoding with a named enum.
+- **S69**, error vs silent default when something is missing: rejoined. `missing-context-default-vs-surface` (b-sb03-f000669-q1) and `missing-asset-build-fail-vs-runtime-degrade` (b-sR10-f004706-q1) merge into `silent-fallback-vs-explicit-error`, which becomes two-team. The service-level containment Question stays apart.
+
+**Question and Position ids changed, for the fill merge.** Claim ids are unchanged. The fill inputs and `fill/key-b1.csv` are left as they were. The same table is in `merge-v3/fill-remap-b1.csv`.
+
+| claim_id | old question | old position | new question | new position |
+| --- | --- | --- | --- | --- |
+| `a-sR07-f002271-c1` | `web-api-wrapper-raw-vs-rust-types` | `web-api-wrapper-raw-vs-rust-types--p1` | `wrap-third-party-types-in-public-api` | `wrap-third-party-types-in-public-api--controlled-type` |
+| `a-sa14-f005079-c6` | `silent-fallback-vs-explicit-error` | `silent-fallback-vs-explicit-error--p1` | `silent-fallback-vs-explicit-error` | `silent-fallback-vs-explicit-error--fail-loudly` |
+| `a-sa14-f005079-c7` | `silent-fallback-vs-explicit-error` | `silent-fallback-vs-explicit-error--p2` | `silent-fallback-vs-explicit-error` | `silent-fallback-vs-explicit-error--fail-loudly` |
+| `b-bk03-f000267-c17` | `wrap-third-party-types-in-public-api` | `wrap-third-party-types-in-public-api--p1` | `wrap-third-party-types-in-public-api` | `wrap-third-party-types-in-public-api--controlled-type` |
+| `b-sR10-f004706-c1` | `missing-asset-build-fail-vs-runtime-degrade` | `missing-asset-build-fail-vs-runtime-degrade--p1` | `silent-fallback-vs-explicit-error` | `silent-fallback-vs-explicit-error--fail-loudly` |
+| `b-sb03-f000669-c1` | `missing-context-default-vs-surface` | `missing-context-default-vs-surface--p1` | `silent-fallback-vs-explicit-error` | `silent-fallback-vs-explicit-error--silent-fallback` |
+| `b-sb03-f000669-c2` | `missing-context-default-vs-surface` | `missing-context-default-vs-surface--p2` | `silent-fallback-vs-explicit-error` | `silent-fallback-vs-explicit-error--fail-loudly` |
+| `b-sb18-f005307-c3` | `current-thread-runtime-for-blocking` | `current-thread-runtime-for-blocking--p1` | `blocking-work-in-async` | `blocking-work-in-async--p2` |
+
+Unclaimed alternative Positions in the fill inputs whose Question id changed:
+- `web-api-wrapper-raw-vs-rust-types--alt1` → `wrap-third-party-types-in-public-api--alt1`
+- `current-thread-runtime-for-blocking--alt1` → `blocking-work-in-async--alt2`
+- `missing-asset-build-fail-vs-runtime-degrade--alt1` → `silent-fallback-vs-explicit-error--silent-fallback`
+
+`wrap-third-party-types-in-public-api--alt1` keeps its id; its wording now covers both contexts.
 
 ## Groupings I was least sure of
 
@@ -701,6 +749,27 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`b-sT09-f005312-q1`): reverse proxy in front, framework TLS unused
 - Positions seen by the extractor (`b-sb22-f008906-q6`): build custom middleware — usage plans don't exist on HTTP API v2, expose no `X-RateLimit-*` client-facing quota headers even on REST APIs, cap at 10,000 API keys per account/region, and only offer coarse DAY/WEEK/MONTH windows (Luciano Mammino)
 
+### `silent-fallback-vs-explicit-error`
+
+**Question.** When something expected is missing or ambiguous (caller input, handler context, an embedded asset), should code fail explicitly (an error, a panic, a failed build) or fall back silently to a default (pick the first, `unwrap_or_default`, serve a 404)?
+
+- Grouping: Rejoined after the final merge check (S69). The same concrete choice, error or silent default when something expected is missing, appears in three contexts: socket input, Leptos context, embedded assets. Old ids `missing-context-default-vs-surface` and `missing-asset-build-fail-vs-runtime-degrade`. Service-level fault containment stays in `service-fault-isolation-degrade`.
+- Absorbs merge-final ids: `missing-asset-build-fail-vs-runtime-degrade`, `missing-context-default-vs-surface`
+- Teams: a, b · members (context): `a-sa14-f005079-q5` (f005079, core); `b-sR10-f004706-q1` (f004706, web, frontend, core); `b-sb03-f000669-q1` (f000669, web)
+- Domains: core, frontend, web
+- Concepts: fail-loud vs. silent fallback; explicit error handling; surprising behavior; build-time vs runtime failure; error handling; panics; Option/unwrap; context/dependency injection; defaults
+- Positions:
+  - `silent-fallback-vs-explicit-error--fail-loudly` — Fail loudly and fix the cause
+    - **alexcrichton** · Source `f005079` · date 2026-09-10 · locator comment 2026-09-10T22:28:43Z — asks whether the code should return an error if multiple TCP sockets are listed, rather than silently using the first, since that could cause odd behavior if the first one happens to be the wrong one Quote: "Should this perhaps return an error if there are multiple TCP sockets listed? Because otherwise using the first feels like it might lead to odd behavior" [`a-sa14-f005079-c6`, team a]
+    - **simolus3** · Source `f005079` · date 2026-09-11 · locator comment 2026-09-11T10:19:47Z — made the multiple-socket case an error, and also made it an error to have no usable socket at all, reasoning it would be surprising for `--systemd-listenfd` to silently fall back to wasmtime listening itself because of a mismatched environment variable Quote: "it might be surprising to explicitly indicate that inherited sockets are requested with `--systemd-listenfd` only to then have wasmtime listen itself because of a mismatched environment variable that's ignored" [`a-sa14-f005079-c7`, team a]
+    - **gbj (Greg Johnston, Leptos creator)** · Source `f004706` · date 2026-09-18 · locator PR review comment, 2026-09-18T18:13:56Z — an `allow_missing = true` option that lets the build succeed and then 404 at request time is a bad default, because it converts a build-time problem into a silent runtime one Quote: "`allow_missing = true` seems bad because it allows for a successful build → 404 rather than a build failure." [`b-sR10-f004706-c1`, team b]
+    - **gbj** · Source `f000669` · date 2024-03-29 · locator issue #2112, comment 2024-03-29T14:49:12Z — worried the `unwrap_or_default()` fix "mostly *hides* the problem rather than fixing it," since a server function that actually sets `ResponseOptions` would silently fail to have its header/status applied; prefers finding and fixing the real cause (a disposed Runtime), to be revisited in 0.7 Quote: "I'm concerned that the solution ... mostly *hides* the problem rather than fixing it" [`b-sb03-f000669-c2`, team b]
+  - `silent-fallback-vs-explicit-error--silent-fallback` — Fall back silently
+    - **glademiller** · Source `f000669` · date 2024-03-06 · locator issue #2112, comment 2024-03-06T15:53:46Z — proposes patching leptos-axum so the missing-context `.unwrap()` becomes `use_context::<ResponseOptions>().unwrap_or_default().0`, as a workaround for the panic, for callers not using `ResponseOptions` to modify the response Quote: "the workaround I am using at the moment is to patch leptos-axum by changing this line ... to let res_options = use_context::<ResponseOptions>().unwrap_or_default().0;" [`b-sb03-f000669-c1`, team b]
+- Positions seen by the extractor (`a-sa14-f005079-q5`): return an explicit error rather than silently picking the first of several candidates, and error out rather than silently falling back to normal listening when the flag was explicitly requested but no usable input was found
+- Positions seen by the extractor (`b-sR10-f004706-q1`): fail-the-build
+- Positions seen by the extractor (`b-sb03-f000669-q1`): silent-default-workaround, surface-and-fix-root-cause
+
 ### `tokio-as-default-runtime`
 
 **Question.** Tokio as the default async runtime, or alternatives?
@@ -1176,6 +1245,23 @@ Ordered by: found by both teams first, then by member count, then by id.
 - Positions seen by the extractor (`a-sB02-f000256-q10`): switch-to-wee_alloc(trades allocation speed for ~10KB size), eliminate-allocation/no_std(most size saved)
 - Positions seen by the extractor (`b-bk02-f000256-q10`): switch to wee_alloc or avoid dynamic allocation entirely when size matters more than allocation speed (chosen); keep the default allocator (implicit status quo, faster but ~10KB heavier)
 
+### `wrap-third-party-types-in-public-api`
+
+**Question.** Should a crate's public API expose a dependency's own type (a raw `web-sys` handle, a third-party crate's type), or a type the crate controls (a std collection, a local newtype)?
+
+- Grouping: Rejoined after the final merge check (S15). Both members choose, at the API signature, between exposing the dependency's type and exposing a type the crate controls. `UrlSearchParams` in a Sycamore hook and Zebra's u256 wrapper are contexts. Old id `web-api-wrapper-raw-vs-rust-types`.
+- Absorbs merge-final ids: `web-api-wrapper-raw-vs-rust-types`
+- Teams: a, b · members (context): `a-sR07-f002271-q1` (f002271, frontend, wasm); `b-bk03-f000267-q15` (f000267, core)
+- Domains: core, frontend, wasm
+- Concepts: web-sys/wasm-bindgen API wrapping; idiomatic API surface; newtype pattern; abstraction over dependencies; API design
+- Positions:
+  - `wrap-third-party-types-in-public-api--controlled-type` — Expose a type the crate controls (a std collection, a local newtype)
+    - **lukechu10** · Source `f002271` · date 2024-11-03 · locator comment on router.rs (2024-11-03T22:58:52Z) — a hook exposing browser search params should return a `HashMap<String, String>` rather than the raw `UrlSearchParams` handle Quote: "we should return a `HashMap<String, String>` from search params to values" [`a-sR07-f002271-c1`, team a]
+    - **Zcash Foundation / Zebra project** · Source `f000267` · date unknown (living document) · locator Contextual Difficulty Validation RFC § Fundamental data types — because Rust has no standard u256 type, Zebra picks one of several third-party crate implementations but does not expose it directly — it wraps the chosen implementation behind its own ExpandedDifficulty type, so the underlying crate choice stays swappable Quote: "Zebra abstracts over the chosen u256 implementation using its ExpandedDifficulty type." (flag: voice-unverified) [`b-bk03-f000267-c17`, team b]
+  - `wrap-third-party-types-in-public-api--alt1` — Expose the dependency's own type (raw `web-sys` handle, third-party type) directly in the API (no Claim in batch 1; named alternative)
+- Positions seen by the extractor (`a-sR07-f002271-q1`): convert-to-rust-collection (lukechu10)
+- Positions seen by the extractor (`b-bk03-f000267-q15`): abstract-over-third-party-crate-choice
+
 ### `async-drop-raii-vs-close`
 
 **Question.** Without async `Drop`, should async resources keep RAII cleanup, or require an explicit async `close`?
@@ -1209,6 +1295,25 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Adam (surname unconfirmed; self-ID only)** · Source `f011186` · date 2024-11-20 · locator ~00:10:56 — don't hand-write the OpenAPI spec or rely on a programmer-maintained one; have the API server generate it, since a generated spec is provably in sync with the server that produced it Quote: "a better idea is don't hand write the spec don't rely on a programmer spec instead have your API server generate the spec" [`a-sa23-f011186-c1`, team a]
 - Positions seen by the extractor (`a-sa14-f005454-q1`): code-first — generate the spec from code specifically so it can't diverge from the implementation, a goal the team didn't find already solved in any existing crate
 - Positions seen by the extractor (`a-sa23-f011186-q1`): code-first/generate-from-server (Adam)
+
+### `blocking-work-in-async`
+
+**Question.** How should blocking or CPU-bound work be integrated into an async program: `spawn_blocking`, a dedicated thread, a thread pool or second runtime, or a dedicated `current_thread` runtime?
+
+- Grouping: Rejoined after the final merge check (S56). A dedicated `current_thread` runtime on its own thread is one of the named mechanisms for integrating blocking work, so sb18-q2 is a Position on this choice. Old id `current-thread-runtime-for-blocking`.
+- Absorbs merge-final ids: `current-thread-runtime-for-blocking`
+- Teams: b · members (context): `b-bk01-f000233-q6` (f000233, core, distributed, ml); `b-sb18-f005307-q2` (f005307, distributed, decentralized-iroh)
+- Domains: core, decentralized-iroh, distributed, ml
+- Concepts: spawn_blocking; dedicated thread; second runtime; Rayon; async runtimes; current_thread/single-threaded executors; blocking I/O bridging
+- Positions:
+  - `blocking-work-in-async--p1` — match mechanism to work shape
+    - **async-book (rust-lang.github.io, Rust Async Working Group)** · Source `f000233` · date 2026-09-27 · locator chapter "IO and issues with blocking" § Other blocking operations — gives a decision rule: use `spawn_blocking` for blocking IO; use `std::thread::spawn` (not a thread-pool slot) for a thread that will run forever; use a dedicated thread pool (e.g. Rayon) or a second async runtime for sustained CPU-bound work; accepts a dedicated thread or spawn_blocking as an easy-but-suboptimal choice when performance needs are modest. Quote: "If you're doing blocking IO, you should probably use spawn_blocking. ... If you have a thread that will run forever, you should use std::thread::spawn rather than use any kind of thread pool" [`b-bk01-f000233-c7`, team b]
+  - `blocking-work-in-async--p2` — single-threaded-runtime-fine-for-n1-scheduling
+    - **withoutboats** · Source `f005307` · date 2024-08-02 · locator lobste.rs/s/7rtvnp, comment 2024-08-02T08:03:38-05:00 — responding to kbknapp's report that Jon Gjengset warned against using Tokio's single-threaded runtime except when no OS threads are available, states this warning is wrong: if you want N:1 scheduling of async tasks, the single-threaded runtime is the right tool, though combining it with blocking syscalls on that thread is unusual Quote: "I believe that Jon Gjengset is wrong about this. If you want to N:1 scheduling of async tasks (instead of M:N), using the single threaded runtime is the right choice." [`b-sb18-f005307-c3`, team b]
+  - `blocking-work-in-async--alt1` — Run blocking or CPU-bound work directly on the async runtime (no Claim in batch 1; named alternative)
+  - `blocking-work-in-async--alt2` — a dedicated `current_thread` runtime is an anti-pattern here (no Claim in batch 1; named alternative)
+- Positions seen by the extractor (`b-bk01-f000233-q6`): match mechanism to work shape (spawn_blocking for bounded blocking work, dedicated thread for indefinite blocking work, thread pool/second runtime for sustained CPU work)
+- Positions seen by the extractor (`b-sb18-f005307-q2`): single-threaded-runtime-fine-for-n1-scheduling
 
 ### `compile-time-vs-runtime-switches`
 
@@ -1268,9 +1373,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `enum-vs-flags-and-optionals`
 
-**Question.** Should multi-outcome or growing state be an enum, or a bool or a struct of optional fields?
+**Question.** Should multi-outcome or growing state be a named enum, or a bool flag or a struct of optional fields?
 
-- Grouping: Same modelling choice in two sources.
+- Grouping: Both members replace a primitive encoding (a bool with special-cased checks; independent optional fields) with a named enum whose variants carry the states. The alternatives are concrete and the same kind, an enum vs flags or optional fields. "More than two outcomes" and "room for future variants" are the reasons each context gives. The merge check held this weakly apart; it stays joined, with this reason (lead ruling 2026-09-28).
 - Absorbs merge-final ids: `enum-vs-bool-for-state`, `enum-vs-struct-of-optionals-for-extension`
 - Teams: b · members (context): `b-sR08-f003531-q1` (f003531, desktop-cli-ui); `b-sR08-f003731-q1` (f003731, decentralized-iroh)
 - Domains: decentralized-iroh, desktop-cli-ui
@@ -1690,8 +1795,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `ad-hoc-special-case-vs-general-mechanism`
 
-**Question.** When migrating a compiler backend to a new, more systematic instruction-assembler abstraction, and an instruction needs special-cased handling (e.g. custom flag-setting/printing) that the new abstraction doesn't yet cleanly support, should the PR merge the ad hoc special case now or block on designing the general mechanism first?
+**Question.** Should Cranelift's new assembler add another special-cased printing path for compare-instruction flags (like the `lock_` case), or first land the general `custom`/external printing mechanism and rebase onto it?
 
+- Grouping: Kept after the stopgap review. The Claims name concrete mechanisms: the `lock_` special case, the `custom` logic, and the external-printing patch. The merge check read it as a Value; the Claims are more concrete than the Question text was.
 - Teams: b · members (context): `b-sb09-f003052-q1` (f003052, wasm, core)
 - Domains: core, wasm
 - Concepts: compiler backend migration; instruction encoding abstraction; technical debt sequencing
@@ -1959,19 +2065,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `bitflags-vs-generated-variants--p2` — explicit-array-generation
     - **coreh** · Source `f000493` · date 2023-10-17 · locator PR #10156, 3rd comment — the two approaches are mostly the same in principle, but with 32 combinations here versus 6 in the prior PR, enumerating by hand is more daunting, which is why the code generates the array instead Quote: "The amount of combinations here (32) makes this a little bit more daunting to fully enumerate like that (6) which is why I added the code to generate it in an array." [`b-sb01-f000493-c2`, team b]
 - Positions seen by the extractor (`b-sb01-f000493-q1`): bitflags-preferred, explicit-array-generation
-
-### `blocking-work-in-async`
-
-**Question.** How should CPU-bound or blocking work be integrated into an async program?
-
-- Teams: b · members (context): `b-bk01-f000233-q6` (f000233, core, distributed, ml)
-- Domains: core, distributed, ml
-- Concepts: spawn_blocking; dedicated thread; second runtime; Rayon
-- Positions:
-  - `blocking-work-in-async--p1` — match mechanism to work shape
-    - **async-book (rust-lang.github.io, Rust Async Working Group)** · Source `f000233` · date 2026-09-27 · locator chapter "IO and issues with blocking" § Other blocking operations — gives a decision rule: use `spawn_blocking` for blocking IO; use `std::thread::spawn` (not a thread-pool slot) for a thread that will run forever; use a dedicated thread pool (e.g. Rayon) or a second async runtime for sustained CPU-bound work; accepts a dedicated thread or spawn_blocking as an easy-but-suboptimal choice when performance needs are modest. Quote: "If you're doing blocking IO, you should probably use spawn_blocking. ... If you have a thread that will run forever, you should use std::thread::spawn rather than use any kind of thread pool" [`b-bk01-f000233-c7`, team b]
-  - `blocking-work-in-async--alt1` — Run blocking or CPU-bound work directly on the async runtime (no Claim in batch 1; named alternative)
-- Positions seen by the extractor (`b-bk01-f000233-q6`): match mechanism to work shape (spawn_blocking for bounded blocking work, dedicated thread for indefinite blocking work, thread pool/second runtime for sustained CPU work)
 
 ### `borrowck-self-referential-structs`
 
@@ -2455,19 +2548,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `crdt-vs-coordination--alt1` — A coordinating mechanism (locking, operational transform, an authoritative server) (no Claim in batch 1; named alternative)
 - Positions seen by the extractor (`b-sR11-f005071-q1`): CRDTs, no coordination required
 
-### `current-thread-runtime-for-blocking`
-
-**Question.** Is it acceptable practice to run blocking synchronous I/O (e.g. database calls) inside a dedicated single-threaded ("current_thread") Tokio runtime on its own OS thread, or does limiting a Tokio runtime to a single thread carry negative internal ramifications that make this an anti-pattern except when no other OS threads are available?
-
-- Teams: b · members (context): `b-sb18-f005307-q2` (f005307, distributed, decentralized-iroh)
-- Domains: decentralized-iroh, distributed
-- Concepts: async runtimes; current_thread/single-threaded executors; blocking I/O bridging
-- Positions:
-  - `current-thread-runtime-for-blocking--p1` — single-threaded-runtime-fine-for-n1-scheduling
-    - **withoutboats** · Source `f005307` · date 2024-08-02 · locator lobste.rs/s/7rtvnp, comment 2024-08-02T08:03:38-05:00 — responding to kbknapp's report that Jon Gjengset warned against using Tokio's single-threaded runtime except when no OS threads are available, states this warning is wrong: if you want N:1 scheduling of async tasks, the single-threaded runtime is the right tool, though combining it with blocking syscalls on that thread is unusual Quote: "I believe that Jon Gjengset is wrong about this. If you want to N:1 scheduling of async tasks (instead of M:N), using the single threaded runtime is the right choice." [`b-sb18-f005307-c3`, team b]
-  - `current-thread-runtime-for-blocking--alt1` — A single-threaded runtime is an anti-pattern unless no other threads are available (no Claim in batch 1; named alternative)
-- Positions seen by the extractor (`b-sb18-f005307-q2`): single-threaded-runtime-fine-for-n1-scheduling
-
 ### `custom-allocator-restart-persistence`
 
 **Question.** To persist Rust objects across process/container restarts, should a practitioner build a custom raw-memory `Allocator` (memfd + systemd FD store + mmap) rather than serializing state to an external store (file/Redis) on shutdown/startup?
@@ -2893,8 +2973,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `embedded-interpreter-stopgap`
 
-**Question.** When a needed capability (like `eval`) isn't natively supported by the host platform, is it acceptable to run a full interpreter for that capability inside your own Rust-compiled Wasm module as a stopgap, even though it means "a runtime on top of a runtime"?
+**Question.** Without native `eval` on Workers, should a Rust Wasm module embed a JS interpreter (Boa), or use another mechanism such as a second isolate?
 
+- Grouping: Kept after the stopgap review. The Claim names Boa against a second isolate that would not share `globalThis`.
 - Teams: a · members (context): `a-sa14-f004985-q2` (f004985, wasm, cloud-workers)
 - Domains: cloud-workers, wasm
 - Concepts: embedded interpreters; platform capability gaps; pragmatic tradeoffs
@@ -3204,8 +3285,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `ffi-bindings-lag-pause-or-ship`
 
-**Question.** When a Rust library's non-Rust-language FFI bindings lag behind the quality of its native Rust API, should maintainers keep shipping degraded bindings on every release, or pause bindings updates until the FFI/bridging story itself is fixed, accepting ecosystem-fragmentation risk in the meantime?
+**Question.** Should iroh keep shipping its Kotlin/Python/Swift/JS FFI bindings every release, or pause them until its FFI story meets its bar?
 
+- Grouping: Kept after the stopgap review. The Claim names the concrete release policy.
 - Teams: a · members (context): `a-sa04-f002665-q1` (f002665, decentralized-iroh, swift-interop)
 - Domains: decentralized-iroh, swift-interop
 - Concepts: FFI; UniFFI; multi-language bindings; ecosystem fragmentation
@@ -3809,8 +3891,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `land-hal-separate-now-vs-unified-later`
 
-**Question.** should a new chip-family HAL be merged into the monorepo immediately as its own separate crate to unblock waiting users, or held back until it can be integrated into the unified/combined HAL from the start?
+**Question.** Should embassy-mcxa land now as its own crate, or wait to be integrated into embassy-nxp and the combined HAL?
 
+- Grouping: Kept after the stopgap review. The Claims name both crates.
 - Teams: b · members (context): `b-sR09-f003955-q1` (f003955, embedded)
 - Domains: embedded
 - Concepts: none given
@@ -3974,8 +4057,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `merge-expensive-feature-with-limits`
 
-**Question.** When a feature is useful but the only available implementation is algorithmically expensive (here, exponential batch count with glyph/outline count), should a game engine merge it now with documented limits, or hold it out of core until an efficient approach exists?
+**Question.** Should Bevy merge its text-outline implementation (cost exponential in width) with capped widths and documented limits, or hold for a proper approach (font baking, SDF text rendering)?
 
+- Grouping: Kept after the stopgap review. The Claims name concrete options: a Px1/Px2/Px3 width enum, a doc warning, offline font baking, SDF text rendering.
 - Teams: a · members (context): `a-sa05-f003126-q1` (f003126, desktop-cli-ui, other)
 - Domains: desktop-cli-ui, other
 - Concepts: performance; API-surface; feature-gating
@@ -4028,33 +4112,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `minimal-vs-batteries-std--p2` — stdlib-is-not-batteries-included
     - **DanielKeep (author of "The Little Book of Rust Macros," cited independently elsewhere in this same thread)** · Source `f012469` · date 2015-06-12 · locator post by @DanielKeep dated 2015-06-12T13:06:31Z — frames Rust's stdlib philosophy as the opposite of Python's "batteries included" Quote: "Buy Your Own Damn Batteries. cf. 'Python: Batteries Included'." [`a-sa28-f012469-c4`, team a]
 - Positions seen by the extractor (`a-sa28-f012469-q2`): "Rust deliberately targeted 'medium-sized', not minimal" (graydon2, Rust's original language designer) vs. the community's own recurring "buy your own damn batteries" framing of stdlib as intentionally NOT batteries-included
-
-### `missing-asset-build-fail-vs-runtime-degrade`
-
-**Question.** When an expected embedded resource (e.g. a static asset) is missing, should the framework fail the build, or degrade silently at runtime (e.g. serve a 404)?
-
-- Teams: b · members (context): `b-sR10-f004706-q1` (f004706, web, frontend, core)
-- Domains: core, frontend, web
-- Concepts: build-time vs runtime failure; error handling
-- Positions:
-  - `missing-asset-build-fail-vs-runtime-degrade--p1` — fail-the-build
-    - **gbj (Greg Johnston, Leptos creator)** · Source `f004706` · date 2026-09-18 · locator PR review comment, 2026-09-18T18:13:56Z — an `allow_missing = true` option that lets the build succeed and then 404 at request time is a bad default, because it converts a build-time problem into a silent runtime one Quote: "`allow_missing = true` seems bad because it allows for a successful build → 404 rather than a build failure." [`b-sR10-f004706-c1`, team b]
-  - `missing-asset-build-fail-vs-runtime-degrade--alt1` — Let the build succeed and degrade at runtime (serve a 404) (no Claim in batch 1; named alternative)
-- Positions seen by the extractor (`b-sR10-f004706-q1`): fail-the-build
-
-### `missing-context-default-vs-surface`
-
-**Question.** When a context a handler expects (e.g. `ResponseOptions`) is legitimately missing under load, should the code fall back to a silent safe default, or should the panic/error surface so the root cause gets found and fixed?
-
-- Teams: b · members (context): `b-sb03-f000669-q1` (f000669, web)
-- Domains: web
-- Concepts: panics; Option/unwrap; error handling; context/dependency injection; defaults
-- Positions:
-  - `missing-context-default-vs-surface--p1` — silent-default-workaround
-    - **glademiller** · Source `f000669` · date 2024-03-06 · locator issue #2112, comment 2024-03-06T15:53:46Z — proposes patching leptos-axum so the missing-context `.unwrap()` becomes `use_context::<ResponseOptions>().unwrap_or_default().0`, as a workaround for the panic, for callers not using `ResponseOptions` to modify the response Quote: "the workaround I am using at the moment is to patch leptos-axum by changing this line ... to let res_options = use_context::<ResponseOptions>().unwrap_or_default().0;" [`b-sb03-f000669-c1`, team b]
-  - `missing-context-default-vs-surface--p2` — surface-and-fix-root-cause
-    - **gbj** · Source `f000669` · date 2024-03-29 · locator issue #2112, comment 2024-03-29T14:49:12Z — worried the `unwrap_or_default()` fix "mostly *hides* the problem rather than fixing it," since a server function that actually sets `ResponseOptions` would silently fail to have its header/status applied; prefers finding and fixing the real cause (a disposed Runtime), to be revisited in 0.7 Quote: "I'm concerned that the solution ... mostly *hides* the problem rather than fixing it" [`b-sb03-f000669-c2`, team b]
-- Positions seen by the extractor (`b-sb03-f000669-q1`): silent-default-workaround, surface-and-fix-root-cause
 
 ### `ml-dataset-eager-vs-lazy`
 
@@ -4398,8 +4455,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `polonius-scope-cut`
 
-**Question.** When a new borrow-checker algorithm (Polonius) trades full expressiveness parity with the old implementation for an easier path to production-readiness, should the project accept the narrower formulation (and its known false positive on one loop/region case) to ship sooner, or hold out for full expressiveness?
+**Question.** Should Polonius ship its datalog-based formulation, which rejects one loop/region case (a known false positive), or hold out for the older, slower formulation's full expressiveness?
 
+- Grouping: Kept after the stopgap review. The Claim names concrete alternatives: the current datalog formulation vs the prior comprehensive approach, with NLL problem case 3 as the difference.
 - Teams: a · members (context): `a-sa20-f009698-q3` (f009698, core)
 - Domains: core
 - Concepts: polonius; borrow-checker; NLL; datalog; expressiveness-vs-shippability
@@ -4587,8 +4645,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `pure-rust-crypto-stopgap`
 
-**Question.** When targeting an unusual/constrained platform where the standard C-backed crypto backend won't build, is it acceptable to reach for a pure-Rust crypto implementation as a stopgap, even knowing a hardware-accelerated backend would be the "right" choice for production?
+**Question.** On Xtensa, where `ring` and `aws-lc-rs` do not build, should iroh use a pure-Rust rustls provider (rustls-rustcrypto) now, or a hardware-accelerated backend?
 
+- Grouping: Kept after the stopgap review. The Claim names the crates on both sides.
 - Teams: a · members (context): `a-sa11-f004471-q1` (f004471, embedded)
 - Domains: embedded
 - Concepts: crypto provider selection; embedded constraints; rustls pluggable providers
@@ -5141,8 +5200,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `ship-polyfill-before-spec`
 
-**Question.** before a spec (WASI 0.3 async) is finalized, should the ecosystem ship stopgap/polyfill implementations to unblock development, or wait for the finished standard?
+**Question.** Should the ecosystem ship a WASI 0.3 async polyfill now, or wait for WASI 0.3's native async?
 
+- Grouping: Kept after the stopgap review, the weakest of the ten. The one Claim names the polyfill against waiting for WASI 0.3's real async; no other concrete alternative is argued.
 - Teams: b · members (context): `b-sR03-f000889-q1` (f000889, wasm)
 - Domains: wasm
 - Concepts: none given
@@ -5151,20 +5211,6 @@ Ordered by: found by both teams first, then by member count, then by id.
     - **Joel Dice (Fermyon, component-model/wasmtime contributor)** · Source `f000889` · date 2024-02-05 · locator bytecodealliance.org/articles/plumbers-day-2, "Async and WASI 0.3" section, talk timestamp 1:11:00. · L465-L472. — favors shipping a polyfill ahead of the spec. Quote: a "'polyfill' that devs can play with today while they're waiting for WASI 0.3 and real async." [`b-sR03-f000889-c1`, team b]
   - `ship-polyfill-before-spec--alt1` — Wait for the finished standard (no Claim in batch 1; named alternative)
 - Positions seen by the extractor (`b-sR03-f000889-q1`): favors shipping a polyfill ahead of the spec. (Joel Dice (Fermyon, component-model/wasmtime contributor))
-
-### `silent-fallback-vs-explicit-error`
-
-**Question.** When a caller's input is ambiguous or partially satisfiable (multiple matching sockets, or a requested feature with no usable input at all), should the code silently proceed with a plausible default, or fail with an explicit error?
-
-- Teams: a · members (context): `a-sa14-f005079-q5` (f005079, core)
-- Domains: core
-- Concepts: fail-loud vs. silent fallback; explicit error handling; surprising behavior
-- Positions:
-  - `silent-fallback-vs-explicit-error--p1` — error on ambiguous multiple-socket input rather than silently pick one
-    - **alexcrichton** · Source `f005079` · date 2026-09-10 · locator comment 2026-09-10T22:28:43Z — asks whether the code should return an error if multiple TCP sockets are listed, rather than silently using the first, since that could cause odd behavior if the first one happens to be the wrong one Quote: "Should this perhaps return an error if there are multiple TCP sockets listed? Because otherwise using the first feels like it might lead to odd behavior" [`a-sa14-f005079-c6`, team a]
-  - `silent-fallback-vs-explicit-error--p2` — error rather than silently fall back when the flag was explicitly requested
-    - **simolus3** · Source `f005079` · date 2026-09-11 · locator comment 2026-09-11T10:19:47Z — made the multiple-socket case an error, and also made it an error to have no usable socket at all, reasoning it would be surprising for `--systemd-listenfd` to silently fall back to wasmtime listening itself because of a mismatched environment variable Quote: "it might be surprising to explicitly indicate that inherited sockets are requested with `--systemd-listenfd` only to then have wasmtime listen itself because of a mismatched environment variable that's ignored" [`a-sa14-f005079-c7`, team a]
-- Positions seen by the extractor (`a-sa14-f005079-q5`): return an explicit error rather than silently picking the first of several candidates, and error out rather than silently falling back to normal listening when the flag was explicitly requested but no usable input was found
 
 ### `single-pass-vs-multi-pass-iteration`
 
@@ -5789,8 +5835,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `wasi-path-workaround-vs-breaking-fix`
 
-**Question.** When a Rust WASM extension host hits a known-bad upstream WASI behavior (a spurious leading `/` in Windows paths from `std::env::current_dir`) that has both a correct-but-breaking extension-API fix on offer and a pragmatic non-breaking user-space workaround, should the project ship the pragmatic workaround now, or hold out for the correct breaking fix (with API versioning to preserve compatibility)?
+**Question.** For WASI's spurious leading `/` in Windows paths, should Zed ship a user-space path workaround now, or a breaking extension-API fix with API versioning?
 
+- Grouping: Kept after the stopgap review. The Claims name both concrete fixes.
 - Teams: b · members (context): `b-sb07-f002307-q1` (f002307, desktop-cli-ui, wasm)
 - Domains: desktop-cli-ui, wasm
 - Concepts: WASI; wasm extension API; breaking changes; API versioning; Windows path handling; upstream vs. workaround fixes
@@ -5974,19 +6021,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `wasm-undefined-symbols-error--alt1` — Keep the silent-import default (`--allow-undefined`) (no Claim in batch 1; named alternative)
 - Positions seen by the extractor (`b-sb23-f009737-q1`): remove the historical --allow-undefined default so undefined symbols become build-time errors, with an explicit opt-in (`#[link(wasm_import_module = ...)]` or `-Clink-arg=--allow-undefined`) for the rare intentional case
 
-### `web-api-wrapper-raw-vs-rust-types`
-
-**Question.** When wrapping a browser Web API (e.g. `UrlSearchParams`) inside a Rust frontend-framework hook, should the API surface the raw web-sys type or convert it to an idiomatic Rust collection?
-
-- Teams: a · members (context): `a-sR07-f002271-q1` (f002271, frontend, wasm)
-- Domains: frontend, wasm
-- Concepts: web-sys/wasm-bindgen API wrapping; idiomatic API surface
-- Positions:
-  - `web-api-wrapper-raw-vs-rust-types--p1` — convert-to-rust-collection
-    - **lukechu10** · Source `f002271` · date 2024-11-03 · locator comment on router.rs (2024-11-03T22:58:52Z) — a hook exposing browser search params should return a `HashMap<String, String>` rather than the raw `UrlSearchParams` handle Quote: "we should return a `HashMap<String, String>` from search params to values" [`a-sR07-f002271-c1`, team a]
-  - `web-api-wrapper-raw-vs-rust-types--alt1` — Surface the raw `web-sys` type (no Claim in batch 1; named alternative)
-- Positions seen by the extractor (`a-sR07-f002271-q1`): convert-to-rust-collection (lukechu10)
-
 ### `web-framework-macro-free-api`
 
 **Question.** should a Rust web framework favor a macro-free, type/extractor-driven API design, or a macro-based route/handler declaration syntax?
@@ -6017,8 +6051,9 @@ Ordered by: found by both teams first, then by member count, then by id.
 
 ### `web-wasm-target-workaround-vs-target`
 
-**Question.** Facing the absence of a proper Web-WASM Rust target, should the ecosystem work around it now with crate-feature plumbing, or push to get the target itself built first?
+**Question.** Should getrandom support wasm-bindgen through crate-feature plumbing now, or push for a dedicated `wasm32-web`/`wasm32-bindgen` Rust target first?
 
+- Grouping: Kept after the stopgap review. The Claims name the feature workaround and the target by name.
 - Teams: a · members (context): `a-sa06-f003558-q1` (f003558, wasm)
 - Domains: wasm
 - Concepts: WASM compilation targets; ecosystem workarounds
@@ -6084,19 +6119,6 @@ Ordered by: found by both teams first, then by member count, then by id.
   - `work-stealing-vs-thread-per-core--alt1` — Work-stealing is better (no Claim in batch 1; named alternative)
   - `work-stealing-vs-thread-per-core--alt2` — thread-per-core is better (no Claim in batch 1; named alternative)
 - Positions seen by the extractor (`a-sa18-f009026-q1`): choice-is-workload-dependent-not-universally-faster
-
-### `wrap-third-party-types-in-public-api`
-
-**Question.** Should a crate depend on a third-party type directly in its public API, or wrap it behind a local newtype/abstraction?
-
-- Teams: b · members (context): `b-bk03-f000267-q15` (f000267, core)
-- Domains: core
-- Concepts: newtype pattern; abstraction over dependencies; API design
-- Positions:
-  - `wrap-third-party-types-in-public-api--p1` — abstract-over-third-party-crate-choice
-    - **Zcash Foundation / Zebra project** · Source `f000267` · date unknown (living document) · locator Contextual Difficulty Validation RFC § Fundamental data types — because Rust has no standard u256 type, Zebra picks one of several third-party crate implementations but does not expose it directly — it wraps the chosen implementation behind its own ExpandedDifficulty type, so the underlying crate choice stays swappable Quote: "Zebra abstracts over the chosen u256 implementation using its ExpandedDifficulty type." (flag: voice-unverified) [`b-bk03-f000267-c17`, team b]
-  - `wrap-third-party-types-in-public-api--alt1` — Use the third-party type directly in the public API (no Claim in batch 1; named alternative)
-- Positions seen by the extractor (`b-bk03-f000267-q15`): abstract-over-third-party-crate-choice
 
 ### `xcframework-tooling-vs-hand-built`
 
