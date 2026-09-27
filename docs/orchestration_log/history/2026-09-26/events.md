@@ -635,3 +635,4 @@
 2026-09-27T19:27 | self | decision | the 90% gate stands as written: after the send-back extracts land, a full second blind merge (t4-mcheck-b1 continued, opus) runs over all batch-1 extracts, then an opus adjudicator settles every grouping the two merges disagree on; no post-hoc widening of the sample (decided under the 2026-09-26 handover)
 2026-09-27T19:27 | agent:r-xr-a-3 | receipt | send-back a-R08: 11 sources, 4 overturned (4 Questions, 5 Claims); retired; r-xr-a-6 new with a-R13
 2026-09-27T19:27 | agent:r-xr-a-4 | receipt | send-back a-R12: 4 sources, nothing new confirmed; last unit a-R14
+2026-09-27T19:28 | agent:r-xr-a-5 | receipt | send-back a-R11: 6 sources, 2 overturned (3 Questions, 3 Claims); next a-R15
