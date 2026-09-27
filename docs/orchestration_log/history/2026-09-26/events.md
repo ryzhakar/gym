@@ -615,3 +615,4 @@
 2026-09-27T19:20 | self | decision | capture-recapture strata are each Question's own Domains, source hints kept for bias checks; a Question met by both teams in different source strata is one recapture (decided under the 2026-09-26 handover)
 2026-09-27T19:20 | self | delegation | agent:t4-mcheck-b1, opus: blind 20% merge check of batch 1 per prompts/t4-merge.md
 2026-09-27T19:21 | agent:t4-merge-b1 | receipt | crosswalk restratified by Question Domains, 541 rows; estimate.py batch 1: Chapman unseen 30-64% per stratum, Chao1 57-84%, m 0-21; closure fails as expected after one batch
+2026-09-27T19:21 | agent:r-xr-a-3 | receipt | send-back a-R03: Swift thread, nothing new confirmed; next a-R05
