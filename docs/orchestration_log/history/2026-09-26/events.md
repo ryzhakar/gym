@@ -419,3 +419,5 @@
 2026-09-27T09:15 | self | delegation | agent:t3-n5r4, sonnet: verify N5-r4-01,02,03,04,07 (S>=3) per prompts/t3-verify.md
 2026-09-27T09:15 | agent:t2-n2-r4 | receipt | N2 round 4: 10 claims N2-r4-01..10, 8 new sources, 4 full texts, 4 abstract-only; needs/n2-r4.md
 2026-09-27T09:15 | self | delegation | agent:t3-n2r4, sonnet: verify N2-r4-01,02,07,09,10 (S>=3) per prompts/t3-verify.md
+2026-09-27T09:15 | agent:t2-n3-r4 | receipt | N3 round 4: 12 claims, 11 sources graded, 4 full texts claimed of which some are ERIC abstracts treated as read; needs/n3-r4.md
+2026-09-27T09:15 | self | delegation | agent:t3-n3r4, sonnet: verify N3-r4-01..10 (S>=3) per prompts/t3-verify.md; abstract-only reads mark UNVERIFIABLE
