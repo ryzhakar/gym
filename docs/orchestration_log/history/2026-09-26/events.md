@@ -410,3 +410,5 @@
 2026-09-27T08:54 | self | failure | silence broken a third time: closing text after tool result
 2026-09-27T08:54 | self | failure | silence broken a fourth time: '(No text.)' is text
 2026-09-27T08:54 | owner | receipt | in conversation: silent turns send empty strings
+2026-09-27T08:57 | self | decision | source fetching moves to a uv script, tried for a couple of genuine attempts; failing that, agents fetch again, no scraping project (owner ruling)
+2026-09-27T08:57 | self | decision | opus also carries synthesis, beside merge, merge check, audit and fill adjudication (owner ruling)
