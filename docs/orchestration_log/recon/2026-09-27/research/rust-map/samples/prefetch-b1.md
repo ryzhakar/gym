@@ -122,6 +122,23 @@ team-a has 4 `L2` rows — exactly the EuroRust/Deno-family videos named, all no
 
 Output: 59 `.txt` files total (team-a 32: 30 numbered including 4 now-orphaned-but-untouched old slices + `L1` + `L2`; team-b 27: 26 numbered + `L1`), both manifests updated (frozen numeric rows untouched; `L1`/`L2` rows' `slice` and `chars` columns repointed to the fresher copy).
 
+## Send-back bundles (round 6)
+
+The audit (`RECON/audit/audit-b1.md`) found both teams' extractors dismissing sources as "nothing new" when a single Voice's declared Position went unopposed inside the source — a bar the rule doesn't set (opposition is not required). New script `scripts/research/sendback.py` builds a re-extraction bundle: every batch-1 row a team logged as nothing-new, so an extractor gets a second pass.
+
+**Population.** Merged every `team-{a,b}/readlog-b1-*.csv` entry by `frame_id`, across all files for that team (original slices, s-prefixed re-reads, L1/L2 supplements) — six team-a rows have an unquoted comma in `locator_span` (extra CSV fields), 18 team-b rows are missing the `minutes` column; both tolerated with the exact parse recipe the audit's own `draw.py` uses. A row sends back when every merged entry reads `yes` and `new_questions` sums to 0 across all of them — an L1/L2 re-read that actually found content makes the sum nonzero, which is what excludes an already-superseded row; no separate exclusion step was needed once every readlog file was merged in. This reproduced the audit's own population counts exactly (team-a 92, team-b 101), which is the correctness check for the parsing and merge logic. `team-a f000227` and `team-b f012788` are both already inside their team's population (single `yes`/`0` entries) rather than needing to be added on top.
+
+**Re-fetch.** Any selected row whose current cached text was a bot/login stub or under 1,500 chars got one live re-fetch attempt. `f000227` (`rtic.rs`) already carries its full 11,754-char text from an earlier round's fix, so it needed none. Two team-a rows are still unfixable, both already-known, previously-disclosed limits, not new findings: `f000149` (nogibjj tutorial, genuinely short real content, held to the same 1,500-char bar as everything else) and `f000217` (`nalgebra.org/docs`, DNS still unresolved, no Wayback snapshot on this attempt either). team-b: 0 rows needed a re-fetch attempt at all.
+
+One honest caveat, not fixed here because it doesn't meet the mechanical re-fetch trigger: `f012788` (`netstack.fm/#episode-15`) is `kept` at 3,878 chars — over the floor, not a stub — but per the audit's own finding, that page is a podcast episode index, not a transcript. It passes this script's fetch-quality gate while still lacking the content an extractor actually needs; flagged here rather than presented as resolved.
+
+| team | population | rows built | re-fetch attempts | kept | dropped (no-text) | slices |
+|---|---|---|---|---|---|---|
+| team-a | 92 | 92 | 2 (both unsuccessful, pre-existing limits) | 90 | 2 | 16 |
+| team-b | 101 | 101 | 0 | 101 | 0 | 13 |
+
+Output: `samples/bundles/b1-team-{a,b}-R{nn}.txt` (29 files: team-a 16, team-b 13), `samples/bundles/b1-team-{a,b}-R-manifest.csv` (freshly rebuilt each run, unlike `bundle.py`'s frozen-slice scheme — there is nothing to freeze here since this is a first pass).
+
 **lobste.rs/HN attribution + wider freeze (round 4).** `lobsters-json` carried comment text with no username (`row f005516`, in slice a-15, flagged by a surveyor); the same gap existed for a Hacker News route that didn't exist yet. Fixed in `cache.py`: `route_lobsters` now reads lobste.rs's own JSON fields (`commenting_user`/`created_at`, `submitter_user` for the story) instead of the unattributed HTML scrape it fell back to before; a new `route_hn` fetches `hn.algolia.com/api/v1/items/<id>` (`author`/`created_at`) for `news.ycombinator.com` URLs, wired into `fetch_by_class_route`. Both use the same `@<login> · <date>:` prefix as GitHub/Discourse/reddit. No `news.ycombinator.com` URL actually appears in either batch-1 CSV, so the HN route is provisioned but untested against batch data; verified live instead against `hn.algolia.com/api/v1/items/1` (Aug '06 PG/sama thread) — correct authors and dates.
 
 Re-fetched the 6 lobste.rs rows in scope (3 per team; `get` was tried first and found to route generic URLs through `route_html`, bypassing the fix entirely — switched to calling `fetch_by_class_route` directly, which dispatches correctly). All 6 now save via `lobsters-json` with real usernames (spot-checked: 54 `@` lines in the `f005516` capture).
