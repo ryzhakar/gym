@@ -693,3 +693,6 @@
 2026-09-27T19:57 | self | delegation | t4-audit-b1 continued: audit the third pass; t4-merge-b1 continued: re-merge all batch-1 extracts under the decision-level Question test into merge-v2/
 2026-09-27T23:42 | self | discovery | session limit at 20:00 stopped t4-merge-b1, t4-audit-b1 and t5-map-v3 mid-task; limit reset
 2026-09-27T23:42 | self | delegation | resumed via SendMessage: t4-merge-b1, t4-audit-b1, t5-map-v3
+2026-09-27T23:46 | agent:t4-audit-b1 | receipt | third-pass audit: team a FAIL on f000217 only (dropped on a false no-snapshot fetch), all 10 sampled nothing-new rows correct; team b PASS, but 3 of 4 sampled Claims struck under rule 8; audit/audit-b1-third.md
+2026-09-27T23:46 | self | decision | extraction misses closed for batch 1: the third pass leaves no judgment miss in the sample; the team-a failure is a fetch defect, fixed by re-fetching books-courses rows with short front pages (f000149, f000217 and like rows) including their chapter pages, then extracting those rows only; all 54 third-pass Claims are checked for false positives under rules 8-9 (decided under the 2026-09-26 handover)
+2026-09-27T23:46 | self | decision | books-courses rows: the book or guide is the source, so chapter pages under its root are fetched, bounded to the book; supersedes the f000149 access-gap decision
