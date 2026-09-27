@@ -626,3 +626,4 @@
 2026-09-27T19:24 | agent:r-xr-a-2 | receipt | send-back a-R07: 6 sources, 4 overturned (5 Questions, 6 Claims); retired; r-xr-a-4 new with a-R10
 2026-09-27T19:25 | agent:r-xr-a-1 | receipt | send-back a-R09: 1 source overturned (BLAKE3 hazmat API); retired; r-xr-a-5 new with a-R11
 2026-09-27T19:25 | agent:r-xr-b-2 | receipt | send-back b-R06: 10 sources, 1 overturned (Wasmtime LTS); last unit b-R07
+2026-09-27T19:25 | agent:r-xr-b-1 | receipt | send-back b-R04: 7 sources, 5 overturned; last unit b-R08
