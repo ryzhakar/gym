@@ -1,0 +1,60 @@
+## f004905 — SE-0538: Disconnected (2026-07-17, en)
+
+### Nothing new
+Swift Evolution review thread for a proposed `Disconnected`/`Sent`/`Sending` wrapper type for region-based isolation. Every participant (hborla, OneSadCookie, mattie, aviva, John_McCall, and others) speaks as a Swift-community voice; a couple of comments mention Rust only in passing as an analogy (Rust's `Cell` semantics, "Rust has a replace") from voices with no shown Rust track record. This is a Swift language-evolution naming/semantics debate, not a point where competent Rust practitioners disagree.
+
+## f004947 — We're open-sourcing our privacy proxy CLI (2026-07-27, en)
+
+### Nothing new
+Single-voice (Hannah Wang, Ben Yang, Fisher Darling) Cloudflare blog post announcing `pvcli`, a Rust CLI for debugging Oblivious HTTP and related privacy protocols. Explains motivation and usage; no other Voice appears and no contested design point is raised.
+
+## f004960 — Protect your relays (2026-07-30, en)
+
+### Nothing new
+Single-voice (Rae McKelvey) iroh blog post announcing authenticated-by-default managed relays and the capability-token design behind it. States a security design decision without any opposing view present in the source.
+
+## f004993 — Bevy's Sixth Birthday (2026-08-10, en)
+
+### Nothing new
+Single-voice (Carter Anderson / @cart, Bevy's creator) yearly retrospective and roadmap post. Covers BSN, Bevy UI/Feathers, rendering work, project governance ("Bevy Project Goals"), and a brewing AI-contribution policy. Cart reports on community tension and a policy in progress with @alice-i-cecile, but no other Voice's own words appear in this source, so no second Position can be attributed; this is one Voice's self-critique and plans, not a captured disagreement between practitioners.
+
+## f004997 — esp-hal API docs (2026-08-11, en)
+
+### Questions
+- Q: When using an LLM to bring doc-comment prose in a codebase to a consistent style, should the project make the process reproducible by pinning down and declaring exactly which model, prompt, and environment produced the edits, or should it instead adopt a formal controlled-language writing standard that constrains vocabulary/grammar enough to make the model's "taste" mostly irrelevant?
+  concepts: LLM-assisted code review, doc-comment style consistency, controlled natural language, reproducibility; domains_live: embedded; positions_seen: declare-model-prompt-and-clean-env (MabezDev), adopt-controlled-language-standard-ASD-STE100 (bugadani)
+
+### Claims
+- voice: bjoernQ | position: pre-review-guidelines-for-llms | date: 2026-08-11 | locator: PR description @bjoernQ 2026-08-11T12:34:57Z | paraphrase: expects the doc-consistency effort to trigger bikeshedding, and hopes it results in additions to DEVELOPER-GUIDELINES.md that also help LLMs pre-review changes. | quote: "I assume this will end up in a lot of bike-shedding which ideally should result in additions to the DEVELOPER-GUIDELINES.md to (not only) help LLMs in pre-reviewing changes." | practiced_evidence: none
+- voice: bugadani | position: adopt-controlled-language-standard-ASD-STE100 | date: 2026-08-11 | locator: comment @bugadani 2026-08-11T12:39:59Z | paraphrase: proposes mandating a standard like ASD-STE100 Simplified Technical English so the prose style is consistent and free of "flowery nonsense." | quote: "I would also propose mandating some standard we should follow, like ASD-STE100 Simplified Technical English, so that the _style_ of the prose is also consistent, and free of any flowery nonsense." | practiced_evidence: none
+- voice: MabezDev | position: declare-model-prompt-and-clean-env | date: 2026-08-12 | locator: comment @MabezDev 2026-08-12T13:34:07Z | paraphrase: argues that to merge this kind of LLM-driven doc pass, the project must declare which model was used (since each model has its own "taste"), declare the exact prompt (wording changes the results), and run the update in a clean environment to avoid picking up incidental local agent rules. | quote: "We must declare what model we run this with. Each model has its own interpretation of the rules and its own \"taste\"... We need to declare the prompt we run with this... we should run these updates in a clean env." | practiced_evidence: none
+- voice: bugadani | position: adopt-controlled-language-standard-ASD-STE100 | date: 2026-08-12 | locator: comment @bugadani 2026-08-12T13:36:48Z | paraphrase: responds that a controlled-language standard largely removes model "taste" from the equation by constraining vocabulary and grammar, offering this as an alternative to MabezDev's process-heavy approach. | quote: "Simplified Technical English pretty much removes taste from the equation, it limits vocabulary and grammar, too." | practiced_evidence: none
+
+## f005000 — feat: implement PartialEq/Eq/Hash for Func (2026-08-12, en)
+
+### Questions
+- Q: When a runtime needs to expose a narrow debugging capability that would be most efficient as a purpose-built accessor coupled to internal layout details, should the maintainers accept that coupled accessor (even once made asymptotically efficient), or insist on a smaller, decoupled, general-purpose primitive that pushes the assembling logic (and any inefficiency) out to the caller?
+  concepts: API surface minimalism, internal layout coupling, debugging APIs, encapsulation; domains_live: wasm, core; positions_seen: narrow-purpose-built-debug-accessor (smarcd, initial and revised), prefer-generic-decoupled-primitive (alexcrichton, cfallin)
+- Q: When a wrapper/handle type's "true" identity requires dereferencing store-owned state that isn't safely reachable from the handle alone, should identity comparison be implemented as the standard `PartialEq`/`Eq`/`Hash` traits on the bare handle, or as separate methods that take an explicit store borrow?
+  concepts: trait-based equality, store-scoped state, handle types, identity keys; domains_live: wasm, core; positions_seen: implement-standard-traits-on-bare-handle (smarcd, initial), store-scoped-explicit-methods (cfallin, smarcd revised)
+
+### Claims
+- voice: smarcd | position: narrow-purpose-built-debug-accessor | date: 2026-08-12 | locator: PR description @smarcd 2026-08-12T17:14:28Z | paraphrase: adds `debug_function_index`, a host-only, linear-search accessor for debugging tools, deliberately scoped to guest-debugging mode only. | quote: "Adds a host-only inverse to Instance::debug_function for debugging tools that need to serialize a same-instance funcref as a Wasm function index." | practiced_evidence: https://github.com/bytecodealliance/wasmtime/pull/14128
+- voice: alexcrichton | position: skeptical-of-narrow-internals-coupled-api | date: 2026-08-13 | locator: comment @alexcrichton 2026-08-13T13:55:31Z | paraphrase: questions the use case, noting the API is inherently inefficient (linear search) and may not survive future refactorings, and wants to understand whether the cost of supporting it is justified. | quote: "This is a pretty powerful debugging capability which also sort of inherently can't be efficient (e.g. the linear search here) and may also not hold up in future possible refactorings." | practiced_evidence: none
+- voice: cfallin | position: prefer-generic-decoupled-primitive | date: 2026-08-13 | locator: comment @cfallin 2026-08-13T14:34:17Z | paraphrase: argues the linear-search accessor makes a whole-store snapshot quadratic overall, and proposes instead adding `Func::eq`/`Func::hash` so the caller can build their own hashtable in a single linear pass, asymptotically better. | quote: "I could see a `Func::eq` implementation making sense (because the primitive is harder to argue against -- it may be independently useful)... asymptotically better." | practiced_evidence: none
+- voice: smarcd | position: narrow-purpose-built-debug-accessor | date: 2026-08-13 | locator: comment @smarcd 2026-08-13T15:49:36Z | paraphrase: rewrites `debug_function_index` to be O(1) via a lazily-built, module-level cached reverse table, addressing the performance objection while keeping the original narrow accessor design. | quote: "I pushed a rewrite that makes `debug_function_index` itself O(1) instead of scanning every function." | practiced_evidence: none
+- voice: cfallin | position: prefer-generic-decoupled-primitive | date: 2026-08-13 | locator: comment @cfallin 2026-08-13T15:57:51Z | paraphrase: even with the O(1) fix, still prefers not taking on the coupling to `VMContext`'s internal layout and the added delicate logic for what is a niche use case, and again asks whether `Func::eq`/`Func::hash` plus an external algorithm could work instead. | quote: "I think that is still the sort of complexity that we would rather not take on if we don't have to... This is a whole lot of new functionality instead for a niche use-case." | practiced_evidence: none
+- voice: smarcd | position: prefer-generic-decoupled-primitive | date: 2026-08-13 | locator: comment @smarcd 2026-08-13T16:10:07Z | paraphrase: agrees the layout coupling isn't worth it, drops `debug_function_index`, and implements `Func::eq`/`Func::hash` as pointer-identity equality instead, letting the debugger build its own index map. | quote: "That's a fair concern — coupling to `VMContext`'s internal layout is more entanglement than this is worth. I dropped `debug_function_index` and pushed `Func::eq`/`Func::hash` instead, per your suggestion." | practiced_evidence: none
+- voice: cfallin | position: store-scoped-explicit-methods | date: 2026-08-13 | locator: comment @cfallin 2026-08-13T17:28:44Z | paraphrase: objects that pointer-identity equality on the bare `Func` is surprising because it doesn't hold across import/export boundaries even for the same underlying function, and argues that correct identity needs a store borrow, so it should be separate methods rather than literal `Eq`/`Hash` trait impls. | quote: "equality (and hashing) *should* hold when a `Func` refers to the same function within a store, regardless how it's reached... we need to provide separate methods on the `Func` for this." | practiced_evidence: none
+- voice: smarcd | position: store-scoped-explicit-methods | date: 2026-08-13 | locator: comment @smarcd 2026-08-13T17:43:55Z | paraphrase: agrees, replaces the trait impls with `Func::is_same(&store, ...)` and `Func::identity_key(&store)`, dereferencing into the `VMFuncRef`'s own identity so import/export copies of the same function compare equal. | quote: "pushed `Func::is_same(store, a, b)` and `Func::identity_key(store)` in place of the trait impls." | practiced_evidence: none
+- voice: smarcd | position: exclude-lazily-populated-field-from-identity-key | date: 2026-08-14 | locator: comment @smarcd 2026-08-14T05:14:00Z | paraphrase: discovers that one candidate identity-key field (`wasm_call`) starts as `None` and is filled in place later, so it can't safely be used alone as a hash/identity key (it would collide two never-imported functions, and change a function's own key mid-lifetime); keeps `(vmctx, array_call)` plus `type_index` instead. | quote: "Two never-imported host functions both read `wasm_call = None`, so they'd collide... Even a single `Func`'s key would change over the store's lifetime as it flips `None → Some`, which breaks `HashMap` use outright." | practiced_evidence: none
+
+## f005050 — Announcing Spin v4.1 (2026-08-26, en)
+
+### Nothing new
+Single-voice (The Spin Project) release announcement covering WASIp3 finalization, composable HTTP middleware built as Wasm components, async MySQL, WASIp2/WASIp3 service chaining, target-environment tooling, WAGI deprecation, connection limits, and telemetry changes. Explains and justifies design choices (e.g. capability inheritance for middleware) without any opposing voice present in the source.
+
+## f005053 — Component Composition with Spin 4.0 (2026-08-27, en)
+
+### Nothing new
+Single-voice (Thorsten Hans) hands-on tutorial demonstrating Wasm component composition in Spin 4.0 using WIT interfaces and `spin_sdk::dependencies!()`. Purely instructional walkthrough; no other Voice appears and no contested design point is raised.

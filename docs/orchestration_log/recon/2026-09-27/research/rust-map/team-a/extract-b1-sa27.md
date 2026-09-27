@@ -1,0 +1,18 @@
+## f012237 — Ferrostar: Building a Cross-Platform Navigation SDK in Rust (Part 2 - iOS Packaging) (2024-12-04, en)
+
+### Questions
+- Q: When packaging a Rust core library for Apple platforms (iOS) via UniFFI, should the FFI-binding and packaging steps run as an Xcode build phase or as an external script/CI pipeline outside Xcode?
+  concepts: UniFFI, Swift Package Manager binary targets, Xcode build phases, cross-compilation; domains_live: swift-interop; positions_seen: external shell-script/CI pipeline for reliability (Ian Wagner/Stadia Maps — Xcode integration is possible but avoided as difficult and flaky) vs. Xcode-build-phase integration (unnamed alternative the source explicitly flags as "possible", implying some teams take it)
+
+- Q: When assembling a Rust static library into an XCFramework for Swift distribution, should you hand-build the XCFramework's directory structure or use Apple's `xcodebuild -create-xcframework` tooling?
+  concepts: XCFramework, static-library packaging, lipo fat binaries; domains_live: swift-interop; positions_seen: use official `xcodebuild` tooling (Ian Wagner/Stadia Maps) vs. hand-assemble the XCFramework directory by hand (unnamed "some teams", described in source as viable given the format's simple structure)
+
+### Claims
+- voice: Ian Wagner | position: run Rust-to-Swift FFI packaging as an external shell-script/CI pipeline, not as an Xcode build phase | date: 2024-12-04 | locator: section "Generating the FFI Bindings", paragraph starting "NOTE: It is possible to integrate these steps into Xcode." | paraphrase: it is possible to wire UniFFI's binding generation into an Xcode build phase, but Stadia Maps rejected that given the difficulty and the overall flakiness of the Xcode build process, choosing a plain shell script invoked manually/by CI instead, at the cost of needing a manual rebuild after Rust changes | quote: "given the relative difficulty of doing this and the overall flakiness of the Xcode build process, we opted for a simple, reliable shell script" | practiced_evidence: https://github.com/stadiamaps/ferrostar (their own shipped SDK, built via this exact pipeline for about a year and a half per the post)
+
+- voice: Ian Wagner | position: use Apple's official `xcodebuild -create-xcframework` rather than hand-assembling the XCFramework directory | date: 2024-12-04 | locator: section "Generating the XCFramework", opening paragraph | paraphrase: XCFramework's on-disk structure is simple enough that some teams build it by hand, but Stadia Maps scripts `xcodebuild -create-xcframework` to combine the per-target static libraries, headers and module map instead of replicating that structure manually | quote: "Some teams actually do this by hand, since it's a relatively simple structure, but we'll stick to Apple's official tooling." | practiced_evidence: https://github.com/stadiamaps/ferrostar (same shipped pipeline)
+
+## f012428 — Rust polymorphism (live coding: supertraits, subtyping, dyn vs static dispatch) (2025-03-26, en)
+
+### Nothing new
+`nothing new` — this is a live-coding tutorial by Nas (developerlife.com, Rebel/Dewey crates maintainer) demonstrating supertrait/subtrait syntax, static vs. dynamic dispatch, and type erasure for heterogeneous collections (`Vec<&mut dyn Component<...>>`). The one trade-off remark made — that Rust's trait-based approach to OO-style view hierarchies is "cumbersome" next to inheritance-based OO languages because of monomorphization and no GC — is presented as an uncontested, well-known property of the language, not a claim contested by another named voice or position; no other Voice, disagreement, or governance/culture dispute appears in the source.
