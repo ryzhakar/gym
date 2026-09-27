@@ -425,3 +425,5 @@
 2026-09-27T09:17 | agent:t2-n6-r4 | receipt | N6 round 4: 7 claims N6-r4-01..07, 8 new sources, 3 unreachable metadata-only; needs/n6-r4.md
 2026-09-27T09:17 | agent:t2-n7-r4 | receipt | N7 round 4: 10 claims N7-r4-01..10, 8 new sources, 1 full text, 56 of 58 found identifiers new; needs/n7-r4.md
 2026-09-27T09:17 | self | delegation | agent:t3-n67r4, sonnet: verify N6-r4-05,06 and N7-r4-03,07,08 (S>=3) per prompts/t3-verify.md
+2026-09-27T09:17 | agent:t2-n1-r4 | receipt | N1 round 4: 10 claims N1-r4-01..10, 6 new sources, 2 full texts, 4 abstract-only; needs/n1-r4.md
+2026-09-27T09:17 | self | delegation | agent:t3-n1r4, sonnet: verify N1-r4-01..04,06..10 (S>=3) per prompts/t3-verify.md
