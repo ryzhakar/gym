@@ -699,3 +699,4 @@
 2026-09-27T23:52 | agent:t4-audit-b1 | receipt | third-pass strike check: 54 Claims, 38 kept (9 weak), 16 struck (a 3, b 13); audit/strike-b1-third.md
 2026-09-27T23:52 | self | decision | struck Claims dropped from the merge, except Claims struck only for answering a different decision, which are re-homed to the Question they answer (decided under the 2026-09-26 handover)
 2026-09-27T23:52 | agent:t5-map-v3 | receipt | evidence map v3: 464 claims, 135 verified, 103 with unaided outcome; Pareto set of 9, none dominant; biggest gap: no verified claim on adults learning a CS-adjacent skill unaided at 7+ days; synthesis/evidence-map-v3.md
+2026-09-27T23:52 | agent:t4-merge-b1 | receipt | decision-level re-merge: 484 team-local to 278 canonical Questions; a only 115, b only 108, both 55; Chapman unseen 0-31% per stratum, Chao1 19-63%; broad Questions choose-rust-for-a-domain, ship-stopgap, typestate inflate m; strikes pending; merge-v2/
