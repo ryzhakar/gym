@@ -18,12 +18,13 @@ Merger: t4-merge (opus), 2026-09-27. Inputs: every `team-a/extract-b1-*.md` (35 
 
 ## Crosswalk shape
 
-Columns: `batch, stratum, team, source_id, question_id, team_question_ids, question_domains`. It keeps all five columns `scripts/map/estimate.py` reads (`CROSSWALK_FIELDS`). The two extra columns are ignored by its `csv.DictReader`.
+Columns: `batch, stratum, team, source_id, question_id, team_question_ids, source_hint`. It keeps all five columns `scripts/map/estimate.py` reads (`CROSSWALK_FIELDS`). The two extra columns are ignored by its `csv.DictReader`.
 
-- Each row is one team's mention of one canonical Question in one source (a read), within one stratum. When a team logged two local Questions in the same source that merge into one canonical Question, they share a row, joined in `team_question_ids`. This keeps Chao1's per-read frequencies right. Every team-local id appears in exactly one (team, source, canonical) group.
-- `stratum` comes from the source's `domain_hints` in `samples/batch-1-team-<t>.csv`, the sampling cells. A source with several hints yields one row per hint. So a recapture counts only when both teams met the Question in sources of the same cell.
-- `question_domains` is the union of the extractors' `domains_live` for the canonical Question. It allows the alternative basis, where a team captures a Question in stratum S if it found it anywhere and S is among the Question's Domains. The two bases differ a lot. For `core`, m is 1 on the source-hint basis and 21 on the domain basis. Per domain on the domain basis (n1, n2, m): cloud-workers 23/11/6, core 93/69/21, decentralized-iroh 7/11/3, desktop-cli-ui 27/13/7, distributed 20/17/7, embedded 26/21/4, frontend 12/13/3, ml 13/8/2, other 7/15/2, swift-interop 4/2/0, wasm 22/18/4, web 26/17/7. The choice of basis belongs to the plan's owner, not the merger.
-- `estimate.py --batch 1` runs cleanly on this file.
+- Each row is one team's mention of one canonical Question in one source (a read), within one stratum. When a team logged two local Questions in the same source that merge into one canonical Question, they share a row, joined in `team_question_ids`. This keeps Chao1's per-read frequencies right.
+- `stratum` is each of the canonical Question's Domains: the union of the extractors' `domains_live` across its members. A mention yields one row per Domain, whichever source it came from (lead ruling 2026-09-27: a Question is one member of the population wherever a team met it, and Domains are where it is live).
+- `source_hint` is the source's `domain_hints` from `samples/batch-1-team-<t>.csv`, the sampling cells. It is kept for bias checks.
+- Since Domains are unioned, a mention also counts in Domains that only another member's extractor named. For example, team a's f001053 mention of `depend-vs-hand-roll` counts in `cloud-workers` because of a-saL2-f011092-q3.
+- `estimate.py --batch 1` runs cleanly on this file (541 rows).
 
 ## Merges I was unsure of
 
