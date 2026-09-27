@@ -333,3 +333,4 @@
 2026-09-27T04:09 | self | delegation | agent:t2-n2-r3, sonnet: saturation round 3 for n2, fresh queries, needs/n2-r3.md
 2026-09-27T04:09 | self | delegation | agent:t2-n3-r3, sonnet: saturation round 3 for n3, fresh queries, needs/n3-r3.md
 2026-09-27T04:09 | self | failure | round-3 prompts named sub-areas (knowledge components, unproductive struggle, interruption) learned from the seed probe; seed coverage for those blocks in round 3 is no longer an independent measure — history/2026-09-26/failures.md
+2026-09-27T04:15 | agent:t2-n7-r2 | receipt | needs/n7-r2.md: 22 verified N1–N6 claims through the LLM lens: 8 hold, 2 gain, 3 fail (productive failure's no-early-solution mechanism breaks under default LLMs; Tutor CoPilot year-end null; conversational diagnosis), 11 untested; 3 new sources
