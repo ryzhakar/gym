@@ -412,3 +412,5 @@
 2026-09-27T08:54 | owner | receipt | in conversation: silent turns send empty strings
 2026-09-27T08:57 | self | decision | source fetching moves to a uv script, tried for a couple of genuine attempts; failing that, agents fetch again, no scraping project (owner ruling)
 2026-09-27T08:57 | self | decision | opus also carries synthesis, beside merge, merge check, audit and fill adjudication (owner ruling)
+2026-09-27T09:08 | owner | receipt | in conversation: let the teaching round-4 surveyors finish on their standing instructions
+2026-09-27T09:08 | self | decision | t2-n1-r4..t2-n7-r4 resumed as launched, instructions unchanged; search.py leaves the teaching lane (owner ruling)
