@@ -523,3 +523,4 @@
 2026-09-27T14:17 | agent:t4-audit-r5 | receipt | audit r6-r7: no need saturated; N1, N2, N3, N5, N7 OPEN; N4, N6 VOID-ROUND (round-7 files lack Found DOIs); first recaptures (N3 m=5, 47% unseen); OpenAlex answered 34 of 98 queries; 85 of 269 Found ids ungraded; N7-r7-05, 06 unverified; audit/saturation-r7.md
 2026-09-27T14:17 | self | decision | round 8 capture moves to script: per need two sonnet agents each write an independent query set, a uv script runs all queries serially through OpenAlex and Crossref with backoff and writes the DOI lists, graders read only new DOIs; capture-recapture on the two lists (decided under the 2026-09-26 handover)
 2026-09-27T14:17 | self | delegation | resumed t2-n4-r7, t2-n6-r7 to add Found DOIs from their own logs; t3-r67-e continued for N7-r7-05, 06; t3-r67-d continued to grade the 85 ungraded Found ids
+2026-09-27T14:18 | agent:t2-n4-r7 | receipt | n4-r7 and n6-r7 Found DOIs sections added (15 and 14 ids)
