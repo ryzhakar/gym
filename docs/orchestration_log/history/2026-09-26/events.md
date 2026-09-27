@@ -457,3 +457,7 @@
 2026-09-27T09:46 | agent:t2-n6-r5 | receipt | N6 round 5: 10 claims, 8 sources, 5 full texts, 7 unreadable listed; needs/n6-r5.md
 2026-09-27T09:46 | self | decision | round-5 verification (33 claims S>=3) waits for cache.py's stub fix and mirrors: sources prefetched by script first, verifiers then grouped by source so each text is read once (decided under the 2026-09-26 handover)
 2026-09-27T09:46 | agent:r-x-a-b1-02 | receipt | team a b1-02: 15 rows read from cache, 6 sources gave 7 Questions and 6 Claims; off-subject Swift threads in the frame
+2026-09-27T09:51 | owner | receipt | in conversation: work appeared stopped; report asked
+2026-09-27T09:51 | self | failure | said next steps without launching them: the bundle script and round-5 verification sat idle after the pilot report
+2026-09-27T09:51 | self | delegation | agent:t3-r5-a, -b, -c, sonnet: verify 33 round-5 S>=3 claims grouped by source (18 sources, 6 each), cache first
+2026-09-27T09:51 | self | delegation | agent:cache-script (continued): scripts/research/bundle.py, pre-filter off-subject and thin rows, one bundle file per extractor slice
