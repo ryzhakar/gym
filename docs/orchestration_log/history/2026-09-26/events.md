@@ -441,3 +441,5 @@
 2026-09-27T09:25 | agent:t3-n67r4 | receipt | N6/N7 r4 verify: 4 VERIFIED (N6-r4-05,06, N7-r4-07,08), 1 UNVERIFIABLE (N7-r4-03), N6-r4-05 R 1 to 0
 2026-09-27T09:25 | self | decision | round 4 teaching verification closed: r4 audit skipped, since rule 2 needs Found-DOIs lists from two rounds (r4, r5) and rule 1 already fails at r4 where new S>=3 sources landed; round 5 runs on unchanged instructions, audit after it covers r4-r5 (decided under the 2026-09-26 handover)
 2026-09-27T09:25 | self | delegation | agent:t2-n1-r5..t2-n7-r5, sonnet: round 5 surveys, same prompt as round 4 with r=5; source-cache rule now in common.md
+2026-09-27T09:26 | self | decision | cache.py gains open mirrors (Europe PMC, CORE, OpenAlex oa_url, author preprints) and a headless-browser fallback for bot walls, kept only if cheap; a list of paywalled load-bearing DOIs is kept for the owner's own access (owner ruling)
+2026-09-27T09:26 | self | delegation | agent:t2-n5-r5..t2-n7-r5, sonnet: round 5 surveys, same prompt as round 4 with r=5 (t2-n1..n4-r5 launched 09:3x)
