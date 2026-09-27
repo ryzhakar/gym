@@ -724,3 +724,5 @@
 2026-09-28T00:16 | self | delegation | agent:t4-mcheck3-b1, opus, fresh: final blind 20% check of merge-v3 at operational grain; result ships with map v0.1
 2026-09-28T00:16 | self | delegation | t4-merge-b1 continued: blind fill inputs and key; prompts/t3-fill.md written
 2026-09-28T00:18 | agent:t4-merge-b1 | receipt | blind fill inputs: 13 files, 772 Claims over 405 Questions; 273 Questions list one Position only; sent back to add each Question's named alternatives as Positions
+2026-09-28T00:21 | agent:t4-merge-b1 | receipt | fill inputs rewritten: 309 named alternatives added as unclaimed Positions to 273 single-Position Questions
+2026-09-28T00:21 | self | delegation | blind duplicate fill, sonnet: fill a r-fa-1..4, fill b r-fb-1..4, input files 01-04, 05-07, 08-10, 11-13 in sequence
