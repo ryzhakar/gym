@@ -1,0 +1,135 @@
+"""Cut a fetched batch into read-sized text bundles for extraction agents.
+
+Usage: uv run python scripts/research/bundle.py <team-a|team-b>
+
+Input: samples/batch-1-team-{team}.csv (data rows, in order), samples/prefetch-b1-status.csv
+(one status row per batch row, in the same order: team-a's 198 rows first, then team-b's 198),
+and the shared cache CACHE/<key>.txt.
+
+For each row, keep only if its cached text exists, is not a bot/login-wall stub, is >=1,500
+chars, and mentions "rust" at least 3 times (case-insensitive); otherwise it is dropped with
+one reason: no-text, stub, thin, off-subject. Kept rows are cut, in CSV order, into ~150k-char
+slices, never splitting a source (an oversized source becomes its own truncated slice).
+
+Output: samples/bundles/b1-{team}-{jj}.txt (one file per slice, each source preceded by a
+`=== ROW n | id | url | date | class ===` header) and samples/bundles/b1-{team}-manifest.csv
+(slice,data_row,id,url,status,reason,chars).
+"""
+import csv
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import cache as c  # noqa: E402 - local module, path set above
+
+RECON = Path("/Users/ryzhakar/pp/gym/docs/orchestration_log/recon/2026-09-27/research/rust-map")
+SAMPLES = RECON / "samples"
+STATUS_CSV = SAMPLES / "prefetch-b1-status.csv"
+BUNDLES = SAMPLES / "bundles"
+SLICE_TARGET_CHARS = 150_000
+MIN_RUST_MENTIONS = 3
+EXCLUDED_DATA_ROWS = {"team-a": set(range(1, 31))}  # already extracted
+
+
+def team_status_rows(team: str) -> list[dict]:
+    # fetch-csv appended team-a's rows first, then team-b's, each in its batch CSV's row
+    # order; team-a's own row count is the exact split point (not an assumed 50/50 split).
+    all_rows = list(csv.DictReader(STATUS_CSV.open(newline="")))
+    n_a = sum(1 for _ in csv.DictReader((SAMPLES / "batch-1-team-a.csv").open(newline="")))
+    return all_rows[:n_a] if team == "team-a" else all_rows[n_a:]
+
+
+def load_text(status_row: dict) -> str | None:
+    key = status_row.get("key")
+    if not key:
+        return None
+    for suffix in (".txt", ".abstract.txt"):
+        p = c.CACHE / f"{key}{suffix}"
+        if p.exists():
+            return p.read_text(errors="replace")
+    return None
+
+
+def classify(text: str | None) -> str | None:
+    """None if the row is kept; otherwise the drop reason."""
+    if text is None:
+        return "no-text"
+    lower = text.lower()
+    if any(marker in lower for marker in c.CHALLENGE_MARKERS):
+        return "stub"
+    if len(text) < c.MIN_PAGE_CHARS:
+        return "thin"
+    if lower.count("rust") < MIN_RUST_MENTIONS:
+        return "off-subject"
+    return None
+
+
+def build(team: str) -> None:
+    batch_csv = SAMPLES / f"batch-1-{team}.csv"
+    batch_rows = list(csv.DictReader(batch_csv.open(newline="")))
+    status_rows = team_status_rows(team)
+    assert len(batch_rows) == len(status_rows), (
+        f"{team}: {len(batch_rows)} batch rows vs {len(status_rows)} status rows"
+    )
+    excluded = EXCLUDED_DATA_ROWS.get(team, set())
+
+    manifest: list[dict] = []
+    kept: list[tuple[dict, str]] = []  # (batch_row with data_row, text)
+
+    for data_row, (batch_row, status_row) in enumerate(zip(batch_rows, status_rows), start=1):
+        if data_row in excluded:
+            continue
+        text = load_text(status_row)
+        reason = classify(text)
+        chars = len(text) if text is not None else 0
+        manifest.append({
+            "data_row": data_row, "id": batch_row["id"], "url": batch_row["url"],
+            "status": "dropped" if reason else "kept", "reason": reason or "", "chars": chars,
+        })
+        if reason is None:
+            kept.append((batch_row | {"data_row": data_row}, text))
+
+    BUNDLES.mkdir(parents=True, exist_ok=True)
+    slices: list[list[tuple[dict, str]]] = [[]]
+    running = 0
+    for row, text in kept:
+        piece_len = min(len(text), SLICE_TARGET_CHARS)
+        if slices[-1] and running + piece_len > SLICE_TARGET_CHARS:
+            slices.append([])
+            running = 0
+        slices[-1].append((row, text))
+        running += piece_len
+
+    row_to_slice = {}
+    for i, sl in enumerate(slices, start=1):
+        if not sl:
+            continue
+        path = BUNDLES / f"b1-{team}-{i:02d}.txt"
+        with path.open("w") as f:
+            for row, text in sl:
+                if len(text) > SLICE_TARGET_CHARS:
+                    text = text[:SLICE_TARGET_CHARS] + "\n[... truncated at 150,000 chars ...]\n"
+                header = (f"=== ROW {row['data_row']} | {row['id']} | {row['url']} | "
+                          f"{row['date']} | {row['class']} ===")
+                f.write(header + "\n" + text + "\n\n")
+                row_to_slice[row["data_row"]] = i
+
+    for entry in manifest:
+        entry["slice"] = row_to_slice.get(entry["data_row"], "")
+
+    manifest_path = BUNDLES / f"b1-{team}-manifest.csv"
+    with manifest_path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["slice", "data_row", "id", "url", "status", "reason", "chars"])
+        w.writeheader()
+        for entry in manifest:
+            w.writerow({k: entry[k] for k in w.fieldnames})
+
+    n_slices = sum(1 for sl in slices if sl)
+    n_kept = sum(1 for e in manifest if e["status"] == "kept")
+    n_dropped = len(manifest) - n_kept
+    print(f"{team}: {len(manifest)} rows processed ({len(excluded)} excluded), "
+          f"{n_kept} kept, {n_dropped} dropped, {n_slices} slices -> {manifest_path}")
+
+
+if __name__ == "__main__":
+    build(sys.argv[1])
