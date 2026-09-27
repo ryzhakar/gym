@@ -527,3 +527,5 @@
 2026-09-27T14:19 | agent:t3-r67-e | receipt | N7-r7-05, 06 VERIFIED from PMC full text
 2026-09-27T14:37 | agent:t3-r67-d | receipt | 103 ungraded r6-r7 Found ids graded: 100 rows, 19 at S>=3, 4 excluded at S0, 30 metadata-only; line 687 re-graded; verify/found-dois-graded-r67.md
 2026-09-27T14:37 | self | delegation | agent:search-script, sonnet: scripts/research/search.py, runs query files serially through OpenAlex and Crossref with backoff, writes per-capture DOI lists deduped against the teaching ledger
+2026-09-27T14:54 | agent:cache-script | receipt | attribution added to 154 re-fetched rows; swift-forum rule dropped 8; bundles rebuilt: team a slices 05-32, team b 03-34, frozen slices untouched
+2026-09-27T14:54 | self | delegation | Rust slice 1 wave 2, 3 agents per team, rolling 3 slices each: r-x-a-s1-3, -4, -5 new with a-05, a-06, a-07; r-x-b-s1-1, -2 continued with b-03, b-04; r-x-b-s1-3 new with b-05
