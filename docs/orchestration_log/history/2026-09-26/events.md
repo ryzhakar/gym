@@ -366,3 +366,6 @@
 2026-09-27T04:57 | agent:t3-n6r3-a | receipt | N6-r3-04 VERIFIED (fresh-start effect, O 0→1), N6-r3-11 VERIFIED (commit-time clustering); N6-r3-01..03 (Lally 2010) and 10 UNVERIFIABLE, paywalled
 2026-09-27T04:57 | self | delegation | agent:t-audit-r3, sonnet: saturation audit after round 3, audit/saturation-r3.md (computation shown, no script kept)
 2026-09-27T04:59 | agent:t3-n6r3-a | receipt | N5-r3-13 VERIFIED (S3 R2 O0, quasi-experimental); all teaching Tier 3 checks for rounds 1–3 closed
+2026-09-27T05:08 | agent:t-audit-r3 | receipt | audit/saturation-r3.md: no need SATURATED (N3, N6, N7 OPEN; N1, N2, N4, N5 VOID-ROUND on ungraded paywalled rows); seed coverage fails all; SURVEYED backlog 5–19 per need
+2026-09-27T05:08 | self | discovery | plan defect: capture-recapture rule 2 is undefined by construction (m=0 everywhere) because sources.csv is append-only and re-found sources are never re-recorded per round; a valid estimate needs per-round found-DOI lists in the search logs
+2026-09-27T05:08 | self | delegation | agent:t5-map-v2, fable: evidence map v2 with audit as confidence section, synthesis/evidence-map-v2.md
