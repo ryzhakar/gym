@@ -408,3 +408,4 @@
 2026-09-27T08:53 | self | failure | heartbeat turn ended on text 'Nothing to act on.' while silent; silent turns end on tool results only
 2026-09-27T08:54 | self | failure | silence broken again: answered a harness visible-output nudge with text; nudges get zero text
 2026-09-27T08:54 | self | failure | silence broken a third time: closing text after tool result
+2026-09-27T08:54 | self | failure | silence broken a fourth time: '(No text.)' is text
