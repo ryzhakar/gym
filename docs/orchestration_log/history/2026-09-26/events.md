@@ -555,3 +555,4 @@
 2026-09-27T15:06 | agent:r-x-a-s1-4 | receipt | slice a-14: 10 sources, 20 Questions, 25 Claims; lobste.rs attribution recovered by live fetch; retired; r-x-a-s1-8 new with a-19
 2026-09-27T15:07 | agent:q-n1-8a | receipt | round 8 query files: all 14 written (31-41 queries each) under capture/r8a, capture/r8b
 2026-09-27T15:07 | agent:r-x-b-s1-4 | receipt | slice b-14: 4 sources, 3 Questions, 11 Claims; last unit b-16
+2026-09-27T15:07 | agent:r-x-b-s1-5 | receipt | slice b-13: 4 sources, 5 Questions, 9 Claims; waits for rebuilt b-17
