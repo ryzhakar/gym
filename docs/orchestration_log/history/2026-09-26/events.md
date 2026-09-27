@@ -658,3 +658,5 @@
 2026-09-27T19:41 | self | decision | third pass on rows still logged Nothing new, one fresh opus extractor per team, since the residual misses are judgment at a knowledge bottleneck (owner ruling on opus placement); rule 6 gains the example 'a release note or README stating a decision and the alternative it replaced' (decided under the 2026-09-26 handover)
 2026-09-27T19:46 | agent:t4-merge2-b1 | receipt | second blind merge: 440 team-local Questions to 385 canonical; a 203, b 210, both 28; 9 groupings marked unsure; merge2/
 2026-09-27T19:46 | self | delegation | agent:t4-adjud-b1, opus, fresh: adjudicate every grouping where merge/ and merge2/ disagree, write the final batch-1 crosswalk in estimate.py's columns
+2026-09-27T19:46 | agent:cache-script | receipt | third-pass bundles: team a 60 rows kept, 12 slices T01-T12; team b 49 rows, 10 slices T01-T10; send-back found content in 30 and 52 rows
+2026-09-27T19:46 | self | delegation | third pass, opus, fresh: r-xt-a-1..3 (a-T01..T12, 4 each), r-xt-b-1..3 (b-T01..T10, 4/3/3), slices sent in sequence
