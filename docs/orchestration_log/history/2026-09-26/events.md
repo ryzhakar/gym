@@ -589,3 +589,6 @@
 2026-09-27T19:01 | agent:r-x-b-s1-8 | receipt | slice b-22: 6 sources, 13 Questions, 20 Claims; last unit b-26 (team b's final slice)
 2026-09-27T19:01 | agent:r-x-a-s1-11 | receipt | slice a-28: 1 TWiR quote thread cut at 150k chars (2018 of 2025), 5 Questions, 12 Claims; last unit a-30
 2026-09-27T19:02 | agent:r-x-a-s1-9 | receipt | slice a-26: 9 sources, 16 Questions, 16 Claims; two Voices unconfirmed from captions; last unit a-L2
+2026-09-27T19:03 | tool:search.py | receipt | round 8 Crossref pass: 14 captures, 882-1889 distinct DOIs each, unscreened (Crossref returns 50 hits per query)
+2026-09-27T19:03 | self | decision | round 8 adds a relevance screen: per need, one screener labels the union of both captures' titles blind to capture; capture-recapture runs on relevant DOIs only; OpenAlex pass after its budget resets at 03:00 (decided under the 2026-09-26 handover)
+2026-09-27T19:03 | self | commitment | tripwire laid: one-shot cron at 03:07 Sep 28 starts the round-8 OpenAlex pass; session-only
