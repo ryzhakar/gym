@@ -448,3 +448,5 @@
 2026-09-27T09:38 | agent:t2-n7-r5 | receipt | N7 round 5: 10 claims, 8 new sources, all abstract-level, 19 queries, 1 source seen; needs/n7-r5.md
 2026-09-27T09:39 | agent:cache-script | receipt | team-a batch-1 prefetch done: of 199 rows most cached; failed: books-courses 7, talks 5; team-b prefetch running
 2026-09-27T09:39 | self | delegation | pilot: r-x-a-b1-01 and r-x-a-b1-02 resumed via SendMessage, reading cached texts; token cost per source to be measured
+2026-09-27T09:40 | agent:t2-n2-r5 | receipt | N2 round 5: 10 claims, 5 sources, 34 queries, 3 full texts; reports a cache.py fetch that saved a Cloudflare stub as text, corrected by hand
+2026-09-27T09:40 | self | discovery | cache.py saves bot-challenge pages as source text; sent back to cache-script to reject stubs and rescan the cache
