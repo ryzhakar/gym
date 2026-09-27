@@ -446,3 +446,5 @@
 2026-09-27T09:37 | agent:t2-n1-r5 | receipt | N1 round 5: 12 claims N1-r5-01..12, 4 new sources, 13 queries all new to the ledger, 9 found-but-unread; needs/n1-r5.md
 2026-09-27T09:37 | agent:t2-n3-r5 | receipt | N3 round 5: 10 claims, 6 sources, 15 queries, 2 full texts, 4 abstract-only; needs/n3-r5.md
 2026-09-27T09:38 | agent:t2-n7-r5 | receipt | N7 round 5: 10 claims, 8 new sources, all abstract-level, 19 queries, 1 source seen; needs/n7-r5.md
+2026-09-27T09:39 | agent:cache-script | receipt | team-a batch-1 prefetch done: of 199 rows most cached; failed: books-courses 7, talks 5; team-b prefetch running
+2026-09-27T09:39 | self | delegation | pilot: r-x-a-b1-01 and r-x-a-b1-02 resumed via SendMessage, reading cached texts; token cost per source to be measured
