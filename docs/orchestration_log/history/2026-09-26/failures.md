@@ -119,3 +119,11 @@ What happened: at 08:40 on 2026-09-27, 28 batch-1 extractors were launched: team
 Mechanism: the Rust plan's line 104 ("team B on opus … Cost difference is the price of a valid estimate") was obeyed without checking it. Two things argued against it. First, the plan's own line 59 says to upgrade on observed unreliability, not before. Second, agentic-delegation assigns extraction to sonnet. The independence the plan wanted already comes from different framings and disjoint samples. No check was made of the cumulative load before launching. Splitting the work into 15-row slices multiplied each agent's fixed costs by 28: its binding reads and context files.
 
 Correction: all work is paused, and nothing is relaunched without the owner's word. Before any dispatch, the cumulative running load is checked. The model is picked by work type, not by a plan's line. Slices are sized to cut fixed per-agent costs.
+
+## Round prompts that made saturation unmeasurable
+
+What happened: the round-4 and round-5 dispatch prompts told surveyors to search "avoiding the obvious" and declared OpenAlex spent. The r4–r5 audit found both rounds VOID, since every field list names OpenAlex. It also found capture–recapture impossible: rounds 4 and 5 shared no S≥2 source in any need (m=0).
+
+Mechanism: fresh eyes were confused with fresh ground. Telling each round to avoid earlier angles guarantees that two rounds never catch the same source, and capture–recapture needs that overlap to estimate what is unseen. The OpenAlex exclusion was written as a budget fact and never re-checked against the field lists.
+
+Correction: rounds 6 and 7 run concurrently as independent full-population captures, with no avoid-lists and OpenAlex under backoff (prompts/round-6-7.md).
