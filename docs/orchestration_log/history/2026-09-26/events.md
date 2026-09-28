@@ -872,3 +872,6 @@
 2026-09-28T16:10 | agent:t-p56-scripts | receipt | dead unit-crate scaffold removed; 74 tests pass
 2026-09-28T16:15 | agent:r2-xb-2 | receipt | batch 2 team b slices 04-06: 4 sources, 5 Questions, 5 Claims, 2 no-decision
 2026-09-28T16:15 | self | delegation | r2-xb-2 continued: team b slices 13-15
+2026-09-28T16:17 | agent:t-p3-author-b | receipt | probe-b revision 2: 9 items from specs rev 2; 75 of 76 checks as expected; residual u01 p2 accepts a by-value-and-return callee
+2026-09-28T16:17 | self | decision | decided: u01 p2's by-value-and-return callee is accepted and declared, since it is a sound ownership move; the isomorph check reruns on revision 2
+2026-09-28T16:17 | self | delegation | t-p3-iso continued: isomorph check on probe-b revision 2
