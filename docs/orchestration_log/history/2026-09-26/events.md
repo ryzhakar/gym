@@ -870,3 +870,5 @@
 2026-09-28T16:09 | self | decision | decided: batch 2 extraction on sonnet for both teams, independence from framing and disjoint draws, never from a model split; waves of 4 agents per team, 3 slices each, fresh agents per wave to stay under 150k context
 2026-09-28T16:09 | self | delegation | wave 1: agent:r2-xa-1..4 and r2-xb-1..4, sonnet: batch 2 extraction, team a and b slices 01-12, per prompts/t2-extract.md
 2026-09-28T16:10 | agent:t-p56-scripts | receipt | dead unit-crate scaffold removed; 74 tests pass
+2026-09-28T16:15 | agent:r2-xb-2 | receipt | batch 2 team b slices 04-06: 4 sources, 5 Questions, 5 Claims, 2 no-decision
+2026-09-28T16:15 | self | delegation | r2-xb-2 continued: team b slices 13-15
