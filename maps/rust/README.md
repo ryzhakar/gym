@@ -79,12 +79,7 @@ carry `voice-unverified` in total, 0 overlapping with `voice-below-bar`.
   `r-my-rakic-on-behalf-of-the-compiler-performance-working`) give an
   illegal `type` value (`role` — a track_record kind word, not a Voice
   type) in the source chunk file; `type` left unset rather than guessed,
-  `track_record` otherwise intact. 10 MEETS Voices (`bjoernq`, `jamesmunns`, `jessebraham`,
-  `laggui`, `ssokolow`, `stefan-baumgartner`,
-  `vaultwarden-maintainers-dani-garcia-vaultwarden`, `warre-snaet`,
-  `yanshay`, `yatekii`) cite only a `gh api` command as evidence, no
-  browsable url, and so still fail the validator's track-record-url check
-  despite being genuinely established.
+  `track_record` otherwise intact.
 - **Sources carry `url`, `title`, `kind`, `language` and (for 261 of 267) a
   `date`**, transcribed from the source-frame registry
   (`frame/frame*.csv`, `samples/batch-1-team-{a,b}.csv`). `kind` is set
