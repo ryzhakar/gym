@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import shlex
 import subprocess
@@ -30,49 +31,99 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).parent))
+import record_schema  # noqa: E402
 from log import append_row, build_row  # noqa: E402
 from probe import run_probe  # noqa: E402
 from record_schema import ROOT, TIMESTAMP_FORMAT, file_path  # noqa: E402
 
 TRAINING_ROOT = ROOT / "training/rust"
 DEFAULT_ITEMS_ROOT = ROOT / "training/rust/items"  # decided: team lead, 2026-09-28
+BASH_GUARD = ROOT / "scripts/train/bash_guard.py"
 
-# Deny/allow rules for the trainer's own session (team lead, 2026-09-28): no read of any item's
-# key/, and Bash confined to the append-only logger and to cargo check/test in the unit's own crate.
-# The trainer's agent definition (P1) writes the same rules, in prose, to
-# docs/orchestration_log/recon/2026-09-28/trainer/agent/allowlist.md; this is the enforced form.
-KEY_DENY_PATTERN = "Read(training/rust/items/**/key/**)"
+# The trainer's own session's permission rules (team lead, 2026-09-28), read from
+# docs/orchestration_log/recon/2026-09-28/trainer/agent/allowlist.md — this is that spec's
+# "Claude Code permission form" turned into the settings this launch actually applies, with UNIT,
+# CRATE and RECORD substituted per unit. Not parsed from the file at run time: the file is P1's
+# prose account of the same team-lead ruling this reads directly, so the two can't format-drift but
+# also aren't mechanically coupled — flagged, not silently assumed reconciled.
+KEY_DENY_PATTERN = "Read(**/key/**)"
 
 
-def allowed_bash_patterns(unit: str) -> list[str]:
-    manifest = f"training/rust/{unit}/Cargo.toml"
-    return [
-        "Bash(uv run python scripts/train/log.py*)",
-        f"Bash(cargo check --manifest-path {manifest}*)",
-        f"Bash(cargo test --manifest-path {manifest}*)",
+def unit_paths(unit: str) -> tuple[str, str, str]:
+    """UNIT, CRATE, RECORD — absolute, as `allowlist.md` names them."""
+    unit_dir = str(ROOT / "training/rust/items" / unit)
+    crate = str(TRAINING_ROOT / unit)
+    record = str(record_schema.RECORD_DIR)
+    return unit_dir, crate, record
+
+
+def permission_settings(unit: str) -> dict:
+    """`allowlist.md` § Allow/Deny, substituted for `unit`: a `--settings` payload, `permissions` plus
+    the `bash_guard.py` `PreToolUse` hook for what a permission pattern alone cannot pin (chaining
+    after a `cargo check*`/`cargo test*` prefix; a command's cwd — allowlist.md § Open points 1, 3)."""
+    unit_dir, crate, record = unit_paths(unit)
+    allow = [
+        f"Read({unit_dir}/attempt.md)",
+        f"Read({unit_dir}/example.md)",
+        f"Read({unit_dir}/hints.yaml)",
+        f"Read({unit_dir}/reuse-1/**)",
+        f"Read({unit_dir}/reuse-2/**)",
+        f"Read({unit_dir}/unshown/**)",
+        f"Read({crate}/**)",
+        f"Read({record}/**)",
+        f"Glob({crate}/**)",
+        f"Bash(uv run python {ROOT}/scripts/train/log.py turn *)",
+        "Bash(cargo check*)",
+        "Bash(cargo test*)",
     ]
+    deny = [
+        KEY_DENY_PATTERN,
+        "Glob(**/key/**)",
+        "Read(**/probe-*/**)",
+        "Glob(**/probe-*/**)",
+        "Bash(cargo run*)",
+        "Bash(cargo build*)",
+        "Bash(cargo add*)",
+        "Bash(cargo install*)",
+        "Bash(git *)",
+    ]
+    return {
+        "permissions": {"allow": allow, "deny": deny},
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"uv run python {BASH_GUARD} --crate {shlex.quote(crate)}",
+                            "timeout": 5,
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+
+def new_session_id() -> str:
+    return datetime.now().strftime(TIMESTAMP_FORMAT)
 
 
 def trainer_launch_command(unit: str) -> str:
-    """The trainer hand-off command, permission flags included: `dontAsk` so a call outside the
-    allowlist is refused outright rather than put to the learner (no lock-out exists otherwise —
-    fable-plan.md § 5 sessions.assistant_closed)."""
-    parts = [
-        "claude",
-        "--agent",
-        "rust-trainer",
-        "--permission-mode",
-        "dontAsk",
-        "--allowedTools",
-        " ".join(allowed_bash_patterns(unit)),
-        "--disallowedTools",
-        KEY_DENY_PATTERN,
-        "--",
-        "--unit",
-        unit,
-        "--record",
-        "training/rust/record/",
-    ]
+    """The trainer hand-off command: the unit's permission settings inline (`--settings`), plus
+    `dontAsk` so a call outside them is refused outright, never put to the learner (no lock-out
+    exists otherwise — fable-plan.md § 5 sessions.assistant_closed). The trailing prompt carries the
+    session id, unit id, item directory and record tail the trainer's own definition expects."""
+    unit_dir, _crate, record = unit_paths(unit)
+    session_id = new_session_id()
+    settings = json.dumps(permission_settings(unit), separators=(",", ":"))
+    prompt = (
+        f"session {session_id}; unit {unit}; items {unit_dir}; record {record}\n"
+        "sessions tail:\n" + "\n".join(record_tail("sessions")) + "\n"
+        "items tail:\n" + "\n".join(record_tail("items"))
+    )
+    parts = ["claude", "--agent", "rust-trainer", "--permission-mode", "dontAsk", "--settings", settings, prompt]
     return " ".join(shlex.quote(part) for part in parts)
 
 

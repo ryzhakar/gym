@@ -93,3 +93,76 @@ def test_append_refuses_a_missing_file(tmp_path: Path, monkeypatch: pytest.Monke
     row = log.build_row("sessions", dict(VALID_SESSION_FIELDS))
     with pytest.raises(SystemExit, match="no such record file"):
         log.append_row("sessions", row)
+
+
+@pytest.fixture
+def turns_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(record_schema, "RECORD_DIR", tmp_path)
+    path = tmp_path / "turns.csv"
+    path.write_text(",".join(record_schema.FILES["turns"]) + "\n", encoding="utf-8")
+    return path
+
+
+def test_parse_turn_flags_matches_the_trainer_definitions_literal_invocation() -> None:
+    fields = log.parse_turn_flags(
+        ["--session", "2026-09-28T10:00", "--n", "1", "--kind", "hint-1", "--item", "unit-1-attempt", "--request", "hint"]
+    )
+    assert fields == {"session": "2026-09-28T10:00", "n": "1", "kind": "hint-1", "item": "unit-1-attempt", "request_kind": "hint"}
+
+
+def test_parse_turn_flags_maps_request_none_to_blank() -> None:
+    fields = log.parse_turn_flags(
+        ["--session", "s", "--n", "1", "--kind", "instruction", "--item", "unit-1-example", "--request", "none"]
+    )
+    assert fields["request_kind"] == ""
+
+
+def test_turn_fields_computes_minute_from_the_session_id_never_a_hand_typed_one() -> None:
+    session_id = (datetime.now() - timedelta(minutes=5)).strftime(record_schema.TIMESTAMP_FORMAT)
+    fields = log.turn_fields(
+        ["--session", session_id, "--n", "1", "--kind", "hint-1", "--item", "unit-1-attempt", "--request", "hint"]
+    )
+    assert float(fields["minute"]) == pytest.approx(5.0, abs=1.0)  # --session truncates to the minute
+
+
+def test_turn_fields_refuses_a_malformed_session_id() -> None:
+    with pytest.raises(SystemExit, match="--session is not"):
+        log.turn_fields(["--session", "not-a-timestamp", "--n", "1", "--kind", "hint-1", "--item", "x", "--request", "hint"])
+
+
+def test_turn_alias_round_trips_through_build_and_append(turns_csv: Path) -> None:
+    session_id = datetime.now().strftime(record_schema.TIMESTAMP_FORMAT)
+    fields = log.turn_fields(
+        ["--session", session_id, "--n", "1", "--kind", "hint-1", "--item", "unit-1-attempt", "--request", "hint"]
+    )
+    row = log.build_row("turns", fields)
+    log.append_row("turns", row)
+    assert "hint-1" in turns_csv.read_text(encoding="utf-8")
+
+
+def test_main_turn_alias_appends_to_turns_csv(turns_csv: Path) -> None:
+    session_id = (datetime.now() - timedelta(minutes=1)).strftime(record_schema.TIMESTAMP_FORMAT)
+    log.main(
+        [
+            "log.py",
+            "turn",
+            "--session",
+            session_id,
+            "--n",
+            "1",
+            "--kind",
+            "feedback",
+            "--item",
+            "unit-1-reuse-1",
+            "--request",
+            "none",
+        ]
+    )
+    with turns_csv.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 1
+    assert rows[0]["session"] == session_id
+    assert rows[0]["kind"] == "feedback"
+    assert rows[0]["item"] == "unit-1-reuse-1"
+    assert rows[0]["request_kind"] == ""
+    assert float(rows[0]["minute"]) == pytest.approx(1.0, abs=1.0)  # --session truncates to the minute

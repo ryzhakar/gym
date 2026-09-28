@@ -6,6 +6,9 @@ Run: `uv run pytest scripts/train/tests/test_session.py`. Needs `cargo` on PATH.
 from __future__ import annotations
 
 import csv
+import json
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -112,28 +115,86 @@ def read_workspace_members(root: Path) -> list[str]:
     return session.read_members(root / "training/Cargo.toml")
 
 
-def test_launch_command_denies_key_reads_and_scopes_bash_to_the_unit_crate() -> None:
+def settings_from_command(command: str) -> dict:
+    tokens = shlex.split(command)
+    return json.loads(tokens[tokens.index("--settings") + 1])
+
+
+def test_launch_command_carries_the_full_allowlist() -> None:
     command = session.trainer_launch_command("unit-1")
+    settings = settings_from_command(command)
 
     assert "--permission-mode dontAsk" in command
-    assert "--disallowedTools" in command
-    assert session.KEY_DENY_PATTERN in command
-    assert "training/rust/items/**/key/**" in command
+    assert "--agent rust-trainer" in command
 
-    for pattern in session.allowed_bash_patterns("unit-1"):
-        assert pattern in command
-    assert "training/rust/unit-1/Cargo.toml" in command
-    # not a blanket Bash allowance — every allowed Bash entry names a specific command
-    assert "Bash(*)" not in command
-    assert "'Bash'" not in command
+    allow, deny = settings["permissions"]["allow"], settings["permissions"]["deny"]
+    assert session.KEY_DENY_PATTERN in deny
+    assert "Read(**/probe-*/**)" in deny
+    assert "Bash(cargo run*)" in deny
+    assert "Bash(git *)" in deny
+    unit_dir, crate, record = session.unit_paths("unit-1")
+    for suffix in ("attempt.md", "example.md", "hints.yaml", "reuse-1/**", "reuse-2/**", "unshown/**"):
+        assert f"Read({unit_dir}/{suffix})" in allow
+    assert f"Read({crate}/**)" in allow
+    assert f"Read({record}/**)" in allow
+    assert f"Glob({crate}/**)" in allow
+    assert "Bash(cargo check*)" in allow
+    assert "Bash(cargo test*)" in allow
+    # not a blanket Bash allowance — the log.py entry names the exact invocation
+    assert not any(pattern == "Bash(*)" for pattern in allow)
+
+    hook = settings["hooks"]["PreToolUse"][0]
+    assert hook["matcher"] == "Bash"
+    assert str(session.BASH_GUARD) in hook["hooks"][0]["command"]
+    assert f"--crate {crate}" in hook["hooks"][0]["command"]
 
 
-def test_launch_command_scopes_cargo_to_the_named_unit_only() -> None:
-    command_a = session.trainer_launch_command("unit-1")
-    command_b = session.trainer_launch_command("unit-2")
+def pattern_matches(pattern: str, path: str) -> bool:
+    """Whether a `Tool(glob)` permission pattern's glob matches `path` — `**` any run of characters,
+    a lone `*` no `/`. A static check of the pattern text session.py emits, not a live claude-CLI
+    run: no nested `claude` session was spawned to confirm the real matcher behaves this way."""
+    inner = pattern[pattern.index("(") + 1 : -1]
+    out, i = [], 0
+    while i < len(inner):
+        if inner[i : i + 2] == "**":
+            out.append(".*")
+            i += 2
+        elif inner[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(inner[i]))
+            i += 1
+    return re.fullmatch("".join(out), path) is not None
 
-    assert "training/rust/unit-2/Cargo.toml" not in command_a
-    assert "training/rust/unit-1/Cargo.toml" not in command_b
+
+def test_a_read_of_any_key_path_is_denied_by_the_pattern() -> None:
+    unit_dir, _crate, _record = session.unit_paths("unit-1")
+    key_paths = [
+        f"{unit_dir}/probe-a/key/solution.rs",
+        f"{unit_dir}/key/notes.md",
+        f"{session.ROOT}/training/rust/items/baseline/item-1/key/tests.rs",
+    ]
+    for path in key_paths:
+        assert pattern_matches(session.KEY_DENY_PATTERN, path), f"deny pattern misses {path}"
+
+    settings = settings_from_command(session.trainer_launch_command("unit-1"))
+    for path in key_paths:
+        for allow_pattern in settings["permissions"]["allow"]:
+            if allow_pattern.startswith(("Read(", "Glob(")):
+                assert not pattern_matches(allow_pattern, path), f"{allow_pattern} wrongly admits {path}"
+
+
+def test_launch_command_scopes_the_hook_to_the_named_unit_only() -> None:
+    _, crate_1, _ = session.unit_paths("unit-1")
+    _, crate_2, _ = session.unit_paths("unit-2")
+    settings_1 = settings_from_command(session.trainer_launch_command("unit-1"))
+    settings_2 = settings_from_command(session.trainer_launch_command("unit-2"))
+
+    hook_command_1 = settings_1["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    hook_command_2 = settings_2["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert crate_1 in hook_command_1 and crate_2 not in hook_command_1
+    assert crate_2 in hook_command_2 and crate_1 not in hook_command_2
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
