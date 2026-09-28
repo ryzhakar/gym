@@ -8,7 +8,7 @@ Order: census gate → t4-audit → t4-merge → t4-merge-check → estimate.py.
 
 ## Census gate (script, no agent)
 
-Run `uv run python GYM/scripts/map/census.py --recon RECON --batch n --out RECON/audit/`. It writes `audit/census-b{n}.md` and `audit/census-b{n}-population.csv`, and exits 1 while any row is flagged: a malformed read-log line, a Nothing new row without a valid `reason-code:` and `reason:`, or a reason that uses the opposition vocabulary.
+Run `uv run python GYM/scripts/map/census.py --recon RECON --batch n --out RECON/audit/`. It writes `audit/census-b{n}.md` and `audit/census-b{n}-population.csv`, and exits 1 while any row is flagged: a malformed read-log line, a Nothing new row without a valid `reason-code:` and `reason:`, or a reason that cites missing opposition or counts Voices (`census.py` FORBIDDEN, calibrated in `batch-2-prep.md` § 7).
 
 On exit 1, give the flagged rows of each team to one fresh extractor per team per ≤15 rows, under `prompts/t2-extract.md` unchanged. It writes `team-TEAM/readlog-b{n}-fixK.csv` and `extract-b{n}-fixK.md`, which supersede earlier entries for those rows. Then re-run the census. The audit draws only after the census exits 0. A flagged row is not an audit miss.
 

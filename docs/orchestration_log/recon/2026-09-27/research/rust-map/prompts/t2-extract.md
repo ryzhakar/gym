@@ -29,7 +29,7 @@ Skeleton: PLAN lines 368–386 (t2 extractor). Where this file differs from it, 
   - `no-decision`: Rust content, but no declared Position (rule 8).
   - `no-rust-voice`: the only declared Positions come from Voices with no Rust connection in the source (rule 9).
 
-  The reason sentence says what the source contains. It never mentions agreement, disagreement, opposition, debate, or how many Voices speak. A script checks every reason before the audit (`scripts/map/census.py`). A row it flags goes back to a fresh extractor.
+  The reason sentence says what the source contains. It never cites the absence of disagreement, opposition, dispute, pushback, or a second, competing or opposing Voice or view, and it never counts Voices. Naming what an off-subject source is about ("a Swift syntax debate") is allowed. A script checks every reason before the audit (`scripts/map/census.py`). A row it flags goes back to a fresh extractor.
 
 ## Rules
 

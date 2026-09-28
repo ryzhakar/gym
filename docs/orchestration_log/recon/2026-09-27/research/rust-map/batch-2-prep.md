@@ -22,7 +22,7 @@ Preparer: r-batch2-prep, 2026-09-28. Prime directive: one bar for the whole batc
 |---|---|---|---|
 | P1 | Rules 6–9 folded into one numbered list. Rule 8 now carries the lead's strike list (diagnoses, support requests, tentative plans, off-Question). Rule 9 says track record is never the extractor's test. | `prompts/t2-extract.md` § Rules | `audit/audit-b1-sendback.md` header (rule 6 re-worded mid-batch); `audit-b1-third.md` line 7 (rules 8–9 added); `strike-b1-third.md` lines 7–14 (strike list); `audit-b1-third.md` § Notes D1 (rule-9 misread by both teams); `slice-1-review.md` line 125 |
 | P2 | The batch-1 audit bar, stated to the extractor | `t2-extract.md` § The audit bar | `audit-b1.md` line 51; `audit-b1-sendback.md` line 52; `audit-b1-third.md` lines 72, 74 (the third pass's bar, the latest; the earlier two are narrower wordings of the same bar) |
-| P3 | One Nothing-new format, with `reason-code:` (off-subject, no-decision, no-rust-voice) and a `reason:` sentence that never mentions opposition or how many Voices speak | `t2-extract.md` § Outputs | `audit-b1-sendback.md` line 122 (three formats in use); `audit-b1.md` line 12 (census 11/97 and 30/101 on the opposition ground) |
+| P3 | One Nothing-new format, with `reason-code:` (off-subject, no-decision, no-rust-voice) and a `reason:` sentence that never cites missing opposition or counts Voices | `t2-extract.md` § Outputs | `audit-b1-sendback.md` line 122 (three formats in use); `audit-b1.md` line 12 (census 11/97 and 30/101 on the opposition ground) |
 | P4 | Read log: exactly 7 fields, comma fields quoted, no prose in integer columns | `t2-extract.md` § Outputs | `audit-b1.md` lines 121–122 |
 | P5 | `voice:` holds the name or handle only; qualifiers move to a new `connection:` field | `t2-extract.md` § Outputs | `slice-1-review.md` line 125 (25 ids for 18 people from extractor naming); `maps/rust/voices/` holds ids such as `antimora-tracel-ai-burn-maintainer` next to `antimora` (read only) |
 | P6 | A book's or course's front page is a stub, so the row is unreachable; chapters must be read | `t2-extract.md` rules 1, 7 | `audit-b1-third.md` line 132 (f000149, f000217) |
@@ -72,7 +72,7 @@ Batch 2 projection. The Claim count scales batch 1's 771 Claims per 396 rows, ab
 | stage | base runs | basis |
 |---|---|---|
 | extraction | 40 | ⌈292/15⌉ = 20 per team (`fable-plan.md` line 108) |
-| census fix | 2 | one fresh extractor per team, assuming ≤ 15 flagged rows each |
+| census fix | 2 | one fresh extractor per team. Batch 1's third-pass flag rate (1/47, 1/33; § 7) on about 130 nothing-new rows per team gives ≤ 3 flags each |
 | audit | 2 | one per team: about 13 nothing-new re-reads, every drop, 20 Claims |
 | merge + merge check | 2 | P12 |
 | Claim verification | 8 | 7 at batch 1's ~166 Claims per run, plus 1 adjudicator |
@@ -85,9 +85,10 @@ Batch 2 projection. The Claim count scales batch 1's 771 Claims per 396 rows, ab
 Contingent runs, each fixed in advance by the frozen rules:
 - audit send-back: +21 per failed team (20 extractors and a re-audit). Batch 1 failed both teams on pass 1 and pass 2.
 - full strike check: about +12 per team (~570 Claims at 50 per run).
+- census at batch 1's first-pass flag rate (23%, 39%; § 7) instead of its third-pass rate: +6 (30–50 flagged rows per team, 3–4 fix runs each instead of 1).
 - merge check < 90%: +2.
 
-Worst case: 79 + 42 + 24 + 2 = 147.
+Worst case: 79 + 42 + 24 + 2 + 6 = 153.
 
 Runs per unseen Question cannot be projected honestly. It depends on how many new canonical Questions batch 2 yields, and the English second draw and the first non-English draw have no yield history. Batch 1 gives about 4 seen Questions per run (399 from about 100 runs). After batch 2, compute runs ÷ (canonical ids in `merge-b2/crosswalk-b2.csv` absent from `merge-v3/crosswalk-b1.csv`).
 
@@ -97,7 +98,6 @@ Prerequisites outside this preparer's scope, still open before the first read:
 - **No re-sample mode.** The plan says unreachable rows are re-sampled by the script (`fable-plan.md` line 111), but `sample.py` has no such mode, and the files read here do not record whether batch 1's unreachable rows (A 10, B 3, `slice-1-review.md` line 9) were replaced. The draw holds 3 (team a) and 5 (team b) paywalled book pages. Until a mode exists, those rows stay unread.
 - **Prefetch.** Chapter enumeration for books and docs sites, and a retry window for yt-dlp (`slice-1-review.md` line 125), belong to `scripts/research/`, outside this preparer's code scope. P6 makes an extractor mark a front page unreachable rather than read, but only the bundler can fetch the chapters. 23–25 youtube.com rows per team face the 429 risk (`prefetch-b1.md` line 22).
 - **Compile.** Compile has no prompt file. Its dispatch must turn `fill/checks-b2.csv` into `MAP/checks/` records, or validator rule 4 still gates nothing. The validator's 417 FAILs (`slice-1-review.md` line 53) are compile- and verify-side and untouched.
-- **Census calibration.** The census gate has not been run against batch 1's extracts to check that it recovers the auditor's 11/97 and 30/101. Reading those files needs a ruling under common.md rule 3, which was asked of the lead. It is a phrase gate, not a re-read: a reason that avoids the words but rests on the forbidden ground passes it. The audit remains the check.
 
 Limits of the design that the numbers should be read against:
 - **Strata that get no second English batch.** web, distributed, decentralized-iroh, frontend, cloud-workers and swift-interop are not drawn as English cells. The first four get zh-only reads plus incidental English rows through secondary hints (en web 17–18 rows per team). cloud-workers and swift-interop get almost nothing. `estimate.py` part 2 counts the batches present in a stratum's crosswalk rows, whatever cell drew them, so it can PASS for a stratum no batch-2 cell targeted. Read part 2 against `samples/batch-2.md`.
@@ -110,17 +110,19 @@ Limits of the design that the numbers should be read against:
 - **Question identity.** The grain rule is fixed, but batch 2's merge may re-cut batch-1 canonical ids. Identity stability (`slice-1-review.md` line 131) should be measured from `merge-v3/crosswalk-b1.csv` against the batch-2 crosswalk before grading.
 - **Correlated misses.** Misses shared by the two Claude teams stay invisible to both estimators (`fable-plan.md` line 178, § 9 T1).
 
-## 6. Hashes of the files this preparation wrote (computed after the last edit)
+- **Census is a phrase gate.** It does not re-read the source. A reason that avoids the listed phrasings but still rests on the forbidden ground passes it, so the audit remains the check (§ 7).
+
+## 6. Hashes of the files this preparation wrote (computed after the last edit, 2026-09-28)
 
 | file | sha256 |
 |---|---|
-| `prompts/t2-extract.md` | `143907dc070fea3fd7b0074eb17e6c86bb1dc31b0ed694d38aed22b8dc39c73f` |
+| `prompts/t2-extract.md` | `4ee00bd528b56598a020435183472f81e302a6c252fd64279b503b8b8ba7b59d` |
 | `prompts/t3-fill.md` | `adc6e95dde30dd758309c1131f49c727d2cc92a26ca9db90ed424cc3b8f2935d` |
-| `prompts/t4-merge.md` | `314d09e25a7bddc54c76ff7405668c35a35c8a2518b3921a060a998af21321b3` |
+| `prompts/t4-merge.md` | `ab889f51cb8dfb4754c7c9dd9abc84c6791591386b35525b5c4f22bfd71f6002` |
 | `prompts/t4-fill-resolve.md` | `5e787782a02abee09cb67af24f130c9f0b35e01b0a5adb9a4360cfa9f8eabb1e` |
 | `scripts/map/sample.py` | `f8c3be0c9ee4d3a6a5a51058ff8aa4b23364085dd5479efaddbc3e714b64eda5` |
 | `scripts/map/prepare_frame.py` | `1a60c0ae220928e660cfce38d3fe84a727564f50352a915f67ccb3afe5cc8ec9` |
-| `scripts/map/census.py` | `016a30aeb7b735d56b1451048d84b1524864fe3b55112581a36b5cdfdc5a5bf8` |
+| `scripts/map/census.py` | `e4aa9fded74a38cd62aa777a5372fa995e704a87abe15ac2286580c8ad441409` |
 | `scripts/map/test_sample.py` | `d2d56241c1057aa5ee258d72911c96bc85fa4d0d884e96032edfe59e1e957cb1` |
 | `scripts/map/test_census.py` | `b9ac74c7e617d09cbba82ed07ab87598b2118d47d5e271bf59b6cdeca8cd5860` |
 | `frame/frame-swift-fix.md` | `687f5592b865c3c740668efe99db866d7e89ac55aedc73cb2b4ee4818b8d6686` |
@@ -132,3 +134,38 @@ Limits of the design that the numbers should be read against:
 | `samples/batch-2.md` | `e913c9cfdc7eb12566fac93209fd8fa439cca1c1b75b40f35872d0430ec5c73c` |
 
 `batch-2-prep.md` itself is not hashed here.
+
+## 7. Census calibration on batch 1 (lead ruling 2026-09-28)
+
+The lead allowed the census to run over `team-{a,b}/extract-b1-*.md` and `readlog-b1-*.csv`. Only counts and matched reason lines were read.
+
+**Method.** Batch 1's reasons use the old formats: `### Nothing new` followed by text, a bare "Nothing new. Reason:", and "Not applicable" blocks. `census.py` as written flags all of them for a missing `reason-code:`, which is the intended format gate for batch 2. To calibrate the phrase test alone, a throwaway parser took the text of every Nothing-new block per section and applied the pattern to it.
+- first pass: every file except `-sR*` and `-sT*`;
+- send-back: `-sR*`;
+- third pass: `-sT*`.
+
+The parser counts every block, so its denominators run higher than the auditor's (102 against 97 for team A, 122 against 101 for team B).
+
+**First pattern: rejected.** It banned every opposition word (disagree, debate, contested and others). It flagged 73 of 102 (A) and 81 of 122 (B) first-pass reasons against the auditor's 11 and 30. Most of its hits describe an off-subject topic ("a Swift Evolution thread debating syntax"), or use the plan skeleton's own allowed ground ("raises no contested point", `fable-plan.md` line 384).
+
+**Adopted pattern** (`census.py` FORBIDDEN). It flags only reasons that cite missing opposition or count Voices: no disagreement, dispute, pushback or counter-argument; a competing, opposing or other Voice or view; single or one Voice; "against another …". It does not flag topic words or "contested".
+
+| pass | team | reasons | flagged | auditor's census | auditor-named rows caught |
+|---|---|---|---|---|---|
+| first | a | 102 | 23 | 11 of 97 | — |
+| first | b | 122 | 47 | 30 of 101 | — |
+| send-back | a | 53 | 9 | 3 (f004169, f008237, f009704) | 3 of 3 |
+| send-back | b | 50 | 7 | 2 (f002233, f002499), plus 1 false positive (f001246) | 2 of 2; f001246 also flagged |
+| third | a | 47 | 1 (f002488 "no one takes a side") | — | — |
+| third | b | 33 | 1 (f004371 "no Rust practitioners in disagreement") | — | — |
+
+**Reading.**
+- Recall on the 5 rows the auditors named is 5 of 5.
+- The pattern flags about twice the auditor's count. The extra hits are reasons like "no disagreement appears" (f008381, f002542), which state the ground without naming a Voice.
+- The frozen t2 prompt now bans exactly what the pattern flags (§ Outputs, reason sentence). Under it, a flag is a prompt violation, not a judgment call.
+- The flag rate fell from 23–39% at the first pass to 2–3% at the third, after rule 6 was in force. The base projection (§ 4) uses the third-pass rate; the contingency uses the first-pass rate.
+
+**Limits.**
+- The auditor's census was itself a phrase match, never published as a pattern, so agreement on counts is not agreement on rows. Only the 5 named rows are checkable.
+- A reason can rest on the forbidden ground in words the pattern does not list, and pass.
+- The throwaway parser is not `census.py`'s parser, because the formats differ. `census.py`'s own parser is tested only on the batch-2 format (`test_census.py`).
