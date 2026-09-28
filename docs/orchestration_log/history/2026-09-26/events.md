@@ -815,3 +815,6 @@
 2026-09-28T13:54 | agent:t-p2-curriculum | receipt | curriculum v0: 8 mechanism units over the six core clusters, 4 judgment units needs-arguments; 6-item baseline spec; check.py 240 PASS 0 FAIL 8 WARN; judgment units fail worked-example check C1; map lacks iterator, Result, ? and Fn-trait Concepts
 2026-09-28T13:54 | self | decision | decided: items are a committed product under training/rust/items/<unit>/; Stage 0 authors baseline and u01-u03; the fable review of P2 waits until judgment units are authored
 2026-09-28T13:54 | self | delegation | agent:t-p3-author-a, opus: baseline items and u01-u03 items with keys, hints and probe-a, plus probe-b specs; then agent t-p3-author-b, opus, writes probe-b isomorphs from the specs only
+2026-09-28T13:55 | agent:t-p1-trainer | receipt | trainer v0.1: 40 rules; verbatim-line exception cut; hint-improv removed; tools Read, Glob, Bash under an allowlist; allowlist.md with 3 defaulted open points (shell chaining hook, syntax check, cwd pinning)
+2026-09-28T13:55 | agent:r-args-1 | receipt | arguments chunk 00: 32 Questions, all Sources read from cache; Positions with only below-bar or no Claims marked no argument; 14 value candidates flagged
+2026-09-28T13:55 | self | delegation | t-p1-eval continued: re-evaluate trainer v0.1
