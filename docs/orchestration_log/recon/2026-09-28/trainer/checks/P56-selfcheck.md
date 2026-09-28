@@ -121,6 +121,54 @@ accepted as a flag, matching rule 11 ("the trainer has no clock"). Covered by si
 `trainer.md` and `allowlist.md` were not re-read against this change, so if either changes rule 36's
 flag names later, `TURN_FLAG_COLUMNS` in `log.py` needs updating with them.
 
+## Hook rebuilt to the P1 eval v0.1's exact remaining finding, adversarially tested (team lead, 2026-09-28)
+
+The eval (`trainer/checks/P1-prompt-eval.md` § v0.1, "Remaining findings") named the exact residual
+gap: `cargo check*`/`cargo test*` prefix patterns still admit shell chaining to `key/`, the fix is
+"designed, not built or tested," and closing it requires "(a) the PreToolUse hook is built, (b) an
+adversarial Bash-chaining attempt is run against it and fails." That eval predates my first hook
+build in this file's earlier section (`bash_guard.py`, single-directory Bash-only matcher, inline
+`--settings` JSON) — team lead's follow-up asked for a wider rebuild, which supersedes it:
+
+- **Location**: `scripts/train/hooks/trainer_guard.py` (old `scripts/train/bash_guard.py` and its
+  test deleted — `git status` now shows both as `D`, for the next commit to pick up).
+- **Chain tokens widened**: `;`, `&&`, `\|\|`, `\|`, `>`, `<`, backtick, `$(` (added `<` and `$(`).
+- **Denies a `key`/`probe-*` path segment named in a Bash command even with no chaining** — e.g.
+  `cat training/rust/items/u01/key/x` alone, not just `cargo test; cat key/x` — belt-and-suspenders
+  under the same tool the eval flagged.
+- **Matcher widened to `Bash|Read|Glob`**: the hook now also denies a `Read`/`Glob` call whose
+  argument names a `key`/`probe-*` path segment, a second check on top of `allowlist.md`'s own
+  permission-list deny (which the eval called "solid" already) — checked against every string value
+  in `tool_input`, not a guessed field name, since the exact Read/Glob argument key isn't pinned down
+  here.
+- **`--settings` now a generated file**, not inline JSON: `session.write_settings_file(unit)` writes
+  `training/rust/<unit>/.trainer-settings.json` fresh on every `trainer_launch_command` call (never
+  committed, same as the crate tree it sits beside).
+
+New test file `test_trainer_guard.py` (13 tests) covers exactly what was asked: the chained command
+is denied (all 8 tokens, parametrized) and a Read of a `key/` path is denied (`check()` directly and
+through a real subprocess over stdin); the logger call and a plain `cargo test --manifest-path
+training/rust/u01/Cargo.toml` are allowed (both the team lead's literal examples).
+
+**Adversarial run against the real generated command** (the eval's condition (b), literally, not
+just unit-tested): built `session.write_settings_file`'s actual hook command for a scratch unit,
+then piped the eval's own named attack string through it as a real subprocess:
+
+```
+hook command: uv run python /Users/ryzhakar/pp/gym/scripts/train/hooks/trainer_guard.py --crate /Users/ryzhakar/pp/gym/training/rust/adv-unit
+payload command: cargo test --manifest-path training/rust/adv-unit/Cargo.toml; cat training/rust/items/adv-unit/key/solution.rs
+decision: {"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "chaining token ';' is not allowed in a trainer session Bash call"}}
+```
+
+Denied. The scratch unit's crate directory was removed afterward; `training/rust/` holds only
+`record/` and `items/` (P3's, not mine) again.
+
+```
+============================== 57 passed in 1.62s ==============================
+```
+
+`check_record.py` still `record: 0 FAIL`.
+
 ## Coverage against the original brief's four required cases
 
 - malformed row refused: `test_log.py::test_malformed_row_is_refused` (6 mutations) plus `test_hand_typed_timestamp_is_refused`.
