@@ -749,3 +749,4 @@
 2026-09-28T11:48 | self | delegation | agent:r-voice-1..4, sonnet: Voice verification, chunks 00-03, 04-07, 08-11, 12-15, output verify/voices-<chunk>.md
 2026-09-28T11:57 | agent:t5-compile-b1 | receipt | compile correction: 1354 FAIL, all declared gaps: Voice type, track_record and its url 399 each (Voice pass running), 70 Claims with no day-precision date, 6 living-doc Sources undated, 9 untagged Positions, 2 Questions without domains; Source fields and quotes closed
 2026-09-28T11:57 | self | decision | decided: map v0.1 committed provisional with its declared gaps; the Voice pass closes 1197 of the 1354 FAIL; the dateless Claims stay unset, never guessed
+2026-09-28T12:03 | agent:r-voice-4 | receipt | voices chunk-12: 20 MEETS, 3 FAILS, 0 UNKNOWN; chunk-13: 17 MEETS, 6 FAILS, 1 UNKNOWN (24 of 25 reported); on 14-15
