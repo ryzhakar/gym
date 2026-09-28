@@ -35,3 +35,7 @@ CACHE = /Users/ryzhakar/pp/gym/docs/orchestration_log/recon/cache/ — shared by
 2. After any successful fetch, save the full text before using it: key = DOI lowercased with `/` → `_`, or for a URL without DOI the first 12 hex of `sha1(url)`; text to CACHE/<key>.txt (pdftotext -layout for PDFs; readable text for HTML, transcripts for talks); append one row to CACHE/index.csv: `key,doi_or_url,route,fetched_at,agent,chars`.
 3. Once `scripts/research/cache.py` exists, use `uv run python /Users/ryzhakar/pp/gym/scripts/research/cache.py get <doi-or-url>` instead; it does 1–2 and prints the text path.
 4. Abstract-only text is saved as CACHE/<key>.abstract.txt with route `abstract`; it never counts as full text.
+
+## Scratch
+
+Keep temporary files in your own directory, /private/tmp/gym-scratch/<your agent name>/; never write scratch to a shared path such as /tmp directly (decided 2026-09-28, after concurrent agents overwrote each other).

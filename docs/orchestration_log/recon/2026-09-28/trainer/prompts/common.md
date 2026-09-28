@@ -18,3 +18,7 @@ Rules:
 4. Cite by path and line. Never paste another file's content into yours.
 5. No owner questions. Write open points with a default.
 6. Final message: a 3-sentence summary suitable for a notification, naming your outputs.
+
+## Scratch
+
+Keep temporary files in your own directory, /private/tmp/gym-scratch/<your agent name>/; never write scratch to a shared path such as /tmp directly (decided 2026-09-28, after concurrent agents overwrote each other).
