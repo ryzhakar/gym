@@ -788,3 +788,4 @@
 2026-09-28T13:18 | agent:r-claim-2 | receipt | applied the verbatim rule to chunks 05-07 before the stand-down landed: 4 quotes to UNFAITHFUL, 1 to DATE-WRONG; 2 chunk-04 candidates flagged; adjudicator told to re-read
 2026-09-28T13:23 | agent:r-claim-adj | receipt | adjudication: 653 CONFIRMED, 7 DATE-WRONG, 4 UNFAITHFUL; random 10% recheck 0 of 31 disagree (seed 20260927); built from stale chunk files and left noted misquotes and date drift CONFIRMED
 2026-09-28T13:23 | self | delegation | r-claim-adj continued: re-read chunks 05-07, apply the rule to every noted row across all files, fix CSV quoting
+2026-09-28T13:25 | agent:r-claim-adj | receipt | adjudication rebuilt: 648 CONFIRMED, 8 DATE-WRONG, 8 UNFAITHFUL of 664; csv parses, 9 columns; 6 verifier edits independently rechecked; random recheck 0 of 31
