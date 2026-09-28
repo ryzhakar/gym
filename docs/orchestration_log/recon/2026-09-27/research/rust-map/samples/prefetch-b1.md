@@ -103,6 +103,23 @@ All 8 off-subject drops in this round are forums.swift.org rows caught by the ne
 
 Output: `samples/bundles/b1-{team}-{jj}.txt` (66 files total, including the 6 frozen: team-a 32, team-b 34), `samples/bundles/b1-team-a-manifest.csv`, `samples/bundles/b1-team-b-manifest.csv` (frozen rows unchanged in place, all other rows replaced).
 
+**lobste.rs/HN attribution + wider freeze (round 4).** `lobsters-json` carried comment text with no username (`row f005516`, in slice a-15, flagged by a surveyor); the same gap existed for a Hacker News route that didn't exist yet. Fixed in `cache.py`: `route_lobsters` now reads lobste.rs's own JSON fields (`commenting_user`/`created_at`, `submitter_user` for the story) instead of the unattributed HTML scrape it fell back to before; a new `route_hn` fetches `hn.algolia.com/api/v1/items/<id>` (`author`/`created_at`) for `news.ycombinator.com` URLs, wired into `fetch_by_class_route`. Both use the same `@<login> · <date>:` prefix as GitHub/Discourse/reddit. No `news.ycombinator.com` URL actually appears in either batch-1 CSV, so the HN route is provisioned but untested against batch data; verified live instead against `hn.algolia.com/api/v1/items/1` (Aug '06 PG/sama thread) — correct authors and dates.
+
+Re-fetched the 6 lobste.rs rows in scope (3 per team; `get` was tried first and found to route generic URLs through `route_html`, bypassing the fix entirely — switched to calling `fetch_by_class_route` directly, which dispatches correctly). All 6 now save via `lobsters-json` with real usernames (spot-checked: 54 `@` lines in the `f005516` capture).
+
+Freeze widened to team-a slices 01–20 and team-b slices 01–16 (what was "new" in round 3 is now frozen too). Of the frozen rows, every `class=hn-lobsters` row — not just the 3 re-fetched lobste.rs ones, the whole class, per the instruction — gets its current cached text written to a supplementary `b1-{team}-L1.txt`, with its manifest `slice` column repointed to `L1` (`chars` updated to match; the original numbered slice file is left exactly as it was). Team-a has 11 such rows (3 lobste.rs + 8 already-fine mastodon/blog/GitHub rows carried along for a single lookup location); team-b has 0, because its 3 lobste.rs rows already sat above the new frozen_max (slices 18–19) and were simply reclassified and repacked as ordinary unassigned rows.
+
+| team | rows total | frozen (incl. L1-supplemented) | kept | dropped | no-text | stub | thin | off-subject | new slices | L1 rows |
+|---|---|---|---|---|---|---|---|---|---|---|
+| team-a | 168 (30 excluded) | 134 | 157 | 11 | 8 | 0 | 1 | 2 | 12 (21–32) | 11 |
+| team-b | 198 | 113 | 189 | 9 | 3 | 0 | 0 | 6 | 18 (17–34) | 0 |
+
+kept/dropped totals are unchanged from round 3 for both teams — this round only re-routed *where* the 6 lobste.rs rows' text lives (all were already `kept` before and after; the fresher text didn't cross the 1,500-char or "rust" thresholds either way).
+
+A rerun-safety bug caught before it shipped: `load_frozen()` parsed every `slice` value as `int(...)`, which crashes on a manifest that already contains `"L1"` from a prior run of this same script — fixed to treat `L1` as frozen-forever, and fixed the stale-slice-file cleanup loop (same `int()` assumption) to skip non-numeric slice filenames like `b1-team-a-L1.txt`.
+
+Output: 67 `.txt` files total (team-a 32 numbered + 1 `L1`, team-b 34 numbered), manifests updated in place (frozen numeric rows still untouched; only the 11 team-a `hn-lobsters` rows had their `slice`/`chars` columns repointed to `L1`).
+
 **Talk transcript truncation (round 5).** Talks were hitting the 150k-char slice cap at 26–34 minutes into much longer recordings (`a-21` EuroRust, `a-22` Deno talk, flagged by a surveyor). Root cause, confirmed by inspecting a raw `.vtt`: YouTube's auto-captions are "rolling" — each cue repeats the previous settled line, then grows a new line word by word with inline `<00:00:09.230><c>word</c>` timing tags. The old code only stripped full `-->` timing lines and did an exact-line `dict.fromkeys` dedup; it never touched the inline tags, so the same phrase resurfaced 5–10x as slightly different (still-growing) strings that dedup couldn't catch, burning through the char budget on near-duplicate noise long before the talk was over.
 
 Fix in `cache.py` (`vtt_to_text`, replacing the old inline stripping in `route_video`): a cue's last line is "settled" — one clean, complete phrase — once it stops growing (no inline tags left on it); every settled line appears exactly once, in cue order, so collecting only those reconstructs the full transcript with no duplication and no gaps, plus a `[mm:ss]` marker roughly every 60s. Verified live on the EuroRust talk (`LO7tvIed-YQ`, 37:06 runtime): old approach would have kept truncating well short; new output is 31,564 chars, ends at `[36:01]` with "Thank you for your time" — the actual end of the talk, not a cutoff.
@@ -139,19 +156,73 @@ One honest caveat, not fixed here because it doesn't meet the mechanical re-fetc
 
 Output: `samples/bundles/b1-team-{a,b}-R{nn}.txt` (29 files: team-a 16, team-b 13), `samples/bundles/b1-team-{a,b}-R-manifest.csv` (freshly rebuilt each run, unlike `bundle.py`'s frozen-slice scheme — there is nothing to freeze here since this is a first pass).
 
-**lobste.rs/HN attribution + wider freeze (round 4).** `lobsters-json` carried comment text with no username (`row f005516`, in slice a-15, flagged by a surveyor); the same gap existed for a Hacker News route that didn't exist yet. Fixed in `cache.py`: `route_lobsters` now reads lobste.rs's own JSON fields (`commenting_user`/`created_at`, `submitter_user` for the story) instead of the unattributed HTML scrape it fell back to before; a new `route_hn` fetches `hn.algolia.com/api/v1/items/<id>` (`author`/`created_at`) for `news.ycombinator.com` URLs, wired into `fetch_by_class_route`. Both use the same `@<login> · <date>:` prefix as GitHub/Discourse/reddit. No `news.ycombinator.com` URL actually appears in either batch-1 CSV, so the HN route is provisioned but untested against batch data; verified live instead against `hn.algolia.com/api/v1/items/1` (Aug '06 PG/sama thread) — correct authors and dates.
+## Third-pass bundles (round 7)
 
-Re-fetched the 6 lobste.rs rows in scope (3 per team; `get` was tried first and found to route generic URLs through `route_html`, bypassing the fix entirely — switched to calling `fetch_by_class_route` directly, which dispatches correctly). All 6 now save via `lobsters-json` with real usernames (spot-checked: 54 `@` lines in the `f005516` capture).
+The R-pass send-back got re-extracted (`readlog-b1-sR*.csv` now exists for both teams). `sendback.py` gained a `<pass-name>` argument (`R` or `T`) instead of a new script, since the population logic is identical — the population function already merges *every* `readlog-b1-*.csv` file present for a team, so once `sR*` files exist on disk, re-running the same merge naturally picks them up; adding a pass was a matter of parameterizing the output filename prefix and the per-pass exclude set, not new logic. `f000227` (round 6's `rtic.rs` fix) confirms this works end to end: it's now correctly *absent* from the population (`readlog-b1-sR01.csv` logs `new_questions=2` for it) instead of failing a stale assertion — the hard "must still be in the population" check from round 6 was loosened to a soft note for exactly this reason, since membership is expected to shift as real extraction lands. `f012788` (netstack.fm) is also gone from the population, but for a different, already-flagged reason: the re-extractor logged it `unreachable` this time ("client-rendered episode list ... fragment target not present"), confirming round 6's caveat rather than resolving it — an `unreachable` entry fails the "all entries read yes" test, so it can never re-enter a later pass's population either.
 
-Freeze widened to team-a slices 01–20 and team-b slices 01–16 (what was "new" in round 3 is now frozen too). Of the frozen rows, every `class=hn-lobsters` row — not just the 3 re-fetched lobste.rs ones, the whole class, per the instruction — gets its current cached text written to a supplementary `b1-{team}-L1.txt`, with its manifest `slice` column repointed to `L1` (`chars` updated to match; the original numbered slice file is left exactly as it was). Team-a has 11 such rows (3 lobste.rs + 8 already-fine mastodon/blog/GitHub rows carried along for a single lookup location); team-b has 0, because its 3 lobste.rs rows already sat above the new frozen_max (slices 18–19) and were simply reclassified and repacked as ordinary unassigned rows.
+**Exclusion.** `f000149` (team-a, nogibjj tutorial) dropped by explicit instruction — "access gap, decided" — rather than resent a third time for genuinely short real content already twice confirmed unfixable.
 
-| team | rows total | frozen (incl. L1-supplemented) | kept | dropped | no-text | stub | thin | off-subject | new slices | L1 rows |
-|---|---|---|---|---|---|---|---|---|---|---|
-| team-a | 168 (30 excluded) | 134 | 157 | 11 | 8 | 0 | 1 | 2 | 12 (21–32) | 11 |
-| team-b | 198 | 113 | 189 | 9 | 3 | 0 | 0 | 6 | 18 (17–34) | 0 |
+| team | population (pre-exclude) | excluded | rows built | re-fetched | kept | dropped (no-text) | slices |
+|---|---|---|---|---|---|---|---|
+| team-a | 62 | 1 (f000149) | 61 | 0 | 60 | 1 | 12 |
+| team-b | 49 | 0 | 49 | 0 | 49 | 0 | 10 |
 
-kept/dropped totals are unchanged from round 3 for both teams — this round only re-routed *where* the 6 lobste.rs rows' text lives (all were already `kept` before and after; the fresher text didn't cross the 1,500-char or "rust" thresholds either way).
+Progress since round 6: team-a's population fell from 92 to 62 (30 rows resolved with real content via the R-pass re-read); team-b's fell from 101 to 49 (52 resolved) — before either team's single decided exclusion. The one remaining team-a drop is `f000217` (`nalgebra.org/docs`), the same DNS/no-Wayback-snapshot limit disclosed since round 1.
 
-A rerun-safety bug caught before it shipped: `load_frozen()` parsed every `slice` value as `int(...)`, which crashes on a manifest that already contains `"L1"` from a prior run of this same script — fixed to treat `L1` as frozen-forever, and fixed the stale-slice-file cleanup loop (same `int()` assumption) to skip non-numeric slice filenames like `b1-team-a-L1.txt`.
+Output: `samples/bundles/b1-team-{a,b}-T{nn}.txt` (22 files: team-a 12, team-b 10), `samples/bundles/b1-team-{a,b}-T-manifest.csv`.
 
-Output: 67 `.txt` files total (team-a 32 numbered + 1 `L1`, team-b 34 numbered), manifests updated in place (frozen numeric rows still untouched; only the 11 team-a `hn-lobsters` rows had their `slice`/`chars` columns repointed to `L1`).
+## Books-courses: the book is the source (round 8)
+
+Decided: for `books-courses` rows, the book is the source, not its front page. The audit's `f000149`/`f000217` misses were exactly this — a single ~1,000-char landing page cached instead of the book. Confirmed by reading: `rtic.rs` and `rust-lang.github.io/async-book`'s cached text was also just their front chapter (a full mdBook sidebar in every page's HTML, but only the intro's body text captured) — see caveat below.
+
+**Fix in `cache.py` (`fetch_book()`, new `fetch-book` subcommand).** Two routes, tried in order:
+1. **`/print.html`** — mdBook publishes the whole book as one page, one `<h1>` per chapter, specifically for printing. By far the cheapest route (one request): tried direct, then a `www.` variant, then both again via Wayback. A page only counts if it has ≥3 `<h1>` tags (a lone 404/redirect page won't). Chapter boundaries become `## <chapter title>` markers by marking every `<h1>`.
+2. **Table-of-contents crawl** (when the site isn't mdBook, e.g. Docusaurus): fetch the front page (direct → `www.` → Wayback), extract every same-path-root `<a>` link in document order, fetch each (front page kept first), cap 60 pages / 400,000 chars total, `## <link text>` marker per chapter.
+
+Both cap at 400,000 chars with a truncation marker if exceeded (`zebra.zfnd.org` hit it — see below). Saved under the row's existing cache key, so `get`/`fetch-csv` pick it up like any other cache entry.
+
+**Two more defects found and fixed while building this:**
+- `wayback_snapshot_url` (used by `wayback_fallback` and now `fetch_book`) called `urllib.parse.quote(url)` with the default `safe="/"`, leaving the target URL's own `/` unescaped in the query string. Confirmed by testing the identical query both ways: archive.org's availability endpoint silently returns **no match** when those slashes aren't escaped too, even though the snapshot exists (this is likely why some earlier-round Wayback lookups looked flaky/inconsistent rather than reliably hit-or-miss). Fixed: `quote(url, safe="")`.
+- `extract_same_root_links`'s same-root check compared full URL strings, but a Wayback-archived page's own URL sometimes carries an explicit `:443` while its sibling links (resolved without a port) don't — `nalgebra.org`'s crawl silently found 0 links until this was caught. Fixed: strip a `:<port>` before `/` from both sides before comparing (`_no_port()`).
+
+**Fetched (5 books, all previously under ~5,000 chars or never actually saved):**
+
+| id | url | route | chars |
+|---|---|---|---|
+| f000149 | nogibjj.github.io/rust-tutorial | book-print | 33,500 |
+| f000217 | nalgebra.org/docs | book-crawl | 98,420 |
+| f000256 | rustwasm.github.io/docs/book | book-print | 111,991 |
+| f000233 | rust-lang.github.io/async-book | book-print | 247,573 |
+| f000267 | zebra.zfnd.org | book-print | 400,038 (hit the cap, truncated) |
+
+`f000217` (`nalgebra.org/docs`) is the book-crawl case: front page fetched via Wayback (direct DNS still fails, as in every earlier round), 11 chapter links found on the archived page, 8 fetched successfully (3 failed silently, tolerated by design — "one missing chapter shouldn't sink the book"). Every fetched chapter carries the Wayback capture-banner boilerplate ("N captures ... About this capture") ahead of its real content, same as other Wayback-sourced pages elsewhere in this cache; not removed, since it's harmless and consistent with how the rest of the corpus already looks.
+
+**Caveat, disclosed rather than silently expanded into:** `rtic.rs` (`f000227`) and, to a lesser degree, `rust-lang.github.io/async-book` were flagged by the audit or this task's own reading as "book, not front page" cases, but both were over this task's literal "~5,000 chars" trigger (11,754 and 5,788 chars respectively) at the time this round started. `async-book` was refetched anyway since 5,788 is only marginally over an explicitly approximate ("~") threshold and reading its cached text confirmed it was just the intro chapter of a much larger book (now 247,573 chars via `print.html`). `rtic.rs`'s `print.html` returns 404 (confirmed), so fixing it would need the slower TOC-crawl route for a page already well over the threshold; left as-is rather than unilaterally expanding scope — flagged here for a ruling rather than decided unilaterally.
+
+**Bundles.** New script `scripts/research/books.py`: every batch-1 `books-courses` row, `kept` if its cache text clears the same stub/thin gate as everywhere else, `dropped` with reason `paywalled` for a `PAYWALLED_DOMAINS` host (never attempted, by standing owner ruling), `no-text`/`stub`/`thin` otherwise.
+
+| team | rows | kept | chars kept | dropped (paywalled) | slices |
+|---|---|---|---|---|---|
+| team-a | 9 | 4 | 255,665 | 5 | 2 |
+| team-b | 5 | 3 | 759,602 | 2 | 3 |
+
+team-a's 4 kept: `nogibjj` + `nalgebra` (both just fetched) + `rtic.rs` (already good from an earlier round, unaffected by this round's ~5,000-char trigger) + `rustwasm` (just fetched). team-b's 3 kept: `async-book` + `rustwasm` (shared with team-a, fetched once) + `zebra`. Every dropped row in both teams is `paywalled` — no `no-text`/`stub`/`thin` drops, i.e. every open book actually reachable in this batch was recovered.
+
+Output: `samples/bundles/b1-team-{a,b}-B{nn}.txt` (5 files: team-a 2, team-b 3), `samples/bundles/b1-team-{a,b}-B-manifest.csv`.
+
+**Ruling: rtic.rs is the book too (round 8b).** Crawled whole via the TOC route (its `print.html` 404s, confirmed).
+
+Two more genuine bugs found and fixed getting this to work, both in the *existing* redirect-following code, not new to this feature:
+- `follow_client_redirect` resolved each hop's relative target against the URL it was *requested* at, not the URL it actually *landed* on after urllib silently followed a real HTTP redirect first. rtic.rs's own chain hits exactly this: `/2` gets an invisible-here HTTP redirect to `/2/`, and the next hop's relative target `book/en` resolves correctly only against `/2/` — against `/2` it silently 404s on a wrong, different path. Fixed with a new `http_get_final_url()` (returns the post-redirect URL alongside the bytes) used at every hop; `follow_client_redirect` and `fetch_front_page_raw` now both track and return the *true* landed-on URL, not the originally-requested one.
+- Once landed correctly, rtic.rs's front page still yielded 0 table-of-contents links: this mdBook version populates its sidebar via JS (`<!-- populated by js -->`), leaving the static HTML with no chapter links at all — only a `<noscript><iframe src="toc.html">` fallback. Added `extract_toc_links()`: look for that iframe first and crawl its target instead when present, falling back to the front page's own links otherwise (still needed by the other, older-mdBook-themed sites in scope, none of which hit this defect).
+
+Re-crawled with both fixes: 28 chapter pages found and fetched (was 0), 120,459 chars, ending on the book's real last sentence, not a cutoff. Saved under `rtic.rs`'s existing key (`0ae387ef9986`).
+
+Rebuilt team-a's B-bundle: bin-packing (never split a source, ~150k/slice) puts `nogibjj`+`nalgebra` in `B01` (131,920 chars together), `rtic.rs` alone in `B02` (120,459 — added to `B01` would have exceeded the slice cap), and `rustwasm` (displaced from `B02`) alone in `B03`. Noting this because the ruling named `B03` for `rtic.rs` specifically — the algorithm that packs every other bundle in this project put it in `B02` instead; reported as-is rather than forced to match, since forcing it would mean special-casing one row against the same never-split/greedy-pack rule everything else here follows.
+
+| team | rows | kept | chars kept | dropped (paywalled) | slices |
+|---|---|---|---|---|---|
+| team-a | 9 | 4 | 364,370 | 5 | 3 |
+| team-b | 5 | 3 | 759,602 | 2 | 3 |
+
+Output: team-a now 3 `.txt` files (`B01`–`B03`) + manifest, both regenerated; team-b unchanged (`rtic.rs` is team-a-only).
