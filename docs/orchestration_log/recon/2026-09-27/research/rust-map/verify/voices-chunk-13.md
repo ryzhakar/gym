@@ -164,6 +164,18 @@ influence:
 - his JetBrains guest post on Rust vs. JS/TS was picked up in This Week in Rust — `gh api search/code?q=rust-vs-javascript-typescript+repo:rust-lang/this-week-in-rust` → 1 hit (checked 2026-09-28)
 checked: crate-dependents, production, role not separately checked (course already holds)
 
+## steffahn
+name: Frank Steffahn
+identity: https://github.com/steffahn (real name given via crates.io account)
+type: builder
+verdict: MEETS
+track_record:
+- role: listed on official rust-lang project team pages — `teams/mods.toml`, `teams/mods-venue.toml`, `teams/mods-discourse.toml` in rust-lang/team, plus a personal `people/steffahn.toml` entry — `gh api search/code?q=steffahn+repo:rust-lang/team` (checked 2026-09-28)
+- crate-dependents: owns `async_fn_traits` (2.16M downloads, 14 real reverse dependencies) — https://crates.io/api/v1/crates/async_fn_traits/reverse_dependencies (checked 2026-09-28)
+influence:
+- active, high-signal participant in Rust language-design threads on internals.rust-lang.org — https://internals.rust-lang.org/t/toowned-is-a-bad-name-for-the-trait/22129 (2025-01-07)
+checked: production, book/course/talk/post not separately checked (role/crate-dependents already hold)
+
 ## steve-klabnik
 name: Steve Klabnik
 identity: https://steveklabnik.com — self-identified co-author, no ambiguity; widely documented as a former Rust core team member and co-author of "The Rust Programming Language" book
