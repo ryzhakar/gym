@@ -33,8 +33,10 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).parent))
 import record_schema  # noqa: E402
 from log import append_row, build_row  # noqa: E402
-from probe import run_probe  # noqa: E402
+from probe import run_probe, stage_item  # noqa: E402
 from record_schema import ROOT, TIMESTAMP_FORMAT, file_path  # noqa: E402
+
+PRACTICE_ITEM_NAMES = ("attempt", "reuse-1", "reuse-2", "unshown")
 
 TRAINING_ROOT = ROOT / "training/rust"
 DEFAULT_ITEMS_ROOT = ROOT / "training/rust/items"  # decided: team lead, 2026-09-28
@@ -123,14 +125,15 @@ def write_settings_file(unit: str) -> Path:
     return path
 
 
-def trainer_launch_command(unit: str) -> str:
+def trainer_launch_command(unit: str, session_id: "str | None" = None) -> str:
     """The trainer hand-off command: the unit's permission settings in a generated file (`--settings
     <path>`), plus `dontAsk` so a call outside them is refused outright, never put to the learner (no
     lock-out exists otherwise — fable-plan.md § 5 sessions.assistant_closed). The trailing prompt
     carries the session id, unit id, item directory and record tail the trainer's own definition
-    expects."""
+    expects. `session_id` is `open_session`'s own (shared with its due probes' staged copies); a
+    direct call generates a fresh one."""
     unit_dir, _crate, record = unit_paths(unit)
-    session_id = new_session_id()
+    session_id = session_id or new_session_id()
     settings_path = write_settings_file(unit)
     prompt = (
         f"session {session_id}; unit {unit}; items {unit_dir}; record {record}\n"
@@ -187,6 +190,21 @@ def ensure_unit_crate(unit: str) -> Path:
     return crate_dir
 
 
+def stage_practice_items(items_root: Path, unit: str, session_id: str) -> list[Path]:
+    """Copy the unit's practice stub crates (`attempt/`, `reuse-1/`, `reuse-2/`, `unshown/` — whichever
+    exist) into `training/rust/work/<session_id>/<unit>/<item>/`, the same read-only-`items/` rule
+    `probe.py`'s grading follows (team lead ruling, 2026-09-28). Staged, not yet wired into the
+    allowlist: `permission_settings`'s `CRATE` still names `training/rust/<unit>/`
+    (`ensure_unit_crate`'s empty workspace member), not this staged copy — repointing the trainer's
+    own Read/Glob/Bash grants at the staged location is a further, undecided change, flagged rather
+    than folded in here silently."""
+    return [
+        stage_item(items_root / unit / name, session_id, unit)
+        for name in PRACTICE_ITEM_NAMES
+        if (items_root / unit / name).is_dir()
+    ]
+
+
 def completed_delayed_probe_units() -> set[str]:
     path = file_path("items")
     if not path.is_file():
@@ -227,13 +245,15 @@ def open_session(
     wait: Callable[[], None] = lambda: input(),
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
+    session_id = new_session_id()
     due = due_delayed_probes()
     for row in due:
         unit_dir = items_root / row["unit"]
-        run_probe(unit_dir, "delayed", wait=wait, clock=clock)
+        run_probe(unit_dir, "delayed", session_id, wait=wait, clock=clock)
     unit = next_unit()
     if unit:
         ensure_unit_crate(unit)
+        stage_practice_items(items_root, unit, session_id)
     print(f"due delayed probes run: {[row['unit'] for row in due] or 'none'}")
     print(f"next unit: {unit or 'none — run session.py close --next-unit <id> first'}")
     print("sessions tail:")
@@ -243,7 +263,7 @@ def open_session(
     for line in record_tail("items"):
         print(f"  {line}")
     if unit:
-        print(f"\nstart the trainer:\n  {trainer_launch_command(unit)}")
+        print(f"\nstart the trainer:\n  {trainer_launch_command(unit, session_id)}")
 
 
 def gap_days_since_last_session() -> float:

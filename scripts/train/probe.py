@@ -1,6 +1,6 @@
 """Present a unit's probe items, time the attempt against the shared cap, grade each item, log one row per item.
 
-Usage: `uv run python scripts/train/probe.py <unit_dir> immediate|delayed [--cap-minutes 10]`.
+Usage: `uv run python scripts/train/probe.py <unit_dir> immediate|delayed --session-id <id> [--cap-minutes 10]`.
 
 `immediate` presents the unit's `probe-a/`, `delayed` its `probe-b/` — the isomorph the delayed
 check reads against (fable-plan.md § 1 T3, § 7 "isomorph illusion"). Layout is P3's (`items/README.md`):
@@ -13,6 +13,11 @@ check" #3, decided by the team lead 2026-09-28: the no-key rule binds the traine
 (`allowlist.md`), not this script's own grading step. Grading only ever *copies* the held-out test
 files into the learner's problem directory, runs the tests, and removes exactly what it copied in —
 it never prints a key file's content, on any path, at any point.
+
+`training/rust/items/` stays read-only in use (team lead ruling, 2026-09-28): the learner never
+edits a committed stub directly. Before presenting or grading, every problem crate is copied to
+`training/rust/work/<session_id>/<unit>/<problem>/` (gitignored); that copy is what gets presented,
+edited, and graded — `items/` itself is only ever read from.
 """
 from __future__ import annotations
 
@@ -29,11 +34,12 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).parent))
 from log import append_row, build_row  # noqa: E402
-from record_schema import TIMESTAMP_FORMAT, file_path  # noqa: E402
+from record_schema import ROOT, TIMESTAMP_FORMAT, file_path  # noqa: E402
 
 CAP_MINUTES_DEFAULT = 10.0  # O2, first-protocol default, unmeasured (fable-plan.md § 6 O2)
 KIND_OF = {"immediate": "probe-immediate", "delayed": "probe-delayed"}
 ISOMORPH_OF = {"immediate": "probe-a", "delayed": "probe-b"}
+WORK_ROOT = ROOT / "training/rust/work"
 
 
 def assert_no_key(path: Path) -> None:
@@ -100,6 +106,18 @@ def run_cargo_test(crate_dir: Path) -> tuple[bool, float]:
     return failed == 0, passed / (passed + failed)
 
 
+def stage_item(source_dir: Path, session_id: str, unit: str) -> Path:
+    """Copy `source_dir`'s stub crate into `training/rust/work/<session_id>/<unit>/<source_dir.name>/`
+    — the learner edits and is graded there, never in `source_dir` itself (team lead ruling,
+    2026-09-28). Re-staging the same problem in the same session starts from the stub again."""
+    work_dir = WORK_ROOT / session_id / unit / source_dir.name
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_dir, work_dir)
+    return work_dir
+
+
 def key_dir_for(unit_dir: Path, which: str, problem_name: str) -> Path:
     return unit_dir / "key" / ISOMORPH_OF[which] / problem_name
 
@@ -150,6 +168,7 @@ def delay_days_for(unit: str) -> float:
 def run_probe(
     unit_dir: Path,
     which: str,
+    session_id: str,
     cap_minutes: float = CAP_MINUTES_DEFAULT,
     wait: Callable[[], None] = lambda: input(),
     clock: Callable[[], float] = time.monotonic,
@@ -157,8 +176,9 @@ def run_probe(
     unit = unit_dir.name
     directory = probe_dir(unit_dir, which)
     problems = list_problem_dirs(directory)
-    for problem in problems:
-        print(item_text(problem))
+    staged = [stage_item(problem, session_id, unit) for problem in problems]
+    for work_dir in staged:
+        print(item_text(work_dir))
         print()
     print(f"cap: {cap_minutes:g} min total for {len(problems)} item(s). Press Enter once your answers are in place.")
     start = clock()
@@ -168,8 +188,8 @@ def run_probe(
         print(f"over the {cap_minutes:g}-minute cap: {elapsed_minutes:.1f} min")
     delay_days = 0.0 if which == "immediate" else delay_days_for(unit)
     rows = []
-    for problem in problems:
-        passed, continuous = grade_item(problem, key_dir_for(unit_dir, which, problem.name))
+    for problem, work_dir in zip(problems, staged):
+        passed, continuous = grade_item(work_dir, key_dir_for(unit_dir, which, problem.name))
         fields = {
             "item_id": f"{unit}-{ISOMORPH_OF[which]}-{problem.name}",
             "unit": unit,
@@ -190,9 +210,10 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("unit_dir", type=Path)
     parser.add_argument("which", choices=["immediate", "delayed"])
+    parser.add_argument("--session-id", required=True)
     parser.add_argument("--cap-minutes", type=float, default=CAP_MINUTES_DEFAULT)
     args = parser.parse_args(argv[1:])
-    rows = run_probe(args.unit_dir, args.which, args.cap_minutes)
+    rows = run_probe(args.unit_dir, args.which, args.session_id, args.cap_minutes)
     for row in rows:
         print(f"logged: {row}")
     return 0

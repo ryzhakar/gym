@@ -20,6 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import log  # noqa: E402
+import probe  # noqa: E402
 import record_schema  # noqa: E402
 import session  # noqa: E402
 
@@ -34,6 +35,7 @@ def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         (record_dir / f"{name}.csv").write_text(",".join(columns) + "\n", encoding="utf-8")
     monkeypatch.setattr(record_schema, "RECORD_DIR", record_dir)
     monkeypatch.setattr(session, "TRAINING_ROOT", tmp_path / "training")
+    monkeypatch.setattr(probe, "WORK_ROOT", tmp_path / "work")
     return tmp_path
 
 
@@ -81,6 +83,47 @@ def test_open_with_no_due_probe_hands_off_to_the_next_unit(isolated_paths: Path,
     assert "next unit: unit-2" in out
     assert "unit-2" in read_workspace_members(isolated_paths)
     assert (isolated_paths / "training/unit-2/Cargo.toml").is_file()
+
+
+def make_practice_item(items_root: Path, unit: str, name: str) -> None:
+    """A minimal real crate under `<unit>/<name>/` — attempt/reuse-1/reuse-2/unshown all share this shape."""
+    base = items_root / unit / name
+    (base / "src").mkdir(parents=True)
+    (base / "Cargo.toml").write_text(
+        f'[package]\nname = "{name.replace("-", "_")}_crate"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n',
+        encoding="utf-8",
+    )
+    (base / "src" / "lib.rs").write_text("pub fn stub() {}\n", encoding="utf-8")
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_open_stages_the_next_units_practice_items_leaving_items_byte_identical(
+    isolated_paths: Path,
+) -> None:
+    items_root = isolated_paths / "items"
+    make_practice_item(items_root, "unit-2", "attempt")
+    make_practice_item(items_root, "unit-2", "reuse-1")
+    before = {p.relative_to(items_root): p.read_bytes() for p in sorted(items_root.rglob("*")) if p.is_file()}
+
+    session.close_session(
+        minutes=45,
+        units=["unit-1"],
+        trainer_model="opus",
+        probe_minutes=8,
+        assistant_closed=True,
+        interruptions=0,
+        next_unit_id="unit-2",
+    )
+    session.open_session(items_root=items_root)
+
+    staged_attempt = probe.WORK_ROOT
+    matches = list(staged_attempt.glob("*/unit-2/attempt/src/lib.rs"))
+    assert len(matches) == 1
+    assert matches[0].read_text(encoding="utf-8") == "pub fn stub() {}\n"
+    assert list(staged_attempt.glob("*/unit-2/reuse-1/src/lib.rs"))
+
+    after = {p.relative_to(items_root): p.read_bytes() for p in sorted(items_root.rglob("*")) if p.is_file()}
+    assert after == before
 
 
 def make_probe_b_problem(items_root: Path, unit: str, problem: str = "p1") -> None:

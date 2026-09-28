@@ -35,6 +35,7 @@ def isolated_record_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     record_dir.mkdir()
     (record_dir / "items.csv").write_text(",".join(record_schema.FILES["items"]) + "\n", encoding="utf-8")
     monkeypatch.setattr(record_schema, "RECORD_DIR", record_dir)
+    monkeypatch.setattr(probe, "WORK_ROOT", tmp_path / "work")
 
 
 def make_problem_crate(root: Path, lib_rs: str = LIB_RS_PASSING) -> Path:
@@ -170,7 +171,7 @@ def test_run_probe_logs_every_item_even_when_one_fails_to_compile(tmp_path: Path
     unit_dir = make_unit_dir(tmp_path, "unit-1")
     (unit_dir / "probe-a" / "p1" / "src" / "lib.rs").write_text("this does not compile(", encoding="utf-8")
 
-    rows = probe.run_probe(unit_dir, "immediate", wait=lambda: None, clock=lambda: 0.0)
+    rows = probe.run_probe(unit_dir, "immediate", "sess-1", wait=lambda: None, clock=lambda: 0.0)
 
     assert len(rows) == 2  # p1's compile failure didn't abort grading p2
     by_item = {row["item_id"]: row for row in rows}
@@ -185,7 +186,7 @@ def test_run_probe_grades_every_item_and_logs_one_row_each(tmp_path: Path) -> No
     (unit_dir / "probe-a" / "p2" / "src" / "lib.rs").write_text(LIB_RS_PARTIAL, encoding="utf-8")
 
     clock_values = iter([0.0, 42.0])
-    rows = probe.run_probe(unit_dir, "immediate", wait=lambda: None, clock=lambda: next(clock_values))
+    rows = probe.run_probe(unit_dir, "immediate", "sess-1", wait=lambda: None, clock=lambda: next(clock_values))
 
     assert len(rows) == 2
     by_item = {row["item_id"]: row for row in rows}
@@ -201,11 +202,44 @@ def test_run_probe_grades_every_item_and_logs_one_row_each(tmp_path: Path) -> No
     assert "unit-1-probe-a-p2" in items_csv
 
 
+def snapshot(root: Path) -> dict[str, bytes]:
+    return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def test_stage_item_copies_to_work_root_leaving_the_source_untouched(tmp_path: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    source = unit_dir / "probe-a" / "p1"
+    before = snapshot(source)
+
+    work_dir = probe.stage_item(source, "sess-1", "unit-1")
+
+    assert work_dir == probe.WORK_ROOT / "sess-1" / "unit-1" / "p1"
+    assert snapshot(work_dir) == before
+    assert snapshot(source) == before  # copying never touches the source
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_run_probe_leaves_items_byte_identical(tmp_path: Path) -> None:
+    """The learner edits the staged copy, never `items/` itself (team lead ruling, 2026-09-28)."""
+    items_root = tmp_path / "items"
+    unit_dir = make_unit_dir(items_root, "unit-1")
+    before = snapshot(items_root)
+
+    def learner_edits_the_staged_copy() -> None:
+        staged = probe.WORK_ROOT / "sess-1" / "unit-1" / "p1" / "src" / "lib.rs"
+        assert staged.read_text(encoding="utf-8") == LIB_RS_PASSING  # the copy started from the stub
+        staged.write_text(LIB_RS_PARTIAL, encoding="utf-8")  # a real edit, distinct from the original
+
+    probe.run_probe(unit_dir, "immediate", "sess-1", wait=learner_edits_the_staged_copy, clock=lambda: 0.0)
+
+    assert snapshot(items_root) == before
+
+
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
 def test_run_probe_warns_over_cap(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     unit_dir = make_unit_dir(tmp_path, "unit-1")
     clock_values = iter([0.0, 900.0])
-    probe.run_probe(unit_dir, "immediate", cap_minutes=10.0, wait=lambda: None, clock=lambda: next(clock_values))
+    probe.run_probe(unit_dir, "immediate", "sess-1", cap_minutes=10.0, wait=lambda: None, clock=lambda: next(clock_values))
     assert "over the 10-minute cap" in capsys.readouterr().out
 
 
