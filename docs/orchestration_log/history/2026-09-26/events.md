@@ -782,3 +782,6 @@
 2026-09-28T13:06 | self | delegation | r-claim-2 continued: quote absent from source is UNFAITHFUL; wrong timestamps go to corrected_locator
 2026-09-28T13:06 | self | failure | a cd into verify/ moved the harness working directory again; reset
 2026-09-28T13:11 | agent:r-claim-4 | receipt | claims chunks 12-15: every id has a row; 1 DATE-WRONG, rest CONFIRMED; 5 CONFIRMED rows carry locator corrections
+2026-09-28T13:14 | agent:r-claim-2 | receipt | claims chunks 04-07: 165 CONFIRMED, 1 UNFAITHFUL; misquote and date drift passed as CONFIRMED with notes; correction not applied; told to stand down
+2026-09-28T13:14 | self | decision | decided: one adjudicator re-applies the verdicts strictly across all 664 Claims: misquote or absent quote UNFAITHFUL, date drift DATE-WRONG; rechecks every noted row and a random 10% of clean rows; output verify/claims-final.csv
+2026-09-28T13:14 | self | delegation | agent:r-claim-adj, sonnet: claim adjudication per prompts/t3-claim.md § Adjudication
