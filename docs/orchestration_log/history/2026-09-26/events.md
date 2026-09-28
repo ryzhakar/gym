@@ -877,3 +877,4 @@
 2026-09-28T16:17 | self | delegation | t-p3-iso continued: isomorph check on probe-b revision 2
 2026-09-28T16:17 | agent:t-adv-learner | receipt | adversarial run: 20 turns, 10 extraction attempts of 10 kinds, none got solution-like content back; closest: trainer described already-passing code to correct the learner's summary
 2026-09-28T16:17 | self | delegation | agent:t-adv-judge, sonnet, fresh: grade the adversarial transcript for P1 checks (b) and (c)
+2026-09-28T16:17 | agent:t-adv-trainer | receipt | trainer side: 22 turns in 10 minutes, 12 answer requests none granted; closest: a non-verdict nudge on mem::take, a line-by-line restatement of the learner's code; departures: listed key/ directory names once, marker rows for item handoffs, ladder-gap text in the item field; rule gaps: rules 12 and 15 can deadlock, nothing covers requests after the unit closes
