@@ -7,19 +7,21 @@ Usage:
 
 `open` runs every due delayed probe first (queue.csv, kind `delayed_probe`, due today or earlier,
 skipping units already probed at that due date — fable-plan.md § 3 "Session n ≥ 1"), then prints the
-record tail and the command that starts the trainer on the queued next unit. `close` writes the
-session row and the queue rows: one delayed probe due in 7 days per unit practiced (§ 6 O3, a
-first-protocol default, unmeasured) and one `next_unit` row.
+record tail and the command that starts the trainer on the queued next unit, under a tool allowlist
+scoped to that unit (`trainer_launch_command`). `close` writes the session row and the queue rows:
+one delayed probe due in 7 days per unit practiced (§ 6 O3, a first-protocol default, unmeasured)
+and one `next_unit` row.
 
-`--items-root`'s default (`training/rust/items`) is undecided: P3 has not yet named the item bank's
-committed home (fable-plan.md § 4 P3 output is still the disposable recon path). A default, not a
-decision — pass `--items-root` to point at wherever P3's items actually land.
+`--items-root` (`training/rust/items`, decided: team lead, 2026-09-28) holds `<unit>/` directories
+in P3's layout (attempt.md, example.md, reuse-1..2/, unshown/, probe-a/, probe-b/, hints.yaml, key/)
+plus `baseline/<item>/` for the unaided baseline set.
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -33,7 +35,45 @@ from probe import run_probe  # noqa: E402
 from record_schema import ROOT, TIMESTAMP_FORMAT, file_path  # noqa: E402
 
 TRAINING_ROOT = ROOT / "training/rust"
-DEFAULT_ITEMS_ROOT = ROOT / "training/rust/items"  # undecided default; see module docstring
+DEFAULT_ITEMS_ROOT = ROOT / "training/rust/items"  # decided: team lead, 2026-09-28
+
+# Deny/allow rules for the trainer's own session (team lead, 2026-09-28): no read of any item's
+# key/, and Bash confined to the append-only logger and to cargo check/test in the unit's own crate.
+# The trainer's agent definition (P1) writes the same rules, in prose, to
+# docs/orchestration_log/recon/2026-09-28/trainer/agent/allowlist.md; this is the enforced form.
+KEY_DENY_PATTERN = "Read(training/rust/items/**/key/**)"
+
+
+def allowed_bash_patterns(unit: str) -> list[str]:
+    manifest = f"training/rust/{unit}/Cargo.toml"
+    return [
+        "Bash(uv run python scripts/train/log.py*)",
+        f"Bash(cargo check --manifest-path {manifest}*)",
+        f"Bash(cargo test --manifest-path {manifest}*)",
+    ]
+
+
+def trainer_launch_command(unit: str) -> str:
+    """The trainer hand-off command, permission flags included: `dontAsk` so a call outside the
+    allowlist is refused outright rather than put to the learner (no lock-out exists otherwise —
+    fable-plan.md § 5 sessions.assistant_closed)."""
+    parts = [
+        "claude",
+        "--agent",
+        "rust-trainer",
+        "--permission-mode",
+        "dontAsk",
+        "--allowedTools",
+        " ".join(allowed_bash_patterns(unit)),
+        "--disallowedTools",
+        KEY_DENY_PATTERN,
+        "--",
+        "--unit",
+        unit,
+        "--record",
+        "training/rust/record/",
+    ]
+    return " ".join(shlex.quote(part) for part in parts)
 
 
 def workspace_path() -> Path:
@@ -130,7 +170,7 @@ def open_session(
     for line in record_tail("items"):
         print(f"  {line}")
     if unit:
-        print(f"\nstart the trainer:\n  claude --agent rust-trainer -- --unit {unit} --record training/rust/record/")
+        print(f"\nstart the trainer:\n  {trainer_launch_command(unit)}")
 
 
 def gap_days_since_last_session() -> float:

@@ -110,3 +110,46 @@ def test_open_runs_a_due_delayed_probe_then_hands_off(isolated_paths: Path, caps
 
 def read_workspace_members(root: Path) -> list[str]:
     return session.read_members(root / "training/Cargo.toml")
+
+
+def test_launch_command_denies_key_reads_and_scopes_bash_to_the_unit_crate() -> None:
+    command = session.trainer_launch_command("unit-1")
+
+    assert "--permission-mode dontAsk" in command
+    assert "--disallowedTools" in command
+    assert session.KEY_DENY_PATTERN in command
+    assert "training/rust/items/**/key/**" in command
+
+    for pattern in session.allowed_bash_patterns("unit-1"):
+        assert pattern in command
+    assert "training/rust/unit-1/Cargo.toml" in command
+    # not a blanket Bash allowance — every allowed Bash entry names a specific command
+    assert "Bash(*)" not in command
+    assert "'Bash'" not in command
+
+
+def test_launch_command_scopes_cargo_to_the_named_unit_only() -> None:
+    command_a = session.trainer_launch_command("unit-1")
+    command_b = session.trainer_launch_command("unit-2")
+
+    assert "training/rust/unit-2/Cargo.toml" not in command_a
+    assert "training/rust/unit-1/Cargo.toml" not in command_b
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_open_session_prints_a_launch_command_with_the_deny_rule(
+    isolated_paths: Path, capsys: pytest.CaptureFixture
+) -> None:
+    session.close_session(
+        minutes=45,
+        units=["unit-1"],
+        trainer_model="opus",
+        probe_minutes=8,
+        assistant_closed=True,
+        interruptions=0,
+        next_unit_id="unit-2",
+    )
+    session.open_session(items_root=isolated_paths / "items")
+    out = capsys.readouterr().out
+    assert session.KEY_DENY_PATTERN in out
+    assert "--permission-mode dontAsk" in out
