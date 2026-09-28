@@ -6,7 +6,7 @@ Edit: src/lib.rs
 
 - `area` keeps its signature. `SizeError` stays as written.
 - Each failure gives its own variant, carrying the parse error where there is one.
-- No `unwrap`, `expect`, `panic!`, `unreachable!` or `todo!` in `src/lib.rs`.
-- `tests/visible.rs` is locked. Held-out tests add cases.
+- No `From` impl in `src/lib.rs`. No `unwrap`, `expect`, `panic!`, `unreachable!` or `todo!` either.
+- `tests/visible.rs` and `tests/structure.rs` are locked. `tests/structure.rs` checks the `From` rule in your source. Held-out tests add cases.
 
 Probe: unaided, trainer closed. 10 minutes for p1, p2 and p3 together.

@@ -8,4 +8,4 @@ A plotter takes three commands: draw a dot at (x, y); draw a line from (x1, y1) 
 - `cost(c: Command) -> u32`: a dot costs 1. A line costs its horizontal plus its vertical distance, and a line of length zero costs 1, like a dot. Lifting the pen costs 0.
 - `endpoint(c: Command) -> Option<(i32, i32)>`: where the pen ends. A dot ends at its point and a line at its second point. Lifting the pen gives `None`.
 
-No `_` arm in any `match`. `tests/visible.rs` is locked. Held-out tests add cases.
+Every arm of every `match` names its variant: no `_` arm and no catch-all binding. `..` inside a variant's pattern is fine. `tests/visible.rs` and `tests/structure.rs` are locked; `tests/structure.rs` checks this rule and that `Command` is an enum. Held-out tests add cases.

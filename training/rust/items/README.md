@@ -11,7 +11,7 @@ Author: drill author (opus), 2026-09-28. Piece P3 of `docs/orchestration_log/rec
 
 ## Grading
 
-Copy `key/<problem>/` to a scratch directory, copy the learner's `Edit:` files into it, run `cargo test`. Pass = every test green. The key holds the visible tests unchanged plus `tests/heldout.rs`. The locked files, the program under a predict-output item included, are therefore always the key's, and editing them in the learner's crate changes nothing.
+Copy `key/<problem>/` to a scratch directory, copy the learner's `Edit:` files into it, run `cargo test`. Pass = every test green. The key holds the visible test files unchanged (`tests/visible.rs`, and `tests/structure.rs` where a spec names a structural rule such as no `_` arm, one `match`, no `From`, or a type that must not be `Copy`) plus `tests/heldout.rs`. The locked files, the program under a predict-output item included, are therefore always the key's, and editing them in the learner's crate changes nothing.
 
 Predict-output items: the learner's only file is `prediction.txt`. Its test runs the item's binary and compares stdout to the prediction, with trailing whitespace trimmed per line and at the end. The test never prints the actual output.
 

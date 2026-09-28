@@ -11,9 +11,3 @@ fn boundaries() {
     assert_eq!(price(Ticket::Group(0)), 0);
     assert_eq!(price(Ticket::Group(1)), 1000);
 }
-
-#[test]
-fn every_arm_names_its_variant() {
-    let src = include_str!("../src/lib.rs");
-    assert!(!src.contains("_ =>") && !src.contains("_=>"), "src/lib.rs has a `_` arm");
-}

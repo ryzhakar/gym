@@ -17,10 +17,3 @@ fn dot_at_origin() {
     assert_eq!(endpoint(dot(0, 0)), Some((0, 0)));
     assert_eq!(endpoint(pen_up()), None);
 }
-
-#[test]
-fn an_enum_with_no_catch_all() {
-    let src = include_str!("../src/lib.rs");
-    assert!(src.contains("enum Command"), "Command is not an enum");
-    assert!(!src.contains("_ =>") && !src.contains("_=>"), "src/lib.rs has a `_` arm");
-}

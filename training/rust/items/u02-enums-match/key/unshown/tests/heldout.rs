@@ -13,10 +13,3 @@ fn all_twelve_pairs() {
         assert_eq!(next(door, action), want, "{door:?} + {action:?}");
     }
 }
-
-#[test]
-fn one_match_no_if() {
-    let src = include_str!("../src/lib.rs");
-    assert_eq!(src.matches("match ").count(), 1, "`next` needs exactly one `match`");
-    assert!(!src.contains("if "), "`next` uses `if`");
-}

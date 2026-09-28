@@ -12,9 +12,3 @@ fn boundaries() {
     assert_eq!(alert(Status::Battery { percent: 10, charging: false }), None);
     assert_eq!(alert(Status::Battery { percent: 0, charging: true }), None);
 }
-
-#[test]
-fn every_arm_names_its_variant() {
-    let src = include_str!("../src/lib.rs");
-    assert!(!src.contains("_ =>") && !src.contains("_=>"), "src/lib.rs has a `_` arm");
-}
