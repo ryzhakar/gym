@@ -791,3 +791,4 @@
 2026-09-28T13:25 | agent:r-claim-adj | receipt | adjudication rebuilt: 648 CONFIRMED, 8 DATE-WRONG, 8 UNFAITHFUL of 664; csv parses, 9 columns; 6 verifier edits independently rechecked; random recheck 0 of 31
 2026-09-28T13:26 | agent:r-claim-adj | receipt | adjudication final: 648 CONFIRMED, 8 DATE-WRONG, 8 UNFAITHFUL; sweep of the remaining notes found no further deviations
 2026-09-28T13:26 | self | delegation | t5-compile-b1 continued: apply verify/claims-final.csv to MAP
+2026-09-28T13:26 | self | decision | decided: fairness grading (paired cases, ITT) waits until later batches stop merging and splitting Questions, since grading now would be redone; next after the Claim application: the fable slice review (coverage per stratum, next-batch targets), then batch 2
