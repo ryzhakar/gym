@@ -819,3 +819,5 @@
 2026-09-28T13:55 | agent:r-args-1 | receipt | arguments chunk 00: 32 Questions, all Sources read from cache; Positions with only below-bar or no Claims marked no argument; 14 value candidates flagged
 2026-09-28T13:55 | self | delegation | t-p1-eval continued: re-evaluate trainer v0.1
 2026-09-28T13:55 | agent:r-args-3 | receipt | arguments chunk 02: 32 Questions, 84 Positions, 144 Arguments, 23 no-argument lines; 11 value candidates flagged
+2026-09-28T13:56 | agent:r-args-2 | receipt | arguments chunk 01: 32 Questions, 79 Positions, 111 Arguments, 6 no-argument; 5 value candidates; a scratch file at a shared path was overwritten by another agent, discarded and recomputed
+2026-09-28T13:56 | self | discovery | concurrent agents collide on shared scratch paths; later prompts give each agent its own scratch directory named by agent id
