@@ -106,3 +106,12 @@ def test_replace_draws_from_the_same_cell_and_class_and_logs(tmp_path: Path) -> 
     subprocess.run(run + ["--replace", str(tmp_path / "replace.csv"), "--seed", "10"], check=True, capture_output=True)
     log = list(csv.DictReader((tmp_path / "batch-1-team-a-replaced.csv").open()))
     assert log[-1]["replacement_id"] == "" and log[-1]["pool"] == "0"
+
+
+def test_replace_other_class_draws_from_the_rest_of_the_cell() -> None:
+    from sample import replace_rows
+    frame_rows = frame([("t1", "talks", "ml"), ("t2", "talks", "ml"), ("f1", "forum", "ml"), ("f2", "forum", "ml"),
+                        ("x1", "forum", "web")])
+    current = [frame_rows[0]]
+    updated, log = replace_rows(frame_rows, current, {"t1": ("en", "ml")}, ["t1"], set(), random.Random(2), other_class=True)
+    assert [row["id"] for row in updated][0] in {"f1", "f2"} and log[0]["pool"] == 2

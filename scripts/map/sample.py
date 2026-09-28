@@ -28,6 +28,8 @@ for one row drawn from the same (language, hint, class) cell, excluding every
 row the team has drawn in any batch or had replaced; the RNG is
 `Random(f"{seed}-{team}")`. An empty cell leaves the row out with no
 replacement. Every swap is appended to `batch-n-team-T-replaced.csv`.
+With `--other-class`, the replacement comes from the same (language, hint) cell's other
+classes: for a class dropped whole from the frame, whose own cell is empty.
 """
 
 from __future__ import annotations
@@ -129,7 +131,7 @@ def in_cell(row: dict, cell: tuple[str, str]) -> bool:
 
 
 def replace_rows(frame_rows: list[dict], current: list[dict], cell_of: dict[str, tuple[str, str]], replace_ids: list[str],
-                 excluded: set[str], rng: random.Random) -> tuple[list[dict], list[dict]]:
+                 excluded: set[str], rng: random.Random, other_class: bool = False) -> tuple[list[dict], list[dict]]:
     by_id = {row["id"]: row for row in current}
     excluded = excluded | set(by_id) | set(replace_ids)
     log: list[dict] = []
@@ -137,7 +139,8 @@ def replace_rows(frame_rows: list[dict], current: list[dict], cell_of: dict[str,
         old = by_id.pop(row_id)
         cell, row_class = cell_of[row_id], sampling_class(old)
         pool = sorted((row for row in frame_rows if row["id"] not in excluded and in_cell(row, cell)
-                       and sampling_class(row) == row_class), key=lambda row: row["id"])
+                       and (sampling_class(row) != row_class if other_class else sampling_class(row) == row_class)),
+                      key=lambda row: row["id"])
         new = rng.choice(pool) if pool else None
         if new:
             excluded.add(new["id"])
@@ -175,6 +178,7 @@ def main() -> int:
     quota.add_argument("--cells", type=Path, help="CSV: language,hint,per_team; hint * is the whole language")
     quota.add_argument("--replace", type=Path, help="CSV: team,frame_id; rows of this batch to replace")
     parser.add_argument("--by-class", action="store_true", dest="by_class")
+    parser.add_argument("--other-class", action="store_true", dest="other_class", help="with --replace: draw from the cell's other classes")
     parser.add_argument("--seed", required=True, type=int)
     args = parser.parse_args()
 
@@ -223,7 +227,7 @@ def replace_main(args: argparse.Namespace, rows: list[dict]) -> int:
         replaced_before = {row["replaced_id"] for row in read_frame(log_path)} if log_path.exists() else set()
         excluded = already_used(args.out, team, args.batch) | replaced_before
         rng = random.Random(f"{args.seed}-{team}")
-        updated, log = replace_rows(rows, current, cell_of, replace_ids, excluded, rng)
+        updated, log = replace_rows(rows, current, cell_of, replace_ids, excluded, rng, args.other_class)
         write_sample(sample_path, updated)
         write_rows(cells_path, CELL_FIELDS, [{"id": row["id"], "language": cell_of[row["id"]][0], "hint": cell_of[row["id"]][1],
                                              "class": sampling_class(row)} for row in updated])
