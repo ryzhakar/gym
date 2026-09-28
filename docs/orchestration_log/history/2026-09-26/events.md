@@ -831,3 +831,4 @@
 2026-09-28T14:05 | agent:r-args-4 | receipt | arguments chunk 03: 30 Questions, 80 Positions, 139 Arguments, 22 no-argument; 5 value candidates
 2026-09-28T14:05 | self | decision | decided: Arguments compile into MAP with their fixed Values; an Argument whose only Values are candidates stays out of MAP and goes to a value-candidate register, since the Language's Values are the owner's
 2026-09-28T14:05 | self | delegation | t5-compile-b1 continued: compile args/arguments-chunk-00..03 into MAP/arguments, register value candidates
+2026-09-28T14:08 | agent:t-p56-scripts | receipt | launch built from allowlist.md tables via --settings with dontAsk; bash_guard.py PreToolUse hook denies ; && || | > and backticks and cargo outside the unit crate; rust-trainer installed; log.py gained the turn form the trainer calls; 47 tests pass; key-path denial checked statically only
