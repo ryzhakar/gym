@@ -826,3 +826,4 @@
 2026-09-28T13:56 | self | delegation | t-p56-scripts continued: allowlist launch per TRAINER/agent/allowlist.md, with a test
 2026-09-28T13:56 | agent:r-batch2-prep | receipt | census calibrated on batch 1: the first word list flagged 73/102 and 81/122, replaced by one naming only the banned ground, which catches all 5 auditor-named rows; extractor rule now bans exactly what the gate flags; worst case 153 runs
 2026-09-28T13:57 | agent:t-p1-eval | receipt | trainer v0.1 eval 8/10: v0 criticals and majors fixed; open major: Bash prefix allows shell chaining to key/ until the PreToolUse hook is built and tested (with t-p56-scripts)
+2026-09-28T13:59 | agent:t-p56-scripts | receipt | trainer launch: dontAsk mode, Bash allowed only for log.py and the unit's cargo check and test, Read denied on items key/; 30 tests pass; chaining hook and agent install pending
