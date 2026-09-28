@@ -861,3 +861,5 @@
 2026-09-28T16:07 | agent:r-batch2-prep | receipt | batch 2 bundled: team a 27 slices, 244 rows; team b 33 slices, 246 rows; 104 zh conference-talk rows are schedule anchors with no content, 33 per team dropped; batch 1 re-cut byte-identical; 16 tests pass
 2026-09-28T16:07 | self | decision | decided: redraw the dropped zh rows from the same (zh, hint) cell's other classes, fetch, re-cut; batch-2 extractors are reused across slices within a team, about three slices each, retired near 150k context
 2026-09-28T16:07 | self | delegation | r-batch2-prep continued: zh redraw, fetch, re-cut bundles
+2026-09-28T16:07 | agent:t-p3-author-a | receipt | probe-b specs revision 2: each pair names the structural difference blocking a rename port, locked in signature, types or visible tests; bans carried by pointing at the locked scanners
+2026-09-28T16:07 | self | delegation | t-p3-author-b continued: rewrite probe-b from specs revision 2
