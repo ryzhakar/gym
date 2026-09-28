@@ -125,6 +125,7 @@ CHALLENGE_MARKERS = (
     "checking your browser before accessing",
     "attention required! | cloudflare",
     "just a moment...",
+    "cookies zustimmen",  # golem.de consent wall in place of the article (batch-2 bundle, 2026-09-28)
 )
 MIN_PAGE_CHARS = 1500  # below this, an "HTML route" page is more likely a stub than an article
 # Hosts whose page shows it is whole: every marker present means the page rendered its post,
@@ -956,6 +957,15 @@ def fetch_whole_book(url: str) -> Fetched:
 BOOK_ROUTES = {"book-print", "book-crawl"}
 
 
+def cached_is_wall(hit: dict) -> bool:
+    """A cached text that is a bot, login or consent wall (a marker added after it was cached)."""
+    path = CACHE / f"{hit['key']}.txt"
+    if not path.exists():
+        return False
+    lower = path.read_text(errors="replace").lower()
+    return any(marker in lower for marker in CHALLENGE_MARKERS)
+
+
 # --- subcommands ----------------------------------------------------------
 
 def cmd_get(doi_or_url: str) -> int:
@@ -1067,7 +1077,7 @@ def cmd_fetch_csv(csv_path: str, status_csv: str = DEFAULT_STATUS_CSV) -> int:
             w.writerow(["id", "url", "class", "status", "key", "chars", "route"])
         for row in rows:
             hit = find_cached(row["url"])
-            if hit and not (is_book_class(row["class"]) and hit["route"] not in BOOK_ROUTES):
+            if hit and not (is_book_class(row["class"]) and hit["route"] not in BOOK_ROUTES) and not cached_is_wall(hit):
                 w.writerow([row["id"], row["url"], row["class"], "cached", hit["key"], hit["chars"], hit["route"]])
                 continue
             attempt(row, w, final=False)

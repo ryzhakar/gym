@@ -1,6 +1,10 @@
 """Build books-courses bundles: for batch-1, the book is the source, not its front page.
 
-Usage: uv run python scripts/research/books.py <team-a|team-b>
+Usage: uv run python scripts/research/books.py <team-a|team-b> [--batch n] [--out DIR]
+
+Batch 1 needed this pass because its prefetch stored books' front pages. From batch 2 on,
+cache.py's fetch-csv fetches book-class rows as whole books, so bundle.py already carries them;
+this script stays for re-cutting batch 1 and for any batch whose books need their own slices.
 
 Every batch-1 `class=books-courses` row, upgraded in `cache.py` via `fetch_book()` (a single
 /print.html request for an mdBook site, else a table-of-contents crawl - see cache.py for the
@@ -8,10 +12,11 @@ fetch side of this; this script only reads the resulting cache and bundles it). 
 site (PAYWALLED_DOMAINS in cache.py) stays `unreachable` - it was never attempted, by owner
 ruling, and nothing here changes that.
 
-Output: samples/bundles/b1-team-{team}-B{nn}.txt (~150k-char slices, never splitting a
-source, same header format as bundle.py) and samples/bundles/b1-team-{team}-B-manifest.csv
+Output: samples/bundles/b{n}-team-{team}-B{nn}.txt (~150k-char slices, never splitting a
+source, same header format as bundle.py) and samples/bundles/b{n}-team-{team}-B-manifest.csv
 (slice,data_row,id,url,status,reason,chars).
 """
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -22,13 +27,12 @@ import cache as c  # noqa: E402 - local module, path set above
 RECON = Path("/Users/ryzhakar/pp/gym/docs/orchestration_log/recon/2026-09-27/research/rust-map")
 SAMPLES = RECON / "samples"
 BUNDLES = SAMPLES / "bundles"
-STATUS_CSV = SAMPLES / "prefetch-b1-status.csv"
 SLICE_TARGET_CHARS = 150_000
 
 
-def latest_status_by_id_url() -> dict[tuple[str, str], dict]:
+def latest_status_by_id_url(status_csv: Path) -> dict[tuple[str, str], dict]:
     latest: dict[tuple[str, str], dict] = {}
-    for row in csv.DictReader(STATUS_CSV.open(newline="")):
+    for row in csv.DictReader(status_csv.open(newline="")):
         latest[(row["id"], row["url"])] = row
     return latest
 
@@ -53,20 +57,23 @@ def classify(text: str | None, url: str) -> str | None:
     lower = text.lower()
     if any(marker in lower for marker in c.CHALLENGE_MARKERS):
         return "stub"
-    if len(text) < c.MIN_PAGE_CHARS:
+    try:
+        c.validate_page_text(text, url=url)  # the cache's own floor and whole-page exemptions
+    except c.FetchError:
         return "thin"
     return None
 
 
-def build(team_arg: str) -> None:
-    batch_rows = list(csv.DictReader((SAMPLES / f"batch-1-{team_arg}.csv").open(newline="")))
-    status_by_id_url = latest_status_by_id_url()
+def build(team_arg: str, batch: int = 1, out: Path = BUNDLES) -> None:
+    prefix = f"b{batch}-{team_arg}"
+    batch_rows = list(csv.DictReader((SAMPLES / f"batch-{batch}-{team_arg}.csv").open(newline="")))
+    status_by_id_url = latest_status_by_id_url(SAMPLES / f"prefetch-b{batch}-status.csv")
 
     manifest: list[dict] = []
     kept: list[tuple[dict, str]] = []
 
     for data_row, batch_row in enumerate(batch_rows, start=1):
-        if "books-courses" not in batch_row["class"].split(";"):
+        if not c.is_book_class(batch_row["class"]):
             continue
         status_row = status_by_id_url.get((batch_row["id"], batch_row["url"]), {})
         text = load_text(status_row)
@@ -79,8 +86,8 @@ def build(team_arg: str) -> None:
         if reason is None:
             kept.append((batch_row | {"data_row": data_row}, text))
 
-    BUNDLES.mkdir(parents=True, exist_ok=True)
-    for stale in BUNDLES.glob(f"b1-{team_arg}-B*.txt"):
+    out.mkdir(parents=True, exist_ok=True)
+    for stale in out.glob(f"{prefix}-B*.txt"):
         stale.unlink()  # fully rebuilt each run, like sendback.py's R/T passes
 
     slices: list[list[tuple[dict, str]]] = [[]]
@@ -97,7 +104,7 @@ def build(team_arg: str) -> None:
     for i, sl in enumerate(slices, start=1):
         if not sl:
             continue
-        path = BUNDLES / f"b1-{team_arg}-B{i:02d}.txt"
+        path = out / f"{prefix}-B{i:02d}.txt"
         with path.open("w") as f:
             for row, text in sl:
                 if len(text) > SLICE_TARGET_CHARS:
@@ -111,7 +118,7 @@ def build(team_arg: str) -> None:
         entry["slice"] = f"B{row_to_slice[entry['data_row']]:02d}" if entry["data_row"] in row_to_slice else ""
 
     manifest.sort(key=lambda e: e["data_row"])
-    manifest_path = BUNDLES / f"b1-{team_arg}-B-manifest.csv"
+    manifest_path = out / f"{prefix}-B-manifest.csv"
     with manifest_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["slice", "data_row", "id", "url", "status", "reason", "chars"])
         w.writeheader()
@@ -127,4 +134,9 @@ def build(team_arg: str) -> None:
 
 
 if __name__ == "__main__":
-    build(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("team", choices=["team-a", "team-b"])
+    parser.add_argument("--batch", type=int, default=1)
+    parser.add_argument("--out", type=Path, default=BUNDLES)
+    args = parser.parse_args()
+    build(args.team, args.batch, args.out)
