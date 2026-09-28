@@ -789,3 +789,5 @@
 2026-09-28T13:23 | agent:r-claim-adj | receipt | adjudication: 653 CONFIRMED, 7 DATE-WRONG, 4 UNFAITHFUL; random 10% recheck 0 of 31 disagree (seed 20260927); built from stale chunk files and left noted misquotes and date drift CONFIRMED
 2026-09-28T13:23 | self | delegation | r-claim-adj continued: re-read chunks 05-07, apply the rule to every noted row across all files, fix CSV quoting
 2026-09-28T13:25 | agent:r-claim-adj | receipt | adjudication rebuilt: 648 CONFIRMED, 8 DATE-WRONG, 8 UNFAITHFUL of 664; csv parses, 9 columns; 6 verifier edits independently rechecked; random recheck 0 of 31
+2026-09-28T13:26 | agent:r-claim-adj | receipt | adjudication final: 648 CONFIRMED, 8 DATE-WRONG, 8 UNFAITHFUL; sweep of the remaining notes found no further deviations
+2026-09-28T13:26 | self | delegation | t5-compile-b1 continued: apply verify/claims-final.csv to MAP
