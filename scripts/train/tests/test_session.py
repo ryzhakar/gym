@@ -83,12 +83,27 @@ def test_open_with_no_due_probe_hands_off_to_the_next_unit(isolated_paths: Path,
     assert (isolated_paths / "training/unit-2/Cargo.toml").is_file()
 
 
+def make_probe_b_problem(items_root: Path, unit: str, problem: str = "p1") -> None:
+    """A minimal real crate under `<unit>/probe-b/<problem>/`, plus its `key/` mirror with a
+    held-out test — the shape probe.py's rewritten grader expects (P3 items/README.md § Layout)."""
+    cargo_toml = '[package]\nname = "probe_b_crate"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n'
+    lib_rs = "pub fn triple(n: i32) -> i32 {\n    n * 3\n}\n"
+    visible_rs = "use probe_b_crate::triple;\n\n#[test]\nfn visible() {\n    assert_eq!(triple(2), 6);\n}\n"
+    heldout_rs = "use probe_b_crate::triple;\n\n#[test]\nfn heldout() {\n    assert_eq!(triple(3), 9);\n}\n"
+    for base in (items_root / unit / "probe-b" / problem, items_root / unit / "key" / "probe-b" / problem):
+        (base / "src").mkdir(parents=True)
+        (base / "tests").mkdir(parents=True)
+        (base / "Cargo.toml").write_text(cargo_toml, encoding="utf-8")
+        (base / "src" / "lib.rs").write_text(lib_rs, encoding="utf-8")
+        (base / "tests" / "visible.rs").write_text(visible_rs, encoding="utf-8")
+    (items_root / unit / "probe-b" / problem / "spec.md").write_text("Edit: src/lib.rs\n", encoding="utf-8")
+    (items_root / unit / "key" / "probe-b" / problem / "tests" / "heldout.rs").write_text(heldout_rs, encoding="utf-8")
+
+
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
 def test_open_runs_a_due_delayed_probe_then_hands_off(isolated_paths: Path, capsys: pytest.CaptureFixture) -> None:
     items_root = isolated_paths / "items"
-    probe_b = items_root / "unit-1" / "probe-b"
-    probe_b.mkdir(parents=True)
-    (probe_b / "prompt.md").write_text("isomorph b of unit-1's probe", encoding="utf-8")
+    make_probe_b_problem(items_root, "unit-1")
 
     log.append_row(
         "queue",

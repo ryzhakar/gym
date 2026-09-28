@@ -230,8 +230,7 @@ def open_session(
     due = due_delayed_probes()
     for row in due:
         unit_dir = items_root / row["unit"]
-        crate_dir = ensure_unit_crate(row["unit"])
-        run_probe(unit_dir, crate_dir, "delayed", wait=wait, clock=clock)
+        run_probe(unit_dir, "delayed", wait=wait, clock=clock)
     unit = next_unit()
     if unit:
         ensure_unit_crate(unit)
