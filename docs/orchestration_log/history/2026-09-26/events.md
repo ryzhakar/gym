@@ -792,3 +792,5 @@
 2026-09-28T13:26 | agent:r-claim-adj | receipt | adjudication final: 648 CONFIRMED, 8 DATE-WRONG, 8 UNFAITHFUL; sweep of the remaining notes found no further deviations
 2026-09-28T13:26 | self | delegation | t5-compile-b1 continued: apply verify/claims-final.csv to MAP
 2026-09-28T13:26 | self | decision | decided: fairness grading (paired cases, ITT) waits until later batches stop merging and splitting Questions, since grading now would be redone; next after the Claim application: the fable slice review (coverage per stratum, next-batch targets), then batch 2
+2026-09-28T13:30 | agent:t5-compile-b1 | receipt | Claim verification applied to MAP: 8 dates corrected, 8 quotes or paraphrases fixed, 16 gap notes, README states 648 Claims verified at Sources 2026-09-28; check_map 417 FAIL unchanged, all declared gaps
+2026-09-28T13:30 | self | delegation | agent:t5-slice-review-1, fable: slice 1 review: coverage per stratum, failed checks, next-batch targets, no content verdicts; output slice-1-review.md
