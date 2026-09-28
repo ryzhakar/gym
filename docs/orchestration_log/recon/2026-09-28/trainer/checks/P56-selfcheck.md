@@ -384,3 +384,31 @@ and a hook command naming that exact path with `--crate`.
 it) but is no longer where any permission grant points — it's now unused by the trainer's own
 sandbox. Flagging it as dead weight rather than removing it unasked: happy to delete it (and the
 `training/rust/Cargo.toml` workspace machinery it maintains) on the word, since nothing reads it now.
+
+## Removed the dead scaffold (team lead, 2026-09-28, go-ahead on the item above)
+
+Deleted from `scripts/train/session.py`: `ensure_unit_crate`, `workspace_path`, `read_members`,
+`write_workspace`, and the now-unused `TRAINING_ROOT` constant and `import re`/`import subprocess`
+lines (nothing else in the file used either). Removed the `ensure_unit_crate(unit)` call from
+`open_session` — staging the next unit's practice items is now the whole of that branch. No
+`training/rust/Cargo.toml` existed as a committed file (it was only ever generated at runtime,
+already gitignored under `training/**/Cargo.lock` alongside `training/**/target/`), so there was
+nothing further to delete on disk.
+
+In `test_session.py`: dropped the `TRAINING_ROOT` monkeypatch (the attribute no longer exists on
+`session`), the `read_workspace_members` helper, and the two workspace-specific assertions
+(`"unit-2" in read_workspace_members(...)"`, the `Cargo.toml` existence check) from
+`test_open_with_no_due_probe_hands_off_to_the_next_unit` — which no longer needs `cargo` at all now
+that nothing in its path calls it, so its `@pytest.mark.skipif(CARGO_MISSING, ...)` came off too.
+Updated both files' module docstrings, which still described "a unit's crate is created on demand
+and joins the workspace."
+
+```
+$ uv run pytest scripts/train/tests
+============================== 74 passed in 7.33s ==============================
+$ uv run python scripts/train/check_record.py
+record: 0 FAIL
+```
+
+Same test count as before (74): this was a deletion of dead assertions and dead production code
+together, not a net-new test.
