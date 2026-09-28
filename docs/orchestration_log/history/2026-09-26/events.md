@@ -841,3 +841,5 @@
 2026-09-28T14:30 | agent:t-p3-hints | receipt | hint review: 36 levels, 32 SAFE (6 borderline), 3 LEAKS (u01 unshown L3, u03 reuse-1 L3, u03 reuse-2 L3), 1 USELESS; also a wrong description of ? in u03 attempt L3, two wrong subgoals, two missing ladders; gate not met
 2026-09-28T15:51 | self | discovery | session limit at 14:30 stopped t-p56-scripts, t-p3-blind, t-p3-author-b and r-batch2-prep; reset 15:50
 2026-09-28T15:51 | self | delegation | resumed after the limit: t-p56-scripts, t-p3-blind, t-p3-author-b, r-batch2-prep
+2026-09-28T15:54 | agent:t-p3-blind | receipt | blind solve: 27 of 27 solved from stubs and specs; 6 ambiguous (2 admit a fix that misses the lesson, 3 structural bans no test enforces, 1 needs unstated From impls); cargo build artifacts appeared twice under items/ and a sub-agent's denial is unreliable
+2026-09-28T15:54 | self | delegation | t-p3-author-a continued: fix the 4 non-SAFE hint levels and the other hint findings, and the 6 blind-solve ambiguities
