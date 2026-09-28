@@ -33,6 +33,7 @@ Sensor readings as temperature, fault and off; window input events (key, click, 
 - `tests/visible.rs`, locked. `key/probe-b/p<n>-<slug>/` is the full crate: the reference solution, a byte-identical `tests/visible.rs`, and `tests/heldout.rs`.
 - Predict-output: `src/main.rs`; an empty `prediction.txt` in the stub and the exact stdout in the key's copy; one test that runs the binary through the `CARGO_BIN_EXE_<package name>` environment variable, compares after trimming trailing whitespace per line and at the end, and never prints the actual output.
 - Grading copies the learner's `Edit:` files into a copy of the key and runs `cargo test`.
+- Structural rules (no `_` arm, every arm names its variant, one `match`, no `if`) are checked in a visible, locked `tests/structure.rs` that the spec names. The check reads the source with comments and string and char literals blanked, extracts each arm's pattern, and flags any alternative that is `_`, a bare binding, or anything not starting with a type or path. `..` inside a variant's pattern stays allowed, and the spec says so.
 - A signature lock is a held-out test that assigns the function to a function-pointer type written out in full.
 - No hints: probes are unaided (PLAN:50).
 
