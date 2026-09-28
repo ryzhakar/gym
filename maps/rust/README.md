@@ -2,17 +2,18 @@
 
 Compiled from batch 1's resolved research output (t5 compile, 2026-09-28;
 corrected the same day — source enrichment, date and quote fixes; a
-Voice-verification pass and then a Claim-verification pass applied the same
-day after that). Every entry below is provisional: nothing in this map has
-passed grading. See `docs/opinion-map.md` for the map's architecture and
-`docs/subjects/rust.md` for Rust's scope.
+Voice-verification pass, a Claim-verification pass, and an Arguments compile
+followed the same day). Every entry below is provisional: nothing in this
+map has passed grading. See `docs/opinion-map.md` for the map's architecture
+and `docs/subjects/rust.md` for Rust's scope.
 
 ## What batch 1 covers
 
-401 Questions, 607 Positions, 771 Claims, 374 Voices, 267 Sources, 1,447
-Concepts, across the 12 domains in `domains/` (10 target domains, `core`,
-`other`). Every Question is `status: open`; none has been closed, graded, or
-checked.
+401 Questions, 607 Positions, 771 Claims, 374 Voices, 429 Arguments, 267
+Sources, 1,447 Concepts, across the 12 domains in `domains/` (10 target
+domains, `core`, `other`). Every Question is `status: open`; none has been
+closed, graded, or checked. Arguments cover 259 Positions under 114
+Questions (a partial pass, not all 607/401) — see "Arguments" below.
 
 ## Voices, by verdict
 
@@ -57,6 +58,24 @@ status/check field for `claim`, so this statement is it. The 16 corrected
 ones carry a one-line note in `gap` (e.g. "verified 2026-09-28: date
 corrected"). Full row-by-row detail: `RECON/compile/compile-b1.md` §
 Claim-verification pass.
+
+## Arguments
+
+**429 Arguments**, `for`/`against` a Position, each with a fixed Value
+(`approachability`, `correctness`, `iteration-speed`, `performance`,
+`simplicity`, `stability`) and its Source(s) — covering 259 of 607
+Positions under 114 of 401 Questions; the rest have none yet (this batch's
+Arguments pass, `RECON/args/arguments-chunk-00..03.md`, is partial, not
+exhaustive). 58 more Arguments were found but excluded: their only Values
+were proposed-but-not-fixed `value-candidate:` names, logged instead —
+never merged into MAP — at `RECON/args/value-candidates.md` (34 distinct
+names, 68 occurrences; most frequent: `security` 8, `attribution-norms` 6).
+
+Simulating validator rule 4 (the `status: closed` evidence minimum) minus
+its check-record requirement — no fill-position/fill-tag/itt check exists
+yet for anything — **4 Questions already meet it structurally**:
+`merge-expensive-feature-with-limits`, `http-error-status-in-result`,
+`depend-vs-hand-roll`, `generics-vs-dyn-for-abstraction`.
 
 ## Declared limits
 
