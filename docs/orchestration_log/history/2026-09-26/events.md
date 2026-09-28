@@ -824,3 +824,4 @@
 2026-09-28T13:56 | agent:t-p56-scripts | receipt | learner record, log.py, check_record.py, probe.py, session.py built; 27 tests pass; allowlist launch not yet in; one read-only git status run against the brief; sessions.csv merges date and start into one stamped timestamp
 2026-09-28T13:56 | self | decision | decided: one stamped timestamp column stands; items root training/rust/items stands
 2026-09-28T13:56 | self | delegation | t-p56-scripts continued: allowlist launch per TRAINER/agent/allowlist.md, with a test
+2026-09-28T13:56 | agent:r-batch2-prep | receipt | census calibrated on batch 1: the first word list flagged 73/102 and 81/122, replaced by one naming only the banned ground, which catches all 5 auditor-named rows; extractor rule now bans exactly what the gate flags; worst case 153 runs
