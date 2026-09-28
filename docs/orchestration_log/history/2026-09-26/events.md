@@ -845,3 +845,5 @@
 2026-09-28T15:54 | self | delegation | t-p3-author-a continued: fix the 4 non-SAFE hint levels and the other hint findings, and the 6 blind-solve ambiguities
 2026-09-28T15:55 | agent:t-p56-scripts | receipt | probe runner: one row per item crate under a shared timer, cargo test --no-fail-fast, held-out tests copied from key/ at grading and removed after, build failure a miss; the stray target dirs were its own live runs, cleaned; 69 tests pass
 2026-09-28T15:55 | self | decision | decided: the learner works on copies under training/rust/work/<session>/, gitignored; items/ stays read-only in use
+2026-09-28T15:57 | agent:t-p3-author-b | receipt | probe-b: 9 items for u01-u03 from specs only; 68 checks as expected; open: u02 p2 unreachable _ arm capped by arm count, u02 p3 binding catch-all passes the scan, u01 p2 copy ban is text search
+2026-09-28T15:57 | self | delegation | agent:t-p3-iso, sonnet, fresh: isomorph check probe-a vs probe-b, same skill, no copy pass
