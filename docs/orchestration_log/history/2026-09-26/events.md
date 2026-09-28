@@ -818,3 +818,4 @@
 2026-09-28T13:55 | agent:t-p1-trainer | receipt | trainer v0.1: 40 rules; verbatim-line exception cut; hint-improv removed; tools Read, Glob, Bash under an allowlist; allowlist.md with 3 defaulted open points (shell chaining hook, syntax check, cwd pinning)
 2026-09-28T13:55 | agent:r-args-1 | receipt | arguments chunk 00: 32 Questions, all Sources read from cache; Positions with only below-bar or no Claims marked no argument; 14 value candidates flagged
 2026-09-28T13:55 | self | delegation | t-p1-eval continued: re-evaluate trainer v0.1
+2026-09-28T13:55 | agent:r-args-3 | receipt | arguments chunk 02: 32 Questions, 84 Positions, 144 Arguments, 23 no-argument lines; 11 value candidates flagged
