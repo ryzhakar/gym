@@ -799,3 +799,4 @@
 2026-09-28T13:39 | self | delegation | agent:r-args-1..4, sonnet: Arguments with Values, args chunks 00-03, output args/arguments-<chunk>.md
 2026-09-28T13:39 | self | delegation | agent:r-batch2-prep, opus: batch 2 preparation from slice-1-review § 4: freeze extraction, fill and merge prompts, class-balanced sampler, swift-interop frame fix, draw batch 2
 2026-09-28T13:39 | self | delegation | agent:trainer-planner, fable: plan the trainer program from the teaching evidence map v3, the owner's intake and rulings, and the Rust map v0.1; time to first session first-class; open points with defaults, no owner questions
+2026-09-28T13:42 | self | decision | decided: r-batch2-prep may read batch-1 readlogs and nothing-new reasons to calibrate the census gate; it writes prompts and draws, extracts nothing, so team independence is untouched
