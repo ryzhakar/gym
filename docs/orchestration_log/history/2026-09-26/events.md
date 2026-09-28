@@ -742,3 +742,6 @@
 2026-09-28T11:30 | self | decision | decided: a-sa30-f013276-c5 unresolved, since its two third fills disagree; unresolved rows compile marked unresolved and count toward no evidence minimum; blind majority overrides key-b1 on the 23 mismatches; the 7 duplicate Positions and the lexical summary pick ship declared in v0.1, fixed by the next merge and the ITT grading; compile on sonnet, upgrade on observed failure
 2026-09-28T11:30 | self | delegation | agent:t5-compile-b1, sonnet: write maps/rust v0.1 provisional from merge-v3 and resolved fill, check_map.py to 0 FAIL, log compile/compile-b1.md
 2026-09-28T11:31 | owner | receipt | work-silently skill invoked again: silence re-entered; heartbeat and outside-event prompts get zero text
+2026-09-28T11:48 | agent:t5-compile-b1 | receipt | compile v0.1: 401 Questions, 607 Positions, 771 Claims, 399 Voices, 267 Sources, 1447 Concepts; check_map 2364 FAIL, all content gaps: Voice type/track_record, Source fields, 79 non-ISO dates, 9 overlong quotes
+2026-09-28T11:48 | self | decision | decided: Source fields, dates and quotes are transcription from frame and inputs, sent back to the compiler; Voice type and track record stay a declared gap for a Voice-verification pass
+2026-09-28T11:48 | self | delegation | t5-compile-b1 continued: Source fields from frame, ISO dates, quote cuts, rerun check_map
