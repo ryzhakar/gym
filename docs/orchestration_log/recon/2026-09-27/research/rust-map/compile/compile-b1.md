@@ -551,6 +551,74 @@ the fields the validator was already failing on. By rule:
 | Claim missing `date` | 70 |
 | Claim date not ISO | 70 |
 
+
+## Arguments compiled (lead ruling, 2026-09-28)
+
+Compiled `RECON/args/arguments-chunk-00..03.md` (126 Questions, 332
+Positions covered) into `MAP/arguments/`. Script:
+`docs/orchestration_log/recon/2026-09-27/research/rust-map/compile/compile_arguments.py`.
+
+### Format and rule applied
+
+Per Position, the chunk files give `for`/`against` bullets:
+`text | values: <fixed and/or value-candidate:name entries> | sources:
+<source ids>` or a `no argument in sources` line (skipped; no entity).
+An Argument's `values` keeps only the six fixed Values
+(`approachability, correctness, iteration-speed, performance, simplicity,
+stability`); a `value-candidate:` entry is dropped from an Argument that
+also carries a fixed Value, and an Argument whose values are *entirely*
+`value-candidate:` entries is excluded from `MAP` altogether. `sources`
+keeps only the source id(s) (a locator/date/handle also given in the
+sources column has no field on `argument` in the schema and isn't
+transcribed there).
+
+- **487** `for`/`against` lines parsed (0 failed); **92** `no argument in
+  sources` lines (including the per-side form, `- against | no argument in
+  sources`) skipped with no entity written.
+- **429 Arguments written**, ids `<position>--NN` (sequential per
+  Position over kept Arguments only, no gaps for excluded ones), across
+  **259 Positions** and **114 Questions**.
+- **58 Arguments excluded**: values were entirely `value-candidate:`
+  entries. Logged, not lost: `RECON/args/value-candidates.md`.
+- Every Question, Position and Source id referenced resolved cleanly — 0
+  unresolved relations, 0 unrecognized value tokens.
+
+### Value candidates
+
+`RECON/args/value-candidates.md`: **34 distinct candidate names, 68 total
+occurrences** (58 from excluded Arguments, 10 from Arguments kept on a
+fixed Value alongside a dropped candidate), each with every Question/
+Position/side it was seen on. Most frequent: `security` (8), `attribution-norms`
+(6), `cost-efficiency` (4), `process-consistency` (4).
+
+### Rule 4, except for checks
+
+Validator rule 4 (`status: closed` gate) never fires — no Question is
+closed. Simulating it anyway (≥2 Positions; each with ≥2 Claims from
+distinct Voices; ≥1 Argument with ≥1 Value per Position; ≥1 Domain and
+Concept — everything **except** the fill-position/fill-tag/itt check
+records, which don't exist yet): **4 Questions** meet it now —
+`merge-expensive-feature-with-limits`, `http-error-status-in-result`,
+`depend-vs-hand-roll`, `generics-vs-dyn-for-abstraction`. 5 more have ≥2
+Positions structurally ready but not *all* of them (a mix of ready and
+not-yet-ready Positions under the same Question).
+
+### Validator run
+
+**417 FAIL** (unchanged) — Arguments add a new, fully-passing entity kind;
+they don't touch any of the fields already failing. By rule:
+
+| cause | count |
+| --- | --- |
+| Voice missing `type` | 88 |
+| Voice missing `track_record` | 86 |
+| Voice `track_record` has no url (rule 6) | 86 |
+| Source missing `date` | 6 |
+| Position missing `tag` | 9 |
+| Question missing `domains` | 2 |
+| Claim missing `date` | 70 |
+| Claim date not ISO | 70 |
+
 Full output verbatim follows.
 
 ```
@@ -975,7 +1043,7 @@ FAIL  maps/rust/voices/zackw.yaml  no track_record line with a url
 counts per kind:
   question: 401
   position: 607
-  argument: 0
+  argument: 429
   value: 6
   voice: 374
   claim: 771
