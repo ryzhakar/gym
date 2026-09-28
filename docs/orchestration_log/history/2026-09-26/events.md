@@ -751,3 +751,5 @@
 2026-09-28T11:57 | self | decision | decided: map v0.1 committed provisional with its declared gaps; the Voice pass closes 1197 of the 1354 FAIL; the dateless Claims stay unset, never guessed
 2026-09-28T12:03 | agent:r-voice-4 | receipt | voices chunk-12: 20 MEETS, 3 FAILS, 0 UNKNOWN; chunk-13: 17 MEETS, 6 FAILS, 1 UNKNOWN (24 of 25 reported); on 14-15
 2026-09-28T12:03 | self | delegation | r-voice-4 continued: add missing steffahn to voices-chunk-13.md
+2026-09-28T12:04 | agent:r-voice-1 | receipt | voices chunks 00-03: 100 Voices, 80 MEETS, 15 FAILS, 5 UNKNOWN by chunk sums (agent's total said 85); identity tied by profile pages
+2026-09-28T12:04 | agent:r-voice-2 | receipt | voices chunks 04-07: 100 Voices, 74 MEETS, 19 FAILS, 7 UNKNOWN; 2 same-person id pairs found (dominaezzz, jonathan-kelly)
