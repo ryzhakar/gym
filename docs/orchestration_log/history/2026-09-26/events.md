@@ -778,3 +778,6 @@
 2026-09-28T12:59 | agent:t5-compile-b1 | receipt | 10 gh api citations rewritten as browsable urls; check_map 417 FAIL, all declared gaps: 88 Voices untyped, 86 without track record (FAILS and UNKNOWN), 70 undated Claims, 6 undated Sources, 9 untagged Positions, 2 Questions without domains
 2026-09-28T13:03 | agent:r-claim-3 | receipt | claims chunks 08-11: 168 of 168 CONFIRMED, practiced unknown throughout; 2 Source date mismatches noted (b-sR13-f007973-c1, b-sT09-f011688-c1); done within about ten minutes, spot-check due
 2026-09-28T13:05 | agent:r-claim-1 | receipt | claims chunks 00-03: 162 CONFIRMED, 6 DATE-WRONG (thread date given instead of comment date, corrected dates supplied); all sources cached
+2026-09-28T13:06 | agent:r-claim-2 | receipt | claims chunks 04-05: 83 CONFIRMED, 1 UNFAITHFUL; one quote absent from the transcript was marked CONFIRMED
+2026-09-28T13:06 | self | delegation | r-claim-2 continued: quote absent from source is UNFAITHFUL; wrong timestamps go to corrected_locator
+2026-09-28T13:06 | self | failure | a cd into verify/ moved the harness working directory again; reset
