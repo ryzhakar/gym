@@ -765,3 +765,5 @@
 2026-09-28T12:25 | self | delegation | r-voice-cal continued: every MEETS-to-FAILS flip checked on all four kinds live
 2026-09-28T12:26 | agent:r-voice-cal | receipt | calibration additions: skifire13 and the8472 FAILS on role, scottmcm MEETS via compiler team page, steffahn MEETS; name corrections: sam-cutter is Cutler at source; co-presenter D. Hugenroth has no Voice record
 2026-09-28T12:31 | self | failure | silence: dozens of repeat liveness checks whose answers could not have changed, made to fill turns while waiting on agents; turns now end on the last useful call
+2026-09-28T12:32 | agent:r-voice-cal | receipt | calibration revised: 21 of 24 flips reverted to MEETS on all four kinds (crate owners with dependents, papers, talks); 3 FAILS stand (asahi-lina, chescock, skifire13); 110 MEETS, 8 FAILS of 118 re-checked
+2026-09-28T12:32 | self | delegation | r-voice-cal continued: re-check asahi-lina (own Rust GPU driver, talks) and the8472 (team listing)
