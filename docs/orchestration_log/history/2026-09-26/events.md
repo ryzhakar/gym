@@ -863,3 +863,6 @@
 2026-09-28T16:07 | self | delegation | r-batch2-prep continued: zh redraw, fetch, re-cut bundles
 2026-09-28T16:07 | agent:t-p3-author-a | receipt | probe-b specs revision 2: each pair names the structural difference blocking a rename port, locked in signature, types or visible tests; bans carried by pointing at the locked scanners
 2026-09-28T16:07 | self | delegation | t-p3-author-b continued: rewrite probe-b from specs revision 2
+2026-09-28T16:07 | agent:t-p56-scripts | receipt | trainer grants repointed at training/rust/work/<session>/<unit>/practice/; probe and practice staging kept apart; guard cwd allows the practice subtree; allowlist.md updated; 74 tests pass; the old unit-crate scaffold is dead
+2026-09-28T16:07 | self | decision | decided: remove the dead unit-crate scaffold and its workspace machinery
+2026-09-28T16:07 | self | delegation | t-p56-scripts continued: remove the dead scaffold
