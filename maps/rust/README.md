@@ -1,17 +1,40 @@
 # Rust opinion map — v0.1 (provisional)
 
 Compiled from batch 1's resolved research output (t5 compile, 2026-09-28;
-corrected the same day — source enrichment, date and quote fixes). Every
-entry below is provisional: nothing in this map has passed grading. See
+corrected the same day — source enrichment, date and quote fixes; a
+Voice-verification pass applied the same day after that). Every entry below
+is provisional: nothing in this map has passed grading. See
 `docs/opinion-map.md` for the map's architecture and `docs/subjects/rust.md`
 for Rust's scope.
 
 ## What batch 1 covers
 
-401 Questions, 607 Positions, 771 Claims, 399 Voices, 267 Sources, 1,447
+401 Questions, 607 Positions, 771 Claims, 374 Voices, 267 Sources, 1,447
 Concepts, across the 12 domains in `domains/` (10 target domains, `core`,
 `other`). Every Question is `status: open`; none has been closed, graded, or
 checked.
+
+## Voices, by verdict
+
+Of 399 originally-compiled Voice ids, a Tier-3 track-record check
+(`RECON/verify/voices-chunk-00..15.md`, `voices-calibration.md`) found:
+
+| verdict | ids | what happened |
+| --- | --- | --- |
+| MEETS | 300 | `type` and `track_record` written; nothing added to its Claims |
+| FAILS | 77 | `type`/`track_record` left unset (no evidence found); its Claims gapped `voice-below-bar` |
+| UNKNOWN | 22 | same as FAILS; its Claims gapped `voice-unverified` |
+
+25 of the 399 ids turned out to be the same person under a different id
+(same-person clusters, `RECON/compile/compile-b1.md` § Voice-verification
+pass) and were merged into 18 canonical ids, with their Claims repointed —
+**374 Voice files remain**. One id (`sam-cutter`) was itself a
+mis-transcription and was renamed to `sam-cutler`.
+
+**Claims gapped this pass:** 107 `voice-below-bar`, 28 `voice-unverified`.
+Combined with the 30 Claims already gapped `voice-unverified` at compile
+time (an explicit `[voice-unverified]` marker in the source), 58 Claims
+carry `voice-unverified` in total, 0 overlapping with `voice-below-bar`.
 
 ## Declared limits
 
@@ -29,8 +52,10 @@ checked.
 - **Position summaries** were picked between two candidate fills by lexical
   overlap with the Claims' own quoted words, not by a semantic read of all
   candidates (`fill/resolve-b1.md` § Summaries).
-- **Claims and Voices are unverified.** No Tier-3 pass has fetched a Claim's
-  source to confirm it, or checked a Voice's track record.
+- **Claims are unverified; Voices are now track-record-checked but not
+  Claim-checked.** No Tier-3 pass has fetched a Claim's own source to
+  confirm the quote/paraphrase/date; a separate Tier-3 pass has checked
+  each Voice's track record (see "Voices, by verdict" below).
 - **No grading has run.** No paired-cases or ITT check exists; `MAP/checks/`
   is empty this batch.
 
@@ -49,11 +74,17 @@ checked.
   `reproduce-wasm-bugs-natively` (`fill/resolve-b1.md` § Key comparison).
 - **1 Claim excluded** (`a-saL1-f005454-c5`): resolved to "supports no
   Position", and the schema has no slot for that outcome.
-- **Every Voice carries only `name`.** No Tier-3 voice-verification pass has
-  run this batch, so `type` and `track_record` are not established; all 399
-  Voices fail the validator's required-field and track-record checks by
-  design — this is the one gap the correction pass did not close (lead
-  ruling: it belongs to the Voice-verification pass, not the compiler).
+- **Voice type/track_record: now established for MEETS Voices** (see
+  "Voices, by verdict" above). 2 Voices (`ralfjung`,
+  `r-my-rakic-on-behalf-of-the-compiler-performance-working`) give an
+  illegal `type` value (`role` — a track_record kind word, not a Voice
+  type) in the source chunk file; `type` left unset rather than guessed,
+  `track_record` otherwise intact. 10 MEETS Voices (`bjoernq`, `jamesmunns`, `jessebraham`,
+  `laggui`, `ssokolow`, `stefan-baumgartner`,
+  `vaultwarden-maintainers-dani-garcia-vaultwarden`, `warre-snaet`,
+  `yanshay`, `yatekii`) cite only a `gh api` command as evidence, no
+  browsable url, and so still fail the validator's track-record-url check
+  despite being genuinely established.
 - **Sources carry `url`, `title`, `kind`, `language` and (for 261 of 267) a
   `date`**, transcribed from the source-frame registry
   (`frame/frame*.csv`, `samples/batch-1-team-{a,b}.csv`). `kind` is set
