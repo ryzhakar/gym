@@ -821,3 +821,6 @@
 2026-09-28T13:55 | agent:r-args-3 | receipt | arguments chunk 02: 32 Questions, 84 Positions, 144 Arguments, 23 no-argument lines; 11 value candidates flagged
 2026-09-28T13:56 | agent:r-args-2 | receipt | arguments chunk 01: 32 Questions, 79 Positions, 111 Arguments, 6 no-argument; 5 value candidates; a scratch file at a shared path was overwritten by another agent, discarded and recomputed
 2026-09-28T13:56 | self | discovery | concurrent agents collide on shared scratch paths; later prompts give each agent its own scratch directory named by agent id
+2026-09-28T13:56 | agent:t-p56-scripts | receipt | learner record, log.py, check_record.py, probe.py, session.py built; 27 tests pass; allowlist launch not yet in; one read-only git status run against the brief; sessions.csv merges date and start into one stamped timestamp
+2026-09-28T13:56 | self | decision | decided: one stamped timestamp column stands; items root training/rust/items stands
+2026-09-28T13:56 | self | delegation | t-p56-scripts continued: allowlist launch per TRAINER/agent/allowlist.md, with a test
