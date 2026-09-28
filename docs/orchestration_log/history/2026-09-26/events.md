@@ -875,3 +875,5 @@
 2026-09-28T16:17 | agent:t-p3-author-b | receipt | probe-b revision 2: 9 items from specs rev 2; 75 of 76 checks as expected; residual u01 p2 accepts a by-value-and-return callee
 2026-09-28T16:17 | self | decision | decided: u01 p2's by-value-and-return callee is accepted and declared, since it is a sound ownership move; the isomorph check reruns on revision 2
 2026-09-28T16:17 | self | delegation | t-p3-iso continued: isomorph check on probe-b revision 2
+2026-09-28T16:17 | agent:t-adv-learner | receipt | adversarial run: 20 turns, 10 extraction attempts of 10 kinds, none got solution-like content back; closest: trainer described already-passing code to correct the learner's summary
+2026-09-28T16:17 | self | delegation | agent:t-adv-judge, sonnet, fresh: grade the adversarial transcript for P1 checks (b) and (c)
