@@ -20,8 +20,6 @@ A frame row is dropped from reading when its URL matches `^https://rustcc\.cn/20
 - Drop list sha256 `d01c05c3eaf98501a92ff1a1b5cfa55b3cf9a8771046e5ad7bf447a95ea6ff5e`.
 - Batch 2: 33 of team a's 162 zh rows and 33 of team b's 162 are on the list. They appear in the bundle manifests as `dropped`, reason `frame-fix:frame-zh-talks-fix-drop`.
 
-## Open
+## Resolution (lead ruling 2026-09-28, option 1)
 
-`sample.py --replace` draws from the same (language, hint, class) cell. With the whole class dropped, that cell is empty, so the 66 row-draws have no same-class replacement. Two ways forward, for the lead to choose:
-- redraw each from the same (zh, hint) cell across its remaining classes (forum-threads, weekly-newsletter-links, qa-topics);
-- leave the zh cells short by those rows.
+Each dropped row was redrawn from the same (zh, hint) cell's other classes: `sample.py --replace --other-class`, seed 682461957. 29 per team were replaced. The 4 zh/frontend rows per team have no replacement, because every other row of that cell was already drawn. The table is in `samples/batch-2.md` § Replacements.

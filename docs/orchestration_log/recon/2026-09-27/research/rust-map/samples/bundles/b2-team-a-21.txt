@@ -1,4 +1,1518 @@
-=== ROW 186 | f014460 | https://rustcc.cn/article?id=75f55093-28f6-41a6-94bf-3fa5b73fa1a6 | 2026-09-22 | forum-threads ===
+=== ROW 154 | f014242 | https://rustcc.cn/article?id=cadacff7-c4a3-44e5-b529-8e64ebe2c248 | 2025-11-18 | forum-threads ===
+Hash 不安全！从 Salt 到 Argon2 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+Hash 不安全！从 Salt 到 Argon2
+blossom-001
+发表于 2025-11-18 20:21
+导语：你存储的 $\text{Hash}$，正在被 $\text{GPU}$ 批量破解
+即使你已经告别了明文存储，但如果你的应用还在使用传统的 $\text{Hash}$ 函数来保护用户密码，那么你的系统安全仍然处于巨大风险之中。密码安全不是简单的 $\text{Hash}$ 一次就能解决的问题。 本文将直面这一致命缺陷，深入解析为什么 $\text{Hash}$ 存储方式会被批量破解，并向你展示如何在强大的 $\text{Rust}$ 生态中，通过引入随机盐值和选择抗硬件加速的算法, 构建起现代化、高可靠的密码存储体系。
+一、致命缺陷：为什么不能直接 $\text{Hash}$ 密码？
+许多初级开发者认为，只要对密码使用 $\text{MD5}$ 或 $\text{SHA-256}$ 等标准散列函数，就可以安全地存储密码。然而，这种方法的确定性特点，使其在面对现代攻击时不堪一击。
+1. 彩虹表攻击（Rainbow Table Attack）的威胁
+原理： 简单的 $\text{Hash}$ 函数（如 $\text{SHA-256}$）对于相同的输入，输出永远相同。攻击者可以利用这一点预先计算出数百万个常见密码的 $\text{Hash}$ 值，构建成一个巨大的查询表（即彩虹表）。
+后果：
+一旦数据库泄露，攻击者无需计算，只需用数据库中存储的 $\text{Hash}$ 值去查询彩虹表。
+所有使用相同弱密码的用户（如 $\text{"123456"}$）会瞬间被批量破解。
+2. 批量破解的风险
+简单 $\text{Hash}$ 的另一个问题是无法区分相同密码。如果 $\text{1000}$ 个用户的密码都是 $\text{“password”}$，它们的存储 $\text{Hash}$ 值是完全一样的。攻击者只需破解这一个 $\text{Hash}$ 值，就能一次性攻破 $\text{1000}$ 个账户。
+二、安全基石：为密码引入随机性（$\text{Salt}$）
+要消除 $\text{Hash}$ 的确定性弱点，我们必须在存储过程中引入随机性。这正是**密码盐值（Password Salt）**的核心价值。
+1. 什么是盐值 ($\text{Salt}$)?
+盐值是一个随机生成的字符串或字节序列。它与用户的原始密码混合后，再进行 $\text{Hash}$ 散列。
+2. $\text{Salt}$ 的插入位置与作用
+“混合”最常见的技术手段是拼接（Concatenation）。$\text{Salt}$ 的作用是改变最终的输入字符串，使 $\text{Hash}$ 输出结果发生雪崩效应。$\text{Salt}$ 的插入位置有多种，虽然对现代算法影响微小，但在理论上，盐值前置被认为更有助于打乱 $\text{Hash}$ 函数的初始状态。
+拼接方式
+表达式
+理论安全性/特点
+盐值前置
+$\text{Hash}(\text{Salt} + \text{密码})$
+推荐的通用做法。 $\text{Salt}$ 优先影响 $\text{Hash}$ 初始状态，鲁棒性略高。
+盐值后置
+$\text{Hash}(\text{密码} + \text{Salt})$
+同样有效，但理论上会产生相同的中间 $\text{Hash}$ 状态（直到 $\text{Salt}$ 被处理）。
+混合拼接
+$\text{Hash}(\text{Salt}_1 + \text{密码} + \text{Salt}_2)$
+更复杂的拼接，进一步打乱输入。
+在实践中，现代密码哈希函数（如 $\text{Argon2}$）的实现库已经为您处理了 $\text{Salt}$ 的生成和混合逻辑，它采用经过安全验证的复杂流程，无需手动进行字符串拼接。
+3. 盐值的核心作用
+消除 $\text{Hash}$ 值的确定性： 即使 $\text{1000}$ 个用户的密码都是 $\text{“password”}$，但由于每个用户都拥有一个独特的随机 $\text{Salt}_n$，最终生成的 $\text{Hash}$ 值 $\text{Hash}_n$ 将完全不同。
+对抗批量破解： 盐值使得攻击者必须针对每个用户的唯一盐值，从头开始进行破解尝试，大大增加了破解的成本和时间。
+三、安全实现：选择“慢而强”的密码哈希算法
+引入盐值解决了批量破解的问题，但为了抵御针对单个账户的暴力破解，我们还需要选择一个抗破解的 $\text{Hash}$ 算法。这就是 $\text{Argon2}$ 成为行业标准的原因。
+1. 为什么传统的 $\text{Hash}$ 容易被破解？（易受硬件加速的暴力破解）
+简单的 $\text{Hash}$ 算法（如 $\text{MD5}$、$\text{SHA-256}$）计算速度极快，且不需要大量内存。这使其极易被 $\text{GPU}$ 和 $\text{ASIC}$ 等硬件加速进行暴力破解：
+硬件类型
+优势
+针对算法
+破解效率
+通用 $\text{GPU}$
+拥有数千个并行处理单元，擅长高速、重复的计算任务。
+传统 $\text{Hash}$ 的噩梦。 $\text{SHA-256}$ 等算法可被高度并行化加速。
+极快
+专用 $\text{ASIC}$ 矿机
+专门为特定算法设计（如比特币的 $\text{SHA-256}$ 矿机）。
+对简单的 $\text{Hash}$ 算法提供极高算力。
+骇人
+2. $\text{Argon2}$：通过资源消耗对抗硬件
+破解的难度主要体现在密码长度和复杂度上。 即使面对 $\text{GPU}$ 等暴力破解工具，密码长度每增加一位，破解所需的时间就会呈指数级增长。Argon2 的价值在于，它将这种指数级难度与硬件成本相结合，使破解从“可行”变为“昂贵且耗时”。
+$\text{Argon2}$ 故意设计为**资源消耗型（Resource-Heavy）**算法，通过引入以下机制来抵抗 $\text{GPU}$ 和 $\text{ASIC}$ 的加速：
+内存成本（$\text{Memory Cost}$）： 需要消耗大量的 $\text{RAM}$ 内存资源。这有效抵抗了 $\text{GPU}$。$\text{GPU}$ 的核心虽然多，但单个核心可用的内存有限，使其在内存密集型的 $\text{Argon2}$ 面前效率大大降低。
+时间成本（$\text{Time Cost}$）： 需要多次迭代计算，减慢计算速度。
+通过消耗大量的时间和内存，$\text{Argon2}$ 将暴力破解的成本提高到不切实际的程度。
+3. $\text{Rust}$ 与 $\text{Argon2}$ 的安全实现范例
+在 $\text{Rust}$ 中，我们可以使用 argon2 crate 来实现这一安全存储策略。
+存储：使用 $\text{Argon2}$ 和 $\text{Salt}$ 进行哈希
+下面的 $\text{Rust}$ 函数展示了如何在函数内部生成安全、随机的盐值，然后利用 $\text{Argon2}$ 默认参数来保证足够的计算消耗。
+pub fn hash_password(pass: &str) -> Result<String> {
+let arg2 = Argon2::new(
+argon2::Algorithm::Argon2id,
+argon2::Version::V0x13,
+Params::default(), // 使用默认的参数，保证足够的计算消耗（内存和时间）
+);
+// 关键：使用操作系统提供的加密安全随机数生成器（OsRng）生成新的盐值
+let salt = SaltString::generate(&mut OsRng);
+Ok(arg2
+.hash_password(pass.as_bytes(), &salt)
+.map_err(|err| Error::Hash(err.to_string()))?
+.to_string())
+}
+示例：两次哈希同一密码的结果对比
+即使使用相同的弱密码 $\text{“123456”}$，由于每次都会生成一个全新的、随机的 $\text{Salt}$，最终的 $\text{Hash}$ 结果也完全不同。
+运行次数
+原始密码
+存储的 $\text{Hash}$ 字符串
+第一次
+$\text{123456}$
+$argon2id$v=19$m=19456,t=2,p=1$rYiMNkHAO0UG4bdjKZcfsQ$sjPranMIpeNmiz3hKiVth10uDCkwVeFK4xJLiM3/5vI
+第二次
+$\text{123456}$
+$argon2id$v=19$m=19456,t=2,p=1$F96v5v7HggAwPBwux8o84w$OUfXiOxjd80X0GYW5mItGBLPTRBiRBGewswlnBTj4do
+关键点： $\text{Argon2}$ 的输出字符串中包含了最终 $\text{Hash}$ 值、使用的盐值和所有参数（内存、时间等）。您只需要将这个完整的字符串存储到数据库中即可。
+校验：利用存储的 $\text{Hash}$ 字符串进行验证
+在用户登录时，argon2 库会自动解析存储的 $\text{Hash}$ 字符串，提取出盐值和参数，并用这些信息来重新计算并验证用户输入的密码。
+pub fn verify_password(pass: &str, hashed_password: &str) -> bool {
+let arg2 = Argon2::new(
+argon2::Algorithm::Argon2id,
+Version::V0x13,
+Params::default(),
+);
+// 1. 从存储的字符串中解析出 Salt、Hash 和参数
+let Ok(hash) = PasswordHash::new(hashed_password) else {
+return false;
+};
+// 2. 使用解析出的 Salt 和参数，以慢速计算方式验证密码
+arg2.verify_password(pass.as_bytes(), &hash).is_ok()
+}
+结论
+密码安全存储的关键在于增加攻击者的计算成本和工作量。
+通过在 $\text{Rust}$ 中采纳以下三大原则，您的应用将获得强大的安全保障：
+引入 $\text{Salt}$： 为每个密码增加随机性，以抵御彩虹表和批量破解。
+使用 $\text{Argon2}$： 选择内存和时间消耗型的算法，以抵抗 $\text{GPU}$ 和 $\text{ASIC}$ 加速的暴力破解。
+合理配置参数： 确保 $\text{Argon2}$ 的时间和内存参数配置合理，以提供足够的安全性。
+这种策略体现了现代密码学的核心理念：将安全性从依赖保密转向依赖计算成本，是业界公认的有效实践。
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 155 | f014293 | https://rustcc.cn/article?id=0fec7808-76b6-443e-91e1-6e2b1bae2389 | 2026-02-09 | forum-threads ===
+[商汤/大装置] 诚邀 Rust 系统工程师共建下一代 AI 推理基础设施 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+[商汤/大装置] 诚邀 Rust 系统工程师共建下一代 AI 推理基础设施
+adamcavendish
+发表于 2026-02-09 18:27
+Tags：AI, 推理,
+Hi Rust 社区的小伙伴们 👋
+我们正在构建全球最具适应性的「推理基础设施底座」——不仅服务于当下的大语言模型（ LLM ），更面向未来十年的前沿模型、异构加速器（ GPU/NPU/ASIC ）以及符合数据主权与合规要求的部署实践。
+从单节点开发集群，到横跨公有云、国家级私有云与物理隔离数据中心的多区域 GPU/NPU 异构算力舰队——大装置在「模型实际运行的位置」完成推理请求的智能路由、弹性编排与深度可观测性：保障可预期的低延迟、严苛的服务等级目标（ SLO ），且彻底杜绝厂商锁定（ zero vendor lock-in ）。这一切，均由 Rust 实现——它足够安全，可贴近内核级系统；足够高效，能支撑微秒级关键路径；也足够表达力丰富，可精准建模全权衡：从 HTTP 头字段解析，到 RDMA 队列对（ queue pair ）调度。
+你不会只是"胶水式对接 API"。你将与团队共同设计定义下一代大规模、生产级 AI 推理所依赖的基础设施原语（ infrastructure primitives ）——让推理真正变得可靠、高效、可持续演进：
+支持跨地域与硬件代际（ H200 、Ascend 910B 等）的全局网关；
+面向场景自适应的控制器（适配合规性、延迟敏感性或成本约束）；
+原生集成 Kubernetes 的 Operator ，将基础设施意图（ infrastructure intent ）转化为可观测、自愈合的运行现实——服务于研究人员、初创公司、国家实验室，以及中国最具雄心的 AI 战略项目。
+商汤/大装置 · AI 推理平台｜后端工程师
+后端工程师（ Rust / 系统 / 基础设施方向）
+🔧 你将实际构建并长期负责的核心系统
+🌐 全球规模推理编排体系
+• 全局网关层（ Global Gateway Layer ）
+基于 pingora 自研高吞吐、低延迟 Rust HTTP 反向代理与智能路由系统：
+跨地域、跨硬件代际（如 H200 / Ascend 910B ）、跨合规边界（如数据驻留区）动态分发请求；
+强制执行地理围栏（ geo-fencing ）、租户级精细化限流（按 token / 请求 / 音频秒计费），以及故障时自动降级策略（ dynamic fallback ）。
+• 场景专用轻量网关（ Scenario-Specific Gateways ）
+为不同推理模态（ LLM 、ASR 、TTS 、OCR 、向量嵌入、重排序、视觉-语言多模态等）定制嵌入式 HTTP 适配器：
+✅ 支持模态特化的请求整形（如音频分块、Prompt 校验、图像预处理提示）；
+✅ 原生支持流式响应语义（text/event-stream、分块二进制传输）；
+✅ SLO 感知型路由（如优先选择 P95 延迟 <300ms 的 ASR 后端）；
+✅ 所有网关共享统一控制平面：API 密钥管理、分布式追踪、指标采集、策略引擎。
+• 跨集群服务发现与健康网格（ Cross-Cluster Service Discovery & Health Meshing ）
+深度集成 Kubernetes Endpoints / EndpointSlices / Service APIs，并通过 eBPF 实现毫秒级、业务感知的存活探针（ liveness probe ）：动态加权路由决策依据包括——实时 token 吞吐量、GPU 显存压力、RDMA/PCIe 互连带宽饱和度等真实负载信号。
+⚙️ 基础设施原语（而非抽象封装）
+• 微批调度器（ Micro-batch Scheduler ）
+跨硬件部署单元（单机 / 集群 / 跨云）进行智能负载均衡——不依赖传统 CPU/内存指标，而是基于推理引擎反馈的深层 telemetry：请求队列积压率、PCIe 总线带宽利用率、NCCL Ring 健康状态等。
+• Token 成本归因管道（ Cost-per-Token Attribution Pipeline ）
+将请求元数据（租户 ID 、模型名称、部署区域、SLA 等级）与底层硬件指标（ GPU 显存带宽、DRAM 访问周期、NIC 卸载使用率）精确关联，实现细粒度、可审计的资源成本核算。
+🧱 全栈所有权（ Cross-Stack Ownership ）
+与 GPU/NPU 内核与固件团队协同：针对特定模型优化 CUDA/Ascend Kernel 、调优 NCCL 集体通信、加固基于 eBPF 的可观测性模块——因为推理可靠性始于运行时（ runtime ）之下。
+🛡️ 可靠性即代码（ Reliability as Code ）
+自动扩缩容逻辑触发条件为业务语义指标：token 吞吐量、KV Cache 命中率、互连网络饱和度——而非泛化的 CPU 或内存使用率；
+渐进式灰度发布（ canary traffic shift ）默认绑定可观测性回滚机制：一旦错误率飙升或显存碎片率超阈值，立即全自动回退，并完整关联全链路 trace 。
+📈 复利型工程素养（ Engineering Posture That Compounds ）
+编写 RFD （ Request for Discussion ）文档，清晰阐述关键架构决策背后的权利衡，例：
+“我们选择去中心化 JWK 分发 + 每请求 JWS 验证，而非 mTLS ，以在跨地域、跨云厂商、跨主权网络场景下实现零信任服务身份——用微量 CPU 开销换取跨集群证书同步消除带来的运维韧性。”
+对每一条关键路径进行结构化日志、直方图统计与 eBPF 探针埋点——因为调试推理系统，本质是调试整个系统栈，而非单一服务。
+✨ 我们寻找的人——不是"完美匹配 JD 的人"，而是"能重新定义问题的人"
+✅ 你进化迅速，且刻意为之
+持续跟踪开源基础设施前沿动态（如 OpenTelemetry 架构演进、CNI 性能趋势），并理解其背后的技术动因；
+过去 6 个月内曾主动交付一个"学习型"项目：K8s Operator PoC 、Rust 编写的压测框架、或 HTTP/2 vs HTTP/1.1 在 token 流式传输场景下的基准测试报告。
+✅ 你以基础设施思维思考，以协作者姿态行动
+善于做合理假设，并立刻验证：用火焰图定位调度器卡顿，用 eBPF 追踪 TCP 重传；
+文档聚焦意图、权衡与失败模式：一份好 README 应说明——
+✅ 为何将 NCCL 锁定在某版本？
+✅ 网关如何应对后端部分宕机？
+✅ 若未调优 SO_KEEPALIVE，长连接流式场景会崩溃在哪一环？
+✅ 你对结果负责，而非仅对任务负责
+将模糊目标"降低延迟"拆解为可验证假设：是调度延迟？多租户网关 DNS 解析慢？分片间 KV Cache 碎片化？ 然后测量、隔离、落地；
+主导闭环式复盘（ post-mortem ），例：
+“根因定位为 ASR 网关音频 Handler 与后端 Dispatcher 之间使用了 unbounded channel ，在突发流量下积压数千请求，导致 async runtime 饿死、P99 延迟激增 12 倍、最终触发 OOM Kill 。修复方案：替换为容量 128 的 bounded channel + try_send() 驱动的背压机制，并在满载时返回 HTTP 429 。下一步：按模态采集 channel 深度直方图，基于实测 token 吞吐量自动伸缩容量。”
+🎯 我们珍视什么？又不看重什么？
+🔷 我们极度重视：
+在强约束下交付成果的技术判断力：
+延迟（ LLM 流式响应 P99 < 500ms ）
+内存（ GB 级租户隔离）
+合规（数据驻留、审计日志）
+硬件异构（同一集群同时调度 CUDA 与 Ascend 模型）
+端到端所有权：从架构设计 → 代码实现 → 可观测性埋点 → 迭代优化，尤其跨越多层技术栈（ Tokio 服务 → eBPF telemetry → Linux kernel module ）；
+快速学习能力：尤其在底层系统领域——Rust 异步运行时原理、Kubernetes controller-runtime 模式、GPU/NPU 驱动接口、RDMA 编程模型、RoCE/InfiniBand 互连拓扑；
+系统直觉（ Systems Intuition ）：知道何时该用无锁环形缓冲区 vs Channel ，何时该信任 CNI 插件 vs 用 eBPF 绕过，何时该增加结构化 telemetry vs 简化控制平面；
+开放共塑心态：愿与内核工程师、模型开发者、合规专家、共建主权 AI 栈的学术伙伴深度协作。
+❌ 我们不筛选：
+学历、工作年限、就职公司 Logo ；
+"全栈"作为空洞标签——但我们高度认可能完整追踪一次请求路径的工程师：
+HTTP/2 HEADERS → Tokio task → HTTP handler → K8s Endpoints watch → eBPF socket filter → NIC RX ring，并在任意环节卡顿时，知道该看哪里、查什么。
+⚡ 加分项（非必需，但会让你脱颖而出）
+向基础设施相关开源项目提交过高质贡献：如 vLLM 的 HTTP Server 层、Envoy Gateway 插件等——尤其欢迎已合并的 patch 、公开的 benchmark 报告、或在真实负载上验证的性能提升；
+构建过被多个团队复用的共享基础设施：如用于 GPU 拓扑校验的 CLI 工具、使网关 SRE 告警疲劳降低 40% 的内部仪表盘、或让跨集群服务发现对其它团队"开箱即用"的 Rust 库。
+🌟 这不是一个职位——这是一次基础设施的共同创造
+在大装置，你不会"支持"AI 推理——你将参与重新定义"生产级 AI 推理基础设施"的内涵：跨越硬件、软件、地理与应用场景。
+你将参与决策：
+某类服务器是否需要定制内存分配器？还是应抽象出新一层统一接口？
+私有云部署是否需要加固型网关？抑或应设计全新的合规感知路由策略？
+如果你相信：卓越的 AI 基础设施，必须由通晓内核、分布式系统、Kubernetes 控制平面与监管边界的通才型工程师来构建；
+如果你渴望以充分的技术自主权、真实的业务影响力、零历史技术债务的方式打造下一代 AI 底座——
+我们诚挚邀请你加入这场基础设施的共同创造。
+📌 请随申请附上：
+一个能体现你好奇心或所有权精神的任意作品链接：GitHub 仓库、技术博客、Gist 、PR 记录，或任何你亲手构建的成果。
+联系方式：商汤官网投递链接
+评论区
+写评论
+eouzoe
+2026-03-29 05:41
+投遞郵箱了 可以看一下 蠻好奇具體情況的
+作者
+adamcavendish
+2026-02-10 20:49
+base 可聊，默认北京
+--
+👇
+bestgopher:
+base哪里呀
+作者
+adamcavendish
+2026-02-10 20:49
+最近看到了的 hhhh
+--
+👇
+shenjinti:  https://github.com/miuda-ai/lele
+要不要看看我新写的项目，将onnx编译成rust，用rust构建你们的基础设施不是更好
+shenjinti
+2026-02-10 17:32
+https://github.com/miuda-ai/lele
+要不要看看我新写的项目，将onnx编译成rust，用rust构建你们的基础设施不是更好
+bestgopher
+2026-02-10 14:13
+base哪里呀
+作者
+adamcavendish
+2026-02-09 18:28
+想要邮箱投递的也可以联系： yangyang18@sensetime.com
+1
+共 6 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 156 | f014295 | https://rustcc.cn/article?id=58b4a89f-c728-4866-8632-19ad1a3fbd4d | 2026-02-11 | forum-threads ===
+MDPT一款GPU独立渲染的TUI markdown演示器（不依赖终端模拟器） - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+MDPT一款GPU独立渲染的TUI markdown演示器（不依赖终端模拟器）
+zipxing
+发表于 2026-02-11 14:16
+Tags：TUI terminal rust_pixel
+我做了 MDPT（Markdown Presentation Tool）——一个演示工具：它把终端风格的 UI 直接渲染到 GPU 窗口里，不需要任何终端模拟器。
+核心想法
+像 presenterm、slides 这类基于终端的演示工具很棒，但它们受限于终端本身能做的事情。MDPT 走的是另一条路：用 GPU 着色器 自己渲染 TUI，因此你可以获得：
+真实终端里做不到的平滑着色器转场（溶解、圆形、擦除）
+全平台一致的显示效果
+保留复古美学的同时，拥有真正的图形渲染能力
+功能特性
+支持 100+ 语言的代码高亮，并支持用 {1-4|6-10|all} 按行分段揭示
+文字动画：Spotlight、Wave、FadeIn、Typewriter
+图表：折线图、柱状图、饼图、Mermaid 流程图（全部以字符方式渲染！）
+完整的 CJK/Emoji 支持
+支持嵌入 .pix/.ssf 的 PETSCII 字符画
+快速开始
+cargo install rust_pixel
+cargo pixel r mdpt g -r assets/demo.md
+基于 RustPixel 构建
+MDPT 构建在 RustPixel 2.0 之上——一个 “tile-first” 的 2D 引擎，同一套代码可运行在终端、原生窗口和 Web（WASM）上；它还内置了一个 BASIC 解释器，用于快速游戏原型开发。
+GitHub: https://github.com/zipxing/rust_pixel
+在线 Demo: https://zipxing.github.io/rust_pixel
+欢迎反馈！🦀
+评论区
+写评论
+Mike Tang
+2026-02-12 02:17
+So cool!
+1
+共 1 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 157 | f014305 | https://rustcc.cn/article?id=15ae5590-e2b6-4ead-b4bd-8ff17718199c | 2026-03-06 | forum-threads ===
+用 Rust 写个命令行大字生成器，让终端酷起来！ - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+用 Rust 写个命令行大字生成器，让终端酷起来！
+lispking
+发表于 2026-03-06 23:35
+Tags：Rust,ASCII-art,text-banner
+起因
+某天我在终端里敲命令，突然想：能不能让输出更炫一点？
+比如把普通的 HELLO 变成这种大字：
+╔═════════════════════════════════════════════════════╗
+║                                                     ║
+║  ██╗  ██╗  ███████╗  ██╗       ██╗        ██████╗   ║
+║  ██║  ██║  ██╔════╝  ██║       ██║       ██╔═══██╗  ║
+║  ███████║  █████╗    ██║       ██║       ██║   ██║  ║
+║  ██╔══██║  ██╔══╝    ██║       ██║       ██║   ██║  ║
+║  ██║  ██║  ███████╗  ███████╗  ███████╗  ╚██████╔╝  ║
+║  ╚═╝  ╚═╝  ╚══════╝  ╚══════╝  ╚══════╝   ╚═════╝   ║
+║                                                     ║
+╚═════════════════════════════════════════════════════╝
+说干就干，用 Rust 实现一个！
+核心思路
+其实原理特别简单，就三步：
+准备字库：把每个字符（A-Z、0-9等）都用 Unicode 方块字符画好，存成一个映射表
+逐字转换：输入文字后，查表把每个字符转成对应的 ASCII 艺术字
+按行拼接：把所有字符的每一行拼在一起，最后加个漂亮的边框
+项目结构
+项目很小，就三个文件：
+src/
+├── main.rs    # 命令行入口，处理参数
+├── banner.rs  # 核心转换逻辑
+└── font.rs    # 字库定义
+字库设计
+首先，我们需要定义每个字符长什么样。用 Unicode 方块字符（█、╗、╔ 等）来画，比传统的 # 或 * 更美观。
+每个字符高度固定为 6 行，比如字母 A：
+vec![
+"   █████╗  ",  // 第1行
+"  ██╔══██╗ ",  // 第2行
+"  ██║  ██║ ",  // 第3行
+"  ███████║ ",  // 第4行
+"  ██╔══██║ ",  // 第5行
+"  ╚═╝  ╚═╝ ",  // 第6行
+]
+用一个 HashMap<char, Vec<&str>> 存所有字符，查起来很方便。
+核心转换逻辑
+关键函数 text_to_ascii，把输入文字转成多行 ASCII 艺术：
+pub fn text_to_ascii(text: &str) -> Option<Vec<String>> {
+let font_map = get_font_map();
+let mut result: Vec<String> = vec![String::new(); FONT_HEIGHT];  // 6个空字符串
+for c in text.to_uppercase().chars() {
+if let Some(lines) = font_map.get(&c) {
+// 把每个字符的每一行追加到结果中
+for (i, line) in lines.iter().enumerate() {
+result[i].push_str(line);
+result[i].push_str(" ");  // 字符间距
+}
+}
+}
+Some(result)
+}
+举个例子，输入 "AB"：
+先查 A，得到 6 行字符串，分别追加到 result[0]~result[5]
+再查 B，同样追加到每行后面
+最终得到 6 行拼好的大字
+加个边框更帅气
+用 Unicode 制表符画边框：
+pub fn generate_banner(text: &str, padding: usize) -> String {
+let ascii_lines = text_to_ascii(text)?;
+// 画上边框
+let top = format!("╔{}╗", "═".repeat(width));
+// 画内容行（左右加空格 padding）
+// ...
+// 画下边框
+let bottom = format!("╚{}╝", "═".repeat(width));
+}
+一个小坑：Unicode 宽度
+用普通 len() 计算字符串长度会翻车！因为 █ 这种字符占 3 个字节，但显示宽度只有 1。
+所以用了 unicode-width 这个 crate：
+use unicode_width::UnicodeWidthStr;
+let width = "█████╗".width();  // 正确得到显示宽度
+命令行参数处理
+没有用 clap 这样的库，直接手写简单处理：
+fn main() {
+let args: Vec<String> = std::env::args().collect();
+if args.len() < 2 || args.contains(&"--help".to_string()) {
+print_help();
+return;
+}
+let no_box = args.contains(&"--no-box".to_string());
+// ...
+}
+使用效果
+# 编译
+cargo build --release
+# 运行
+./target/release/ascii-banner "RUST"
+# 不要边框
+./target/release/ascii-banner "2026" --no-box
+输出：
+╔══════════════════════════════════════════════╗
+║                                              ║
+║  ██████╗    ██╗   ██╗  ███████╗   ████████╗  ║
+║  ██╔══██╗   ██║   ██║  ██╔════╝   ╚══██╔══╝  ║
+║  ██████╔╝   ██║   ██║  ██████╗       ██║     ║
+║  ██╔══██╗   ██║   ██║  ╚════██╗      ██║     ║
+║  ██║  ██║   ╚██████╔╝  ███████║      ██║     ║
+║  ╚═╝  ╚═╝    ╚═════╝   ╚══════╝      ╚═╝     ║
+║                                              ║
+╚══════════════════════════════════════════════╝
+总结
+这个项目虽然简单，但涵盖了几个有趣的点：
+Unicode 方块字符 — 让终端输出更美观
+HashMap 字库 — 灵活可扩展的字符映射
+Unicode 宽度计算 — 处理多字节字符的正确姿势
+按行拼接思路 — 把二维数组转成一维输出
+完整代码已开源：github.com/lispking/ascii-banner
+如果你也想让终端输出更酷，不妨试试这个小工具！
+Ext Link: https://github.com/lispking/ascii-banner
+评论区
+写评论
+cathay4t
+2026-05-08 10:01
+用Copilot写了两个中文字，扩大到12行显示效果不好，考虑到AI并不能看到输出结果，它也不能改进。
+我想可能有2条路来支持中文：
+读取点阵字体，然后转化成asicc点阵。
+教会copilot或者opencode截图分析，继续微调。
+第二条路比较好玩，我继续折腾。
+cathay4t
+2026-05-07 21:58
+特别棒！我折腾折腾，看看AI能不能把中文常用字https://www.zdic.net/zd/zb/cc1/ 搞定，感觉这种重复无聊的事非常适合AI做
+asuper
+2026-03-09 09:42
+他这个明显是手搓的字库，弄中文会累死🤣
+--
+👇
+xbee: 要是可以支持中文就很棒了！！！这主要是中文字体的问题，用 ascii 字符在终端中显示中文！！
+cdzw168
+2026-03-07 08:31
+要是可以支持中文就很棒了！！！这主要是中文字体的问题，用 ascii 字符在终端中显示中文！！
+1
+共 4 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 158 | f014309 | https://rustcc.cn/article?id=b0628330-44d6-4460-ab41-56281c0ba56f | 2026-03-16 | forum-threads ===
+[开源] Tirea 0.4 — Rust AI Agent 框架，同时服务 CopilotKit + Vercel AI SDK，多智能体编排开箱即用 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+[开源] Tirea 0.4 — Rust AI Agent 框架，同时服务 CopilotKit + Vercel AI SDK，多智能体编排开箱即用
+chaizhenhua
+发表于 2026-03-16 05:16
+Tags：AI Agent, 开源项目, 智能体
+核心能力：
+多前端生态兼容：一个二进制同时服务 CopilotKit（AG-UI）和 React（AI SDK v6），零胶水代码
+多智能体编排：本地 + 远程（A2A），支持协调者/流水线/并行扇出/层级/生成-批评模式
+Skills + MCP：技能包运行时发现激活 + 任意 MCP 工具自动注册
+Human-in-the-loop：按工具粒度 Allow/Deny/Ask，暂停 → 审批 → 恢复
+Rust 性能：无 GC、低内存、千级并发 Agent
+技术栈： axum + tokio + genai（DeepSeek / OpenAI / Anthropic / Ollama）
+git clone https://github.com/tirea-ai/tirea.git && cd tirea
+cd examples/ai-sdk-starter && npm install
+DEEPSEEK_API_KEY=<your-key> npm run dev
+# 首次运行会编译 Rust agent（约 1-2 分钟），然后打开 http://localhost:3001
+链接： GitHub · crates.io · 文档 · 中文 README
+欢迎 star 和贡献，good first issue #7–#16。
+Ext Link: https://github.com/tirea-ai/tirea
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 159 | f014316 | https://rustcc.cn/article?id=ef978ab9-fc54-4c0c-9d4b-ba50afa9d495 | 2026-03-28 | forum-threads ===
+[开源] cargo-worktree - 配合git worktree的cargo 编译工具 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+[开源] cargo-worktree - 配合git worktree的cargo 编译工具
+HelloBody
+发表于 2026-03-28 18:54
+Tags：cargo,git,agent,worktree,multi-compile
+痛点
+在使用 git worktree + 多个 agent 开发 Rust 项目时，Cargo 的默认行为会让所有构建共享同一个全局目录：
+target/
+.cargo/.package-cache
+registry cache
+target/.cargo-lock
+这会导致几个严重问题：
+多个 worktree 同时构建会互相覆盖 target/
+CI 多 agent 并发构建会争抢 .cargo-lock
+增量编译缓存被污染，构建结果不稳定
+本地与 CI 行为不一致，debug 成本高
+换句话说：
+Rust 项目一旦进入 multi-worktree / multi-agent 模式，Cargo 默认的 target 目录就会成为的瓶颈。
+解决方案：cargo‑worktree
+我们发布了 cargo‑worktree，为每个 worktree 自动分配独立的构建目录：
+target/git/<namespace(branch/rev)>/
+特点：
+每个 worktree 独立 target → 不再互相覆盖
+并发构建安全 → 不会再争抢 .cargo-lock
+增量编译缓存稳定 → 不会被其他分支污染
+零侵入 Cargo → 仍然是 cargo build 的体验
+crate:
+https://crates.io/crates/cargo-worktree/1.0.0
+安装：
+cargo install cargo-worktree
+使用：
+cargo worktree build
+cargo worktree test
+cargo worktree run
+demo
+欢迎大家使用和反馈
+评论区
+写评论
+作者
+HelloBody
+2026-03-29 15:46
+相关代码已经开源。
+https://github.com/SuccinctPaul/cargo-worktree
+具体使用场景：对于rust的项目，使用多个agent同时开发多个功能的时候，为了避免功能的相互污染以及编辑，往往使用git-worktree配合使用。即每个功能都是一个新的branch feat/xxx, 然后每个agent只关注当前的功能和branch的改动。  配合cargo-worktree 可以让agent+git worktree的并行开发中，不被cargo的cache 争抢 .cargo-lock .
+会根据大家的使用反馈进行维护。因为编译还有很多可以优化的点，后续的路线图，我还在进行调研（期待交流）。
+--
+👇
+eouzoe: 有設計文件 具體代碼 實際使用場景展示 測試 後續開發更新維護的路線圖與規劃嗎
+eouzoe
+2026-03-29 05:56
+有設計文件 具體代碼 實際使用場景展示 測試 後續開發更新維護的路線圖與規劃嗎
+1
+共 2 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 160 | f014319 | https://rustcc.cn/article?id=e162fcda-68d6-4406-9cf5-003da0d9cdb7 | 2026-04-02 | forum-threads ===
+MoteDB v0.1.4 发布：面向具身智能的 AI 原生嵌入式数据库 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+MoteDB v0.1.4 发布：面向具身智能的 AI 原生嵌入式数据库
+motedb
+发表于 2026-04-02 23:06
+Tags：数据库,AI,IOT,嵌入式
+今天发布了 MoteDB v0.1.4 🎉
+这是全球首款面向具身智能场景的 AI 原生嵌入式数据库，专为家庭机器人、AR 眼镜、工业机械臂等边缘设备设计。
+核心特性
+多模态数据支持：向量（VECTOR）、空间坐标（SPATIAL）、时序（TIMESTAMP）、文本（TEXT）统一存储
+超低内存占用：≤ 35MB，可在树莓派上运行
+超低查询延迟：P99 ≤ 50ms
+高写入吞吐：≥ 200 rows/sec
+纯 Rust 实现：零 C 依赖，编译成静态二进制
+架构一览
+存储层：WAL + 列式分段存储
+索引层：
+- Vamana 图索引（向量检索）
+- R-Tree（空间查询）
+- 倒排索引（全文搜索）
+- B+Tree（时序范围查询）
+查询层：基于成本的优化器 + Volcano 执行器
+事务层：MVCC + WAL
+快速上手
+use motedb::{MoteDB, DBConfig};
+fn main() -> Result<()> {
+// 初始化 — 无需启动服务器
+let db = MoteDB::open(DBConfig::default())?;
+// 创建多模态表
+db.execute("CREATE TABLE robot_memory (
+id INTEGER PRIMARY KEY,
+timestamp TIMESTAMP,
+embedding VECTOR(384),
+position SPATIAL,
+objects TEXT[]
+)")?;
+// 插入数据
+db.execute("INSERT INTO robot_memory VALUES (
+1, NOW(),
+'[0.123, 0.456, ...]',
+SPATIAL(1.5, 0.8, 2.1),
+['keys', 'wallet']
+)")?;
+// 多模态查询：查找 50cm 范围内相似的感知记忆
+let rows = db.query(
+"SELECT * FROM robot_memory
+WHERE embedding ~= '[0.123, ...]'
+AND position <-> SPATIAL(1.5, 0.8, 2.1) < 0.5"
+)?;
+Ok(())
+}
+性能对比
+指标
+传统方案（5个数据库）
+MoteDB
+提升
+多模态插入
+45ms
+3ms
+15x
+混合查询
+180ms
+12ms
+15x
+内存占用
+420MB
+28MB
+15x
+冷启动时间
+8.2s
+0.3s
+27x
+测试平台：Raspberry Pi 5
+适用场景
+家庭服务机器人：视觉记忆、物品定位
+AR 眼镜：空间锚点、虚实融合
+工业机械臂：传感器融合、异常检测
+Links
+GitHub: github.com/motedb/motedb
+文档: docs.rs/motedb
+Crates: crates.io/crates/motedb
+欢迎大家试用，有问题欢迎提 issue 或在评论区交流 🙌
+Ext Link: https://github.com/motedb/motedb
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 161 | f014351 | https://rustcc.cn/article?id=b835ffd3-74ef-4bb7-9a98-c2d08fb12b02 | 2026-05-31 | forum-threads ===
+BoxAgnts一个基于 Rust 构建的开源 AI Agent ToolBox - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+BoxAgnts一个基于 Rust 构建的开源 AI Agent ToolBox
+guyoung
+发表于 2026-05-31 20:39
+Tags：AI,Agent,Rust,WebAssembly
+BoxAgnts 是一个基于 Rust 构建的开源 AI Agent ToolBox，专注于开箱即用（Out of the Box）的极致体验。它利用 WebAssembly 沙箱（Sandbox）提供兼顾安全与灵活的运行环境，帮助用户轻松处理各种复杂任务，进而成为高效、可信赖的个人智能助理。
+核心架构
+🎯 AI Agent ToolBox
+BoxAgnts 是一个功能完备的 AI Agent 工具箱，提供：
+多模型支持：兼容 OpenAI、Anthropic、CodeX、Google、Deepseek、MiniMax、OpenCode 等主流 AI 模型提供商
+工具系统：内置文件操作、Web 访问、代码执行等多种工具
+技能系统：通过简单的配置即可创建专用 AI 技能
+🛡️ WebAssembly SandBox
+利用 WebAssembly 技术构建安全的运行环境：
+隔离执行：所有自定义工具和技能在 WASM 沙箱中运行
+安全控制：精细的权限管理和网络访问控制
+跨平台：一次编译，多平台运行
+高性能：基于 Wasmtime 运行时，接近原生性能
+✨ Out of the Box
+开箱即用的极致体验：
+零配置启动：下载即可运行，无需复杂配置
+Web 界面：内置美观的 Dashboard，可视化管理所有功能
+内置扩展：预置常用工具和技能，直接可用
+快速上手：简洁的 API 和直观的操作流程
+主要功能
+🤖 AI 对话与代理
+与多种 AI 模型对话
+创建和管理自定义 Agents
+保存和管理对话历史
+支持流式响应
+🔧 工具执行
+文件读写与编辑
+Shell 命令执行
+Web 内容抓取
+代码审查与分析
+📦 技能系统
+快速创建专用技能
+技能组合与复用
+内置代码审查、天气查询、前端组件生成等技能
+⏰ 自动任务 Cron
+创建和管理定时任务
+支持标准 Cron 表达式
+任务执行日志与状态追踪
+灵活的任务配置与触发方式
+🌐 Web 服务
+自定义网站部署
+静态文件服务
+API 端点管理
+快速上手
+下载可执行文件
+从 Releases 页面下载最新版本的压缩包文件，解压后即可运行。
+启动服务
+# 启动服务
+boxagnts
+# 指定工作空间目录
+boxagnts --workspace-dir /path/to/workspace
+# 指定端口
+boxagnts --workspace-dir /path/to/workspace --port 30002
+建议：BoxAgnts 支持多工作空间，每个工作空间都有自己的配置文件和数据目录，建议不要在默认目录下运行，而是指定一个工作空间目录，或者指定workspace-dir。
+命令行参数：
+BoxAgnts is an open-source AI Agent ToolBox built with Rust.
+Usage: boxagnts [OPTIONS]
+Options:
+--port <PORT>          Port to run the web server on [default: 30001]
+--host <HOST>          Host to bind to (0.0.0.0 for all interfaces) [default: 127.0.0.1]
+--workspace-dir <DIR>  Set workspace dir, default current dir
+--app-dir <DIR>        Set app dir, default Boxagnts executable file dir
+--admin-user <USERNAME>  Set admin username
+--admin-pass <PASSWORD>  Set admin password
+-h, --help                 Print help
+-V, --version              Print version
+访问 Dashboard
+打开浏览器访问 http://127.0.0.1:30001
+配置模型
+在设置页面添加 AI 模型以及 API Key
+项目结构与源代码编译
+本项目是基于 claurst 项目代码开发
+目录结构
+boxagnts/
+├── boxagnts/                 # Rust 后端核心代码
+│   ├── api/                 # AI 模型 API（多提供商支持）
+│   ├── core/                # 核心类型、常量与基础功能
+│   ├── gateway/             # API 网关（包含 Cron 任务调度）
+│   ├── mcp/                 # MCP 协议实现（可选）
+│   ├── server/              # Web 服务器与 Dashboard 接口
+│   ├── tools/               # 工具系统与内置工具
+│   ├── tools-manager/       # 工具管理器
+│   ├── query/               # 查询编排
+│   ├── wasm-sandbox/        # WebAssembly 沙箱运行时
+│   ├── wasm-tools/          # WASM 工具封装
+│   └── workspace/           # 工作空间与配置管理
+├── boxagnts-dashboard-web/  # Vue 3 前端源码
+│   ├── src/
+│   │   ├── api/            # API 接口封装
+│   │   ├── components/     # Vue 组件
+│   │   ├── composables/    # 组合式函数
+│   │   ├── stores/         # Pinia 状态管理
+│   │   ├── views/          # 页面组件
+│   │   └── router/         # 路由配置
+│   └── package.json        # 前端依赖
+├── app/                     # 应用资源
+│   ├── dashboard-web/      # 编译后的 Web 界面静态资源
+│   └── extensions/         # 扩展（工具/技能）
+└── Cargo.toml              # Rust 工作区配置
+后端代码分析
+后端采用 Rust 语言开发，使用 Tokio 异步运行时，主要模块如下：
+api/：封装了 OpenAI、Anthropic、Google、Azure、Bedrock 等多个 AI 提供商的 API，提供统一的接口调用和消息格式转换
+core/：定义核心数据类型、常量、错误处理和系统提示词
+gateway/：API 网关层，处理 HTTP 请求，包含 Cron 任务调度系统（cron/ 子目录），支持定时任务的创建、管理和执行
+server/：Web 服务器，提供 Dashboard 的 REST API 和 WebSocket 支持
+tools/：工具系统，实现了内置工具和技能的执行框架
+wasm-sandbox/：基于 Wasmtime 的 WebAssembly 沙箱，实现安全的代码执行环境
+workspace/：工作空间管理，处理配置、认证和历史记录存储
+前端代码分析
+前端采用 Vue 3 + TypeScript + Vuetify 技术栈：
+使用 Pinia 进行状态管理（stores/ 目录）
+使用 Vue Router 进行路由管理（router/ 目录）
+主要页面：聊天、Agents、Cron 任务、文件、技能、工具、网站、设置等
+支持 Markdown 渲染、代码编辑器（CodeMirror）、图表（Chart.js）等功能
+与后端通过 REST API 和 WebSocket 进行通信
+源代码编译方法
+环境要求
+Rust 1.75+（安装：https://www.rust-lang.org/tools/install）
+Node.js 18+（安装：https://nodejs.org/）
+npm 或 pnpm
+编译后端
+# 进入项目根目录
+cd boxagnts-pub
+# 编译 Debug 版本
+cargo build
+# 编译 Release 版本（优化体积和性能）
+cargo build --release
+# 编译后的可执行文件位于 target/release/boxagnts
+编译前端
+# 进入前端目录
+cd boxagnts-dashboard-web
+# 安装依赖
+npm install
+# 开发模式启动（热重载）
+npm run dev
+# 编译生产版本
+npm run build
+# 编译后的静态文件会输出到 app/dashboard-web/
+完整构建流程
+# 1. 编译前端
+cd boxagnts-dashboard-web
+npm install
+npm run build
+# 2. 编译后端
+cd ..
+cargo build --release
+# 3. 运行
+./target/release/boxagnts
+许可证
+MIT
+Ext Link: https://github.com/guyoung/boxagnts
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 162 | f014367 | https://rustcc.cn/article?id=be9a7439-ecf0-422d-9f59-4f2481ae8924 | 2026-06-15 | forum-threads ===
+用 Rust 打造的 AI 应用管理后台，高性能、高扩展、全开源。 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+用 Rust 打造的 AI 应用管理后台，高性能、高扩展、全开源。
+chelunfu
+发表于 2026-06-15 01:55
+Tags：AI 产品商业化,搭建面向客户的 AI 聊天产品,AI 应用开发测试
+一句话介绍
+祺洛 AI是一个基于 Rust + Vue 3 的 AI 聊天管理平台，提供多供应商 AI 接入、用户管理、套餐计费、微信生态管理的一站式解决方案。
+解决了什么问题？
+痛点
+祺洛的解法
+AI 供应商切换困难
+统一接入层，一行配置切换 OpenAI / 通义 / DeepSeek 等
+无法控制用户用量
+完善的 Access Key + 用量统计 + 限额控制
+没有付费体系
+VIP 套餐管理 + 支付对接（商业版自动支付）
+缺少微信生态
+公众号管理、菜单、回复、用户管理完整覆盖
+部署运维复杂
+Rust 单二进制部署，资源占用极低
+核心优势
+⚡ 性能 — Rust 原生
+单二进制部署，无运行时依赖
+内存占用约 15MB（空载），并发
+启动时间 < 1 秒
+🔌 扩展 — 多供应商架构
+提供统一的 AI 供应商接口，目前已兼容：
+✅ OpenAI / Azure OpenAI
+✅ Anthropic Claude
+✅ 通义千问（Qwen）
+✅ DeepSeek
+✅ 百度文心一言
+✅ 任何 OpenAI 兼容接口
+🎯 完整 — 开箱即用
+AI 管理：供应商、Key、用量、聊天记录、归档
+用户管理：普通用户（Access Key 接入）和管理员（后台接入）
+计费体系：VIP 套餐、用量计费、支付二维码
+系统管理：RBAC 权限、菜单、字典、定时任务、代码生成器
+微信管理：公众号、菜单、自动回复、消息、用户
+🛡️ 可靠 — 企业级特性
+JWT 认证 + 白名单 Token 管理
+完整的操作审计日志
+数据库读写分离与连接池
+Redis 缓存加速
+CORS 安全配置
+适用场景
+场景
+说明
+🏢 企业内部 AI 助手
+员工使用内部 AI 聊天，管理员控制模型和用量
+🛒 AI 产品商业化
+搭建面向客户的 AI 聊天产品（如 AI 写作、客服）
+🧪 AI 应用开发测试
+多模型快速对比测试，统一管理 API Key
+🏫 教育机构
+为学生提供 AI 能力，限制每日使用量
+🔗 集成到现有系统
+通过 Access Key 将 AI 能力嵌入你的应用
+技术栈
+层
+技术选型
+选择理由
+后端
+Rust + Axum
+高性能、内存安全、单二进制部署
+数据库
+MySQL / SQLite / PostgreSQL
+SeaORM 支持多种数据库
+缓存
+Redis / 内存缓存
+灵活切换
+前端
+Vue 3 + TypeScript
+现代响应式开发体验
+UI
+Element Plus + UnoCSS
+组件丰富，按需加载
+AI 协议
+OpenAI 兼容接口
+生态最广，供应商最多
+社区
+⭐ GitHub: github.com/chelunfu/qiluo_ai
+💬 问题反馈：GitHub Issues
+📖 完整文档：https://www.qiluo.vip
+Ext Link: www.qiluo.vip
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 163 | f014374 | https://rustcc.cn/article?id=a1f6e92e-3420-487d-abfa-446690f3f6ca | 2026-06-27 | forum-threads ===
+🔥 RSSH: 为 AI 运维而生的 SSH 客户端，AI + GUI/CLI + 命令块 + 多端数据同步 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+🔥 RSSH: 为 AI 运维而生的 SSH 客户端，AI + GUI/CLI + 命令块 + 多端数据同步
+shihuili1218
+发表于 2026-06-27 23:37
+Tags：ai,ssh,sftp,ssh-client,sftp-client,ftp-client,server-management,terminal-emulator,mobaxterm-alternative,finalshell-alternative,xshell-alternative
+我受不了市面上 SSH 客户端了，所有工具都想来我家里抢地盘，撒泡尿还不冲
+自己维护 host key，我真不懂为啥？
+云同步订阅要收费，稍微能理解，但是我没有付费习惯
+自己的专有录制格式，为啥呀？
+多平台没有移动端
+rssh 的设计反过来：尽可能融入你已有的 Unix 工具链。
+一、天生的 AI 运维助手
+服务器环境初始化，还在自己安装？
+CPU/MEM 过高？还在打开AI Chat网页，当命令输入输出的搬运工？
+排查bug，还在自己看日志？
+SSH 客户端是天生的运维工具，所有命令输入/输出都就经过它。RSSH GUI 提供了多个工具供 LLM 调用，为 LLM 提供了手和脚。
+skills 在 src-tauri/src/ai/prompts ，欢迎审查。
+当然安全是无比重要的，LLM 的任何操作都必须通过 RSSH 提供的工具，而所有操作都会在 RSSH 层 shape validator + 你的授权。
+二、rssh CLI
+rssh CLI是一个特殊的存在，你可以在任意终端工具里使用rssh的数据，随时随地rssh open [profile]，并且它和 GUI 读同一个 SQLite（~/.rssh/rssh.db）。在 GUI 里加的 Profile，命令行立刻能用；反之亦然。
+rssh                       # 列出所有 profile
+rssh ls prod               # 模糊搜索
+rssh open gateway-01       # 直接连
+rssh open fwd my-tunnel    # 启动一个命名端口转发
+rssh add profile           # 交互式创建
+这意味着你可以把 rssh open foo 塞进任何脚本、alias、Makefile，不需要再维护一份重复的 SSH 配置。
+三、零远端配置的 Command Block 色条
+终端里翻一屏输出，找上一条命令的起点是个老问题。
+Warp 是一个很好的工具，这个问题它解决得漂亮，但它要求你在服务器上改 shell 集成脚本。
+rssh 完全前端实现，零服务器改动：
+每条命令在左侧画一道竖向色条，输入和输出共享同色
+下一条命令自动换色——黄金角 HSL 算法保证相邻颜色对比最大
+进入 vim/top/less 这类全屏程序时，色条淡出为半透明灰，不打扰
+设置里一键关掉
+它不知道你在哪台机器上，也不需要知道。 一次连接立刻生效，包括别人的堡垒机。
+四、安全：rssh 不替你保管秘密，但实现了多端同步
+绝大多数同类产品的"同步"功能，本质上是把你的密钥上传到它们的服务器，然后向你保证"端到端加密"。问题是：你怎么验证？
+rssh 的处理方式分三层：
+1. 本地密钥 → 系统钥匙串
+密码、私钥的 passphrase，全部走 macOS Keychain / Windows Credential Manager / Linux Secret Service。
+你信任你自己的钥匙串，胜过信任任何第三方软件——这个假设是合理的。
+2. 远端私钥 → 默认不上传
+每条凭据有独立的"是否参与同步"开关。私钥这种东西本就极少变更，用 U 盘、AirDrop、scp 在两台设备之间拷一次，用十年。把它推到云上换"方便"，是用安全换懒惰。
+3. 配置数据 → 加密后塞进你自己的私有仓库
+profile、转发规则、片段这些纯配置数据，加密后推到你自己的 GitHub 私有仓库。不是 rssh 的服务器——rssh 没有服务器。
+加密本身没有魔法：salted SHA-256 派生密钥（1000 轮）+ 流式异或 + HMAC-SHA256 认证。
+代码在 src-tauri/src/crypto.rs，一百行能读完，欢迎审计。
+rssh config set     # 配置 token 和仓库
+rssh config push    # 推送
+rssh config pull    # 拉取
+底层就是 base64 + GitHub API。**想换工具就换，数据就在你的 repo 里。**没有锁定，没有订阅，没有"导出到 CSV"按钮。
+五、和 ssh 共享 ~/.ssh/known_hosts
+这是 rssh 和其他 GUI 客户端最根本的哲学差异。
+大部分 SSH GUI 客户端（Termius、Tabby…）自己维护一套 host key 数据库。结果是：你在命令行用 ssh 信任过的主机，换到 GUI 里再认一次；GUI 里删掉的指纹，命令行里还在。
+rssh 直接读写标准的 ~/.ssh/known_hosts 文件。ssh-keygen -R <host> 删掉的条目 rssh 立刻知道；rssh 里新信任的主机，ssh 也立刻能连。
+六、其他开箱即用的能力
+不单列，但都实打实干活：
+asciicast v2：通用的NDJSON格式，不是专有格式。这意味着你录下来的任何一段会话，可以直接 asciinema upload、直接嵌到网页、直接被任何 asciinema 工具消费。
+关键词高亮：自定义规则，ERROR / WARN / INFO 自动染色，14 种预设
+SFTP 浏览：Cmd+O 唤起，拖拽上传下载
+命令片段：Cmd+S 唤起可复用命令库
+端口转发：本地 / 远程，实时流量统计
+跨全平台：macOS（Intel + Apple Silicon）、Windows、Linux（deb/rpm/AppImage）、Android
+下载
+Releases 页面提供 macOS / Windows / Linux / Android 安装包。
+MIT 协议，无登录，无订阅，无广告，无遥测开关——因为压根没有遥测。
+这不是商业模式，是工程默认值。SSH 客户端本来就该是一个跑在你机器上的程序，不该是一个 SaaS。
+设计哲学一句话：工具要服务你已有的工作方式，而不是逼你为工具让步。
+Ext Link: https://github.com/shihuili1218/rssh
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 164 | f014393 | https://rustcc.cn/article?id=41509fbb-e18b-4b56-92ce-fc2a044fcfb1 | 2026-07-15 | forum-threads ===
+Rust 版本的Kafka 正式发布 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+Rust 版本的Kafka 正式发布
+socutes
+发表于 2026-07-15 00:26
+https://mp.weixin.qq.com/s/FAWINkUQGaLSHLAWlgHtmA
+概览
+RobustMQ Kafka 是构建在 RobustMQ 统一内核之上的 Kafka 协议兼容层——它不是一个独立的 Kafka 发行版,而是让标准 Kafka 生态直接连接 RobustMQ 的一层协议实现。原生 Kafka 客户端(Java kafka-clients、librdkafka)与官方命令行工具(kafka-*.sh)都可直连,默认端口 9092。
+设计取向:一份数据、多协议视图
+RobustMQ Kafka 最核心的设计取向是 "一份数据、多协议视图":Kafka 与 MQTT 共享同一份 topic 存储和元数据。因此存储层保存的是协议中立的、已解码的消息记录,而不是 Kafka 私有的压缩批次格式。这一取向决定了许多实现选择(例如为什么不采用 Kafka 的"原样存批次 + zero-copy")。
+几个关键事实:
+Controller / 协调器 = meta-service 的 Raft Leader:不使用 ZooKeeper 或 KRaft。Kafka 语义中的 controller、消费组协调器、事务协调器都定位到当前 Raft Leader,经约 3 秒 TTL 缓存的 gRPC 查询获得。
+存储引擎 = File Segment:段的 append / seal / scroll、offset → position 索引 + mmap 读、ISR 多副本 + leader_epoch fencing。
+写入即解码:Produce 写入时把 RecordBatch 解开入库,Fetch 时再重组为 RecordBatch,因此同一 topic 也能被其它协议读写。
+详见 系统架构。https://robustmq.com/zh/RobustMQ-Kafka/Overview
+Ext Link: https://mp.weixin.qq.com/s/FAWINkUQGaLSHLAWlgHtmA
+评论区
+写评论
+DengQingNian
+2026-08-07 16:06
+也就是之前的系统可以无感替换是吗？兼容的话
+he11olx
+2026-07-15 08:44
+很有用。。
+把之前 java 的基建全部干掉！
+至少本地、开发环境，部署一个，就方便太多了。
+1
+共 2 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 165 | f014410 | https://rustcc.cn/article?id=cf2cbce7-1b30-44d5-a437-e185b7508048 | 2026-08-04 | forum-threads ===
+AINS：从一个问题，到一个真正的 AI 原生系统 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+AINS：从一个问题，到一个真正的 AI 原生系统
+aiqubit
+发表于 2026-08-04 18:45
+Tags：ai,ains,aios,agent
+AINS（AI Native System）是一个面向真实应用场景的开源 AI 原生系统框架，用于构建可运行、可扩展、可落地的智能体系统基础设施。
+系统由三部分组成：客户端 Agent Runtime、服务端 AI Gateway、多端应用（Web / 桌面 / 移动）。
+一、客户端 Agent Runtime
+Agent 循环与任务状态管理
+上下文构建与压缩
+短期与长期记忆
+本地与远程工具调用
+权限判断与用户确认
+Skills / 插件扩展
+会话持久化与中断恢复
+多模态能力接入
+特点：
+记忆与状态优先在客户端运行
+支持隐私优先与本地优先场景
+二、服务端 AI Gateway
+AI 能力统一入口
+文本对话
+图像理解
+Embedding
+语音识别 / 合成
+网络搜索
+多模型路由
+企业能力
+身份认证与租户隔离
+Token 计量与配额管理
+缓存 / 限流 / 分布式锁
+订单与计费系统
+特点：
+统一模型接入接口
+屏蔽多供应商差异
+三、多端应用
+Web（浏览器环境）
+Desktop（本地系统能力）
+Mobile（摄像头 / 麦克风）
+特性：
+共享 Agent / 记忆 / 工具体系
+跨设备一致状态
+四、Agent 执行模型
+任务理解
+上下文构建
+模型推理
+工具调用
+权限检查
+执行结果处理
+状态更新
+继续推理
+特性：
+支持多轮执行
+支持任务中断与恢复
+支持复杂任务链路执行
+五、分层记忆系统
+KV 记忆（状态 / 配置）
+向量记忆（语义检索 / 经验）
+文档记忆（文件 / 长期知识）
+能力：
+信息提取
+去重
+重要性评分
+时间衰减
+六、工具与扩展
+本地工具
+文件系统
+Shell / 计算
+网络访问
+截图 / 剪贴板
+系统通知
+远程工具（MCP）
+外部服务接入
+机制：
+参数校验
+权限控制
+资源限制
+工具隔离
+七、安全与权限
+三态权限：允许 / 询问 / 拒绝
+路径与风险规则控制
+Fail-Closed 安全策略
+安全能力：
+敏感路径保护
+加密存储
+SSRF 防护
+HTTPS 强制
+八、Skills 与多智能体
+Skills 模块化能力单元
+版本管理
+评分与回滚
+可组合执行
+扩展能力：
+插件系统
+Slash Commands
+MCP 扩展
+子 Agent 协作
+后台任务
+九、企业级基础设施
+数据库读写分离
+Redis 缓存 / 分布式锁
+负载均衡 / 熔断
+多副本部署
+Kubernetes / Docker
+健康检查 / 优雅关闭
+十、双运行环境
+Native（完整系统能力）
+WASM（浏览器安全运行）
+特性：
+统一 Agent / 记忆 / 工具抽象
+跨平台一致执行模型
+十一、工程体系
+覆盖范围：
+Agent 状态循环
+记忆与上下文系统
+工具运行时
+权限与安全机制
+AI Gateway
+Native / WASM 双环境
+能力：
+CI/CD
+安全审计
+依赖检查
+十二、核心特性
+客户端优先 Agent Runtime
+完整 Agent Loop 执行体系
+分层长期记忆系统
+统一 AI Gateway
+安全工具执行机制
+Skills / 插件 / MCP 扩展
+企业级基础设施
+Native + WASM 双运行环境
+结语
+AINS 是 AI 原生系统基础设施，用于支撑智能体的运行、扩展与规模化落地。
+模型：负责推理
+Runtime：负责执行
+记忆：负责连续性
+工具：连接现实世界
+权限：定义安全边界
+Gateway：提供统一 AI 能力
+多端：提供交互入口
+AINS = 智能体运行系统底座
+GitHub: https://github.com/aiqubits/AINS
+Ext Link: https://github.com/aiqubits/AINS
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 166 | f014427 | https://rustcc.cn/article?id=3c18904c-8f24-47e9-bdd0-f55aae9f8d82 | 2026-08-20 | forum-threads ===
+用 Rust 写一个跨平台通用 AI Agent：workspace 架构、gRPC 内部边界与手写终端后端 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+用 Rust 写一个跨平台通用 AI Agent：workspace 架构、gRPC 内部边界与手写终端后端
+huichen
+发表于 2026-08-20 20:10
+缘起
+FutureOS 是一个开源的通用 AI Agent：一个跑在本地的 agent 后端，同时驱动终端 TUI、桌面应用（Tauri）、移动端、CLI 和 IM 机器人（飞书/钉钉）。它的核心组件——agent 后端、IM 渠道桥、loop 控制面、CLI、TUI——全部用 Rust 实现。
+选 Rust 倒不是性能情怀，而是两个硬约束：
+Agent 是一个拿到用户文件系统和 shell 权限的常驻进程，内存安全在这个场景不是加分项，是底线；
+一套代码要跑在 macOS / Linux / Windows（x86_64 + arm64）四处，单二进制分发，不能要求用户装运行时。
+这篇不谈 AI，只谈工程。几个觉得值得分享的架构决策和踩坑。
+Workspace 架构：一个 future 二进制装进所有组件
+仓库是一个 Cargo workspace，成员按"谁拥有 ~/.future/ 下的哪片数据"划分：
+agent/ — gRPC 后端，唯一的核心
+tui/ — 终端 UI，纯 gRPC 客户端
+channels/ — 飞书/钉钉 IM 桥，也是客户端
+orchestration/loop/ — 长任务控制面
+cli/ — 把所有组件 embed 成统一的 future 二进制：future agent|tui|channel|loop 分别启动对应组件
+packages/rpc/ — protobuf 的唯一事实源
+有意思的两个边界决策：
+桌面端（Tauri）被刻意排除在 workspace 之外。 desktop/src-tauri 按自己的节奏构建（npm/tauri 驱动），如果拉进 workspace，每次根目录 cargo 命令都会把它拖下水。代价是要处理一个 CI 坑：tauri.conf.json 声明了 externalBin: ["binaries/future"]，sidecar 文件不存在时 tauri-build 直接中止构建——CI 里的解法是生成空的占位 sidecar 文件。
+proto 代码生成收口到单一 crate。 早期 agent / channels / desktop 各自持有一份生成代码，漂移是迟早的事。现在由 future-rpc 独占 codegen（opt-in 再生成、产物入 git、CI 检查陈旧度），所有 Rust 消费方只依赖这一个 crate。迁移期间服务端做"双写"：typed payload 和旧的 JSON data 字段同时下发，等所有已发布客户端都迁移到 typed 解码后才下线 JSON——字段号只增不减，optional 标记区分 null 与缺省。
+gRPC 作为内部边界，而不是内部实现细节
+Agent 只监听 127.0.0.1:50051，所有客户端（TUI、桌面、移动端、IM 桥）都是薄 gRPC 客户端。这个决定的收益是：
+运行时与界面解耦：新增一个客户端不需要动 agent 核心；IM 机器人这种"无界面客户端"和 TUI 地位完全平等
+多客户端天然并发：桌面端跑着长任务，终端可以同时开另一个会话，共享同一个后端状态
+崩溃隔离：TUI 挂了对 agent 毫无影响——对长任务场景这是刚需
+成本当然也有：本机 IPC 走 gRPC 有固定开销，proto schema 演进需要纪律（就是上面那套双写机制）。但对"一个后端，N 种界面"的形态，这条边界划得值。
+手写终端后端：为什么没用 crossterm / ratatui
+TUI 没有依赖任何终端 UI 框架。终端后端是自己写的：POSIX 走 libc（termios、poll），Windows 走 windows-sys 的控制台 API（raw mode、VT 输入输出、窗口尺寸与输入等待），按 target 条件编译。Markdown 渲染用 pulldown-cmark，文本分段用 unicode-segmentation。
+换来的东西：
+依赖极小：整个 TUI 的外部依赖屈指可数，供应链面小——对一个默认能执行 shell 命令的工具，这不是小事
+Windows 控制台行为完全可控：Windows 上 VT 序列和控制台 API 的坑很多（输入法、窗口缩放、鼠标事件），框架的抽象在这些地方恰恰最容易漏
+按需实现：输入框、滚动、弹层、markdown 渲染都只实现自己需要的部分，没有框架税
+代价是要自己处理所有平台差异，工作量确实大。如果你的 TUI 需求标准，crossterm/ratatui 依然是正确默认；我们的场景是"终端是一等公民界面，且对依赖和权限敏感"，所以选择自己扛。
+24 小时长任务的控制面：事件溯源 + 确定性内核
+AI Agent 跑长任务的真实问题不是模型不够聪明，而是工程上撑不住：跑到半夜进程崩了无人知晓、上下文膨胀后开始漂移、任务"做完了"没人验收。我们为此写了一个 loop 控制面（以 LoopX 为参考蓝本的 Rust 再实现，Apache-2.0），两个关键设计：
+状态是事件溯源的。 目标、待办、门禁、监控的全部状态都从事件日志重放重建。Agent 进程半夜被 OOM 杀掉，重启后从日志恢复到断点继续跑——"崩溃"从致命事故变成可恢复的日常。
+"该不该再跑一轮"由确定性内核决定。 should-run 判断是纯函数：目标状态 + 显式门禁（证据下限、验收契约、verify 闸门、租约活性）→ 是/否。不为了调度决策再多花一次 LLM 调用，也不让模型自己宣布"我做完了"。
+这套东西跑起来的体验是：晚上扔一个深度调研目标进去，早上在飞书里收它的交付物和待确认项。
+跨平台与 CI 的几条军规
+rust-toolchain.toml 钉死工具链，本地 lint 与 CI 用同一套 clippy flags
+clippy 必须带 --all-targets——不带的话测试代码里的警告会漏掉，本地绿 CI 红
+不要假设 POSIX：路径分隔符、.exe 后缀、大小写不敏感文件系统、Windows 上 shell 是 PowerShell（5.1 连 && 都不支持）
+现状与短板
+项目还很早期：Windows/Linux 的系统级沙箱还没做（目前只有审批门控 + macOS Seatbelt），移动端比 TUI 新。仓库：https://github.com/futuregene/future-os（MIT + Apache-2.0），SECURITY.md 里写了完整的信任模型。
+对架构有任何不同意见，欢迎来评论区拍——尤其是"内部边界该不该用 gRPC"和"手写终端后端值不值"这两个问题，想听听大家的判断。
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 167 | f014432 | https://rustcc.cn/article?id=d93e76c1-c981-423a-b84e-cc0b4a777295 | 2026-08-23 | forum-threads ===
+从 MCP 工具到 AI Agent Runtime：WebCodex 的设计与实践 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+从 MCP 工具到 AI Agent Runtime：WebCodex 的设计与实践
+yyjeqhc
+发表于 2026-08-23 02:18
+Tags：mcp,chatgpt,claude,grok,gemini,agent runtime
+项目地址： yyjeqhc/webcodex
+欢迎大家进行使用体验和反馈，希望能够对大家有所帮助。
+What's WebCodex
+WebCodex 是一个基于 Rust 构建的 AI Agent Runtime，通过 MCP 协议将 GPT、Claude、Gemini、Grok 等线上 Agent 与真实设备和开发环境连接起来。
+它不只是让模型读写文件、执行Shell，还支持多设备、多项目、跨平台、ComputerUse、文件传输以
+及多个线上窗口协作。简单来说，就是让原本只能待在网页里的Agent，真正参与到你的实际开发和设备
+操作中。
+Why WebCodex
+最初也只是想做一个线上mcp工具，让模型可以操作本地文件系统以及写代码，至少来说，可以不用让我手动粘贴代码改来改去。后来发现，它也可以拥有很强的coding能力，基于CS架构的多设备协作，让它可以实现更多本地agent做不到的效果。当然，它也是可以接入本地agent作为mcp工具使用的。
+Why rust
+WebCodex 使用 Rust 作为核心开发语言。
+对于一个长期运行的 AI Agent Runtime 来说，稳定性、资源占用以及跨平台能力都非常重要。Rust 在保证高性能的同时，通过内存安全机制减少了运行时错误，非常适合构建这类长期运行的基础设施服务。
+实际使用中，WebCodex Server + Runner 启动后的内存占用保持在 20MB 以下，即使部署在低配置服务器或者个人设备上，也能够长期稳定运行。
+选择 Rust 主要基于以下几点：
+高性能与低资源占用：适合作为常驻后台服务运行；
+内存安全：降低长时间运行服务中的潜在稳定性问题；
+优秀的异步生态：适合处理多 Agent、多设备连接场景；
+跨平台支持：可以同时运行在 Linux、Windows、macOS 等环境。
+当然，最主要还是本人最熟悉rust，乐于使用rust
+最满意的设计
+一开始我就不太想使用普通隧道来长期暴露本地MCP。CloudflareTunnel之类的方案临时使用很方便
+但如果地址、设备或者连接方式发生变化，线上客户端可能就需要重新配置。
+正好我有一台公网服务器，所以WebCodex从一开始就采用了Server+Runner架构：线上Agent 始
+终连接一个稳定的Server，而真正执行任务的Runner可以部署在不同设备上。
+后来设备越来越多，这套架构也自然演变成了：
+·一个用户可以有多台设备；
+·一台设备可以有多个项目；
+·多个用户也可以共享同一套服务；
+·Windows、macOS、Linux等环境可以同时存在。
+对我自己来说，这可能是WebCodex最值得长期使用的地方。换电脑、换项目，甚至操作远程服务器
+都不需要重新给模型搭一套连接。
+技术架构
+GPT / Claude / Gemini / Grok
+|
+|
+MCP Client
+|
+|
+WebCodex Server
+|
+-------------------
+|        |        |
+Runner   Runner   Runner
+Linux    macOS    Windows
+|
+|
+filesystem / shell / browser
+v0.3.8的新特性
+Computer Use：我简单进行了测试，已知的发个微信消息，打开网页，滚动一下，输入一些文本，剪贴板啥的还是没问题的；由于我没有使用过codex的computer use**，所以不能精确对比来加强这样的；对gpt这样的多模态来说，加上这个，确实会方便很多
+文件上传下载：上传指定格式的文件都没问题，比如ppt/docx之类的办公类型；过程是很顺畅的，你交代意图，它帮你传递文件
+多窗口协作：多个gpt窗口之间可以同时使用webcodex来做不同的事，可以理解为本地agent是自动创建，线上的话还需要你手动打开窗口输入prompt这样的，也就是server可以承载围绕同一任务来做
+多模型客户端支持：本次实际测试了一下，算是全平台集齐了，gpt/claude/grok/gemini 都是可以连接的，你甚至可以让它们凑一起来打牌(bushi)，推荐使用oauth进行连接
+一件有趣也很重要的事
+现在，WebCodex本身就全是线上窗口自己写，自己评审，创建PR，创建Issue，进行合并这样的，我只是负责想一下需求。我日常的开发工作也几乎全部使用webcodex，而不是本地agent。这算是一个自举的应用。
+注意事项
+依据平台现有规则，正常使用本项目并不会导致封号，使用合理合规
+本项目提供操作本地文件系统的能力，但并非毫无风险，因此请谨慎使用，及时做好备份工作
+我的使用强度比较高，记录下来平均每天可以使用4K+工具调用次数，只是gpt平台哈。主要的瓶颈还是在于每天只有24h
+未来期望
+基于webcodex构建一个天生跨设备端的云端agent，它的编程能力和本地agent没有弱势，在各个平台都能很好的支持，拥有更强的扩展性
+Ext Link: https://github.com/yyjeqhc/webcodex
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 168 | f014459 | https://rustcc.cn/article?id=4d406770-e047-40bc-9f47-03f57565686c | 2026-09-22 | forum-threads ===
+[远程 / Web3] CKBA 招聘 Blockchain Engineer - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+[远程 / Web3] CKBA 招聘 Blockchain Engineer
+Cryptape1005
+发表于 2026-09-22 14:57
+Tags：RGB++, CKB, Bitcoin, Rust, JavaScript, TypeScript
+CKBA (Common Knowledge Base Association) 正在寻找一名 Blockchain Engineer，一起探索和构建 RGB++、CKB 与 Bitcoin 相关的新技术和产品方向。
+CKB × Bitcoin 接下来还有什么值得做？
+你可以提出自己的想法，做技术验证和原型，并把有潜力的方向逐步变成工具、SDK、集成方案或基础设施。
+你会参与：
+探索 RGB++、CKB 和 Bitcoin 相关的新技术和产品可能性
+将有潜力的想法做成原型、工具、SDK、集成方案或基础设施
+改善 RGB++ 及相关技术的开发者体验
+与外部开发者合作，帮助他们理解并使用我们构建的技术
+参与开源生态，与其他开发者共同完善相关项目
+根据需要参与现有 RGB++ 基础设施的开发
+分享实验结果、技术思考以及过程中获得的经验
+我们希望你：
+有扎实的区块链基础和实际工程经验
+熟悉 Rust 和/或 JavaScript / TypeScript
+能够处理应用层之外的技术问题，对协议和基础设施感兴趣
+能够独立研究新的技术领域，从问题出发形成自己的判断
+不只是思考“怎么实现”，也愿意思考“什么值得做”
+能够把想法转化成实际的原型或可运行的项目
+对 Bitcoin、区块链基础设施和协议层创新有持续兴趣
+有开源意识，愿意构建可以被其他开发者使用和扩展的东西
+有较强的自主性，能够适应远程和异步协作
+RGB++ 建立在 UTXO 模型之上，因此如果你有 Bitcoin / UTXO-based systems 相关经验，会非常有帮助。
+加分项
+Bitcoin / UTXO-based systems 相关开发经验
+CKB / RGB++ 相关经验
+L1/L2 或区块链基础设施开发经验
+Systems / embedded engineering 背景
+有实际的开源贡献或可以展示的技术项目
+了解我们
+CKBA：https://ckba.build/
+RGB++ Protocol：https://rgbpp.com/
+CKB GitHub：https://github.com/nervosnetwork/ckb
+CKBA 团队是 CKB 生态持续演进的一部分。我们的贡献者分布在全球不同地区，以远程和异步的方式协作，共同推动 CKB 生态的长期发展。
+我们希望保持一个开放、灵活的工作环境：
+全球远程：团队成员分布在不同国家和时区，支持异步协作和沟通
+Open Source：很多工作直接面向开发者和开源生态，而不只是内部业务
+鼓励探索：可以围绕 CKB、RGB++、Bitcoin 尝试新的协议、工具和基础设施方向
+AI & Tooling Support：支持使用 AI 和其他效率工具，也有相应的报销额度
+线下交流：作为全球远程团队，我们也会组织线下团队和生态活动
+申请方式：
+请发送简历 / LinkedIn, 以及 GitHub / open-source / 个人项目链接至 join@ckba.build ， 合适的简历会在1-3天回复联系，感谢关注！
+Ext Link: https://ckba.build/
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 169 | f014460 | https://rustcc.cn/article?id=75f55093-28f6-41a6-94bf-3fa5b73fa1a6 | 2026-09-22 | forum-threads ===
 投稿：rust编写的后端开发调试工具，免本地部署前端即可调试 - Rust语言中文社区
 Rust语言中文社区
 Search
@@ -79,7 +1593,7 @@ Rusoda &
 Sapper
 蜀ICP备20010673号-1
 
-=== ROW 194 | f014554 | https://engineeringkiosk.dev/podcast/episode/98-der-hype-um-rust-mit-matthias-endler | 2023-11-21 | podcasts ===
+=== ROW 177 | f014554 | https://engineeringkiosk.dev/podcast/episode/98-der-hype-um-rust-mit-matthias-endler | 2023-11-21 | podcasts ===
 #98 Der Hype um Rust mit Matthias Endler - Engineering Kiosk
 Zum Inhalt springen
 Engineering Kiosk
@@ -680,209 +2194,4 @@ Anderes
 Aktuelle Werbepartner
 Impressum
 © 2026 Engineering Kiosk. Alle Rechte vorbehalten.
-
-=== ROW 195 | f014555 | https://iotusecase.com/de/podcast/so-geht-iot-embedded-softwareentwicklung-mit-der-programmiersprache-rust | 2024-06-19 | podcasts ===
-IoT-Embedded-Entwicklung mit der Sprache Rust
-Lösungsbeispiele
-Podcast
-Use Cases
-Bausteine
-Netzwerk
-Über Uns
-Anwender treffen
-DEEN
-Startseite
-Podcast
-So geht IoT-Embedded-Softwareentwicklung mit der Programmiersprache Rust
-So geht IoT-Embedded-Softwareentwicklung mit der Programmiersprache Rust
-Folge 134·19.06.2024·34 Min.
-Podcast · SpotifySo geht IoT-Embedded-Softwareentwicklung mit der Programmiersprache Rust
-Hören auf
-Apple Podcasts
-Hören auf
-Spotify
-Hören auf
-Other
-Zurück zur ÜbersichtTeilen
-In dieser Podcast-Folge dreht sich alles um die Programmiersprache Rust und ihre Anwendung im Bereich IoT. Madeleine Mickeleit spricht mit Matthias Goetz, Lead Engineer, und Felix Herrmann, FPGA-Engineer bei ITK Engineering GmbH, einer Tochtergesellschaft von Bosch. Gemeinsam diskutieren sie die Besonderheiten und Vorteile von Rust im Vergleich zu anderen Programmiersprachen und gehen auf spezifische Anwendungsfälle und Best Practices ein, die Entwicklungsprozesse für IoT-Projekte optimieren können.
-Folge 134 auf einen Blick (und Klick):
-[12:00] Herausforderungen, Potenziale und Status quo – So sieht der Use Case in der Praxis aus
-[24:48] Lösungen, Angebote und Services – Ein Blick auf die eingesetzten Technologien
-Zusammenfassung
-In Folge 134 sind wir technisch unterwegs. Diese Podcastfolge ist vor allem etwas für alle Anwendungsentwickler und -entwicklerinnen da draußen – oder Personen, die mit Entwicklungsteams zusammenarbeiten.
-Rust ist eine moderne Programmiersprache, die sich durch innovative Ansätze wie das Ownership-Modell auszeichnet. Diese Merkmale sorgen für memory-safety und eine effiziente Ressourcenkontrolle, was sie besonders geeignet für die Entwicklung sicherer und zuverlässiger Embedded Software macht.
-Im Vergleich zu traditionellen Sprachen wie C und C++ bietet Rust durch seine strikte Speicherverwaltung und das Fehlen von Nullpointern eine höhere Sicherheit. Der Rust-Compiler hilft, viele typische Fehler bereits während der Entwicklung zu vermeiden.
-Anwendungsfälle im IoT: Rust wird sowohl für Embedded als auch für Anwendungssoftware verwendet. Ein konkretes Beispiel ist die Überwachung von Vibrationen in industriellen Motoren zur Früherkennung von Anomalien. ITK-Engineering erläutert, wie Rust in IoT-Projekten implementiert werden kann, um Entwicklungsprozesse zu beschleunigen und die Fehleranfälligkeit zu reduzieren. Sie betonen die Bedeutung der Integration von Rust in bestehende Systeme und die Nutzung von Rusts umfangreicher Toolchain.
-Business Case und Herausforderungen: Rust bietet Lösungen für häufige Probleme in der Softwareentwicklung, wie Speicherfehler und komplexe Testing-Prozesse. Die Sprache trägt zu kürzeren Entwicklungszyklen bei und erhöht die Effizienz durch schnellere Feedback-Loops und weniger notwendige zusätzliche Tools.
-Einhaltung von Industriestandards: Rust unterstützt die Einhaltung von Sicherheitsstandards wie ISO 26262 und MISRA. Institutionen wie die CISA und NSA empfehlen zunehmend die Nutzung speichersicherer Sprachen wie Rust.
-Speaker:
-HostIng. Madeleine Mickeleit
-Gründerin & GeschäftsführerinZum LinkedIn-Profil
-Gäste
-ITK Engineering GmbH
-Felix Herrmann
-ITK Engineering GmbH
-Matthias Götz
-Funktionsbereiche
-Produktion
-TranskriptTranskript ausblenden ↑
-Hallo Felix und hallo Matthias. Erst mal schön, dass ihr da seid. Felix, ich frag dich mal, wie geht’s dir und wo erreiche ich dich gerade?
-Felix:
-Hi Madeleine, vielen Dank für die Einladung zuerst. Du erreichst mich gerade noch im Homeoffice hier im schönen Wien.
-Madeleine:
-In Wien. Fantastisch. Ja, dann schöne Grüße nach Wien an der Stelle. Und Matthias, wo bist du gerade unterwegs?
-Matthias:
-Auch von mir vielen Dank für die Einladung. Ich habe mich heute bei uns in unserem Besprechungsraum im Speyerer Dom an unserem Hauptstandort in Rülzheim in der Südpfalz eingemietet, damit wir eine gute Gesprächsatmosphäre haben.
-Madeleine:
-Fantastisch, dann schöne Grüße an die Menschen vor Ort. Vielleicht bevor wir den Podcast starten: Ich bin heute ein bisschen aufgeregt. Man ist immer ein bisschen aufgeregt, aber ich glaube, ihr werdet mich heute herausfordern, weil ich klassisch Baumaschinenbau studiert habe, aber keine ITlerin bin. In meiner Vergangenheit habe ich viel mit den Pre-Sales und technischen Funktionen gearbeitet. Deswegen, Felix, du hast ja auch ein bisschen den Hintergrund im Maschinenbau, ne? Habe ich aus den Vorgesprächen erfahren.
-Felix:
-Ne, wir haben zwar die gleiche Alma Mater, wie wir vorher festgestellt haben, aber ich war an der elektrotechnischen Fakultät.
-Madeleine:
-Stimmt, du warst ja Elektrotechnik. Dann seid ihr tatsächlich beide aus der IT. Könnt ihr mal ganz kurz, weil ich finde es persönlich, Vorstellung, Felix, kannst du ein, zwei Worte zu dir sagen, was du genau machst, was du studiert hast und was du jetzt bei ITK machst?
-Felix:
-Gerne. Ich habe Elektrotechnik und Informationstechnik sowohl im Bachelor als auch im Master studiert und dabei einen Fokus auf FPGA-Technologie, vor allem Real-Time-Architektur und Embedded-Systeme gelegt. Bei ITK bin ich in der Real-Time-Architectures-Umgebung eingesetzt und entwickle vor allem C- und C++-Systeme, hardwarenah. Treiber schreiben, Firmware anbinden, Firmware schreiben, sowas in der Richtung.
-Madeleine:
-Sehr schön. Was es damit auf sich hat, da hören wir ja gleich ein bisschen was drüber. Matthias, wie ist es bei dir? Was machst du genau bei ITK und was ist deine Historie?
-Matthias:
-Ich habe Informatik bzw. Computer Science studiert und habe vor über zehn Jahren bei ITK angefangen. Bin in der Softwareentwicklung unterwegs, war früher mehr in der Application Software Ebene, aber die letzten Jahre näher im Embedded Bereich. Bin auch in der gleichen Abteilung wie Felix, in der Real-Time Architectures.
-Madeleine:
-Sehr schön. Für die Leute, die ITK noch nicht kennen, würde ich eine kurze Vorstellung in eigenen Worten machen. ITK Engineering ist eine Tochter der Bosch. Die Branche umfasst Entwicklungsdienstleistungen, Beratung und Softwareentwicklung. Ihr habt insgesamt 1.300 Mitarbeitende und baut branchenübergreifende und kundenspezifische Lösungen. Eure Teams werden tatsächlich auch bei den Kunden eingesetzt. Das heißt, ihr seid vor Ort, um die Projekte mitzuentwickeln. Wir haben auch schon ein paar Folgen gemacht, zum Beispiel Folge 111. Hört da auch mal rein oder abonniert den Podcast und hört die Folge noch mal. Die ist mega spannend, auch mit einem Partner von euch, der Firma SEW Eurodrives. Habe ich das richtig gesagt? Habt ihr noch Ergänzungen?
-Matthias:
-Passt im Wesentlichen. Vielleicht noch eine kurze Ergänzung: Die Abteilung, in der wir unterwegs sind, hat ungefähr 200 Mitarbeiter. Wir sind in Deutschland, Österreich und Spanien vertreten. Du hast schon angedeutet, wir sind vor allem für kundenspezifische, maßgeschneiderte Lösungen zuständig. Wir entwickeln nach dem Whitebox-Verfahren. Das heißt, am Ende der Projekte behält der Kunde die IP auf die Software. Das ist ein Alleinstellungsmerkmal im Vergleich zu anderen.
-Madeleine:
-Und von den Kundensegmenten her, habt ihr vor allem Industriekunden? Kannst du da ein bisschen ausholen, mit wem ihr typischerweise arbeitet?
-Matthias:
-Wir sind stark brancheübergreifend unterwegs. Ein großer Bereich ist Mobility. Wir haben Industrie, wo ich aktuell unterwegs bin. Wir haben Medizintechnik und noch viele andere Bereiche. Unsere Stärke ist die Methodenkompetenz, die man gut von einer Branche auf die andere übertragen kann.
-Madeleine:
-Sehr schön. Jetzt sprechen wir heute über eine sehr spezielle Programmiersprache. Bevor wir dazu kommen, wollte ich nur kurz fragen, wen das eigentlich bei euren Kunden betrifft. Mit welchen Teams arbeitet ihr bei den Kunden zusammen? Ist das klassischerweise Softwareentwicklung?
-Matthias:
-Softwareentwicklung, das heißt, mit Softwareentwicklern und Softwarearchitekten haben wir viel zu tun. Wir haben auch System- und Hardwareentwicklung. Ich bin gerade in einem Projekt, das alles umfasst und genau in diesen Bereichen sind wir unterwegs. Wie du auch gesagt hast, oft in gemeinsamen Teams mit dem Kunden, wo wir gemeinsam am Produkt arbeiten.
-Madeleine:
-Cool. Dann lasst uns doch mal ins Thema eintauchen. Ich bin schon gespannt, mehr über Rust zu erfahren. Vielleicht ordnen wir das Thema kurz ein. Ich kannte es vorher nicht, deswegen interessiert es mich: Rust, was ist das überhaupt?
-Felix:
-Ja, bei Rust handelt es sich um eine noch ziemlich neue Programmiersprache. Die Version 1.0 ist vor neun Jahren an den Markt gegangen bzw. öffentlich geworden. Die erste wirklich öffentliche Version, mit der man arbeiten konnte, ist 2015 herausgekommen. Sie zeichnet sich im Vergleich zu herkömmlichen Programmiersprachen wie C, C++ oder Java, Python vor allem durch Memory Safety und eine sehr gute Ressourcenkontrolle aus. Dabei hat sie eine vergleichbare Performance mit C, C++. Sie ist sehr vielseitig, was für alle Einsatzbereiche ein großer Vorteil ist. Von Embedded bis Networking, Application, Cloud Computing ist grundsätzlich alles mit dieser Sprache möglich. Mit diesen innovativen Ansätzen könnte sie einen grundsätzlichen Paradigmenwechsel einleiten.
-Madeleine:
-Stimmt es, dass die Programmiersprache von Mozilla Research mitentwickelt wurde? Ich habe vorher gelesen, dass es ein Open-Source-Ansatz ist. Stimmt das?
-Felix:
-Die Programmiersprache kommt tatsächlich aus dem Hause Mozilla. Sie wurde von Mozilla gefundet. Es war ein einzelner Entwickler, der bei den herkömmlichen Programmiersprachen einige Dinge verbessern wollte, z.B. Nullpointer etc. Er hat auf eigene Faust angefangen, eine neue Programmiersprache zu entwickeln, die diese grundsätzlichen Themen verbessert. Ende der Nullerjahre hat er damit begonnen. Mozilla hat das Potenzial erkannt und viel davon gefundet.
-Madeleine:
-Viele Programmiersprachen haben heute einen Schwerpunkt oder werden für ein spezielles Ziel entwickelt. Mir fallen da auch allgemeine Programmiersprachen ein wie C, C++, Java, Python und so weiter. Es gibt auch in der Webentwicklung und viele andere. In der mobilen Appentwicklung gibt es Swift und so weiter. Wofür wurde Rust entwickelt? Hat das ein spezielles Ziel gehabt? Kannst du dazu noch was sagen?
-Felix:
-Grundsätzlich wurde Rust entwickelt, um die technischen Probleme anderer Sprachen, wie Garbage Collection und Ressourcenverbrauch, auszumerzen. Das war die Idee. Jede Sprache hat ihre Vorteile. Python ist zum Beispiel sehr ressourcenverbrauchend. Bei C muss man sich an viele Coding-Guidelines wie MISRA halten, um sicher zu programmieren. Man muss viel beachten. C++ ist inzwischen auch 50 Jahre alt. Er wollte das alles auf ein neues Niveau bringen.
-Madeleine:
-Okay, verstehe. Noch eine Frage zum Timing: Warum sprechen wir gerade jetzt darüber, vor allem im Kontext von IoT? Viele, die zuhören, arbeiten vielleicht mit Entwicklungsteams oder sind selbst in einem Team aktiv. Warum ist das jetzt wichtig?
-Felix:
-Es wird immer wichtiger, weil unsere Welt zunehmend elektrifiziert wird und mit digitalen Features ausgestattet ist. Alles wird smarter und softwaredefinierter. Die Anforderungen an diese zunehmend komplexen Systeme wachsen, was Security und funktionale Sicherheit betrifft. Mehr Aufwand geht fürs Testing und die Validierung von Designs drauf, weil die Designs größer und komplexer werden. Daraus resultieren langsamere Entwicklungszyklen.
-Madeleine:
-Ich liebe Beispiele aus der Praxis. Wenn ein Motorenhersteller einen Vibrationssensor an seinen Motor anbringen möchte, um seinem Kunden einen zusätzlichen Service zu bieten, Dinge digital abzurufen, muss das programmiert werden. Es gibt eine Unterscheidung zwischen Embedded Software Entwicklung und Nicht-Embedded Software Entwicklung. Rust kann in verschiedenen Bereichen eingesetzt werden. Bei Embedded Software Entwicklung geht es häufig um Geräte, die speziell für die Steuerung oder den Betrieb von Hardware eingesetzt werden. Zum Beispiel könnte ein industrieller Motor überwacht werden, um Anomalien frühzeitig zu erkennen. Dafür könnte man Rust einsetzen. Ist das richtig?
-Felix:
-Prinzipiell würde ich dir zustimmen. Embedded ist vielfältiger als nur hardwarenah, real-time und Treiber schreiben. Es geht darüber hinaus. Viele Teile der Firmware, die den Transport in höhere Anwendungen betreffen, würde ich auch dazu zählen. Grundsätzlich kann Rust dafür eingesetzt werden.
-Okay. Das andere wäre die nicht-embedded Softwareentwicklung. Da greift man nicht direkt von der Software auf die Hardware zu, sondern stellt Daten in übergeordneten Funktionendiensten bereit, z.B. in der Cloud. Das wäre der andere Bereich der nicht-embedded Softwareentwicklung.
-Felix:
-Genau, Cloud Computing wäre da ein Beispiel für.
-[12:00] Herausforderungen, Potenziale und Status quo – So sieht der Use Case in der Praxis aus
-Madeleine:
-Ihr habt ja jetzt viel Erfahrung in den ganzen Kundenprojekten auch schon gesammelt und seid ja auch aktiv in den Projekten. Was sind klassische Herausforderungen eurer Kunden, die durch Rust adressiert werden konnten?
-Felix:
-Grundsätzlich habe ich es schon kurz angedeutet. Im Vergleich zu C/C++, das mich in meinem Arbeitsbereich betrifft, liefert C/C++ im Thema Speichersicherheit wenig Garantien. Man muss viel händisch abfangen und verschiedene Tools benutzen, um die Software sicher zu gestalten. Speichersicherheiten sind verantwortlich für die meisten Probleme in der Softwareentwicklung. Man braucht immer mehr Tools, z.B. statische Code-Analyse, was die Entwicklungsumgebung immer komplexer macht. Jeder Entwickler muss sich auf viele Tools einstellen, oft projektabhängig, manchmal von dem einen Hersteller, manchmal von dem anderen Hersteller. Gerade wir, wo wir in verschiedenen Projekten arbeiten und immer mal wieder bei unterschiedlichen Kunden eingesetzt werden haben da quasi häufig das Problem, dass wenn wir in ein neues Projekt kommen und der Kunde spezifische Vorstellungen an das Tooling hat und an die ganze Toolchain, dass man sich dann erst mal komplett einmal einarbeiten muss, sich um die Wartung kümmern muss, dass die ganzen Versionen miteinander kompatibel sind. Das gehört im Endeffekt alles dazu. Da kommt dann Rust auch so ein bisschen zum Einsatz, da das unter anderem von dieser Programmiersprache getackled wird.
-Madeleine:
-Okay, das heißt, wenn du Speichersicherheit meinst, hast du ein Beispiel, z.B. von diesem Motorenhersteller? Was wird da genau gespeichert? Sind das dann Datenbankinformationen?
-Felix:
-Es geht beim Speichermanagement um Arrays oder ähnliches in deinem Code, im RAM. Also jede Art von Daten, aber auch jede Variable.
-Madeleine:
-Okay, verstehe. Und bei den Tools, du hattest Wartung angesprochen. Hast du ein Beispiel, was das für Tools wären?
-Felix:
-Ja, wir benutzen eine ganze Reihe von Tools, angefangen von Jenkins und Conan. Dann gibt es verschiedene Compiler, die du für C, C++ nutzen kannst. Meistens wird GCC benutzt. Für die statische Code-Analyse kannst du CPP-Checker oder SonarQube nehmen. Linter überprüfen den Code, dass er auch schön aussieht.
-Madeleine:
-Das sind Tools, die die Arbeit vereinfachen oder bestimmte Bibliotheken integrieren. Okay, habe ich verstanden. Wie kann der Einsatz von Rust bei Kundenprojekten konkret dazu beitragen, dass die Entwicklungsprozesse verbessert oder modernisiert werden, insbesondere im IoT-Bereich?
-Matthias:
-Felix hat es schon angedeutet, dass das Memory Management von Rust bzw. speichersichere Sprachen im Allgemeinen einen Paradigmenwechsel im Vergleich zu C und C++ darstellen. Viele Fehler, die bei C, C++ erst im Nachgang, vielleicht durch die statische Code-Analyse oder im realen Einsatz entdeckt werden, werden durch das Design der Sprache schon im Vorfeld vermieden. Das betrifft vor allem kritische Speicherfehler. Ein großer Vorteil ist, dass die Sprache einen Großteil der MISRA-Regeln, dem bekanntesten Programmierstandard im Automotive-Bereich, bereits durch das Design abdeckt. Dadurch wird die Einhaltung des Standards vereinfacht. Da Rust dieses Speichermodell hat, das bereits im Compiler geprüft wird, werden viele Fehler früher entdeckt und vermieden, weil der Code gar nicht gebaut werden kann, wenn Fehler vorhanden sind. Dies führt zu einer schnelleren Feedback-Schleife. Was man auch dazu sagen muss, ist, dass die Qualität der Fehlermeldungen, die man vom Rust-Compiler bekommt, nicht mit denen von C und C++ vergleichbar ist.
-Madeleine:
-Und der Compiler, nur für mein Verständnis, ist im Endeffekt ein Softwareprogramm, das den Quellcode oder die Programmiersprache übersetzt. Könnte man das so sagen?
-Matthias:
-Genau.
-Madeleine:
-Okay, verstanden. Gibt es noch weitere Vorteile, die Rust gegenüber älteren Programmiersprachen hat? Ihr habt schon einige angesprochen, aber gibt es noch weitere wichtige Vorteile in den Projekten?
-Matthias:
-Was man noch erwähnen kann: Felix hat vorhin gesagt, dass man bei C viele zusätzliche Tools braucht. Da bei Rust vieles integriert ist, vereinfacht das die Toolchain und damit auch das Aufsetzen und die Wartung der Toolchain. Das ist ein weiterer Vorteil durch den Einsatz von Rust.
-Madeleine:
-Kannst du kurz erklären, was eine Toolchain ist?
-Matthias:
-Eine Toolchain ist die komplette Umgebung, die man braucht, um Software zu entwickeln. Dazu gehört ein Compiler, mit dem man lokal arbeitet, ein Build-Server wie Jenkins oder GitLab CI/CD, Test-Frameworks, Linter, statische Code-Analyse-Tools und Software für Integrationstests. All diese Dinge.
-Madeleine:
-Also eine Sammlung an Software-Entwicklungstools. Okay. Ihr habt den Unterschied zu C++ angesprochen. Viele arbeiten noch damit. Könnt ihr den Unterschied zu C++ in der Praxis herausarbeiten?
-Felix:
-Rust wächst auf jeden Fall, vor allem in den Staaten und in Deutschland nimmt die Zahl der Rust-Entwickler stark zu. Seit ein paar Jahren ist Rust die meistgeliebte Sprache auf Stack Overflow. Der große Unterschied ist die Speicherverwaltung. Rust bringt das sogenannte Ownership-Modell mit, wobei jede Variable einem Besitzer gehört. Besitzer können Funktionen, Methoden oder Loops sein, also verschiedene Instanzen oder Scopes. Wenn eine Variable out of scope geht, wird sie automatisch gedroppt und der Speicher freigegeben. Es gibt kein Garbage Collection in Rust. Der Zugriff von anderen Funktionen wird über das Borrowing, also das Leihen der Funktion, geregelt. Grundsätzlich kann nur der Besitzer in die Variable schreiben, es sei denn, es wird im Code explizit darauf hingewiesen, dass die Variable ausgeliehen wird und erst dann kann sie auch verändert werden. Es kann nur einen Writer gleichzeitig, aber mehrere Reader geben.
-Madeleine:
-Vielleicht nur für das Protokoll: Stack Overflow ist eine sehr bekannte Community und ein Werkzeug für Entwickler, wo man Fragen stellen, Antworten bekommen und voneinander lernen kann. Für die, die es noch nie gehört haben. Können wir noch mal auf den Business-Case eingehen? Wie hat der Einsatz von Rust in Projekten, z.B. bei einem Motorhersteller, der Vibrationssensoren programmieren möchte, zur spürbaren Verbesserung geführt? Vom Business-Case her betrachtet.
-Matthias:
-Was eine große Rolle spielt, ist die Softwareentwicklung für den Markt, vor allem im Automotive-Bereich, wo die Anforderungen sehr hoch sind, weil es um Menschenleben geht. Viele Fehler müssen ausgeschlossen werden. Dafür kommt im Automotive-Bereich z.B. MISRA zum Einsatz. Die Erfüllung der MISRA-Konformität ist ein enormer Aufwand. Jede Abweichung muss durch einen besonderen Prozess, gereviewt und begründet werden. Wenn wir Rust einsetzen, wo MISRA größtenteils durch das Design der Sprache abgedeckt ist, kann man große Aufwände sparen. Wenn etwas in Rust kompiliert, hat man durch die Prüfungen im Compiler eine viel höhere Sicherheit als bei vergleichbarer Software in C und C++, weil dort viele Checks und Prüfungen noch nicht integriert sind.
-Madeleine:
-Hast du ein Beispiel aus der Praxis, was eine MISRA-Anforderung sein kann? Ist das vor allem auf den Softwarecode bezogen? Nur, damit man das versteht. MISRA ist ja eine Organisation, die diese Richtlinien aufstellt, oder?
-Matthias:
-Ein großes Thema ist z.B. das Arbeiten mit Pointern, also Zeigern, was in C eine der gängigsten Möglichkeiten ist, im Embedded-Bereich an vielen Stellen zu arbeiten. MISRA schränkt das sehr stark ein, was große Probleme bei der Erfüllung macht. Rust hat ein anderes Konzept für das Speichermanagement. Zeiger gibt es in Rust noch, z.B. wenn man Register für eine Hardware im Embedded-Bereich beschreibt, aber in anderen Bereichen braucht man sie weniger und kann dadurch viel Aufwand einsparen.
-Madeleine:
-Ja, und Register für eine Hardware beschreiben wir im Embedded Software-Entwicklungsbereich, z.B. bei einem Vibrationssensor, wo die Software die Vibrationen abruft. Das meinst du wahrscheinlich, oder?
-Matthias:
-Ich meine z.B., wenn man eine Peripherie ansteuert, hat man eine Schnittstelle. Ein einfaches Beispiel: Wir haben einen digitalen Ausgang, einen GPIO, und der wird über ein Register, ein Peripherieregister, gesteuert. Da gibt es ein Bit, und wenn man es setzt oder nicht setzt, wird der entsprechende Ausgang geschaltet.
-Madeleine:
-Jetzt haben wir über die Verbesserung in den Projekten gesprochen. Wie sieht das vom Business-Case her aus? Es geht ja am Ende auch um Kosteneinsparungen, wenn man einen Wechsel durchführen möchte. Welche Kosteneinsparungen kann man erwarten, wenn man auf Rust umsteigt?
-Felix:
-Man hat verschiedene und vielseitige Kosteneinsparungen, wenn man mit Rust entwickelt. Neben den Sicherheiten, die Rust grundsätzlich mitbringt, hat man eine Steigerung der Produktivität, was verschiedene Studien und Stackoverflow-Befragungen von tausenden Entwicklern gezeigt haben. Der wichtigste Punkt ist, dass diese Sprache viele Sicherheiten beim Speichermanagement mitbringt, wodurch weniger Fehler in späteren Projektphasen gefunden werden. Wer mit diesem Kostenmodell vertraut ist, weiß, dass die Kosten für Fehler exponentiell steigen. Was am Anfang 5 Euro kostet, kann nach der Auslieferung 50.000 Euro kosten, wenn man Produkte zurückrufen und Fehler beheben muss. Da die meisten Fehler vom Compiler zur Compile-Zeit abgefangen werden, minimiert man späte Fehler.
-Madeleine:
-Wie unterstützt Rust weiterhin die Einhaltung von Industriestandards? Gibt es neben MISRA noch weitere Industriestandards oder Anforderungen, die diese Programmiersprache erfüllt?
-Matthias:
-Erfüllen würde ich nicht direkt sagen, weil Rust nicht MISRA erfüllt. Es ist eher so, dass viele Dinge, die MISRA fordert, in Rust nicht möglich sind und deshalb wegfallen. Aber wo es noch vielleicht zum Trage kommt, ich meine, Im Moment ist das Thema speichersichere Sprache ein großes Thema. Da gibt es auch nicht nur Rust, muss man der Vollständigkeit halber sagen. Im Moment ist das Thema speichersichere Sprache ein großes Thema. Es gibt Institutionen, die inzwischen die Verwendung von speichersicheren Sprachen empfehlen. Im Moment ist es eine Empfehlung. Sollte das irgendwann mal eine Forderung werden, hätten wir andere Voraussetzungen.
-[24:48] Lösungen, Angebote und Services – Ein Blick auf die eingesetzten Technologien
-Madeleine:
-Wenn ich das umsetzen möchte, welche speziellen Features oder Tools innerhalb von Rust oder der Toolchain brauche ich, um solche Projekte umzusetzen? Könnt ihr dazu noch was sagen?
-Felix:
-Die Rust Toolchain ist zum Glück sehr einfach gehalten und enthält viele der Features, die sonst durch verschiedene Tools abgedeckt werden. Vor allem hat man den Compiler und Cargo. Cargo hat fast alle wichtigen Features dabei: statische Code-Analyse, kein eigenes Paketmanagement mehr mit Conan oder CMake, und Clang-Format ist abgedeckt. Das ist dafür da, den Code übersichtlich zu halten und Coding Guidelines einzuhalten. Doxygen ist komplett mit Rust-Doc abgedeckt. Die statische Code-Analyse ist kaum nötig, weil viel im Compiler abgefangen wird. Der große Vorteil ist, dass alle Tools aus einem Guss sind, also aufeinander abgestimmt. Man muss nicht mehr schauen, dass man die richtigen Versionen installiert hat und dass sie kompatibel sind. Man hat nur noch einen Anbieter und ein Toolpaket, wo alles Wichtige für die Entwicklung schon drinsteckt.
-Madeleine:
-Ja, verstehe. Cargo ist dann das Paketverwaltungssystem, was wie ein Tool für Rust funktioniert, richtig? Ihr seid in den Projekten unterwegs, auch mit den Software-Teams. Wie gehen die Unternehmen vor, die Rust in ihre bestehende Systemlandschaft integrieren oder migrieren wollen? Wie macht man das?
-Matthias:
-Guter Punkt, weil die meisten Projekte beginnen nicht auf der grünen Wiese, sondern es gibt schon bestehende Legacy-Software, die erweitert oder erneuert werden soll. Diese Codebasis ist oft groß. Alles neu in Rust zu machen, ist keine Option. Die Idee ist, auf Basis von Interoperabilität neue Features oder besonders kritische Elemente in der Software auszutauschen und zu erneuern. Rust bietet ein Foreign Function Interface zu C an, und auf Basis dieser Schnittstelle kann man Rust in Kombination mit C oder C++ verwenden. Es gibt viele Tools oder Crates zur Einbindung, die den Aufwand der Schnittstellen-Implementierung zu C vereinfachen, indem sie diese automatisch generieren. Damit ist es einfach möglich, neue oder bestehende kritische Teile zu ersetzen. Das sehen wir z.B. beim Linux-Kernel. Rust ist neben C für den Linux-Kernel erlaubt, und Erweiterungen können in Rust geschrieben und integriert werden.
-Madeleine:
-Ihr habt einiges an Erfahrungswerten aus den Projekten gewonnen. Gibt es Best Practices oder Learnings, die ihr den Hörern mitgeben wollt? Empfehlungen oder Fallstricke, worauf man achten sollte?
-Matthias:
-Gern. Rust ist eine recht junge Programmiersprache, es gibt also noch Optimierungspotenzial. Aber es gibt viele vielversprechende Ansätze, die schon jetzt Vorteile bringen. Nach unserer Einschätzung überwiegen die vorhandenen Vorteile die noch bestehenden Defizite. Perspektivisch gesehen könnten die Defizite noch ausgemerzt oder gemindert werden, was den Einsatz von Rust lohnenswerter macht. Ein wichtiger Punkt ist, Rust überhaupt einsetzen zu können. Es gibt zertifizierte Toolchains von Anbietern wie Ferrocene, die Rust im Wesentlichen treiben, aber auch von unserem ITK-Partner HEITEC gibt es eine Toolchain mit Compiler, die man nutzen kann. Das ist eine Grundvoraussetzung, um die Sprache im sicherheitskritischen Bereich verwenden zu dürfen.
-Felix:
-Man kann noch ergänzen, dass Rust eine sehr junge Sprache ist. Dabei muss man im Hinterkopf behalten, dass die Community und die Standardbibliothek von Rust täglich wachsen und ausgebaut werden. Es gibt viele Entwickler, die sehr zufrieden mit Rust sind. Google hat 2022 eine Studie mit 1.000 Entwicklern aus anderen Programmiersprachen wie C, Python, Java und Go durchgeführt. Sie wurden in Rust ins kalte Wasser geworfen, und zwei Drittel der Entwickler gaben an, dass sie sich in unter zwei Monaten sicher im Programmieren mit Rust fühlten. Sie meinten, dass die Software eher das macht, was sie soll, im Vergleich zu den Programmiersprachen, die sie vorher benutzt haben.
-Madeleine:
-Vielen Dank, dass du es angesprochen hast. Wenn ihr das noch nicht kennt oder ausprobieren wollt, schaut euch das mal an. Felix, kannst du mir die Studie im Nachgang schicken? Dann packe ich sie in die Show Notes. Was muss ich machen, wenn ich das umsetzen will? Ich würde eure Kontaktdaten in den Show Notes verlinken. Habt ihr noch weitere Links oder Informationen?
-Felix:
-Ich kann das offizielle Rust Wiki empfehlen. Wir können dir den Link weitergeben, dann kannst du ihn in die Show Notes packen. Im Rust Book wird gut erklärt, wie man mit Rust umgeht und wie die einzelnen Teile funktionieren, z.B. Borrowing und Referenzen. Das kann ich empfehlen.
-Madeleine:
-Cool. Sehr schön. Ich habe noch weitere Fragen, aber das würde den Podcast heute sprengen. Wir wollten auch mitgeben, was Rust ist, welche Vorteile es bietet und dazu aufrufen, sich damit zu beschäftigen. Es ist eine wichtige Programmiersprache, nicht nur für jetzt, sondern auch für die Zukunft, sowohl für die Embedded Software Entwicklung als auch für die Nicht-Embedded Software Entwicklung. Herzlichen Dank, dass ihr dabei wart und euer Wissen geteilt habt. Wenn ihr Fragen habt, richtet euch an Felix oder Matthias. Von meiner Seite aus herzlichen Dank und das letzte Wort geht an euch.
-Matthias:
-Vielen Dank für die Einladung. Rust ist noch relativ jung. Vielleicht haben wir in ein paar Jahren die Möglichkeit, uns wiederzusehen oder zu hören und über die Entwicklung von Rust zu sprechen. Das würde mich persönlich freuen.
-Felix:
-Da würde ich mich anschließen, das würde mich auch sehr freuen. Wie heute würden wir uns dann noch mal über eine Einladung freuen. Es hat sehr viel Spaß gemacht. Vielen lieben Dank.
-Madeleine:
-Vielen Dank an euch. Einladung folgt gerne mit einem Update, wie Rust in der Praxis Anwendung findet. Vielen Dank und noch eine schöne Restwoche. Macht’s gut. Ciao!
-Felix:
-Ciao!
-Matthias:
-Ciao!
-Hast du ein konkretes IoT-Vorhaben?
-Wir kennen die Anbieter, die es bereits umgesetzt haben.
-Passenden Anbieter finden
-Wir verwenden Cookies
-Wir nutzen Cookies und ähnliche Technologien, um unsere Website zu verbessern und dir relevante Inhalte anzuzeigen. Du kannst selbst entscheiden, welche Kategorien du zulässt. Weitere Informationen findest du in unserer Datenschutzerklärung.Alle akzeptierenEinstellungen anpassen
-Newsletter
-Bleib auf dem Laufenden: Neueste IoT Use Cases, Trends und Veranstaltungen direkt in dein Postfach.
-Update erhalten
-Quicklinks
-LösungsbeispieleUse CasesBausteineBranchenFunktionsbereicheAssetsPartnerPodcastsAnwender treffenÜber UnsEventsNewsletterKontaktPartner PortalAnbieter finden
-IIoT Use Case GmbH
-Rollbergstraße 28A
-12053 Berlin
-Deutschland
-Folge uns auf:
-Begriffserklärung
-Internet of Things, kurz IoT, bedeutet auf Deutsch „Internet der Dinge". Was sich dahinter verbirgt ist weitreichend – daher übersetzen wir die Begriffe aus der Industrie hier in die Praxis. Wie auch immer du es nennst – hier findest du es ohne Buzzword-Bullshit-Bingo.
-Kontakt
-Wir freuen uns, von dir zu hören!→ Kontaktformular→ kontakt@iotusecase.com→ +49 (0) 30 57714477
-© 2026 IoT Use Case. Alle Rechte vorbehalten.
-ImpressumDatenschutzAGB
 

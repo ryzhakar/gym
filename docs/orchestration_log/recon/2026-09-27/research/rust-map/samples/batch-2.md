@@ -1,6 +1,6 @@
 # Rust map — batch 2 sample
 
-Drawn 2026-09-28 by r-batch2-prep, after the prompts were frozen (`batch-2-prep.md`). Current state after replacements: 289 rows per team, and every row has cached text (§ Replacements, `batch-2-prep.md` § 8). The draw tables below describe the original 292-row draw.
+Drawn 2026-09-28 by r-batch2-prep, after the prompts were frozen (`batch-2-prep.md`). Current state after replacements: 285 rows per team, every row with cached text (§ Replacements, `batch-2-prep.md` § 8). The draw tables below describe the original 292-row draw.
 
 ## Inputs (sha256 verified before use)
 
@@ -145,6 +145,19 @@ uv run python scripts/map/sample.py --frame RECON/samples/frame-b2-input.csv --o
 uv run python scripts/map/sample.py --frame RECON/samples/frame-b2-input.csv --out RECON/samples --batch 2 --replace RECON/samples/replace-b2-r4.csv --seed 72851214
 ```
 
-The 33 zh conference-talks rows per team are dropped at bundling by a Tier 1 frame fix and are not yet replaced (`frame/frame-zh-talks-fix.md`).
+Round 5 (lead ruling 2026-09-28, option 1): the 33 zh conference-talks rows per team, dropped by the Tier 1 fix in `frame/frame-zh-talks-fix.md`, were redrawn with `--replace --other-class`. Each came from the same (zh, hint) cell's other classes, excluding every row the team has drawn or had replaced. Seed `682461957`; input `replace-b2-r5.csv`; every swap is in `batch-2-team-{a,b}-replaced.csv`.
 
-Replacement files, sha256 after round 4: see `batch-2-prep.md` § 6.
+```
+uv run python scripts/map/sample.py --frame RECON/samples/frame-b2-input.csv --out RECON/samples --batch 2 --replace RECON/samples/replace-b2-r5.csv --other-class --seed 682461957
+```
+
+| team | redrawn | forum-threads | weekly-newsletter-links | qa-topics | no replacement |
+|---|---|---|---|---|---|
+| a | 29 | 16 | 12 | 1 | 4 |
+| b | 29 | 17 | 11 | 1 | 4 |
+
+The 4 with no replacement are zh/frontend rows (f013474, f013501, f013533, f013538). That cell holds 19 frame rows, and each team had already drawn every other one. All 51 distinct replacement rows were fetched (`prefetch-b2-replacements-r5.csv`: 39 fetched, 12 already cached).
+
+Final: 285 rows per team (en 90, zh 158, uk 20, de 17); 132 frame ids shared; 438 distinct.
+
+Replacement files, sha256 after round 5: see `batch-2-prep.md` § 6.
