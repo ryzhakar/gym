@@ -773,3 +773,5 @@
 2026-09-28T12:36 | self | delegation | t5-compile-b1 continued: apply Voice verification to MAP: fields from chunk files with calibration overriding, FAILS and UNKNOWN Claims gapped, same-person clusters merged, name corrections
 2026-09-28T12:54 | agent:t5-compile-b1 | receipt | Voice verification applied: check_map 427 FAIL; Voices MEETS 300, FAILS 77, UNKNOWN 22; 25 ids merged into 18 clusters, 374 Voice files; sam-cutter renamed sam-cutler; 107 Claims gapped voice-below-bar, 58 voice-unverified; 10 MEETS cite only gh api commands; 2 illegal type values left unset
 2026-09-28T12:54 | self | delegation | t5-compile-b1 continued: turn the 10 gh api citations into browsable urls
+2026-09-28T12:55 | self | decision | decided: Claim verification over the 664 Claims not gapped voice-below-bar, 16 chunks of 42, four long-lived sonnet agents of four chunks each; cache first; code checked only when the Claim names a repository the Voice maintains; prompts/t3-claim.md
+2026-09-28T12:55 | self | delegation | agent:r-claim-1..4, sonnet: Claim verification, chunks 00-03, 04-07, 08-11, 12-15, output verify/claims-<chunk>.md
