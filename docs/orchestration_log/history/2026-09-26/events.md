@@ -785,3 +785,4 @@
 2026-09-28T13:14 | agent:r-claim-2 | receipt | claims chunks 04-07: 165 CONFIRMED, 1 UNFAITHFUL; misquote and date drift passed as CONFIRMED with notes; correction not applied; told to stand down
 2026-09-28T13:14 | self | decision | decided: one adjudicator re-applies the verdicts strictly across all 664 Claims: misquote or absent quote UNFAITHFUL, date drift DATE-WRONG; rechecks every noted row and a random 10% of clean rows; output verify/claims-final.csv
 2026-09-28T13:14 | self | delegation | agent:r-claim-adj, sonnet: claim adjudication per prompts/t3-claim.md § Adjudication
+2026-09-28T13:18 | agent:r-claim-2 | receipt | applied the verbatim rule to chunks 05-07 before the stand-down landed: 4 quotes to UNFAITHFUL, 1 to DATE-WRONG; 2 chunk-04 candidates flagged; adjudicator told to re-read
