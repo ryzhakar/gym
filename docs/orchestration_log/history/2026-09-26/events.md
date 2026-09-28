@@ -844,3 +844,4 @@
 2026-09-28T15:54 | agent:t-p3-blind | receipt | blind solve: 27 of 27 solved from stubs and specs; 6 ambiguous (2 admit a fix that misses the lesson, 3 structural bans no test enforces, 1 needs unstated From impls); cargo build artifacts appeared twice under items/ and a sub-agent's denial is unreliable
 2026-09-28T15:54 | self | delegation | t-p3-author-a continued: fix the 4 non-SAFE hint levels and the other hint findings, and the 6 blind-solve ambiguities
 2026-09-28T15:55 | agent:t-p56-scripts | receipt | probe runner: one row per item crate under a shared timer, cargo test --no-fail-fast, held-out tests copied from key/ at grading and removed after, build failure a miss; the stray target dirs were its own live runs, cleaned; 69 tests pass
+2026-09-28T15:55 | self | decision | decided: the learner works on copies under training/rust/work/<session>/, gitignored; items/ stays read-only in use
