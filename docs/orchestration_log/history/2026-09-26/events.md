@@ -775,3 +775,4 @@
 2026-09-28T12:54 | self | delegation | t5-compile-b1 continued: turn the 10 gh api citations into browsable urls
 2026-09-28T12:55 | self | decision | decided: Claim verification over the 664 Claims not gapped voice-below-bar, 16 chunks of 42, four long-lived sonnet agents of four chunks each; cache first; code checked only when the Claim names a repository the Voice maintains; prompts/t3-claim.md
 2026-09-28T12:55 | self | delegation | agent:r-claim-1..4, sonnet: Claim verification, chunks 00-03, 04-07, 08-11, 12-15, output verify/claims-<chunk>.md
+2026-09-28T12:59 | agent:t5-compile-b1 | receipt | 10 gh api citations rewritten as browsable urls; check_map 417 FAIL, all declared gaps: 88 Voices untyped, 86 without track record (FAILS and UNKNOWN), 70 undated Claims, 6 undated Sources, 9 untagged Positions, 2 Questions without domains
