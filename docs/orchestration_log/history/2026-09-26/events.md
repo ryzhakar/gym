@@ -828,3 +828,6 @@
 2026-09-28T13:57 | agent:t-p1-eval | receipt | trainer v0.1 eval 8/10: v0 criticals and majors fixed; open major: Bash prefix allows shell chaining to key/ until the PreToolUse hook is built and tested (with t-p56-scripts)
 2026-09-28T13:59 | agent:t-p56-scripts | receipt | trainer launch: dontAsk mode, Bash allowed only for log.py and the unit's cargo check and test, Read denied on items key/; 30 tests pass; chaining hook and agent install pending
 2026-09-28T13:59 | self | delegation | t-p56-scripts continued: PreToolUse guard hook against shell chaining and key/ access, trainer agent install, hook tests
+2026-09-28T14:05 | agent:r-args-4 | receipt | arguments chunk 03: 30 Questions, 80 Positions, 139 Arguments, 22 no-argument; 5 value candidates
+2026-09-28T14:05 | self | decision | decided: Arguments compile into MAP with their fixed Values; an Argument whose only Values are candidates stays out of MAP and goes to a value-candidate register, since the Language's Values are the owner's
+2026-09-28T14:05 | self | delegation | t5-compile-b1 continued: compile args/arguments-chunk-00..03 into MAP/arguments, register value candidates
