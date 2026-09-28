@@ -754,3 +754,7 @@
 2026-09-28T12:04 | agent:r-voice-1 | receipt | voices chunks 00-03: 100 Voices, 80 MEETS, 15 FAILS, 5 UNKNOWN by chunk sums (agent's total said 85); identity tied by profile pages
 2026-09-28T12:04 | agent:r-voice-2 | receipt | voices chunks 04-07: 100 Voices, 74 MEETS, 19 FAILS, 7 UNKNOWN; 2 same-person id pairs found (dominaezzz, jonathan-kelly)
 2026-09-28T12:07 | agent:r-voice-3 | receipt | voices chunks 08-11: 100 Voices, 77 MEETS, 15 FAILS, 8 UNKNOWN by file counts (agent's prose tallies off); one dropped Voice (playfulfence) restored; same-person id pairs: kornel records, nazmul-idris
+2026-09-28T12:12 | agent:r-voice-4 | receipt | voices chunks 12-15: 99 Voices written, 69 MEETS, 26 FAILS, 3 UNKNOWN by file counts; steffahn still missing; stricter reading: third-party PRs are not production, but rust-lang commit counts taken as role
+2026-09-28T12:12 | self | discovery | Voice verdicts: 301 MEETS, 75 FAILS, 22 UNKNOWN of 398 written; the four verifiers read production and role differently
+2026-09-28T12:12 | self | decision | decided: calibration rule appended to prompts/t3-voice.md (production needs employer or own product; role needs a team, working-group or Foundation listing, never commit counts); a sonnet calibration audit re-checks every MEETS resting on production or role alone and every FAILS citing contributions
+2026-09-28T12:12 | self | delegation | agent:r-voice-cal, sonnet: calibration audit over all voice chunks, output verify/voices-calibration.md; r-voice-4 continued: add steffahn
