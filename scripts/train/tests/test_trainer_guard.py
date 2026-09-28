@@ -70,6 +70,22 @@ def test_cargo_with_the_wrong_cwd_is_denied() -> None:
     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+def test_cargo_in_a_sibling_crate_under_the_staged_practice_dir_is_allowed() -> None:
+    """CRATE is the staged practice dir, holding several sibling crates (attempt/, reuse-1/, ...);
+    cargo running with cwd at one of them, not at CRATE itself, is still in bounds (team lead
+    ruling, 2026-09-28)."""
+    result = verdict("Bash", {"command": "cargo test"}, cwd=f"{CRATE}/attempt", crate=CRATE)
+    assert result is None
+
+
+def test_cargo_just_outside_the_staged_practice_dir_is_denied() -> None:
+    """A sibling directory that merely starts with the same prefix (`.../practice-extra`, not
+    `.../practice/...`) must not pass the cwd check by string-prefix accident."""
+    result = verdict("Bash", {"command": "cargo test"}, cwd=f"{CRATE}-extra", crate=CRATE)
+    assert result is not None
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_plain_cargo_test_with_manifest_path_is_allowed() -> None:
     result = verdict("Bash", {"command": f"cargo test --manifest-path {CRATE}/Cargo.toml"})
     assert result is None

@@ -106,11 +106,17 @@ def run_cargo_test(crate_dir: Path) -> tuple[bool, float]:
     return failed == 0, passed / (passed + failed)
 
 
-def stage_item(source_dir: Path, session_id: str, unit: str) -> Path:
-    """Copy `source_dir`'s stub crate into `training/rust/work/<session_id>/<unit>/<source_dir.name>/`
-    — the learner edits and is graded there, never in `source_dir` itself (team lead ruling,
-    2026-09-28). Re-staging the same problem in the same session starts from the stub again."""
-    work_dir = WORK_ROOT / session_id / unit / source_dir.name
+def stage_item(source_dir: Path, session_id: str, unit: str, kind: str) -> Path:
+    """Copy `source_dir`'s stub crate into
+    `training/rust/work/<session_id>/<unit>/<kind>/<source_dir.name>/` — the learner edits and is
+    graded there, never in `source_dir` itself (team lead ruling, 2026-09-28). Re-staging the same
+    problem in the same session starts from the stub again.
+
+    `kind` (`"probe"` here, `"practice"` in `session.py`) keeps the two staging areas apart under
+    one unit: the trainer's permission grant is scoped to `.../<unit>/practice/` alone (team lead
+    ruling, 2026-09-28), and a probe item staged in the same session under `.../<unit>/probe/` must
+    never fall inside that grant by a naming coincidence — rule 19, the trainer never sees a probe."""
+    work_dir = WORK_ROOT / session_id / unit / kind / source_dir.name
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -176,7 +182,7 @@ def run_probe(
     unit = unit_dir.name
     directory = probe_dir(unit_dir, which)
     problems = list_problem_dirs(directory)
-    staged = [stage_item(problem, session_id, unit) for problem in problems]
+    staged = [stage_item(problem, session_id, unit, kind="probe") for problem in problems]
     for work_dir in staged:
         print(item_text(work_dir))
         print()

@@ -117,10 +117,10 @@ def test_open_stages_the_next_units_practice_items_leaving_items_byte_identical(
     session.open_session(items_root=items_root)
 
     staged_attempt = probe.WORK_ROOT
-    matches = list(staged_attempt.glob("*/unit-2/attempt/src/lib.rs"))
+    matches = list(staged_attempt.glob("*/unit-2/practice/attempt/src/lib.rs"))
     assert len(matches) == 1
     assert matches[0].read_text(encoding="utf-8") == "pub fn stub() {}\n"
-    assert list(staged_attempt.glob("*/unit-2/reuse-1/src/lib.rs"))
+    assert list(staged_attempt.glob("*/unit-2/practice/reuse-1/src/lib.rs"))
 
     after = {p.relative_to(items_root): p.read_bytes() for p in sorted(items_root.rglob("*")) if p.is_file()}
     assert after == before
@@ -180,7 +180,7 @@ def settings_from_command(command: str) -> dict:
 
 
 def test_launch_command_carries_the_full_allowlist() -> None:
-    command = session.trainer_launch_command("unit-1")
+    command = session.trainer_launch_command("unit-1", "sess-1")
     settings = settings_from_command(command)
 
     assert "--permission-mode dontAsk" in command
@@ -191,9 +191,12 @@ def test_launch_command_carries_the_full_allowlist() -> None:
     assert "Read(**/probe-*/**)" in deny
     assert "Bash(cargo run*)" in deny
     assert "Bash(git *)" in deny
-    unit_dir, crate, record = session.unit_paths("unit-1")
-    for suffix in ("attempt.md", "example.md", "hints.yaml", "reuse-1/**", "reuse-2/**", "unshown/**"):
+    unit_dir, crate, record = session.unit_paths("unit-1", "sess-1")
+    for suffix in ("attempt.md", "example.md", "hints.yaml"):
         assert f"Read({unit_dir}/{suffix})" in allow
+    # reuse-1/reuse-2/unshown/attempt come from the staged copy (CRATE), never read straight off items/
+    for suffix in ("reuse-1/**", "reuse-2/**", "unshown/**", "attempt/**"):
+        assert f"Read({unit_dir}/{suffix})" not in allow
     assert f"Read({crate}/**)" in allow
     assert f"Read({record}/**)" in allow
     assert f"Glob({crate}/**)" in allow
@@ -232,7 +235,7 @@ def pattern_matches(pattern: str, path: str) -> bool:
 
 
 def test_a_read_of_any_key_path_is_denied_by_the_pattern() -> None:
-    unit_dir, _crate, _record = session.unit_paths("unit-1")
+    unit_dir, _crate, _record = session.unit_paths("unit-1", "sess-1")
     key_paths = [
         f"{unit_dir}/probe-a/key/solution.rs",
         f"{unit_dir}/key/notes.md",
@@ -241,7 +244,7 @@ def test_a_read_of_any_key_path_is_denied_by_the_pattern() -> None:
     for path in key_paths:
         assert pattern_matches(session.KEY_DENY_PATTERN, path), f"deny pattern misses {path}"
 
-    settings = settings_from_command(session.trainer_launch_command("unit-1"))
+    settings = settings_from_command(session.trainer_launch_command("unit-1", "sess-1"))
     for path in key_paths:
         for allow_pattern in settings["permissions"]["allow"]:
             if allow_pattern.startswith(("Read(", "Glob(")):
@@ -249,10 +252,10 @@ def test_a_read_of_any_key_path_is_denied_by_the_pattern() -> None:
 
 
 def test_launch_command_scopes_the_hook_to_the_named_unit_only() -> None:
-    _, crate_1, _ = session.unit_paths("unit-1")
-    _, crate_2, _ = session.unit_paths("unit-2")
-    settings_1 = settings_from_command(session.trainer_launch_command("unit-1"))
-    settings_2 = settings_from_command(session.trainer_launch_command("unit-2"))
+    _, crate_1, _ = session.unit_paths("unit-1", "sess-1")
+    _, crate_2, _ = session.unit_paths("unit-2", "sess-1")
+    settings_1 = settings_from_command(session.trainer_launch_command("unit-1", "sess-1"))
+    settings_2 = settings_from_command(session.trainer_launch_command("unit-2", "sess-1"))
 
     hook_command_1 = settings_1["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     hook_command_2 = settings_2["hooks"]["PreToolUse"][0]["hooks"][0]["command"]

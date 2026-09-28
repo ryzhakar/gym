@@ -49,6 +49,14 @@ def command_denied_segment(command: str) -> "str | None":
     return None
 
 
+def cwd_is_under(cwd: str, crate: str) -> bool:
+    """Whether `cwd` is `crate` itself or somewhere inside it — `crate` (team lead ruling, 2026-09-28:
+    the staged practice work dir) holds several sibling crates (attempt/, reuse-1/, reuse-2/,
+    unshown/), so `cargo test` runs with cwd at whichever one is current, never at `crate` itself."""
+    crate_norm, cwd_norm = crate.rstrip("/"), cwd.rstrip("/")
+    return cwd_norm == crate_norm or cwd_norm.startswith(crate_norm + "/")
+
+
 def check_bash(command: str, cwd: str, crate: str) -> "dict | None":
     for token in CHAIN_TOKENS:
         if token in command:
@@ -56,8 +64,8 @@ def check_bash(command: str, cwd: str, crate: str) -> "dict | None":
     segment = command_denied_segment(command)
     if segment:
         return decision("deny", f"command names a {segment!r} path segment, denied regardless of chaining")
-    if command.strip().startswith("cargo") and cwd.rstrip("/") != crate.rstrip("/"):
-        return decision("deny", f"cargo must run with cwd {crate}, not {cwd!r}")
+    if command.strip().startswith("cargo") and not cwd_is_under(cwd, crate):
+        return decision("deny", f"cargo must run under {crate}, not {cwd!r}")
     return None
 
 

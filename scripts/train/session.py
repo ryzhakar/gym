@@ -33,6 +33,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).parent))
 import record_schema  # noqa: E402
 from log import append_row, build_row  # noqa: E402
+import probe  # noqa: E402
 from probe import run_probe, stage_item  # noqa: E402
 from record_schema import ROOT, TIMESTAMP_FORMAT, file_path  # noqa: E402
 
@@ -41,38 +42,43 @@ PRACTICE_ITEM_NAMES = ("attempt", "reuse-1", "reuse-2", "unshown")
 TRAINING_ROOT = ROOT / "training/rust"
 DEFAULT_ITEMS_ROOT = ROOT / "training/rust/items"  # decided: team lead, 2026-09-28
 TRAINER_GUARD = ROOT / "scripts/train/hooks/trainer_guard.py"
+PRACTICE_STAGE_KIND = "practice"  # keeps a unit's practice copies apart from any probe copy staged
+# in the same session under the same unit (probe.py stages under kind "probe") — CRATE below is
+# scoped to this one, never the sibling.
 
 # The trainer's own session's permission rules (team lead, 2026-09-28), read from
 # docs/orchestration_log/recon/2026-09-28/trainer/agent/allowlist.md — this is that spec's
 # "Claude Code permission form" turned into the settings this launch actually applies, with UNIT,
-# CRATE and RECORD substituted per unit. Not parsed from the file at run time: the file is P1's
-# prose account of the same team-lead ruling this reads directly, so the two can't format-drift but
-# also aren't mechanically coupled — flagged, not silently assumed reconciled.
+# CRATE and RECORD substituted per unit and session. Not parsed from the file at run time: the file
+# is P1's prose account of the same team-lead rulings this reads directly, kept in sync by hand, not
+# mechanically coupled — flagged, not silently assumed reconciled.
 KEY_DENY_PATTERN = "Read(**/key/**)"
 
 
-def unit_paths(unit: str) -> tuple[str, str, str]:
-    """UNIT, CRATE, RECORD — absolute, as `allowlist.md` names them."""
+def unit_paths(unit: str, session_id: str) -> tuple[str, str, str]:
+    """UNIT (items root — prose only: attempt.md, example.md, hints.yaml, never edited), CRATE (the
+    session's staged practice copies — team lead ruling, 2026-09-28: the trainer never reads
+    `items/`'s own reuse-1/reuse-2/unshown/attempt crates, only what's staged), RECORD — absolute."""
     unit_dir = str(ROOT / "training/rust/items" / unit)
-    crate = str(TRAINING_ROOT / unit)
+    crate = str(probe.WORK_ROOT / session_id / unit / PRACTICE_STAGE_KIND)
     record = str(record_schema.RECORD_DIR)
     return unit_dir, crate, record
 
 
-def permission_settings(unit: str) -> dict:
-    """`allowlist.md` § Allow/Deny, substituted for `unit`: a `--settings` payload, `permissions` plus
-    the `trainer_guard.py` `PreToolUse` hook for what a permission pattern alone cannot pin (chaining
-    after a `cargo check*`/`cargo test*` prefix; a command's cwd — allowlist.md § Open points 1, 3),
-    matched against `Bash|Read|Glob` as a second, hook-level check on top of the Read/Glob deny
-    patterns below (P1 eval v0.1, "Remaining findings" — belt-and-suspenders, not a replacement)."""
-    unit_dir, crate, record = unit_paths(unit)
+def permission_settings(unit: str, session_id: str) -> dict:
+    """`allowlist.md` § Allow/Deny, substituted for `unit` and `session_id`: a `--settings` payload,
+    `permissions` plus the `trainer_guard.py` `PreToolUse` hook for what a permission pattern alone
+    cannot pin (chaining after a `cargo check*`/`cargo test*` prefix; a command's cwd — allowlist.md
+    § Open points 1, 3), matched against `Bash|Read|Glob` as a second, hook-level check on top of the
+    Read/Glob deny patterns below (P1 eval v0.1, "Remaining findings" — belt-and-suspenders, not a
+    replacement). The trainer reads only the staged copies (`CRATE/**`) plus the unit's `attempt.md`,
+    `example.md` and `hints.yaml` straight from `items/` — never `key/`, never `probe-*/`, never any
+    other path under `items/` (team lead ruling, 2026-09-28)."""
+    unit_dir, crate, record = unit_paths(unit, session_id)
     allow = [
         f"Read({unit_dir}/attempt.md)",
         f"Read({unit_dir}/example.md)",
         f"Read({unit_dir}/hints.yaml)",
-        f"Read({unit_dir}/reuse-1/**)",
-        f"Read({unit_dir}/reuse-2/**)",
-        f"Read({unit_dir}/unshown/**)",
         f"Read({crate}/**)",
         f"Read({record}/**)",
         f"Glob({crate}/**)",
@@ -114,14 +120,15 @@ def new_session_id() -> str:
     return datetime.now().strftime(TIMESTAMP_FORMAT)
 
 
-def write_settings_file(unit: str) -> Path:
+def write_settings_file(unit: str, session_id: str) -> Path:
     """The unit's permission settings, generated fresh on every launch (never committed, same as the
-    crate tree it sits beside): `--settings` takes a path or inline JSON (`claude --help`) — a file
-    keeps the printed launch command short and lets the settings be inspected before the trainer runs."""
-    _unit_dir, crate, _record = unit_paths(unit)
+    staged work tree it sits beside): `--settings` takes a path or inline JSON (`claude --help`) — a
+    file keeps the printed launch command short and lets the settings be inspected before the
+    trainer runs."""
+    _unit_dir, crate, _record = unit_paths(unit, session_id)
     path = Path(crate) / ".trainer-settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(permission_settings(unit), indent=2), encoding="utf-8")
+    path.write_text(json.dumps(permission_settings(unit, session_id), indent=2), encoding="utf-8")
     return path
 
 
@@ -130,11 +137,13 @@ def trainer_launch_command(unit: str, session_id: "str | None" = None) -> str:
     <path>`), plus `dontAsk` so a call outside them is refused outright, never put to the learner (no
     lock-out exists otherwise — fable-plan.md § 5 sessions.assistant_closed). The trailing prompt
     carries the session id, unit id, item directory and record tail the trainer's own definition
-    expects. `session_id` is `open_session`'s own (shared with its due probes' staged copies); a
-    direct call generates a fresh one."""
-    unit_dir, _crate, record = unit_paths(unit)
+    expects. `session_id` is `open_session`'s own (shared with its due probes' and this unit's
+    practice items' staged copies); a direct call generates a fresh one — but then nothing is staged
+    under it yet, so only pass one from `open_session` (or after calling `stage_practice_items`
+    yourself with the same id)."""
     session_id = session_id or new_session_id()
-    settings_path = write_settings_file(unit)
+    unit_dir, _crate, record = unit_paths(unit, session_id)
+    settings_path = write_settings_file(unit, session_id)
     prompt = (
         f"session {session_id}; unit {unit}; items {unit_dir}; record {record}\n"
         "sessions tail:\n" + "\n".join(record_tail("sessions")) + "\n"
@@ -192,14 +201,12 @@ def ensure_unit_crate(unit: str) -> Path:
 
 def stage_practice_items(items_root: Path, unit: str, session_id: str) -> list[Path]:
     """Copy the unit's practice stub crates (`attempt/`, `reuse-1/`, `reuse-2/`, `unshown/` — whichever
-    exist) into `training/rust/work/<session_id>/<unit>/<item>/`, the same read-only-`items/` rule
-    `probe.py`'s grading follows (team lead ruling, 2026-09-28). Staged, not yet wired into the
-    allowlist: `permission_settings`'s `CRATE` still names `training/rust/<unit>/`
-    (`ensure_unit_crate`'s empty workspace member), not this staged copy — repointing the trainer's
-    own Read/Glob/Bash grants at the staged location is a further, undecided change, flagged rather
-    than folded in here silently."""
+    exist) into `training/rust/work/<session_id>/<unit>/practice/<item>/` — the same read-only-`items/`
+    rule `probe.py`'s grading follows (team lead ruling, 2026-09-28). `permission_settings`'s `CRATE`
+    names this exact directory (`unit_paths`), so the trainer reads these staged copies, never
+    `items/`'s own reuse-1/reuse-2/unshown/attempt crates directly."""
     return [
-        stage_item(items_root / unit / name, session_id, unit)
+        stage_item(items_root / unit / name, session_id, unit, kind=PRACTICE_STAGE_KIND)
         for name in PRACTICE_ITEM_NAMES
         if (items_root / unit / name).is_dir()
     ]
