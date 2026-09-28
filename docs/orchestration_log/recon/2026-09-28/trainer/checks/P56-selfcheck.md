@@ -218,3 +218,62 @@ $ uv run pytest scripts/train/tests/test_trainer_guard.py -v
 Full suite: `uv run pytest scripts/train/tests` → 60 passed. `check_record.py` → `record: 0 FAIL`.
 "Live checking comes later with the adversarial trainer run," per the team lead's note — nothing
 further attempted here beyond the direct and subprocess checks above.
+
+## Probe runner fixes, from P3-selfcheck.md "Found during the check" (team lead, 2026-09-28)
+
+Three asked fixes, all in `scripts/train/probe.py`:
+
+1. **One crate per problem, one row per item.** `probe-a/`/`probe-b/` hold several standalone
+   problem crates (`p1-*`, `p2-*`, ...), not one. `list_problem_dirs` finds every subdirectory with
+   its own `Cargo.toml`; `run_probe` presents all of them under one shared timer (each problem's own
+   `spec.md` says so: "10 minutes for p1, p2 and p3 together" — one `wait()` call, not one per item),
+   then grades and logs each separately. `probe_dir`/`crate_dir` as a single-crate argument is gone
+   from `run_probe`'s and `main`'s signature; `session.py`'s call site updated to match (dropped the
+   now-meaningless `crate_dir` argument to `run_probe`, kept `ensure_unit_crate` only for the
+   trainer's own practice-unit crate, unrelated to probes).
+2. **`cargo test --no-fail-fast`.** `run_cargo_test` now passes the flag; a new
+   `test_run_cargo_test_uses_no_fail_fast` locks the exact argument in with a stubbed `subprocess.run`.
+3. **Grading copies `key/`'s held-out tests in, then removes them.** `grade_item` copies every file
+   under `key/<which>/<problem>/tests/` that the learner's own `tests/` doesn't already have (i.e.
+   the held-out ones — `visible.rs` is never touched) into the learner's problem directory, runs
+   `cargo test --no-fail-fast` there against the learner's actual edited source, then deletes exactly
+   what it copied in, in a `finally` — cleanup runs even when `cargo test` itself fails to build. This
+   reads `key/` (by design: the team lead's ruling that the no-key rule binds the trainer session,
+   `allowlist.md`, not this script's own grading step), but never *prints* anything from it —
+   `item_text` (presentation) and `grade_item` (grading) are separate code paths; `assert_no_key`
+   still refuses any `key/` path handed to the presentation side, untouched.
+
+**A fourth thing I found while actually running this against P3's real `u01` items**, not asked for
+but load-bearing: the old `run_cargo_test` called `sys.exit` on "no test result", meaning a build
+failure aborted grading — but P3's own stub items are *routinely* unedited "fix the compile error"
+stubs that don't compile yet (P3-selfcheck's own table shows this for most of u01's probe-a stubs).
+That would have crashed the probe on the first un-fixed item and never logged the other two, let
+alone the failing one. Changed `run_cargo_test` to grade a build failure as `(False, 0.0)` — a full
+miss, not a script abort — since every item must still get its row (T8). Also found: a real grading
+run leaves `target/` inside the item's own directory (each problem declares its own `[workspace]`),
+which crashed a second presentation of the same item on a binary file inside it; `item_text` now
+skips `target/` the same way it skips `key/`.
+
+Verified end to end against the real, unedited `training/rust/items/u01-own-move-borrow/probe-a/`
+(all three problems, all still unedited stubs — the correct, expected `false, 0.0000` for each,
+matching P3-selfcheck's own recorded stub-compile-error table exactly), then cleaned up every
+artifact that run left behind: the `target/` directories, the `Cargo.lock` files `cargo test`
+generated, and reverted `training/rust/record/items.csv` to header-only (my verification calls wrote
+real rows to the live record — caught via `git diff` before reporting, not left in).
+
+```
+$ uv run pytest scripts/train/tests
+============================== 69 passed in 8.36s ==============================
+$ uv run python scripts/train/check_record.py
+record: 0 FAIL
+```
+
+New/changed tests in `test_probe.py`: `test_list_problem_dirs_finds_every_crate_sorted`,
+`test_list_problem_dirs_refuses_an_empty_directory`, `test_heldout_test_files_excludes_what_the_learner_already_has`,
+`test_grade_item_copies_heldout_runs_and_cleans_up`, `test_grade_item_fails_a_wrong_implementation_and_still_cleans_up`,
+`test_grade_item_grades_a_build_failure_as_a_full_miss_and_still_cleans_up`,
+`test_run_probe_logs_every_item_even_when_one_fails_to_compile`,
+`test_run_probe_grades_every_item_and_logs_one_row_each`, `test_run_cargo_test_uses_no_fail_fast`,
+`test_item_text_skips_a_build_directory_without_choking_on_binary_files`. `test_session.py`'s
+due-probe round trip rebuilt against a real minimal crate + `key/` mirror in place of the old
+`probe-b/prompt.md` stub.
