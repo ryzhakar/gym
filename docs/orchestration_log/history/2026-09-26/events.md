@@ -760,3 +760,6 @@
 2026-09-28T12:12 | self | delegation | agent:r-voice-cal, sonnet: calibration audit over all voice chunks, output verify/voices-calibration.md; r-voice-4 continued: add steffahn
 2026-09-28T12:13 | agent:r-voice-4 | receipt | steffahn added to voices-chunk-13: MEETS; all 399 Voices written
 2026-09-28T12:13 | self | delegation | r-voice-cal continued: re-check skifire13, the8472, scottmcm roles; list name corrections (sam-cutter spelled Cutler at source)
+2026-09-28T12:25 | agent:r-voice-cal | receipt | voice calibration: 117 re-checked, 24 MEETS to FAILS (cfallin, fitzgen, saulecabrera, bugadani, felipebalbi among them), 89 hold, 5 FAILS stand; 15 same-person id clusters
+2026-09-28T12:25 | self | discovery | calibration flips re-checked only production and role; cfallin and fitzgen likely meet crate-dependents and talks; flips sent back for all four kinds
+2026-09-28T12:25 | self | delegation | r-voice-cal continued: every MEETS-to-FAILS flip checked on all four kinds live
