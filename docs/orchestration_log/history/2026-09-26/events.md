@@ -847,3 +847,6 @@
 2026-09-28T15:55 | self | decision | decided: the learner works on copies under training/rust/work/<session>/, gitignored; items/ stays read-only in use
 2026-09-28T15:57 | agent:t-p3-author-b | receipt | probe-b: 9 items for u01-u03 from specs only; 68 checks as expected; open: u02 p2 unreachable _ arm capped by arm count, u02 p3 binding catch-all passes the scan, u01 p2 copy ban is text search
 2026-09-28T15:57 | self | delegation | agent:t-p3-iso, sonnet, fresh: isomorph check probe-a vs probe-b, same skill, no copy pass
+2026-09-28T16:01 | agent:t-p56-scripts | receipt | items staged into training/rust/work/<session>/<unit>/<item>/, gitignored; items/ byte-identical after a probe run; 72 tests pass; trainer grants still point at the old unit crate
+2026-09-28T16:01 | self | decision | decided: repoint the trainer's grants, trainer_guard crate and cwd checks, and allowlist.md at the staged work path; practice items the trainer may read are the staged copies only
+2026-09-28T16:01 | self | delegation | t-p56-scripts continued: repoint trainer permissions at the staged work copies
