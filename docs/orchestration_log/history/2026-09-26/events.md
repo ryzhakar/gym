@@ -781,3 +781,4 @@
 2026-09-28T13:06 | agent:r-claim-2 | receipt | claims chunks 04-05: 83 CONFIRMED, 1 UNFAITHFUL; one quote absent from the transcript was marked CONFIRMED
 2026-09-28T13:06 | self | delegation | r-claim-2 continued: quote absent from source is UNFAITHFUL; wrong timestamps go to corrected_locator
 2026-09-28T13:06 | self | failure | a cd into verify/ moved the harness working directory again; reset
+2026-09-28T13:11 | agent:r-claim-4 | receipt | claims chunks 12-15: every id has a row; 1 DATE-WRONG, rest CONFIRMED; 5 CONFIRMED rows carry locator corrections
