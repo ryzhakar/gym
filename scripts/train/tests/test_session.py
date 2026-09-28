@@ -1,5 +1,5 @@
 """Round-trip test for session.py: close writes the session and queue rows; open runs a due probe
-and hands off to the next unit; a unit's crate is created on demand and joins the workspace.
+and hands off to the next unit, staging its practice items into a session-scoped work copy.
 
 Run: `uv run pytest scripts/train/tests/test_session.py`. Needs `cargo` on PATH.
 """
@@ -34,7 +34,6 @@ def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for name, columns in record_schema.FILES.items():
         (record_dir / f"{name}.csv").write_text(",".join(columns) + "\n", encoding="utf-8")
     monkeypatch.setattr(record_schema, "RECORD_DIR", record_dir)
-    monkeypatch.setattr(session, "TRAINING_ROOT", tmp_path / "training")
     monkeypatch.setattr(probe, "WORK_ROOT", tmp_path / "work")
     return tmp_path
 
@@ -66,7 +65,6 @@ def test_close_writes_session_and_queue_rows() -> None:
     assert kinds["next_unit"]["unit"] == "unit-2"
 
 
-@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
 def test_open_with_no_due_probe_hands_off_to_the_next_unit(isolated_paths: Path, capsys: pytest.CaptureFixture) -> None:
     session.close_session(
         minutes=45,
@@ -81,8 +79,6 @@ def test_open_with_no_due_probe_hands_off_to_the_next_unit(isolated_paths: Path,
     out = capsys.readouterr().out
     assert "due delayed probes run: none" in out
     assert "next unit: unit-2" in out
-    assert "unit-2" in read_workspace_members(isolated_paths)
-    assert (isolated_paths / "training/unit-2/Cargo.toml").is_file()
 
 
 def make_practice_item(items_root: Path, unit: str, name: str) -> None:
@@ -167,10 +163,6 @@ def test_open_runs_a_due_delayed_probe_then_hands_off(isolated_paths: Path, caps
     out = capsys.readouterr().out
     assert "due delayed probes run: ['unit-1']" in out
     assert "next unit: unit-2" in out
-
-
-def read_workspace_members(root: Path) -> list[str]:
-    return session.read_members(root / "training/Cargo.toml")
 
 
 def settings_from_command(command: str) -> dict:

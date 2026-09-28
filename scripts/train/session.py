@@ -21,9 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import re
 import shlex
-import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -39,7 +37,6 @@ from record_schema import ROOT, TIMESTAMP_FORMAT, file_path  # noqa: E402
 
 PRACTICE_ITEM_NAMES = ("attempt", "reuse-1", "reuse-2", "unshown")
 
-TRAINING_ROOT = ROOT / "training/rust"
 DEFAULT_ITEMS_ROOT = ROOT / "training/rust/items"  # decided: team lead, 2026-09-28
 TRAINER_GUARD = ROOT / "scripts/train/hooks/trainer_guard.py"
 PRACTICE_STAGE_KIND = "practice"  # keeps a unit's practice copies apart from any probe copy staged
@@ -162,43 +159,6 @@ def trainer_launch_command(unit: str, session_id: "str | None" = None) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
-def workspace_path() -> Path:
-    return TRAINING_ROOT / "Cargo.toml"
-
-
-def read_members(path: Path) -> list[str]:
-    if not path.is_file():
-        return []
-    match = re.search(r"members\s*=\s*\[(.*?)\]", path.read_text(encoding="utf-8"), re.DOTALL)
-    if not match:
-        return []
-    return [item.strip().strip('"') for item in match.group(1).split(",") if item.strip()]
-
-
-def write_workspace(path: Path, members: list[str]) -> None:
-    body = "".join(f'    "{member}",\n' for member in sorted(members))
-    path.write_text(f"[workspace]\nmembers = [\n{body}]\n", encoding="utf-8")
-
-
-def ensure_unit_crate(unit: str) -> Path:
-    """The unit's member crate, created on demand and registered in the workspace, idempotently."""
-    TRAINING_ROOT.mkdir(parents=True, exist_ok=True)
-    workspace = workspace_path()
-    if not workspace.is_file():
-        write_workspace(workspace, [])
-    crate_dir = TRAINING_ROOT / unit
-    if not crate_dir.is_dir():
-        subprocess.run(
-            ["cargo", "new", "--lib", "--name", unit, str(crate_dir)],
-            check=True,
-            capture_output=True,
-        )
-    members = read_members(workspace)
-    if unit not in members:
-        write_workspace(workspace, [*members, unit])
-    return crate_dir
-
-
 def stage_practice_items(items_root: Path, unit: str, session_id: str) -> list[Path]:
     """Copy the unit's practice stub crates (`attempt/`, `reuse-1/`, `reuse-2/`, `unshown/` — whichever
     exist) into `training/rust/work/<session_id>/<unit>/practice/<item>/` — the same read-only-`items/`
@@ -259,7 +219,6 @@ def open_session(
         run_probe(unit_dir, "delayed", session_id, wait=wait, clock=clock)
     unit = next_unit()
     if unit:
-        ensure_unit_crate(unit)
         stage_practice_items(items_root, unit, session_id)
     print(f"due delayed probes run: {[row['unit'] for row in due] or 'none'}")
     print(f"next unit: {unit or 'none — run session.py close --next-unit <id> first'}")
