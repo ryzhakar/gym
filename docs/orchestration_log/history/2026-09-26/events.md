@@ -806,3 +806,6 @@
 2026-09-28T13:50 | agent:t-p1-trainer | receipt | trainer definition v0: rust-trainer, opus, 34 rules each with claim ids or default; solution ban names prose forms; PLAN checks not yet run (prompt-eval, adversarial, fidelity)
 2026-09-28T13:50 | self | delegation | agent:t-p1-eval, prompt-engineering:prompt-eval: evaluate trainer.md, report TRAINER/checks/P1-prompt-eval.md
 2026-09-28T13:51 | self | delegation | r-args-4 resumed: idle on its own background fetches with no output file; told to run fetches in the foreground
+2026-09-28T13:52 | agent:t-p1-eval | receipt | trainer prompt eval 5/10; critical: rule 28 exception reopens the solution ban, and the ban has no tool-level backstop
+2026-09-28T13:52 | self | decision | decided: backstop the solution ban at tool level: the trainer runs under an allowlist from session.py, no read of key/ paths, Bash only for log.py and cargo check or test
+2026-09-28T13:52 | self | delegation | t-p1-trainer continued: fix criticals and majors, write allowlist; t-p56-scripts continued: launch under the allowlist with a test
