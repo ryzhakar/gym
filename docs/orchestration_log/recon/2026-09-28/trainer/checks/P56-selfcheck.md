@@ -277,3 +277,53 @@ New/changed tests in `test_probe.py`: `test_list_problem_dirs_finds_every_crate_
 `test_item_text_skips_a_build_directory_without_choking_on_binary_files`. `test_session.py`'s
 due-probe round trip rebuilt against a real minimal crate + `key/` mirror in place of the old
 `probe-b/prompt.md` stub.
+
+## `items/` stays read-only: staged working copies (team lead, 2026-09-28)
+
+Added `probe.stage_item(source_dir, session_id, unit) -> Path`: copies a stub crate to
+`training/rust/work/<session_id>/<unit>/<source_dir.name>/` (gitignored — `.gitignore` gained
+`training/rust/work/`, next to the existing `training/**/target/`/`training/**/Cargo.lock` lines).
+`run_probe` now stages every problem before presenting or grading it; presentation and grading both
+operate on the staged copy, never on `training/rust/items/` directly. `session_id` is a new required
+positional argument to `run_probe` and `probe.py`'s CLI (`--session-id`); `session.py` generates one
+`session_id` per `open_session` call and threads it through both the due probes and the trainer
+launch prompt (`trainer_launch_command` now takes an optional `session_id`, defaulting to a fresh
+one only when called directly, e.g. from tests).
+
+For "session.py for practice problems": added `session.stage_practice_items(items_root, unit,
+session_id)`, staging whichever of `attempt/`, `reuse-1/`, `reuse-2/`, `unshown/` exist for a unit
+into the same `training/rust/work/<session_id>/<unit>/<item>/` shape, reusing `probe.stage_item`
+rather than a second copy of the copy logic. Wired into `open_session` right after
+`ensure_unit_crate(unit)` for the next unit.
+
+**Deliberately not done, flagged rather than silently folded in**: `permission_settings`'s `CRATE`
+(the trainer's Read/Glob/Bash grant) still names `training/rust/<unit>/` — `ensure_unit_crate`'s
+empty `cargo new` workspace member — not the staged `training/rust/work/<session_id>/<unit>/`
+directory practice items now actually live in. Right now staging happens but the trainer's own
+permission grants don't point at it yet, which is the same gap P3-selfcheck's finding #6 named
+before this message ("that works if session.py copies attempt/ there; otherwise it is an allowlist
+gap") — this closes half of it (the copying) but not the other half (repointing `CRATE`). Repointing
+it also means moving the `Read(UNIT/reuse-1/**)` etc. patterns (currently granted straight off
+`items/`, itself now stale under this ruling) to the staged location, and updating `bash_guard.py`'s
+`--crate` argument and the hook's cwd check to match. That's a further, consequential change to the
+trainer's whole permission surface — asking before touching it rather than quietly redefining what
+the trainer can read mid-session.
+
+New tests: `test_probe.py::test_stage_item_copies_to_work_root_leaving_the_source_untouched` and
+**`test_run_probe_leaves_items_byte_identical`** (the test explicitly asked for) — a full snapshot of
+`items/` before and after a probe run whose `wait` callback edits the *staged* copy's `src/lib.rs`
+to something else entirely, asserting the snapshot is unchanged. `test_session.py`'s
+`test_open_stages_the_next_units_practice_items_leaving_items_byte_identical` covers the same
+property for `stage_practice_items`.
+
+```
+$ uv run pytest scripts/train/tests
+============================== 72 passed in 9.46s ==============================
+$ uv run python scripts/train/check_record.py
+record: 0 FAIL
+```
+
+`training/rust/work/` confirmed gitignored (`git check-ignore -v`) and cleaned up after a manual
+check; the real `training/rust/items/` tree was untouched by any of my own testing this round (the
+files showing as modified/untracked under `items/` in `git status` are other agents' concurrent P3
+work, unrelated to this change).
