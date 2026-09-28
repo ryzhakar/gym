@@ -866,3 +866,6 @@
 2026-09-28T16:07 | agent:t-p56-scripts | receipt | trainer grants repointed at training/rust/work/<session>/<unit>/practice/; probe and practice staging kept apart; guard cwd allows the practice subtree; allowlist.md updated; 74 tests pass; the old unit-crate scaffold is dead
 2026-09-28T16:07 | self | decision | decided: remove the dead unit-crate scaffold and its workspace machinery
 2026-09-28T16:07 | self | delegation | t-p56-scripts continued: remove the dead scaffold
+2026-09-28T16:09 | agent:r-batch2-prep | receipt | batch 2 final: team a 28 slices, 273 of 285 rows readable; team b 33 slices, 275 of 285; 132 shared rows; zh talk rows redrawn from other classes, 4 per team unreplaceable; all rows cached; 17 tests pass; projection 102, worst 197
+2026-09-28T16:09 | self | decision | decided: batch 2 extraction on sonnet for both teams, independence from framing and disjoint draws, never from a model split; waves of 4 agents per team, 3 slices each, fresh agents per wave to stay under 150k context
+2026-09-28T16:09 | self | delegation | wave 1: agent:r2-xa-1..4 and r2-xb-1..4, sonnet: batch 2 extraction, team a and b slices 01-12, per prompts/t2-extract.md
