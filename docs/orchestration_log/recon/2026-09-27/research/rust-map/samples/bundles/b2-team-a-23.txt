@@ -1,0 +1,5504 @@
+=== ROW 209 | f014701 | https://rustcc.cn/article?id=e0739a27-d99f-4ce9-b411-91aab42a4047 | 2025-11-13 | qa-topics ===
+现在完全不明白rust的悬垂引用规则了，来位大佬解答一下，连AI在rust规则面前，正确率低得可怜，未来AI大模型智能水平用rust进行检测是最佳方法！！ - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+现在完全不明白rust的悬垂引用规则了，来位大佬解答一下，连AI在rust规则面前，正确率低得可怜，未来AI大模型智能水平用rust进行检测是最佳方法！！
+tbgwe
+发表于 2025-11-13 10:13
+Tags：rust悬垂引用规则恐怖到设计者可能都无法解释下面出现的情况
+let a = Rc::new(RefCell::new(&String::from("tbg")));
+let s=RefCell::new(String::from("qaz")).
+borrow();
+这两个语句都造成了悬垂引用，但是一个语句报错，一个语句不报错，为什么？所有的AI大模型全部答错，请大佬看看哪个会在编译期报错，哪个不会在编译期报错，帮我解答一下，感谢！！！
+评论区
+写评论
+作者
+tbgwe
+2025-11-16 01:06
+你是对的，，我现在终于弄明白了，包括函数调用返回内部数据引用为什么直接报错，因为函数就相当于一个供所有开发人员的接口，编译器要保证返回的值至少在后续可以使用，这是一种设计理念，不管谁调用这个函数，不管后续是否使用，至少让调用者使用时是一定有效的，所有必须保守限定不能对函数内局部数据进行引用返回；还有对一些常量进行直接引用或嵌套在容器中直接引用，后续对其绑定的变量进行访问，也不会报错，这些常量包括数值，字符，布尔值，以及上述类型组合形成的数组，元组类型，因为这些类型默认是静态数据，在整个程序生命周期都有效，，当然对临时值直接进行引用绑定变量，会延长该临时值生命周期，，，
+--
+👇
+xiaoyaou: 这样的话，那前面的理解就错了。
+let s = RefCell::new(String::from("qaz")).borrow();
+这里实际也是涉及了NLL（非词法生命周期），只不过由于Ref<'_, T>需要析构，改变了s最后使用的位置，所以才造成的生命周期冲突。不绑定s变量的话，语句结束作用域就结束了，也就没有冲突问题了
+--
+👇
+let s = RefCell::new(String::from("qaz")).borrow();
+这里会直接报错，关键点在于变量s是类型RefCell<'_, T>的值，它只是一个含有特定生命周期的值类型，不涉及非词法生命周期，所以其生命周期就是其作用域。基于类型系统的生命周期约束，这里要求临时变量的生命周期在变量s的作用域内始终有效，显然是不可能的。因此，只要返回值被绑定到变量，就无法通过借用检查，而在把s改为_或者直接移除s绑定后，就能恢复正常。
+Mayrixon
+2025-11-14 16:12
+let s = &String::from("something");触发了Temporary Lifetime Extension，The Rust Reference中记录了相关的规则，但是也声明了这些规则在修改中。
+这篇文章来自于Rust语言团队成员，有更详细的介绍，甚至例子就是String::from()
+xiaoyaou
+2025-11-14 11:43
+这样的话，那前面的理解就错了。
+let s = RefCell::new(String::from("qaz")).borrow();
+这里实际也是涉及了NLL（非词法生命周期），只不过由于Ref<'_, T>需要析构，改变了s最后使用的位置，所以才造成的生命周期冲突。不绑定s变量的话，语句结束作用域就结束了，也就没有冲突问题了
+--
+👇
+let s = RefCell::new(String::from("qaz")).borrow();
+这里会直接报错，关键点在于变量s是类型RefCell<'_, T>的值，它只是一个含有特定生命周期的值类型，不涉及非词法生命周期，所以其生命周期就是其作用域。基于类型系统的生命周期约束，这里要求临时变量的生命周期在变量s的作用域内始终有效，显然是不可能的。因此，只要返回值被绑定到变量，就无法通过借用检查，而在把s改为_或者直接移除s绑定后，就能恢复正常。
+xiaoyaou
+2025-11-14 11:27
+确实是Drop隐含的析构行为影响了生命周期范围
+struct Ref<'a, T> {
+ptr: *const T,
+_marker: PhantomData<&'a ()>,
+}
+fn as_ref<'a, T: Debug>(t: &'a Test<T>) -> Ref<'a, T> {
+Ref {
+ptr: &t.t,
+_marker: PhantomData,
+}
+}
+let x: Ref<'_, i32> = as_ref(&Test { t: 5 });
+测试代码里，Ref没有实现Drop时，x能够正常绑定，只是不能继续使用；
+为它实现Drop后：
+impl<'a, T> Drop for Ref<'a, T> {
+fn drop(&mut self) {
+// 什么也不需要做
+}
+}
+变量x就会在它作用域末尾插入drop调用，从而需要把x的生命周期拉到了整个作用域的范围，
+因为正常的Drop是要求引用完全有效的，不过编译器也开了一个口子：
+unsafe impl<#[may_dangle] 'a, T> Drop for Ref<'a, T> {
+fn drop(&mut self) {
+// 允许'a生命周期在这里悬垂，因为不需要使用到它
+// 可以做其他统计工作
+}
+}
+这样的话，即使实现了Drop，x也能正常绑定，因为它的析构drop不再依赖指定的生命周期了
+作者
+tbgwe
+2025-11-14 01:47
+哈哈，这个想法我前段时间也是这么认为的，以为其实本质都是使用了变量就会报错，不管是隐式还是显式，都可能是因为使用才会报错，没使用编译器就暂时睁一只眼闭一只眼，，，后来我今天发现这个思路也有问题，就比如如果是函数返回其内部引用数据，外部变量接收它，其实这也相当于悬垂引用了，但是外部变量未使用就不会报错，但实际情况是函数返回引用内部数据类型就直接报错了，根本不会再外部变量使用时再报错，，我现在最新的理解是，，比如let a = RefCell::new(&String::new())这个例子，并没有生命周期延长，因为如果延长，后续使用变量a,就不会报错，实际情况是使用它就报错，那么只能说明这个例子在写出后，编译器并没有进行生命周期检查，因为这个类型RefCell并没有生命周期标签，编译器压根就不知道其内部T的情况，就不会对内部T进行检查，而
+let a = RefCell::new(32).borrow()返回Ref<'-,T>类型带有生命周期标签，编译器就能根据这个标签立即对其内部进行检查，所以写出这个代码就会立即检查报错，，，而函数返回引用类型几乎都要带生命周期标签，编译器能立即进行检查，所以不需要后续外部接收变量读写才报错，，类似容器类型包裹内部引用类型的，因为都不带生命周期标签，编译器都无法探测内部T生命周期，就无法检查，所以一开始不报错，但是一旦后续进行读写，就能发现数据销毁了，所以再读写时才报错，，，我现在的理解就是但凡一个容器类型嵌套引用数据，因容器本身不带生命周期标签，编译器都不会检查内部引用数据生命周期，只有后续使用才会发现问题，一个类型带有生命周期标签，编译器能立即识别检查，马上报错，，，，而对于临时值引用生命周期延长，多半是类似于栈上的直接引用，例如let s=&String::from("tbg");后续使用s也不会报错
+👇
+TinusgragLin: 我之前翻 Reference 的时候有点印象，感觉和这里提到的 Temporary Lifetime Extension 有关，let s=&String::from("tbg"); 能过应该就是符合它的规则，编译器进行了生命周期扩展，而函数入参（包括 self/&self/&mut self 这些）处不是，所以像 let a = RefCell::new(&String::new()); a; 和 let a = RefCell::new(32).borrow() 都会报错，这两个中前一个需要使用 a 才报错，大概是因为完全没有使用的垂悬引用被认为是安全的，而后一个例子应该是因为 RefCell::borrow 返回的 Ref 类型实现了 Drop，所以在最后面有一个隐藏的对 a 的使用，所以直接就报错了。
+xiaoyaou
+2025-11-13 18:18
+临时生命周期和借用检查这块确实乱的一比，不过应该还不至于太恐怖吧哈哈哈。
+简单说下我的理解吧，这里需要引入两个概念：非词法生命周期（non-lexical lifetime）和临时生命周期延长（temporary lifetime extension）。
+非词法生命周期：在该规则出现之前，像let a = &b;这样的本地变量持有某个引用，借用时间都会持续到变量离开作用域为止，这显然会大大限制借用的多样性和灵活性。所以有了非词法生命周期，就是为了限制借用只持续到变量的最后一次使用即可，按需检查。
+临时生命周期延长：正常情况下，临时变量的作用域和生命周期都是限制在当前语句(Statement)结束前有效。然而凡事都有例外，毕竟“偷懒”才是发展的一大动力：如果只是想要多用一会临时变量，却发现每次不得不强制多写几个let语句显式绑定仅临时使用变量，这显然还是“过于繁琐”了。
+所以有了临时生命周期延长，就是为了在某些场景下可以方便地延长临时变量有效期。想要触发这个规则就要满足特定要求，毕竟“临时生命周期”终究还是“不稳定”的，所以这就需要有一个可靠的“锚点”来绑定这个临时生命周期。而这个锚点就是栈上的位置(placement)：既“临时”又“稳定”。
+下面解释一下你说的代码：
+let a = Rc::new(RefCell::new(&String::from("tbg"))); // 编译通过
+// a.borrow(); // temporary value dropped while borrowed
+这里就是普通的临时变量的使用，临时创建了一个字符串及其引用，语句结束后就失效了，同时a也不再有效，所以后续再使用a就会不满足借用检查，这里涉及了非词法生命周期：a只能最后一次出现在当前语句，后续的使用会导致引用生命周期与临时变量的生命周期发生冲突。
+let s = RefCell::new(String::from("qaz")).borrow();
+这里会直接报错，关键点在于变量s是类型RefCell<'_, T>的值，它只是一个含有特定生命周期的值类型，不涉及非词法生命周期，所以其生命周期就是其作用域。基于类型系统的生命周期约束，这里要求临时变量的生命周期在变量s的作用域内始终有效，显然是不可能的。因此，只要返回值被绑定到变量，就无法通过借用检查，而在把s改为_或者直接移除s绑定后，就能恢复正常。
+let s=&String::from("tbg");
+let len = s.len(); // Ok
+这里是有效且能正常使用变量s的，这就是前面提到的临时生命周期延长，临时变量有效期延长至绑定“锚点”的整个作用域内。这里的“锚点”顾名思义，是需要能够 真正锚定 临时变量不失效的：
+struct Wrap<'a> {
+t: &'a String
+}
+let a = &String::from(""); // a.len() is Ok
+let b = Wrap { t: &String::from("")}; // b.t.len() is Ok
+let c = [&String::from("")]; // c[0].len() is Ok
+let d = (0, &String::from("")); // d.1.len() is Ok
+// 以上都是直接锚定在当前栈上，都满足扩展要求
+fn wrong(r: &String) -> &String {
+r
+}
+let a = wrong(&String::from("")); // a.len() is Err
+let b = Wrap { t: wrong(&String::from(""))}; // b.t.len() is Err
+...
+// 这里通过wrong形参传递临时变量引用，但形参显然不够“稳定”，无法满足扩展要求
+关于临时变量这块的，可以看看这篇文章，网上也有不少中文版的
+--
+👇
+tbgwe: 这个claude解释存在问题哈,,而且有致命漏洞，就像它说的，借用类型立即检查生命周期，我现在给个反例，let s=&String::from("tbg");就这个语句，s是借用类型吧，那么按照它说的，就应该进行立即检查，这个语句按理说就会报错，因为悬垂引用了，又是借用类型，就直接应该报错，但是语句没报错，而且后续还能读写s,,所以rust的借用检查规则不是向它解释得那么简单
+TinusgragLin
+2025-11-13 18:18
+我之前翻 Reference 的时候有点印象，感觉和这里提到的 Temporary Lifetime Extension 有关，let s=&String::from("tbg"); 能过应该就是符合它的规则，编译器进行了生命周期扩展，而函数入参（包括 self/&self/&mut self 这些）处不是，所以像 let a = RefCell::new(&String::new()); a; 和 let a = RefCell::new(32).borrow() 都会报错，这两个中前一个需要使用 a 才报错，大概是因为完全没有使用的垂悬引用被认为是安全的，而后一个例子应该是因为 RefCell::borrow 返回的 Ref 类型实现了 Drop，所以在最后面有一个隐藏的对 a 的使用，所以直接就报错了。
+作者
+tbgwe
+2025-11-13 14:55
+我觉得这个生命周期检查存在很多对悬垂引用不一致的检查规则，导致有些情况报错，有些情况不报错，为了以后写代码的规范，但凡涉及到涉嫌悬垂引用，不管编译器报不报错，都主动尽量不写临时值，即使写了临时值，尽量不要直接对临时值进行引用
+xiaoyaou
+2025-11-13 14:08
+哎呦喂，你们回复的时候能不能简化一下引用[笑哭]。社区站点功能本来就简陋，你们还一直套娃，我滚轮都转冒烟了要，差的没分清哪是哪
+--
+👇
+tbgwe: 这个claude解释存在问题哈,,而且有致命漏洞，就像它说的，借用类型立即检查生命周期，我现在给个反例，let s=&String::from("tbg");就这个语句，s是借用类型吧，那么按照它说的，就应该进行立即检查，这个语句按理说就会报错，因为悬垂引用了，又是借用类型，就直接应该报错，但是语句没报错，而且后续还能读写s,,所以rust的借用检查规则不是向它解释得那么简单
+作者
+tbgwe
+2025-11-13 12:01
+这个claude解释存在问题哈,,而且有致命漏洞，就像它说的，借用类型立即检查生命周期，我现在给个反例，let s=&String::from("tbg");就这个语句，s是借用类型吧，那么按照它说的，就应该进行立即检查，这个语句按理说就会报错，因为悬垂引用了，又是借用类型，就直接应该报错，但是语句没报错，而且后续还能读写s,,所以rust的借用检查规则不是向它解释得那么简单
+--
+👇
+iduanyingjie: claude生成的啊
+--
+👇
+tbgwe: 大佬，谢谢，有点明白了，这个知识你是从哪里找到的
+--
+👇
+iduanyingjie: # Rust 借用检查：三种情况对比分析
+概述
+本文档通过三个具体例子，深入分析 Rust 编译器的借用检查机制，揭示所有权类型与借用类型在生命周期检查上的根本差异。
+情况对比表
+情况
+代码
+编译结果
+原因
+情况1
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+✅ 通过
+所有权类型，未使用不检查
+情况2
+let _a = Rc::new(RefCell::new(&String::from("tbg")));<br>println!("{}", *_a.borrow());
+❌ 报错
+使用时检查，发现悬垂引用
+情况3
+let _s = RefCell::new(String::from("qaz")).borrow();
+❌ 报错
+借用类型，存在即要求生命周期
+情况1：所有权类型 + 未使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+// 没有任何使用 _a 的代码
+}
+编译结果
+✅ 编译通过（但存在潜在的悬垂引用）
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+//       |<--------Rc 拥有 RefCell---------->|
+//
+// 类型：Rc<RefCell<&String>>
+为什么通过？
+Rc::new() 返回 Rc<RefCell<&String>>，是一个拥有所有权的值
+Rc 本身是有效的，它成功分配了内存并存储了 RefCell
+虽然内部的 &String 指向已销毁的临时值，但编译器采用按需检查策略
+因为 _a 从未被使用，编译器将其视为死代码，不进行深度借用检查
+关键点：
+所有权类型（Rc、Box、Vec 等）在未使用时不触发内部借用检查
+这是编译器的优化策略，允许死代码存在
+情况2：所有权类型 + 使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+println!("{}", *_a.borrow());  // 尝试使用
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:5:36
+|
+5 |     let _a = Rc::new(RefCell::new(&String::from("tbg")));
+|                                    ^^^^^^^^^^^^^^^^^^^  - temporary value is freed at the end of this statement
+|                                    |
+|                                    creates a temporary value which is freed while still in use
+6 |     println!("{}", *_a.borrow());
+|                     -- borrow later used here
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+println!("{}", *_a.borrow());
+//              ^^ 尝试访问已销毁的临时值 → 悬垂引用！
+为什么报错？
+*_a.borrow() 尝试解引用并访问内部的 &String
+编译器必须验证这个引用是否有效
+检查发现 &String 指向的 String::from("tbg") 已在第5行结束时销毁
+这会导致未定义行为，编译器必须阻止
+对比情况1：
+情况1：不使用 → 死代码 → 不检查
+情况2：使用 → 必须检查 → 发现悬垂引用 → 报错
+正确写法
+let s = String::from("tbg");           // s 拥有 String
+let _a = Rc::new(RefCell::new(&s));    // RefCell 借用 s
+println!("{}", *_a.borrow());          // s 还活着，引用有效
+情况3：借用类型的生命周期冲突
+代码
+use std::cell::RefCell;
+fn main() {
+let _s = RefCell::new(String::from("qaz")).borrow();
+// 即使不使用 _s，也会报错
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:4:14
+|
+4 |     let _s = RefCell::new(String::from("qaz")).borrow();
+|              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^         - temporary value is freed at the end of this statement
+|              |
+|              creates a temporary value which is freed while still in use
+5 | }
+| - borrow might be used here, when `_s` is dropped and runs the destructor for type `Ref<'_, String>`
+详细分析
+let _s = RefCell::new(String::from("qaz")).borrow();
+//       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^
+//       临时 RefCell                       返回 Ref<'a, String>
+//       |<--在此销毁-->|
+//                                         |<--_s 存活到作用域结束-->|
+//
+// 类型：Ref<'_, String>  (注意生命周期参数)
+为什么报错？（关键！）
+这与情况1和2完全不同：
+Ref<'a, String> 本身就是一个借用类型
+Ref 是 RefCell 的借用守卫（borrow guard），它持有对 RefCell 的运行时借用
+Ref 的存在本身就要求 RefCell 必须保持有效
+这不是"是否使用"的问题，而是类型系统的约束
+生命周期冲突：
+临时 RefCell 的生命周期：|<---第4行--->|
+_s (Ref) 的生命周期：     |<---第4行到第5行--->|
+^^^^^^^^ 冲突！
+与情况1的本质区别
+特性
+情况1: _a
+情况3: _s
+类型性质
+Rc<...> 所有权类型
+Ref<'a, ...> 借用类型
+是否"使用"
+未使用内部值
+类型本身就是借用
+检查时机
+按需检查（使用时）
+立即检查（创建时）
+生命周期
+Rc 自己管理生命周期
+'a 表示依赖外部生命周期
+正确写法
+let cell = RefCell::new(String::from("qaz"));  // cell 拥有 RefCell
+let _s = cell.borrow();                        // _s 借用 cell
+// cell 活着 → _s 有效
+核心概念总结
+1. 所有权类型 vs 借用类型
+// 所有权类型（拥有数据）
+let owned: Rc<T> = ...;        // 自己管理生命周期
+let owned: Box<T> = ...;       // 自己管理生命周期
+let owned: Vec<T> = ...;       // 自己管理生命周期
+// 借用类型（依赖其他数据）
+let borrowed: &T = ...;        // 依赖被引用对象的生命周期
+let borrowed: Ref<'a, T> = ...; // 依赖 RefCell 的生命周期
+let borrowed: &mut T = ...;    // 依赖被引用对象的生命周期
+2. 编译器的检查策略
+所有权类型未使用 → 死代码 → 不深度检查内部借用
+↓
+所有权类型被使用 → 检查使用点 → 验证内部借用有效性
+↓
+借用类型（无论是否使用） → 立即检查 → 验证被借用对象生命周期
+3. 生命周期依赖关系
+// 情况1和2：Rc 不依赖外部
+Rc<RefCell<&String>>
+└─ Rc 拥有 RefCell
+└─ RefCell 包含 &String（悬垂，但未使用时不检查）
+// 情况3：Ref 依赖外部
+Ref<'a, String>
+^^ 这个生命周期参数表示：Ref 的有效期不能超过被借用的 RefCell
+实践建议
+✅ 推荐做法
+// 1. 让被借用对象有足够长的生命周期
+let s = String::from("data");
+let _a = Rc::new(RefCell::new(&s));
+// 2. 或者直接存储所有权类型，避免引用
+let _a = Rc::new(RefCell::new(String::from("data")));
+// 3. 确保 RefCell 在借用期间存活
+let cell = RefCell::new(String::from("data"));
+let _s = cell.borrow();
+❌ 常见错误
+// 错误1：临时值 + 引用
+let _a = Rc::new(RefCell::new(&String::from("temp")));
+println!("{}", *_a.borrow());  // 悬垂引用
+// 错误2：临时 RefCell + borrow
+let _s = RefCell::new(String::from("temp")).borrow();  // 生命周期冲突
+// 错误3：作用域问题
+let _s = {
+let cell = RefCell::new(String::from("temp"));
+cell.borrow()  // cell 离开作用域，_s 悬垂
+};
+类比总结
+用现实世界的类比理解这三种情况：
+情况
+类比
+结果
+情况1
+你买了个保险箱（Rc），里面放了张欠条（&String），但从不打开看
+✅ 没人管
+情况2
+你买了个保险箱，里面放了张欠条，现在打开看→发现欠条指向已倒闭的公司
+❌ 无效！
+情况3
+你借了个临时保险箱，拿到钥匙（Ref）但保险箱立即被拿走了
+❌ 钥匙没用了！
+延伸阅读
+借用检查器：理解 Rust 如何在编译期防止悬垂引用
+智能指针：Rc、Box、RefCell 的内存管理机制
+生命周期参数：显式标注引用的有效期
+内部可变性：RefCell 提供的运行时借用检查
+总结
+三种情况的核心差异在于：
+情况1：所有权类型 + 未使用 = 死代码，不检查
+情况2：所有权类型 + 使用 = 检查使用点，发现悬垂引用
+情况3：借用类型 = 类型本身要求生命周期，立即检查
+记住：借用类型的存在本身就是一种"使用"，它必然要求被借用对象有效！
+作者
+tbgwe
+2025-11-13 11:36
+我突然又有一个疑问，，借用类型也有问题，，比如let s=&String::from("tbg");就这个语句，这是借用类型吧，是不是就应该立即检查，直接报错，，但是编译通过了，，而且后续读写s都能直接通过编译，这是为什么啊
+--
+👇
+tbgwe: 大佬，谢谢，有点明白了，这个知识你是从哪里找到的
+--
+👇
+iduanyingjie: # Rust 借用检查：三种情况对比分析
+概述
+本文档通过三个具体例子，深入分析 Rust 编译器的借用检查机制，揭示所有权类型与借用类型在生命周期检查上的根本差异。
+情况对比表
+情况
+代码
+编译结果
+原因
+情况1
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+✅ 通过
+所有权类型，未使用不检查
+情况2
+let _a = Rc::new(RefCell::new(&String::from("tbg")));<br>println!("{}", *_a.borrow());
+❌ 报错
+使用时检查，发现悬垂引用
+情况3
+let _s = RefCell::new(String::from("qaz")).borrow();
+❌ 报错
+借用类型，存在即要求生命周期
+情况1：所有权类型 + 未使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+// 没有任何使用 _a 的代码
+}
+编译结果
+✅ 编译通过（但存在潜在的悬垂引用）
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+//       |<--------Rc 拥有 RefCell---------->|
+//
+// 类型：Rc<RefCell<&String>>
+为什么通过？
+Rc::new() 返回 Rc<RefCell<&String>>，是一个拥有所有权的值
+Rc 本身是有效的，它成功分配了内存并存储了 RefCell
+虽然内部的 &String 指向已销毁的临时值，但编译器采用按需检查策略
+因为 _a 从未被使用，编译器将其视为死代码，不进行深度借用检查
+关键点：
+所有权类型（Rc、Box、Vec 等）在未使用时不触发内部借用检查
+这是编译器的优化策略，允许死代码存在
+情况2：所有权类型 + 使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+println!("{}", *_a.borrow());  // 尝试使用
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:5:36
+|
+5 |     let _a = Rc::new(RefCell::new(&String::from("tbg")));
+|                                    ^^^^^^^^^^^^^^^^^^^  - temporary value is freed at the end of this statement
+|                                    |
+|                                    creates a temporary value which is freed while still in use
+6 |     println!("{}", *_a.borrow());
+|                     -- borrow later used here
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+println!("{}", *_a.borrow());
+//              ^^ 尝试访问已销毁的临时值 → 悬垂引用！
+为什么报错？
+*_a.borrow() 尝试解引用并访问内部的 &String
+编译器必须验证这个引用是否有效
+检查发现 &String 指向的 String::from("tbg") 已在第5行结束时销毁
+这会导致未定义行为，编译器必须阻止
+对比情况1：
+情况1：不使用 → 死代码 → 不检查
+情况2：使用 → 必须检查 → 发现悬垂引用 → 报错
+正确写法
+let s = String::from("tbg");           // s 拥有 String
+let _a = Rc::new(RefCell::new(&s));    // RefCell 借用 s
+println!("{}", *_a.borrow());          // s 还活着，引用有效
+情况3：借用类型的生命周期冲突
+代码
+use std::cell::RefCell;
+fn main() {
+let _s = RefCell::new(String::from("qaz")).borrow();
+// 即使不使用 _s，也会报错
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:4:14
+|
+4 |     let _s = RefCell::new(String::from("qaz")).borrow();
+|              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^         - temporary value is freed at the end of this statement
+|              |
+|              creates a temporary value which is freed while still in use
+5 | }
+| - borrow might be used here, when `_s` is dropped and runs the destructor for type `Ref<'_, String>`
+详细分析
+let _s = RefCell::new(String::from("qaz")).borrow();
+//       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^
+//       临时 RefCell                       返回 Ref<'a, String>
+//       |<--在此销毁-->|
+//                                         |<--_s 存活到作用域结束-->|
+//
+// 类型：Ref<'_, String>  (注意生命周期参数)
+为什么报错？（关键！）
+这与情况1和2完全不同：
+Ref<'a, String> 本身就是一个借用类型
+Ref 是 RefCell 的借用守卫（borrow guard），它持有对 RefCell 的运行时借用
+Ref 的存在本身就要求 RefCell 必须保持有效
+这不是"是否使用"的问题，而是类型系统的约束
+生命周期冲突：
+临时 RefCell 的生命周期：|<---第4行--->|
+_s (Ref) 的生命周期：     |<---第4行到第5行--->|
+^^^^^^^^ 冲突！
+与情况1的本质区别
+特性
+情况1: _a
+情况3: _s
+类型性质
+Rc<...> 所有权类型
+Ref<'a, ...> 借用类型
+是否"使用"
+未使用内部值
+类型本身就是借用
+检查时机
+按需检查（使用时）
+立即检查（创建时）
+生命周期
+Rc 自己管理生命周期
+'a 表示依赖外部生命周期
+正确写法
+let cell = RefCell::new(String::from("qaz"));  // cell 拥有 RefCell
+let _s = cell.borrow();                        // _s 借用 cell
+// cell 活着 → _s 有效
+核心概念总结
+1. 所有权类型 vs 借用类型
+// 所有权类型（拥有数据）
+let owned: Rc<T> = ...;        // 自己管理生命周期
+let owned: Box<T> = ...;       // 自己管理生命周期
+let owned: Vec<T> = ...;       // 自己管理生命周期
+// 借用类型（依赖其他数据）
+let borrowed: &T = ...;        // 依赖被引用对象的生命周期
+let borrowed: Ref<'a, T> = ...; // 依赖 RefCell 的生命周期
+let borrowed: &mut T = ...;    // 依赖被引用对象的生命周期
+2. 编译器的检查策略
+所有权类型未使用 → 死代码 → 不深度检查内部借用
+↓
+所有权类型被使用 → 检查使用点 → 验证内部借用有效性
+↓
+借用类型（无论是否使用） → 立即检查 → 验证被借用对象生命周期
+3. 生命周期依赖关系
+// 情况1和2：Rc 不依赖外部
+Rc<RefCell<&String>>
+└─ Rc 拥有 RefCell
+└─ RefCell 包含 &String（悬垂，但未使用时不检查）
+// 情况3：Ref 依赖外部
+Ref<'a, String>
+^^ 这个生命周期参数表示：Ref 的有效期不能超过被借用的 RefCell
+实践建议
+✅ 推荐做法
+// 1. 让被借用对象有足够长的生命周期
+let s = String::from("data");
+let _a = Rc::new(RefCell::new(&s));
+// 2. 或者直接存储所有权类型，避免引用
+let _a = Rc::new(RefCell::new(String::from("data")));
+// 3. 确保 RefCell 在借用期间存活
+let cell = RefCell::new(String::from("data"));
+let _s = cell.borrow();
+❌ 常见错误
+// 错误1：临时值 + 引用
+let _a = Rc::new(RefCell::new(&String::from("temp")));
+println!("{}", *_a.borrow());  // 悬垂引用
+// 错误2：临时 RefCell + borrow
+let _s = RefCell::new(String::from("temp")).borrow();  // 生命周期冲突
+// 错误3：作用域问题
+let _s = {
+let cell = RefCell::new(String::from("temp"));
+cell.borrow()  // cell 离开作用域，_s 悬垂
+};
+类比总结
+用现实世界的类比理解这三种情况：
+情况
+类比
+结果
+情况1
+你买了个保险箱（Rc），里面放了张欠条（&String），但从不打开看
+✅ 没人管
+情况2
+你买了个保险箱，里面放了张欠条，现在打开看→发现欠条指向已倒闭的公司
+❌ 无效！
+情况3
+你借了个临时保险箱，拿到钥匙（Ref）但保险箱立即被拿走了
+❌ 钥匙没用了！
+延伸阅读
+借用检查器：理解 Rust 如何在编译期防止悬垂引用
+智能指针：Rc、Box、RefCell 的内存管理机制
+生命周期参数：显式标注引用的有效期
+内部可变性：RefCell 提供的运行时借用检查
+总结
+三种情况的核心差异在于：
+情况1：所有权类型 + 未使用 = 死代码，不检查
+情况2：所有权类型 + 使用 = 检查使用点，发现悬垂引用
+情况3：借用类型 = 类型本身要求生命周期，立即检查
+记住：借用类型的存在本身就是一种"使用"，它必然要求被借用对象有效！
+iduanyingjie
+2025-11-13 11:34
+claude生成的啊
+--
+👇
+tbgwe: 大佬，谢谢，有点明白了，这个知识你是从哪里找到的
+--
+👇
+iduanyingjie: # Rust 借用检查：三种情况对比分析
+概述
+本文档通过三个具体例子，深入分析 Rust 编译器的借用检查机制，揭示所有权类型与借用类型在生命周期检查上的根本差异。
+情况对比表
+情况
+代码
+编译结果
+原因
+情况1
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+✅ 通过
+所有权类型，未使用不检查
+情况2
+let _a = Rc::new(RefCell::new(&String::from("tbg")));<br>println!("{}", *_a.borrow());
+❌ 报错
+使用时检查，发现悬垂引用
+情况3
+let _s = RefCell::new(String::from("qaz")).borrow();
+❌ 报错
+借用类型，存在即要求生命周期
+情况1：所有权类型 + 未使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+// 没有任何使用 _a 的代码
+}
+编译结果
+✅ 编译通过（但存在潜在的悬垂引用）
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+//       |<--------Rc 拥有 RefCell---------->|
+//
+// 类型：Rc<RefCell<&String>>
+为什么通过？
+Rc::new() 返回 Rc<RefCell<&String>>，是一个拥有所有权的值
+Rc 本身是有效的，它成功分配了内存并存储了 RefCell
+虽然内部的 &String 指向已销毁的临时值，但编译器采用按需检查策略
+因为 _a 从未被使用，编译器将其视为死代码，不进行深度借用检查
+关键点：
+所有权类型（Rc、Box、Vec 等）在未使用时不触发内部借用检查
+这是编译器的优化策略，允许死代码存在
+情况2：所有权类型 + 使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+println!("{}", *_a.borrow());  // 尝试使用
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:5:36
+|
+5 |     let _a = Rc::new(RefCell::new(&String::from("tbg")));
+|                                    ^^^^^^^^^^^^^^^^^^^  - temporary value is freed at the end of this statement
+|                                    |
+|                                    creates a temporary value which is freed while still in use
+6 |     println!("{}", *_a.borrow());
+|                     -- borrow later used here
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+println!("{}", *_a.borrow());
+//              ^^ 尝试访问已销毁的临时值 → 悬垂引用！
+为什么报错？
+*_a.borrow() 尝试解引用并访问内部的 &String
+编译器必须验证这个引用是否有效
+检查发现 &String 指向的 String::from("tbg") 已在第5行结束时销毁
+这会导致未定义行为，编译器必须阻止
+对比情况1：
+情况1：不使用 → 死代码 → 不检查
+情况2：使用 → 必须检查 → 发现悬垂引用 → 报错
+正确写法
+let s = String::from("tbg");           // s 拥有 String
+let _a = Rc::new(RefCell::new(&s));    // RefCell 借用 s
+println!("{}", *_a.borrow());          // s 还活着，引用有效
+情况3：借用类型的生命周期冲突
+代码
+use std::cell::RefCell;
+fn main() {
+let _s = RefCell::new(String::from("qaz")).borrow();
+// 即使不使用 _s，也会报错
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:4:14
+|
+4 |     let _s = RefCell::new(String::from("qaz")).borrow();
+|              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^         - temporary value is freed at the end of this statement
+|              |
+|              creates a temporary value which is freed while still in use
+5 | }
+| - borrow might be used here, when `_s` is dropped and runs the destructor for type `Ref<'_, String>`
+详细分析
+let _s = RefCell::new(String::from("qaz")).borrow();
+//       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^
+//       临时 RefCell                       返回 Ref<'a, String>
+//       |<--在此销毁-->|
+//                                         |<--_s 存活到作用域结束-->|
+//
+// 类型：Ref<'_, String>  (注意生命周期参数)
+为什么报错？（关键！）
+这与情况1和2完全不同：
+Ref<'a, String> 本身就是一个借用类型
+Ref 是 RefCell 的借用守卫（borrow guard），它持有对 RefCell 的运行时借用
+Ref 的存在本身就要求 RefCell 必须保持有效
+这不是"是否使用"的问题，而是类型系统的约束
+生命周期冲突：
+临时 RefCell 的生命周期：|<---第4行--->|
+_s (Ref) 的生命周期：     |<---第4行到第5行--->|
+^^^^^^^^ 冲突！
+与情况1的本质区别
+特性
+情况1: _a
+情况3: _s
+类型性质
+Rc<...> 所有权类型
+Ref<'a, ...> 借用类型
+是否"使用"
+未使用内部值
+类型本身就是借用
+检查时机
+按需检查（使用时）
+立即检查（创建时）
+生命周期
+Rc 自己管理生命周期
+'a 表示依赖外部生命周期
+正确写法
+let cell = RefCell::new(String::from("qaz"));  // cell 拥有 RefCell
+let _s = cell.borrow();                        // _s 借用 cell
+// cell 活着 → _s 有效
+核心概念总结
+1. 所有权类型 vs 借用类型
+// 所有权类型（拥有数据）
+let owned: Rc<T> = ...;        // 自己管理生命周期
+let owned: Box<T> = ...;       // 自己管理生命周期
+let owned: Vec<T> = ...;       // 自己管理生命周期
+// 借用类型（依赖其他数据）
+let borrowed: &T = ...;        // 依赖被引用对象的生命周期
+let borrowed: Ref<'a, T> = ...; // 依赖 RefCell 的生命周期
+let borrowed: &mut T = ...;    // 依赖被引用对象的生命周期
+2. 编译器的检查策略
+所有权类型未使用 → 死代码 → 不深度检查内部借用
+↓
+所有权类型被使用 → 检查使用点 → 验证内部借用有效性
+↓
+借用类型（无论是否使用） → 立即检查 → 验证被借用对象生命周期
+3. 生命周期依赖关系
+// 情况1和2：Rc 不依赖外部
+Rc<RefCell<&String>>
+└─ Rc 拥有 RefCell
+└─ RefCell 包含 &String（悬垂，但未使用时不检查）
+// 情况3：Ref 依赖外部
+Ref<'a, String>
+^^ 这个生命周期参数表示：Ref 的有效期不能超过被借用的 RefCell
+实践建议
+✅ 推荐做法
+// 1. 让被借用对象有足够长的生命周期
+let s = String::from("data");
+let _a = Rc::new(RefCell::new(&s));
+// 2. 或者直接存储所有权类型，避免引用
+let _a = Rc::new(RefCell::new(String::from("data")));
+// 3. 确保 RefCell 在借用期间存活
+let cell = RefCell::new(String::from("data"));
+let _s = cell.borrow();
+❌ 常见错误
+// 错误1：临时值 + 引用
+let _a = Rc::new(RefCell::new(&String::from("temp")));
+println!("{}", *_a.borrow());  // 悬垂引用
+// 错误2：临时 RefCell + borrow
+let _s = RefCell::new(String::from("temp")).borrow();  // 生命周期冲突
+// 错误3：作用域问题
+let _s = {
+let cell = RefCell::new(String::from("temp"));
+cell.borrow()  // cell 离开作用域，_s 悬垂
+};
+类比总结
+用现实世界的类比理解这三种情况：
+情况
+类比
+结果
+情况1
+你买了个保险箱（Rc），里面放了张欠条（&String），但从不打开看
+✅ 没人管
+情况2
+你买了个保险箱，里面放了张欠条，现在打开看→发现欠条指向已倒闭的公司
+❌ 无效！
+情况3
+你借了个临时保险箱，拿到钥匙（Ref）但保险箱立即被拿走了
+❌ 钥匙没用了！
+延伸阅读
+借用检查器：理解 Rust 如何在编译期防止悬垂引用
+智能指针：Rc、Box、RefCell 的内存管理机制
+生命周期参数：显式标注引用的有效期
+内部可变性：RefCell 提供的运行时借用检查
+总结
+三种情况的核心差异在于：
+情况1：所有权类型 + 未使用 = 死代码，不检查
+情况2：所有权类型 + 使用 = 检查使用点，发现悬垂引用
+情况3：借用类型 = 类型本身要求生命周期，立即检查
+记住：借用类型的存在本身就是一种"使用"，它必然要求被借用对象有效！
+作者
+tbgwe
+2025-11-13 11:30
+大佬，谢谢，有点明白了，这个知识你是从哪里找到的
+--
+👇
+iduanyingjie: # Rust 借用检查：三种情况对比分析
+概述
+本文档通过三个具体例子，深入分析 Rust 编译器的借用检查机制，揭示所有权类型与借用类型在生命周期检查上的根本差异。
+情况对比表
+情况
+代码
+编译结果
+原因
+情况1
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+✅ 通过
+所有权类型，未使用不检查
+情况2
+let _a = Rc::new(RefCell::new(&String::from("tbg")));<br>println!("{}", *_a.borrow());
+❌ 报错
+使用时检查，发现悬垂引用
+情况3
+let _s = RefCell::new(String::from("qaz")).borrow();
+❌ 报错
+借用类型，存在即要求生命周期
+情况1：所有权类型 + 未使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+// 没有任何使用 _a 的代码
+}
+编译结果
+✅ 编译通过（但存在潜在的悬垂引用）
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+//       |<--------Rc 拥有 RefCell---------->|
+//
+// 类型：Rc<RefCell<&String>>
+为什么通过？
+Rc::new() 返回 Rc<RefCell<&String>>，是一个拥有所有权的值
+Rc 本身是有效的，它成功分配了内存并存储了 RefCell
+虽然内部的 &String 指向已销毁的临时值，但编译器采用按需检查策略
+因为 _a 从未被使用，编译器将其视为死代码，不进行深度借用检查
+关键点：
+所有权类型（Rc、Box、Vec 等）在未使用时不触发内部借用检查
+这是编译器的优化策略，允许死代码存在
+情况2：所有权类型 + 使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+println!("{}", *_a.borrow());  // 尝试使用
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:5:36
+|
+5 |     let _a = Rc::new(RefCell::new(&String::from("tbg")));
+|                                    ^^^^^^^^^^^^^^^^^^^  - temporary value is freed at the end of this statement
+|                                    |
+|                                    creates a temporary value which is freed while still in use
+6 |     println!("{}", *_a.borrow());
+|                     -- borrow later used here
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+println!("{}", *_a.borrow());
+//              ^^ 尝试访问已销毁的临时值 → 悬垂引用！
+为什么报错？
+*_a.borrow() 尝试解引用并访问内部的 &String
+编译器必须验证这个引用是否有效
+检查发现 &String 指向的 String::from("tbg") 已在第5行结束时销毁
+这会导致未定义行为，编译器必须阻止
+对比情况1：
+情况1：不使用 → 死代码 → 不检查
+情况2：使用 → 必须检查 → 发现悬垂引用 → 报错
+正确写法
+let s = String::from("tbg");           // s 拥有 String
+let _a = Rc::new(RefCell::new(&s));    // RefCell 借用 s
+println!("{}", *_a.borrow());          // s 还活着，引用有效
+情况3：借用类型的生命周期冲突
+代码
+use std::cell::RefCell;
+fn main() {
+let _s = RefCell::new(String::from("qaz")).borrow();
+// 即使不使用 _s，也会报错
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:4:14
+|
+4 |     let _s = RefCell::new(String::from("qaz")).borrow();
+|              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^         - temporary value is freed at the end of this statement
+|              |
+|              creates a temporary value which is freed while still in use
+5 | }
+| - borrow might be used here, when `_s` is dropped and runs the destructor for type `Ref<'_, String>`
+详细分析
+let _s = RefCell::new(String::from("qaz")).borrow();
+//       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^
+//       临时 RefCell                       返回 Ref<'a, String>
+//       |<--在此销毁-->|
+//                                         |<--_s 存活到作用域结束-->|
+//
+// 类型：Ref<'_, String>  (注意生命周期参数)
+为什么报错？（关键！）
+这与情况1和2完全不同：
+Ref<'a, String> 本身就是一个借用类型
+Ref 是 RefCell 的借用守卫（borrow guard），它持有对 RefCell 的运行时借用
+Ref 的存在本身就要求 RefCell 必须保持有效
+这不是"是否使用"的问题，而是类型系统的约束
+生命周期冲突：
+临时 RefCell 的生命周期：|<---第4行--->|
+_s (Ref) 的生命周期：     |<---第4行到第5行--->|
+^^^^^^^^ 冲突！
+与情况1的本质区别
+特性
+情况1: _a
+情况3: _s
+类型性质
+Rc<...> 所有权类型
+Ref<'a, ...> 借用类型
+是否"使用"
+未使用内部值
+类型本身就是借用
+检查时机
+按需检查（使用时）
+立即检查（创建时）
+生命周期
+Rc 自己管理生命周期
+'a 表示依赖外部生命周期
+正确写法
+let cell = RefCell::new(String::from("qaz"));  // cell 拥有 RefCell
+let _s = cell.borrow();                        // _s 借用 cell
+// cell 活着 → _s 有效
+核心概念总结
+1. 所有权类型 vs 借用类型
+// 所有权类型（拥有数据）
+let owned: Rc<T> = ...;        // 自己管理生命周期
+let owned: Box<T> = ...;       // 自己管理生命周期
+let owned: Vec<T> = ...;       // 自己管理生命周期
+// 借用类型（依赖其他数据）
+let borrowed: &T = ...;        // 依赖被引用对象的生命周期
+let borrowed: Ref<'a, T> = ...; // 依赖 RefCell 的生命周期
+let borrowed: &mut T = ...;    // 依赖被引用对象的生命周期
+2. 编译器的检查策略
+所有权类型未使用 → 死代码 → 不深度检查内部借用
+↓
+所有权类型被使用 → 检查使用点 → 验证内部借用有效性
+↓
+借用类型（无论是否使用） → 立即检查 → 验证被借用对象生命周期
+3. 生命周期依赖关系
+// 情况1和2：Rc 不依赖外部
+Rc<RefCell<&String>>
+└─ Rc 拥有 RefCell
+└─ RefCell 包含 &String（悬垂，但未使用时不检查）
+// 情况3：Ref 依赖外部
+Ref<'a, String>
+^^ 这个生命周期参数表示：Ref 的有效期不能超过被借用的 RefCell
+实践建议
+✅ 推荐做法
+// 1. 让被借用对象有足够长的生命周期
+let s = String::from("data");
+let _a = Rc::new(RefCell::new(&s));
+// 2. 或者直接存储所有权类型，避免引用
+let _a = Rc::new(RefCell::new(String::from("data")));
+// 3. 确保 RefCell 在借用期间存活
+let cell = RefCell::new(String::from("data"));
+let _s = cell.borrow();
+❌ 常见错误
+// 错误1：临时值 + 引用
+let _a = Rc::new(RefCell::new(&String::from("temp")));
+println!("{}", *_a.borrow());  // 悬垂引用
+// 错误2：临时 RefCell + borrow
+let _s = RefCell::new(String::from("temp")).borrow();  // 生命周期冲突
+// 错误3：作用域问题
+let _s = {
+let cell = RefCell::new(String::from("temp"));
+cell.borrow()  // cell 离开作用域，_s 悬垂
+};
+类比总结
+用现实世界的类比理解这三种情况：
+情况
+类比
+结果
+情况1
+你买了个保险箱（Rc），里面放了张欠条（&String），但从不打开看
+✅ 没人管
+情况2
+你买了个保险箱，里面放了张欠条，现在打开看→发现欠条指向已倒闭的公司
+❌ 无效！
+情况3
+你借了个临时保险箱，拿到钥匙（Ref）但保险箱立即被拿走了
+❌ 钥匙没用了！
+延伸阅读
+借用检查器：理解 Rust 如何在编译期防止悬垂引用
+智能指针：Rc、Box、RefCell 的内存管理机制
+生命周期参数：显式标注引用的有效期
+内部可变性：RefCell 提供的运行时借用检查
+总结
+三种情况的核心差异在于：
+情况1：所有权类型 + 未使用 = 死代码，不检查
+情况2：所有权类型 + 使用 = 检查使用点，发现悬垂引用
+情况3：借用类型 = 类型本身要求生命周期，立即检查
+记住：借用类型的存在本身就是一种"使用"，它必然要求被借用对象有效！
+iduanyingjie
+2025-11-13 11:05
+Rust 借用检查：三种情况对比分析
+概述
+本文档通过三个具体例子，深入分析 Rust 编译器的借用检查机制，揭示所有权类型与借用类型在生命周期检查上的根本差异。
+情况对比表
+情况
+代码
+编译结果
+原因
+情况1
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+✅ 通过
+所有权类型，未使用不检查
+情况2
+let _a = Rc::new(RefCell::new(&String::from("tbg")));<br>println!("{}", *_a.borrow());
+❌ 报错
+使用时检查，发现悬垂引用
+情况3
+let _s = RefCell::new(String::from("qaz")).borrow();
+❌ 报错
+借用类型，存在即要求生命周期
+情况1：所有权类型 + 未使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+// 没有任何使用 _a 的代码
+}
+编译结果
+✅ 编译通过（但存在潜在的悬垂引用）
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+//       |<--------Rc 拥有 RefCell---------->|
+//
+// 类型：Rc<RefCell<&String>>
+为什么通过？
+Rc::new() 返回 Rc<RefCell<&String>>，是一个拥有所有权的值
+Rc 本身是有效的，它成功分配了内存并存储了 RefCell
+虽然内部的 &String 指向已销毁的临时值，但编译器采用按需检查策略
+因为 _a 从未被使用，编译器将其视为死代码，不进行深度借用检查
+关键点：
+所有权类型（Rc、Box、Vec 等）在未使用时不触发内部借用检查
+这是编译器的优化策略，允许死代码存在
+情况2：所有权类型 + 使用
+代码
+use std::rc::Rc;
+use std::cell::RefCell;
+fn main() {
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+println!("{}", *_a.borrow());  // 尝试使用
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:5:36
+|
+5 |     let _a = Rc::new(RefCell::new(&String::from("tbg")));
+|                                    ^^^^^^^^^^^^^^^^^^^  - temporary value is freed at the end of this statement
+|                                    |
+|                                    creates a temporary value which is freed while still in use
+6 |     println!("{}", *_a.borrow());
+|                     -- borrow later used here
+详细分析
+let _a = Rc::new(RefCell::new(&String::from("tbg")));
+//                             |<--临时值-->|-- 在此销毁
+println!("{}", *_a.borrow());
+//              ^^ 尝试访问已销毁的临时值 → 悬垂引用！
+为什么报错？
+*_a.borrow() 尝试解引用并访问内部的 &String
+编译器必须验证这个引用是否有效
+检查发现 &String 指向的 String::from("tbg") 已在第5行结束时销毁
+这会导致未定义行为，编译器必须阻止
+对比情况1：
+情况1：不使用 → 死代码 → 不检查
+情况2：使用 → 必须检查 → 发现悬垂引用 → 报错
+正确写法
+let s = String::from("tbg");           // s 拥有 String
+let _a = Rc::new(RefCell::new(&s));    // RefCell 借用 s
+println!("{}", *_a.borrow());          // s 还活着，引用有效
+情况3：借用类型的生命周期冲突
+代码
+use std::cell::RefCell;
+fn main() {
+let _s = RefCell::new(String::from("qaz")).borrow();
+// 即使不使用 _s，也会报错
+}
+编译结果
+❌ 编译失败
+error[E0716]: temporary value dropped while borrowed
+--> src/main.rs:4:14
+|
+4 |     let _s = RefCell::new(String::from("qaz")).borrow();
+|              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^         - temporary value is freed at the end of this statement
+|              |
+|              creates a temporary value which is freed while still in use
+5 | }
+| - borrow might be used here, when `_s` is dropped and runs the destructor for type `Ref<'_, String>`
+详细分析
+let _s = RefCell::new(String::from("qaz")).borrow();
+//       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^
+//       临时 RefCell                       返回 Ref<'a, String>
+//       |<--在此销毁-->|
+//                                         |<--_s 存活到作用域结束-->|
+//
+// 类型：Ref<'_, String>  (注意生命周期参数)
+为什么报错？（关键！）
+这与情况1和2完全不同：
+Ref<'a, String> 本身就是一个借用类型
+Ref 是 RefCell 的借用守卫（borrow guard），它持有对 RefCell 的运行时借用
+Ref 的存在本身就要求 RefCell 必须保持有效
+这不是"是否使用"的问题，而是类型系统的约束
+生命周期冲突：
+临时 RefCell 的生命周期：|<---第4行--->|
+_s (Ref) 的生命周期：     |<---第4行到第5行--->|
+^^^^^^^^ 冲突！
+与情况1的本质区别
+特性
+情况1: _a
+情况3: _s
+类型性质
+Rc<...> 所有权类型
+Ref<'a, ...> 借用类型
+是否"使用"
+未使用内部值
+类型本身就是借用
+检查时机
+按需检查（使用时）
+立即检查（创建时）
+生命周期
+Rc 自己管理生命周期
+'a 表示依赖外部生命周期
+正确写法
+let cell = RefCell::new(String::from("qaz"));  // cell 拥有 RefCell
+let _s = cell.borrow();                        // _s 借用 cell
+// cell 活着 → _s 有效
+核心概念总结
+1. 所有权类型 vs 借用类型
+// 所有权类型（拥有数据）
+let owned: Rc<T> = ...;        // 自己管理生命周期
+let owned: Box<T> = ...;       // 自己管理生命周期
+let owned: Vec<T> = ...;       // 自己管理生命周期
+// 借用类型（依赖其他数据）
+let borrowed: &T = ...;        // 依赖被引用对象的生命周期
+let borrowed: Ref<'a, T> = ...; // 依赖 RefCell 的生命周期
+let borrowed: &mut T = ...;    // 依赖被引用对象的生命周期
+2. 编译器的检查策略
+所有权类型未使用 → 死代码 → 不深度检查内部借用
+↓
+所有权类型被使用 → 检查使用点 → 验证内部借用有效性
+↓
+借用类型（无论是否使用） → 立即检查 → 验证被借用对象生命周期
+3. 生命周期依赖关系
+// 情况1和2：Rc 不依赖外部
+Rc<RefCell<&String>>
+└─ Rc 拥有 RefCell
+└─ RefCell 包含 &String（悬垂，但未使用时不检查）
+// 情况3：Ref 依赖外部
+Ref<'a, String>
+^^ 这个生命周期参数表示：Ref 的有效期不能超过被借用的 RefCell
+实践建议
+✅ 推荐做法
+// 1. 让被借用对象有足够长的生命周期
+let s = String::from("data");
+let _a = Rc::new(RefCell::new(&s));
+// 2. 或者直接存储所有权类型，避免引用
+let _a = Rc::new(RefCell::new(String::from("data")));
+// 3. 确保 RefCell 在借用期间存活
+let cell = RefCell::new(String::from("data"));
+let _s = cell.borrow();
+❌ 常见错误
+// 错误1：临时值 + 引用
+let _a = Rc::new(RefCell::new(&String::from("temp")));
+println!("{}", *_a.borrow());  // 悬垂引用
+// 错误2：临时 RefCell + borrow
+let _s = RefCell::new(String::from("temp")).borrow();  // 生命周期冲突
+// 错误3：作用域问题
+let _s = {
+let cell = RefCell::new(String::from("temp"));
+cell.borrow()  // cell 离开作用域，_s 悬垂
+};
+类比总结
+用现实世界的类比理解这三种情况：
+情况
+类比
+结果
+情况1
+你买了个保险箱（Rc），里面放了张欠条（&String），但从不打开看
+✅ 没人管
+情况2
+你买了个保险箱，里面放了张欠条，现在打开看→发现欠条指向已倒闭的公司
+❌ 无效！
+情况3
+你借了个临时保险箱，拿到钥匙（Ref）但保险箱立即被拿走了
+❌ 钥匙没用了！
+延伸阅读
+借用检查器：理解 Rust 如何在编译期防止悬垂引用
+智能指针：Rc、Box、RefCell 的内存管理机制
+生命周期参数：显式标注引用的有效期
+内部可变性：RefCell 提供的运行时借用检查
+总结
+三种情况的核心差异在于：
+情况1：所有权类型 + 未使用 = 死代码，不检查
+情况2：所有权类型 + 使用 = 检查使用点，发现悬垂引用
+情况3：借用类型 = 类型本身要求生命周期，立即检查
+记住：借用类型的存在本身就是一种"使用"，它必然要求被借用对象有效！
+1
+共 14 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 210 | f014708 | https://rustcc.cn/article?id=abddca40-c6c3-4cb8-8591-9d6e611f5dd1 | 2026-08-12 | qa-topics ===
+Iced库能不能为每个控件创建各自的struct，并对其自身设置独立的Message和State，最后在update和view里面统一管理 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+Iced库能不能为每个控件创建各自的struct，并对其自身设置独立的Message和State，最后在update和view里面统一管理
+UserB1ank
+发表于 2026-08-12 15:11
+Tags：iced,gui,rust
+楼主以前学过WPF，qt，javaswing等gui开发库，iced这种模式是真没见过。
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 211 | f014709 | https://rustcc.cn/article?id=ec019b35-3462-4a07-9c93-0804f0b86e71 | 2026-09-10 | qa-topics ===
+求助 用 tokio::task::JoinHandle 实现 stop 功能 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+求助 用 tokio::task::JoinHandle 实现 stop 功能
+林深好材
+发表于 2026-09-10 17:09
+Tags：tokio，阻塞
+struct DispatchTaskInner {
+stream: Arc<RecordStream>,
+flow_mode: FlowMode,
+config: DispatchConfig,
+}
+pub struct DispatchTask {
+inner: Arc<DispatchTaskInner>,
+joiner: Mutex<Option<JoinHandle<()>>>,
+token: CancellationToken,
+subs: Arc<Subscriptions>,
+}
+impl DispatchTask {
+pub fn start(&self) -> bool {
+let mut guard = self.joiner.lock();
+if guard.is_some() {
+return false;
+}
+let inner = Arc::clone(&self.inner);
+let subs = Arc::clone(&self.subs);
+let token = self.token.clone();
+debug!(stream=%inner.stream.name(), flow=%inner.flow_mode, "starting to dispatch");
+let joiner = tokio::spawn(async move {
+let mut dispatcher = make_dispatcher(subs.clone(), inner.config.clone());
+loop {
+let (records, more) = inner.stream.poll();
+for record in &records {
+dispatcher.dispatch(record);
+}
+if !more {
+debug!("no more record: {}", inner.stream.name());
+break;
+}
+if token.is_cancelled() {
+info!("dispatch loop exited: {}", inner.stream.name());
+break;
+}
+}
+dispatcher.stop().await;
+debug!(stream=%inner.stream.name(), flow=%inner.flow_mode, "dispatch terminated");
+});
+*guard = Some(joiner);
+true
+}
+}
+pub async fn stop(&self) {
+let joiner = {
+let mut guard = self.joiner.lock();
+guard.take()
+};
+let Some(joiner) = joiner else {
+return;
+};
+self.token.cancel();
+debug!("dispatch stopping");
+let _ = joiner.await;
+debug!("dispatch stopped");
+}
+调试时：
+都已经看到 dispatch terminated 日志了，但是看不到 dispatch stopped 这日志，不理解。
+类似的结构有几层，发现 从其它让 tokio 跑几个任务，堵住的位置就不同，但是一样的操作，每次堵住的位置是一样的。
+评论区
+写评论
+作者
+林深好材
+2026-09-11 16:52
+感觉找到了部分原因：
+上游数据流的poll是同步阻塞方法，没有数据不返回；
+这样的任务数角度较多，有 cpu core 个；
+一旦进入，始终占用了cpu，内部没有出让cpu的细节；
+作者
+林深好材
+2026-09-11 16:46
+保存 JoinerHandle，主要是有管理需求：动态的部署和撤销数据流
+👇
+ThinkCodeStudio: 我不理解你为什么这么用, 这段代码好复杂, 我是启动任务后就不管task了, 也不会保存JoinHandle, 就相当于一个脱离控制的后台线程, 我控制这个task用的都是tokio的管道和事件, 比如关闭task我会发一个Notify信号, 数据交互都用的是管道
+似乎不响应结果。主要是 我这里stop要 &mut，要清除保存它的Vec，放后面更顺手些。
+👇
+我是先await后关闭的, 不是先关闭后await, 我也不理解你为什么把await放的这么靠后
+作者
+林深好材
+2026-09-11 16:35
+用的tokio的Mutex
+--
+👇
+asuper: joiner: Mutex<Option<JoinHandle<()>>>,
+你用的是std::sync::Mutex吧，这个不能在async里面用的
+asuper
+2026-09-11 10:44
+joiner: Mutex<Option<JoinHandle<()>>>,
+你用的是std::sync::Mutex吧，这个不能在async里面用的
+ThinkCodeStudio
+2026-09-11 09:24
+我不理解你为什么这么用, 这段代码好复杂, 我是启动任务后就不管task了, 也不会保存JoinHandle, 就相当于一个脱离控制的后台线程, 我控制这个task用的都是tokio的管道和事件, 比如关闭task我会发一个Notify信号, 数据交互都用的是管道
+pub async fn start(
+db: Database,
+ch: SchedulerChannel,
+shutdown: Arc<Notify>,
+) -> tokio::task::JoinHandle<()> {
+tokio::spawn(async move {
+info!("startup!");
+let mut scheduler = Scheduler::init(&ch.response).await;
+'main_loop: loop {
+tokio::select! {
+cmd = ch.sched_rx.recv_async() => {
+match cmd{
+Ok(pkg) => {
+scheduler.recv_handle(pkg, &db, &ch.response).await;
+},
+Err(RecvError::Disconnected) => {
+warn!("closed");
+break 'main_loop;
+}
+}
+}
+work_rps = ch.event_rx.recv_async() =>{
+match work_rps{
+Ok(event) => {
+scheduler.event_handle(event, &ch.response).await;
+},
+Err(RecvError::Disconnected) => {
+warn!("closed");
+break 'main_loop;
+}
+}
+}
+_ = shutdown.notified() => {
+info!("shutdown!");
+break 'main_loop;
+}
+}
+}
+info!("exit!");
+})
+}
+我是先await后关闭的, 不是先关闭后await, 我也不理解你为什么把await放的这么靠后
+1
+共 5 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 212 | f014711 | https://media.ccc.de/v/froscon2024-3105-in_rust_radikal_refactorn | 2024-08-18 | talks ===
+In Rust Radikal Refactorn
+- media.ccc.de
+System
+Light
+Dark
+News
+RSS, last 100
+Podcast feed of the last two years
+SD quality
+Podcast audio feed of the last year
+Podcast archive feed, everything older than two years
+SD quality
+Podcast feeds for froscon2024
+mp4
+SD quality
+mp3
+opus
+webm
+SD quality
+News
+RSS, last 100
+Podcast feed of the last two years
+SD quality
+Podcast audio feed of the last year
+Podcast archive feed, everything older than two years
+SD quality
+Podcast feeds for froscon2024
+mp4
+SD quality
+mp3
+opus
+webm
+SD quality
+browse
+conferences
+froscon
+2024
+event
+FrOSCon 2024
+In Rust Radikal Refactorn
+Powered by OpenTalk
+Daniél Kerkmann
+In Rust we trust - Memory safe languages
+Playlists:
+'froscon2024' videos starting here
+/
+audio
+61 min
+2024-08-18
+269
+Fahrplan
+Unsere jahrelange Erfahrung mit Rust bei OpenTalk führte zu einer radikalen Umgestaltung unserer Codebasis.
+Unser Vortrag teilt Einblicke in radikales Refactoring mit Rust, einschließlich Unterstützung, Fallstricken und bewährten Praktiken für Produktivität und Wissenstransfer im Team.
+Durch die jahrelange Nutzung von Rust bei OpenTalk war es unvermeidbar, unsere Codebasis von Grund auf radikal umzugestalten.
+Dabei war es besonders wichtig, sicherzustellen, dass das Produkt keine Regressionen erleidet.
+In diesem Vortrag möchten wir euch auf diese Reise mitnehmen und unsere Erkenntnisse teilen:
+- Was wir unter dem Begriff radikales Refactoring verstehen.
+- Wie Rust uns beim radikalen Refactoring unterstützt hat.
+- Welche Fallstricke wir begegnet sind.
+- Die wichtigsten Do's and Don'ts in Bezug auf Produktivität, Komplexität und Nutzen.
+- Wissen und Aufgaben an das Team übertragen.
+- Wie man Aufgaben klein verteilt.
+Download
+Video
+MP4
+WebM
+Download 1080p
+deu
+426.8 MB
+Download 576p
+deu
+106.7 MB
+Download 1080p
+deu
+285.3 MB
+Download 576p
+deu
+118.8 MB
+Audio
+Download mp3
+deu
+56.5 MB
+Download opus
+deu
+35.1 MB
+Embed
+Share:
+Tags
+froscon2024
+3105
+2024
+In Rust we trust - Memory safe languages
+by
+Chaos Computer Club e.V
+––
+About
+––
+Apps
+––
+Imprint
+––
+Privacy
+––
+c3voc
+1cef91a
+
+=== ROW 213 | f014712 | https://media.ccc.de/v/ulm-56311-einfuhrung-in-embeddded-system | 2025-02-11 | talks ===
+Einführung in Embeddded Systeme. Von Maschinencode bis Rust
+- media.ccc.de
+8 captures
+25 Feb 2025 - 15 Mar 2026
+Feb
+MAR
+Apr
+15
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260315052054/https://media.ccc.de/v/ulm-56311-einfuhrung-in-embeddded-system
+System
+Light
+Dark
+News
+RSS, last 100
+Podcast feed of the last two years
+SD quality
+Podcast audio feed of the last year
+Podcast archive feed, everything older than two years
+SD quality
+Podcast feeds for ulm
+mp4
+SD quality
+mp3
+opus
+webm
+SD quality
+News
+RSS, last 100
+Podcast feed of the last two years
+SD quality
+Podcast audio feed of the last year
+Podcast archive feed, everything older than two years
+SD quality
+Podcast feeds for ulm
+mp4
+SD quality
+mp3
+opus
+webm
+SD quality
+browse
+erfas
+ulm
+event
+Einführung in Embeddded Systeme. Von Maschinencode bis Rust
+Robert Jeutter
+Temporärhaus
+Hardware
+Playlists:
+'ulm' videos starting here
+/
+audio
+76 min
+2025-02-11
+2025-02-13
+687
+Fahrplan
+Motivationsvortrag über verschiedene Microcontroller und Abstraktionsfähigkeit durch höhere Prorgammiersprachen
+Assembler->C->Rust, Arduino, STM32, ESP32
+https://www.ulm.ccc.de/ccc/chaosseminar/2025_02_embedded-software-entwicklung/
+https://wieerwill.dev/
+Download
+Video
+MP4
+WebM
+Download 1080p
+deu
+659 MB
+Download 576p
+deu
+156 MB
+Download 1080p
+deu
+478 MB
+Download 576p
+deu
+186 MB
+Audio
+Download mp3
+deu
+69 MB
+Download opus
+deu
+51 MB
+Embed
+Share:
+Tags
+56311
+2025
+import
+Hardware
+Temporärhaus
+import-deu
+by
+Chaos Computer Club e.V
+––
+About
+––
+Apps
+––
+Imprint
+––
+Privacy
+––
+c3voc
+
+=== ROW 214 | f014715 | https://rustcc.cn/article?id=cad2d9fc-0ea0-48fd-954d-9d6518fb6cf5 | 2023-09-27 | weekly-newsletter-links ===
+【Rust日报】2023-09-27 dioxus -- 适用于桌面、Web、移动端等的全栈 GUI 库 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2023-09-27 dioxus -- 适用于桌面、Web、移动端等的全栈 GUI 库
+Mike Tang
+发表于 2023-09-29 22:16
+dioxus -- 适用于桌面、Web、移动端等的全栈 GUI 库
+Dioxus 是一个可移植的、高性能的、符合人体工程学的框架，使用 Rust 语言构建跨平台的用户界面。Dioxus 可用于生成 网页前端、桌面应用、静态网站、移动端应用、TUI程序、等多类平台应用。如果你能够熟悉使用 React 框架，那 Dioxus 对你来说将非常简单。
+fn app(cx: Scope) -> Element {
+let mut count = use_state(cx, || 0);
+cx.render(rsx! {
+h1 { "High-Five counter: {count}" }
+button { onclick: move |_| count += 1, "Up high!" }
+button { onclick: move |_| count -= 1, "Down low!" }
+})
+}
+独特的特性:
+桌面程序完全基于本地环境运行（并非 Electron 的封装）
+符合人体工程学的设计以及拥有强大的状态管理
+全面的内联文档 - 包含所有 HTML 元素、监听器 和 事件 指南。
+极快的运行效率和极高的内存效率
+智能项目热更新和高效的项目迭代
+一流的异步支持🔥
+已支持的平台
+网站项目
+使用 WebAssembly 直接对 DOM 进行渲染
+为 SSR 提供预渲染或作为客户端使用
+简单的 "Hello World" 仅仅 65kb, 媲美 React 框架
+CLI 提供热更新支持，方便项目快速迭代
+桌面应用
+使用 Webview 进行渲染 或 使用 WGPU 和 Skia（试验性的）
+无多余配置，使用 cargo build 即可快速构建
+对原生系统的全面支持
+支持 Macos、Linux、Windows 等系统，极小的二进制文件
+移动端应用
+使用 Webview 进行渲染 或 使用 WGPU 和 Skia（试验性的）
+支持 IOS 和 安卓系统
+显著的 性能强于 React Native 框架
+Liveview
+使用服务器渲染组件与应用程序
+与受欢迎的后端框架进行融合（Axum、Wrap）
+极低的延迟
+终端程序
+在终端程序中渲染，类似于： ink.js
+支持 CSS 相关模型（类似于浏览器内的）
+Built-in widgets like text input, buttons, and focus system
+https://github.com/DioxusLabs/dioxus
+gosub-browser -- 一个 html5 分词器/解析器
+这是一个正在进行的工作。目前的状态是解析器可以解析一些 html5 文档，但还远远没有准备好。主要目标是能够正确解析 html5lib-tests 存储库（https://github.com/html5lib/html5lib-tests）中的所有测试。一旦能做到这一点，作者会尝试看看是否可以生成 DOM 树，然后就可以开始考虑下一个组件（css 解析器）。
+https://github.com/jaytaph/gosub-browser
+From 日报小组 侯盛鑫
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 215 | f014716 | https://rustcc.cn/article?id=3fea9951-b3f8-4899-827d-a2fa4a020ce3 | 2023-09-28 | weekly-newsletter-links ===
+【Rust日报】2023-09-28 egui 0.23 发布 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2023-09-28 egui 0.23 发布
+PsiACE
+发表于 2023-09-29 17:57
+egui 0.23 发布
+egui 是一个使用纯 Rust 编写的即时模式 GUI ，简单易用。
+在 egui 0.23 中新增了一个方便的图像 API，基于插件系统构建，可以指定加载图片的方式和位置。
+// Load from web:
+ui.image("https://www.example.com/some_image.png");
+// Include image in the binary using `include_bytes`:
+ui.image(egui::include_image!("../assets/ferris.svg"));
+// With options:
+ui.add(
+egui::Image::new("file://path/to/image.jpg")
+.max_width(200.0)
+.rounding(10.0),
+);
+Announcing egui 0.23: https://www.reddit.com/r/rust/comments/16u9iu5/announcing_egui_023/
+egui - online demo: https://www.egui.rs/
+文章 - async fn 是错误设计吗？
+hyper 作者 seanmonstar 的新文章，讨论了他对 async fn 这个语法糖的一些看法，比如：
+有一点糟心的魔法返回类型（magic return type）
+可能更优雅的实现方案：
+fn call(&self, req: Request) -> Future<Response> = async {
+// ...
+}
+Was async fn a mistake? : https://seanmonstar.com/post/66832922686/was-async-fn-a-mistake
+Week In Rust 514
+新一期的 Rust 周报速递发布，快来看看有哪些内容你曾经关注过 :)
+This Week in Rust 514: https://this-week-in-rust.org/blog/2023/09/27/this-week-in-rust-514/
+From 日报小组 PsiACE
+社区学习交流平台订阅：
+Rust.cc 论坛：支持 rss
+微信公众号：Rust 语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 216 | f014754 | https://rustcc.cn/article?id=ecfb64fa-cee5-4760-9e3d-90ba5ffd72f6 | 2023-11-09 | weekly-newsletter-links ===
+【Rust日报】2023-11-09 - Nightly Channel 中更快的并行编译前端 - Rust语言中文社区
+4 captures
+01 Dec 2023 - 16 Apr 2026
+Mar
+APR
+May
+16
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260416180840/https://rustcc.cn/article?id=ecfb64fa-cee5-4760-9e3d-90ba5ffd72f6
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2023-11-09 - Nightly Channel 中更快的并行编译前端
+PsiACE
+发表于 2023-11-10 12:17
+项目 - Spin 2.0 发布
+Fermyon 近期发布了 Spin 2.0 。Spin 是一款用于构建、分发和运行 WebAssembly 应用程序的开源开发者工具，使用 Rust 编写。
+Spin 2.0 支持组件模型，允许不同语言编写的组件进行组合和交互，实现多语言组合的应用程序构建。由于 Spin 使用 Wasmtime 内存池分配器，启动速度和吞吐量得到了显著提升。Spin 2.0 还实现了基于 WASI Preview 2 的流式 HTTP 响应，提升交互性。
+Introducing Spin 2.0 ：https://www.fermyon.com/blog/introducing-spin-v2
+文章 - Nightly Channel 中更快的并行编译前端
+来自并行 Rustc 工作组的博客介绍 Rust 编译器的前端如何利用并行执行显著减少编译时间。文章还解释了编译器前后端的工作方式，以及现有的几种并行性支持。
+现在这个新特性可以在 nightly channel 中启用，并且预计在 2024 年发布至 stable channel。
+你可以使用环境变量的形式开启这一特性：
+$ RUSTFLAGS="-Z threads=8" cargo build --release
+或者编辑 config.toml 文件：
+[build]
+rustflags = ["-Z", "threads=8"]
+Faster compilation with the parallel front-end in nightly : https://blog.rust-lang.org/2023/11/09/parallel-rustc.html
+Week In Rust 520
+新一期的 Rust 周报速递发布，快来看看有哪些内容你曾经关注过 :)
+This Week in Rust 520: https://this-week-in-rust.org/blog/2023/11/08/this-week-in-rust-520/
+From 日报小组 PsiACE
+社区学习交流平台订阅：
+Rust.cc 论坛：支持 rss
+微信公众号：Rust 语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+泰晓科技
+| Ruby China
+| 电鸭远程社区
+| IPFS中文社区
+鸣谢：
+迅达云
+赛贝
+LongHash
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 217 | f014772 | https://rustcc.cn/article?id=07543498-bdf7-4264-bf99-666af57c85f7 | 2023-11-28 | weekly-newsletter-links ===
+【Rust日报】2023-11-28 Axum 发布 0.7 版本 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2023-11-28 Axum 发布 0.7 版本
+rust 日报 babpstep
+发表于 2023-11-28 21:35
+Tags：axum,Rustlantis,rustc_codegen_clr,.net
+Axum 发布 0.7 版本
+Axum 0.7.0 是一个构建在 Tokio、Tower 和 Hyper 之上的 Web 框架，新版主要变更点：
+增加了对 Hyper 1.0 的支持。Hyper 1.0 对 API 进行了重大调整，移除了之前的高级API，并计划在新的 hyper-util 库中重新添加这些API。
+引入了一个新的 axum::serve 函数来替代原有的 axum::Server，以简化启动过程。
+推出了自己的 Body 类型来代替 http-body 库的功能。
+为了简化路由配置，Axum 0.7.0 减少了泛型的使用，提供了更加清晰的中间件和请求处理方式。
+开发者在升级过程中应注意与 tower-http 的兼容性，并可以通过查看变更日志来获取升级指南。
+更新日志
+Rustlantis：一个新的模糊测试器
+Rustlantis 是来自 eth 的 Qian Wang 的毕业设计项目。
+它是一个新的模糊器，能够生成在Rust的中间级别表示（Mid-level Intermediate Representation，MIR）中的程序，这些程序是确定性，且不含未定义行为。Rustlantis 已经发现了 Rust 编译器和 LLVM 中的 13 个以前未知的错误，这些错误导致了错误的编译和崩溃。
+作者在论文中，介绍了他们如何使用语义模糊测试来找出 Rust 编译器中的错误。这种方法通过生成随机程序，编译它，并观察编译后的程序行为来工作。如果行为不正确，那么编译器中就存在一个错误。
+Rustlantis 的设计保证了生成的程序具有可约简的控制流，这意味着生成的程序可以使用循环、if-else 和 break 语句来表示。此外，Rustlantis 还能确保所有的语句最多执行一次，所有的函数只进入一次。
+该论文对 Rustlantis、其实现及其在发现 Rust 编译器和 LLVM 中的关键错误方面的有效性进行了彻底而详细的研究。 对发现的错误及其影响的详细分析，展示了此类模糊测试工具在确保编译器可靠性和程序正确性方面的重要性。
+论文链接
+rustc_codegen_clr：rustc 的 .NET 后端
+FractalFir 分享了其 rustc 后端的更新，该后端允许将 Rust 代码编译为 .NET 程序集，从而使 Rust 库能在 C# 中使用，反之亦然。
+作者在类型处理代码上进行了重大改进，支持了常量数据和切片，修复了许多错误，并对最终的 CIL（公共中间语言）代码进行了一些优化，提高了在 .NET 运行时内 Rust 代码的速度。
+目前，该 codegen 能够编译核心库中的1000多个函数，尽管还有约300个函数无法正确编译。作者认为这是一个重要的里程碑，因为超过75%的核心库已经编译。
+github仓库地址
+-- From 日报小组 RustPlumber
+社区学习交流平台订阅：
+Rust.cc 论坛: 支持 rss
+微信公众号：Rust 语言中文社区
+评论区
+写评论
+Bai-Jinlin
+2023-11-30 11:15
+axum基本上就是属于那个“集中打造”的了
+--
+👇
+chunyunzhe: web框架太多了应接不暇，不如集中打造一个，不然到最后很多框架都要淘汰项目也跟着淘汰或重构，代价太大
+chunyunzhe
+2023-11-29 09:20
+web框架太多了应接不暇，不如集中打造一个，不然到最后很多框架都要淘汰项目也跟着淘汰或重构，代价太大
+1
+共 2 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 218 | f014798 | https://rustcc.cn/article?id=3d4642e9-d076-4b10-9d53-bcc28d4e42e0 | 2023-12-30 | weekly-newsletter-links ===
+【Rust日报】2023-12-30  WASM 编译器 Wasker 发布 v0.1.1 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2023-12-30  WASM 编译器 Wasker 发布 v0.1.1
+洋芋
+发表于 2023-12-31 11:18
+Tags：rust, 日报
+WASM 编译器 Wasker 发布 v0.1.1
+Wasker 是一个 WebAssembly 编译器，它将 Wasm 二进制文件编译为 ELF 格式，该 ELF 文件与操作系统无关。这使得用户可以选择其喜爱的操作系统作为 Wasm 的运行时。目前，Wasker 支持 WASI 预览版 1。
+Wasker v0.1.1 发布链接，https://github.com/Mewz-project/Wasker/releases/tag/v0.1.1
+GUI 框架 Freya
+Freya 是 Rust 原生 GUI 库，基于 Dioxus 构建，使用 Skia 提供图形库支持。
+GitHub 链接，https://github.com/marc2332/freya
+Freya Book，https://book.freyaui.dev/index.html
+🦀 Rustaceans 🦀 元旦快乐 🎉
+From 日报小组 洋芋
+社区学习交流平台订阅：
+Rust.cc论坛: 支持rss
+微信公众号：Rust语言学习交流
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 219 | f014800 | https://rustcc.cn/article?id=3d62b53e-811a-4b2f-8e02-5e7ad4acba30 | 2024-01-01 | weekly-newsletter-links ===
+【Rust日报】2024-01-01 使用 Rust 构建生产级微服务 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-01-01 使用 Rust 构建生产级微服务
+gensmusic
+发表于 2024-01-02 14:23
+使用 Rust 构建生产级微服务
+这个由sanyi编写的博客系列 “在Rust中构建生产就绪微服务” 涵盖了Rust中构建生产就绪微服务的过程。以下是每篇博客的主要主题总结：
+设置工作空间：
+为Rust应用程序设置多包工作空间。
+添加CLI子命令：
+实现一种简单的模式，以向应用程序添加多个CLI子命令。
+配置：
+从文件或环境变量中加载配置。
+Web服务器：
+基于Axum启动异步Web服务器。
+应用程序状态：
+向Rust应用程序添加共享状态。
+连接到数据库：
+使用sqlx和SeaORM连接到PostgreSQL数据库。
+基本CRUD操作：
+使用SeaORM实现基本的CRUD操作。
+身份验证和授权：
+实现简单的登录端点和基于JWT的身份验证和授权。
+JWT授权中间件：
+添加JWT令牌验证和简单的错误处理方法。
+改进错误处理：
+改进错误处理，在JSON解析错误时返回JSON响应。
+OpenTelemetry：
+使用OpenTelemetry将追踪数据转发到SigNoz。
+该系列覆盖了从项目设置到数据库集成、身份验证、授权、错误处理和跟踪等一系列主题。每篇博客都提供实际见解和实际示例，指导在Rust中构建生产就绪微服务。
+原文链接
+Arc<str>和 String 性能对比
+本文讨论了 Arc 和String之间的性能差异，以及在多线程情况下，为什么有时候String的性能可能超过Arc。
+实验结果表明，在单线程情况下，Arc的克隆性能通常优于String。然而，在多线程情况下，Arc的性能可能受到原子引用计数的争用的影响，从而导致性能下降，而String则通过Jemalloc的线程本地内存池避免了这种问题。文章还通过strace命令和内存映射的分析，说明了在不释放String的情况下，Jemalloc可能会导致性能下降，因为它需要频繁地调用mmap系统调用。
+总的来说，文章建议在大多数情况下，克隆Arc通常比String更快。但在高度争用的多线程情况下，由于原子引用计数的锁争用，性能可能下降。因此，作者建议在面临性能瓶颈时，不仅仅盲目地优化克隆操作，而是应该仔细测量和评估不同的优化策略。
+原文链接
+通过Rust AWS SDK 探索API 设计
+本文介绍了AWS SDK for Rust的设计概述和实际使用指南。主要内容包括SDK结构、配置和认证、三种SDK配置方法、使用AWS服务的基本步骤、Fallible操作和模块、方法命名和返回类型、异步操作和Builder模式的代价、Blob和Bytestream类型、Rust类型系统的有趣方面以及总结展望。
+原文链接
+--
+From 日报小组 BobQ, FBI小白
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 220 | f014820 | https://rustcc.cn/article?id=218bdd13-af84-4fc5-8b92-9aa1529fde22 | 2024-01-22 | weekly-newsletter-links ===
+【Rust日报】2024-01-22 Tauri更新: 嵌入式原型,离屏渲染,webview多实例 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-01-22 Tauri更新: 嵌入式原型,离屏渲染,webview多实例
+gensmusic
+发表于 2024-01-22 18:55
+Tauri更新: 嵌入式原型,离屏渲染,webview多实例
+Tauri是一个能创建桌面应用的框架（网页前端，Rust后端）
+在我们和Tauri的协作中完成了一些嵌入式改进。现在这个框架已经可以支持移动应用和其他后端语言了。
+我们正在努力将Servo（一款网页浏览器引擎）集成到Tauri中，需要在WRY（Tauri的基础web视图库）中添加对Servo的支持。尽管这个项目尚未完全就绪，但我们已经创建了一个原型。
+我们还在优化Servo的功能，包括定位web视图、透明背景设置、多web视图支持等。我们还发现为多窗口提供支持要比多web视图困难得多。我们正在进行一些大的架构改变以应对这个问题。
+离屏渲染是整合Servo和其他应用的关键，我们已经可以将Servo绘制到离屏帧缓冲区，并让应用决定如何呈现它。
+最后，为了改善开发体验，我们正在研究预编译mozangle和mozjs，从而减少初始化构建时间。
+原文链接
+Fred.rs: 符合人体工程学的 redis 客户端
+Fred.rs 是一个符合人体工程学的 redis 客户端, 目前 8.0.0 版本发布.
+移除全局接口。
+添加 Unix 域套接字支持。
+添加 Redis 时间序列接口。改进对无响应连接的检查。
+将几个特性标志移动到配置选项。
+添加一个基准测试工具。更新至 Rustls 0.22。
+添加几个新的连接配置选项。
+给命令添加一个快速失败标志。
+内部切换至 Crossbeam 类型。
+githhub地址
+Rudric: 秘钥保存器
+Rudric 使得从命令行管理秘密变得简单直接。秘密被加密存储在磁盘上，并可以快速解密并在需要的地方添加到环境中。明文秘密只会被存储在内存中。
+可以替换 .env 文件, 使用 .renv 来更安全的保存秘钥.
+github地址
+lora-rs: LoRa and LoRaWAN 的 rust 库
+这个crate 旨在提供一组兼容的必需品，用于在 Rust 中实现 LoRa 的终端设备。作为一般规则，所有的必需品都是 nostd（无标准库），并且为嵌入式项目设计非常友好。
+github地址
+--
+From 日报小组 BobQ, FBI小白
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 221 | f014874 | https://rustcc.cn/article?id=d7f6b174-c9d3-4f95-b65e-c9dc3e0d15da | 2024-04-05 | weekly-newsletter-links ===
+【Rust日报】2024-04-05 The XZ Backdoor and Wasmtime - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-04-05 The XZ Backdoor and Wasmtime
+Lambert
+发表于 2024-04-06 19:32
+Tags：rust,日报
+Loco 是 Rust 的 Web 或 API 框架。它也是开发人员的生产力套件：它包含您培养爱好或下一次创业所需的一切。它也受到 Rails 的强烈启发。
+$ cargo loco start
+▄     ▀
+▀  ▄
+▄       ▀     ▄  ▄ ▄▀
+▄ ▀▄▄
+▄     ▀    ▀  ▀▄▀█▄
+▀█▄
+▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ ▀▀█
+██████  █████   ███ █████   ███ █████   ███ ▀█
+██████  █████   ███ █████   ▀▀▀ █████   ███ ▄█▄
+██████  █████   ███ █████       █████   ███ ████▄
+██████  █████   ███ █████   ▄▄▄ █████   ███ █████
+██████  █████   ███  ████   ███ █████   ███ ████▀
+▀▀▀██▄ ▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀ ██▀
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+https://loco.rs
+listening on port 3000
+github repo: https://github.com/loco-rs/loco
+loco docs: https://loco.rs/docs/getting-started/guide/
+The XZ Backdoor and Wasmtime
+这是一篇由 bytecodealliance 发布的 XZ后门事件公告，Wasmtime并不受此后门影响。
+详细请阅读原文：https://bytecodealliance.org/articles/xz-backdoor-and-wasmtime
+RustQuiz：What will be the output?
+Quzi 一下，欢迎在文末留言。
+X：https://twitter.com/AstraKernel/status/1776396355671593173
+octox ：一个类Unix OS
+octox 是一个类Unix 的 OS，受到 xv6-riscv 项目的启发，采用纯Rust写成。
+github repo:https://github.com/o8vm/octox
+GQL 0.17.0 supports REGEXPR and RAND
+GQL是一种类似SQL的语言，用于对.git文件执行查询，支持大多数SQL功能，如分组、排序和聚合功能。
+github repo: https://github.com/AmrDeveloper/GQL
+From 日报小组 Lambert
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 222 | f014905 | https://rustcc.cn/article?id=f22b3a4c-21c7-4c87-8a88-1d3f84e478cd | 2024-05-19 | weekly-newsletter-links ===
+【Rust日报】2024-05-19 ratatui版本更新 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-05-19 ratatui版本更新
+长琴
+发表于 2024-05-20 21:56
+Tags：rust,日报,ratarui,ansi2,bul,arduino-plotter,capitalist-chess
+[new ver] ratatui v0.26.3
+一个构建终端用户界面的库。新版本包括：
+修复Unicode 截断 bug
+对颜色更好地序列化
+更快的渲染
+弃用assert_buffer_eq宏
+暴露错误类型
+常量函数和类型
+官网: https://ratatui.rs/
+链接: https://ratatui.rs/highlights/v0263/
+[new lib] ansi2
+一个将 ANSI 字符串转换为 HTML 和 SVG 的库。
+ansi2
+use ansi2::{Canvas};
+let canvas = Canvas::new(s);
+for row in canvas.pixels.iter() {
+for pixel in row.iter() {
+// draw pixel
+}
+}
+ansi2-wasm
+npm i ansi2 -g
+neofetch | ansi2 --format=svg --theme=vscode > ./neofetch.svg
+ansi2html
+cargo install ansi2html
+neofetch | ansi2html > neofetch.html
+ansi2svg
+cargo install ansi2svg
+neofetch | ansi2svg > neofetch.svg
+GitHub: https://github.com/ahaoboy/ansi2
+[new lib] arduino-plotter
+用于与 Arduino 串行绘图仪通信的协议库和 CLI。
+GitHub: https://github.com/LechevSpace/arduino-plotter
+[new lib] bul
+Kubernetes 的交互式容器日志资源管理器。
+# 安装
+brew install ynqa/tap/bul
+# 使用
+Usage: bul [OPTIONS]
+Options:
+--context <CONTEXT>
+Kubernetes context.
+-n, --namespace <NAMESPACE>
+Kubernetes namespace.
+-p, --pod-query <POD_QUERY>
+query to filter Pods.
+--container-states <CONTAINER_STATUS>
+Container states to filter containers. [default: all] [possible values: all, running, terminated, waiting]
+--log-retrieval-timeout <LOG_RETRIEVAL_TIMEOUT_MILLIS>
+Timeout to read a next line from the log stream in milliseconds. [default: 100]
+--render-interval <RENDER_INTERVAL_MILLIS>
+Interval to render a log line in milliseconds. [default: 10]
+-q, --queue-capacity <QUEUE_CAPACITY>
+Queue capacity to store the logs. [default: 1000]
+-h, --help
+Print help (see more with '--help')
+GitHub; https://github.com/ynqa/bul
+[new lib] capitalist-chess
+国际象棋变体引擎，增加了银行和市场。
+GitHub: https://github.com/adam-mcdaniel/capitalist-chess
+From 日报小组 长琴
+社区学习交流平台订阅：
+Rustcc 论坛：支持 rss
+微信公众号：Rust 语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 223 | f014924 | https://rustcc.cn/article?id=300f2657-0252-41a9-b42c-2c3965fbe5d7 | 2024-06-14 | weekly-newsletter-links ===
+【Rust日报】2024-06-14  TurboVorderseite - 用 Leptos 开发的一个电商网站系统  - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-06-14  TurboVorderseite - 用 Leptos 开发的一个电商网站系统
+Mike Tang
+发表于 2024-06-15 13:51
+bluefang - Rust 的 bluetooth stack
+将你的电脑变成一个蓝牙音响。
+https://github.com/sidit77/bluefang
+GQL - 用SQL语法检索你的git内容
+很方便，使用Rust实现。
+TurboVorderseite - 用 Leptos 开发的一个电商网站系统
+用Rust开发电商网站Web前端页面？当你还在疑惑的时候，别人已经做出来了。
+https://gitlab.com/timfvb/turbovorderseite
+这是一个电商示例：https://moturbo.com/
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 224 | f014927 | https://rustcc.cn/article?id=6da14894-cb17-4348-b26d-d5ad34bd0d7c | 2024-06-17 | weekly-newsletter-links ===
+【Rust日报】2024-06-17  使用 WASM 和 Rust 从零实现 React v18  - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-06-17  使用 WASM 和 Rust 从零实现 React v18
+gensmusic
+发表于 2024-06-17 17:59
+使用 WASM 和 Rust 从零实现 React v18
+这是一个系列文章的第 16 部分，介绍如何从零开始使用 WASM 和 Rust 实现 React v18 的核心功能
+原文链接
+htmd: HTML to Markdown for Rust
+htmd 是一个受 turndown.js 启发的 Rust HTML 转 Markdown 转换器。
+功能：
+丰富的选项，与 turndown.js 相同
+可靠，通过了 turndown.js 的所有测试用例
+最小依赖，仅使用 html5ever
+快速，在 i5 7代 CPU 上转换约 1.4MB 的维基百科页面用时不到 200 毫秒
+github地址
+rschess: 1.0 发布
+rschess一个功能尽可能丰富的 Rust 国际象棋库, 目前 1.0 版本已经发布
+github地址
+--
+From 日报小组 BobQ, FBI小白
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 225 | f014928 | https://rustcc.cn/article?id=4a45f13e-f3ca-4e75-8cf9-b7f2dd67fad7 | 2024-06-18 | weekly-newsletter-links ===
+【Rust日报】2024-06-18 Dioxus 团队给Rust未来的期望 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-06-18 Dioxus 团队给Rust未来的期望
+Mike Tang
+发表于 2024-06-22 07:34
+让你的第一个Rust严肃应用成功
+corrode总结了一份用Rust实现工程的评估清单，为考虑采用Rust编程语言的企业提供了全面指南。以下是主要内容：
+评估业务需求和适应性：确定Rust是否符合公司技术需求和长期目标。评估Rust的性能和安全特性在具体用例中的益处。
+建立知识基础：确保团队对Rust有扎实的了解。这包括培训开发人员，获取优质学习资源，并利用社区支持。
+试点项目：从小型、非关键项目开始，积累Rust使用经验。这些试点项目应帮助团队理解Rust的生态系统、库和最佳实践，而不会影响主要生产系统。
+工具和基础设施：将Rust集成到现有的工具和基础设施中。这包括设置CI/CD管道、调试工具和性能监控，以支持Rust开发。
+评估成功：根据预定义的指标评估Rust项目的成功，包括性能改进、错误率和开发速度。利用这些指标做出进一步采用的明智决策。
+迭代和扩展：基于初始项目的成功，逐步将Rust使用扩展到更关键的系统。不断迭代流程、改进工具，并扩展团队专业知识。
+通过遵循此检查清单，企业可以系统地评估并将Rust集成到开发工作流程中，确保平稳过渡并最大化Rust的优势。
+https://corrode.dev/blog/successful-rust-business-adoption-checklist/
+Dioxus 团队给Rust未来的期望
+Dioxus认为Rust的成功很大程度上是拉拢了程序员的心，但是未来仍然有很大的改进空间，并列举了很多具体的点，体现了Dioxus团队非常深刻的洞察力。
+https://dioxus.notion.site/Dioxus-Labs-High-level-Rust-5fe1f1c9c8334815ad488410d948f05e
+Rust std中的排序算法又提速了
+最新的一个PR已合并，能提速std中默认的排序算法。
+https://github.com/rust-lang/rust/pull/124032
+FileQL - 用SQL语法检索本地文件
+这个项目基于 GitQL 来实现。示例如下：
+SELECT 1
+SELECT 1 + 2
+SELECT LEN("File Query Language")
+SELECT "One" IN ("One", "Two", "Three")
+SELECT "File Query Language" LIKE "%Query%"
+SELECT * FROM files
+SELECT COUNT(path) from files
+SELECT DISTINCT parent AS folders FROM files
+SELECT CHILDREN_COUNT(parent) FROM files
+https://github.com/AmrDeveloper/FileQL
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 226 | f014942 | https://rustcc.cn/article?id=2943c0aa-23f4-42ea-bcdd-1725310f4c61 | 2024-07-04 | weekly-newsletter-links ===
+【Rust日报】2024-07-04 Leptos，Dioxus 和 Next.js 之间的比较 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-07-04 Leptos，Dioxus 和 Next.js 之间的比较
+Mike Tang
+发表于 2024-07-10 02:21
+一篇关于C++, Rust 和 Zig 在内存安全上的主观观点文
+作者比较了三者在内存安全上的观点，认为Zig在语言复杂度和内存安全上取得了一个比较好的平衡。
+小编观点：在内存安全这件事情上，世界上只有两种语言，一种是Rust，另外一种是其它语言。
+https://medium.com/@shyamsundarb/memory-safety-in-c-vs-rust-vs-zig-f78fa903f41e
+比较：Leptos，Dioxus 和 Next.js 之间的比较
+一个前端开发者对这三个框架进行了用户体验层面的比较，对想用Rust做前端开发的人讲比较有价值。
+https://codethoughts.io/posts/2024-07-05-static-spas-exploration-of-leptos-dioxus-and-nextjs/
+关于Sematic Version的讨论
+当我们谈论软件版本号时，我们通常会遵循一种标准的格式，例如 MAJOR.MINOR.MICRO。这些数字用于表示软件发布的不同版本。而**语义化版本控制（Semantic Versioning，简称SemVer）**是一种试图为这些版本号赋予更多含义的方法。然而，实际应用中，SemVer 经常被误用，其承诺未能兑现，对维护者和用户都带来了一系列意外后果。
+让我们来看看一些关键点：
+版本号的目的：版本号的主要目的是能够判断一个实体的哪个版本比另一个版本更新。在软件包的上下文中，我们将版本号解释为由整数元组组成的序列，用点号分隔，从左到右具有优先级。例如，版本 2.0 比 1.10.0 新，而后者又比 1.9.42 新¹。
+SemVer 简介：SemVer 的格式为 MAJOR.MINOR.MICRO，并承诺只要 MAJOR 不变（即不进行主要更新），就不会破坏现有功能，用户可以无顾虑地更新依赖。但如果 MAJOR 是零，那么维护者可以随意更改一切。然而，实际上，SemVer 的应用存在问题，其承诺难以实现，给维护者和用户带来了不少麻烦。
+Hyrum's Law：Hyrum Wright 提出了一条基本的软件开发法则：“只要有足够多的 API 用户，不管你在合同中承诺什么，系统的所有可观察行为都会被某人所依赖。” 这意味着，即使维护者非常谨慎，也无法预测更改会如何影响用户。因此，版本 3.2 是否与版本 3.1 兼容，很难确定。尽管你的单元测试表明软件“基本上工作正常”，但如果在 3.1 和 3.2 之间有意义上的行为变化，你肯定会更改测试用例¹。
+总之，SemVer 只是版本号的一种表达方式，它传达了包作者的意图和目标。然而，用户应该保持现实，不要对版本号产生过高的期望，因为软件的变化总是会影响到某些用户。
+https://hynek.me/articles/semver-will-not-save-you/
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 227 | f014947 | https://rustcc.cn/article?id=fdf0ba94-44a3-4970-8e0d-0f2b4e0359ad | 2024-07-09 | weekly-newsletter-links ===
+【Rust日报】2024-07-09 为何WASM来到了Web3 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-07-09 为何WASM来到了Web3
+Mike Tang
+发表于 2024-07-15 14:53
+kartoffels - 利用Rust写bot，上传到服务器进行对战
+一个很有趣的思路，下载模板，自己写bot，然后上传到服务器进行比拼，看谁的bot厉害。
+https://github.com/Patryk27/kartoffels/
+ruskel - 利用LLM生成对crate的概览
+这是一个Rust实现的AI工具，用于使用LLM生成Rust crate的概览。
+https://github.com/cortesi/ruskel
+为何WASM来到了Web3
+本篇长文是WASM系列的第四篇。本篇讲述WASM为何在Web3中大展拳脚的理性分析。
+前面三篇分别为：
+WASM基础
+为何WASM来到了前端
+为何WASM来到了后端
+https://www.jakobmeier.ch/wasm-road-3
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 228 | f014956 | https://rustcc.cn/article?id=2ddfdc4b-4651-49c2-aba0-d279e67c8e9e | 2024-07-19 | weekly-newsletter-links ===
+【Rust日报】2024-07-19  cake - 分布式推理引擎 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-07-19  cake - 分布式推理引擎
+Mike Tang
+发表于 2024-07-23 07:50
+cake - 分布式推理引擎
+使用Rust基于Candle库实现，用于统一桌面各种操作系统，手机操作系统和服务器操作系统进行分布式推理，增强普通用户玩大模型的能力。
+看起来很牛逼的样子。目前已经2k星。
+https://github.com/evilsocket/cake
+monitor - Rust实现的编排和部署工具
+Monitor 是一个用于构建和部署大量 Docker 镜像的系统。其背景是其他系统要么处理构建（例如 Github Actions、CircleCI），要么处理编排（例如 Portainer）。于是可以通过结合软件开发周期的两个部分来避免的摩擦。过去四年我一直在开发 Monitor，最初使用 Typescript。在 2022 年冬天，我将整个后端移植到 Rust（核心 API + 外围代理），这使项目的发展超出了我的预期。
+https://github.com/mbecker20/monitor
+Sqlite的交易 - 以Rusqlite为例
+这篇文章主要讨论了SQLite数据库的事务处理机制，特别是在服务器端应用中的使用。以下是文章的主要要点：
+SQLite近年来在服务器端应用中变得越来越受欢迎，尽管它最初主要用于客户端和边缘应用。
+SQLite的主要优点包括:
+概念简单
+可以通过Litestream进行实用的备份策略
+可以在本地运行，支持离线开发环境
+支持内存数据库，便于测试
+SQLite的主要限制是单写入器设计，这在高并发写入的场景下可能成为瓶颈。
+文章比较了SQLite、PostgreSQL和FoundationDB的事务隔离级别和并发控制机制。
+SQLite提供了多种事务模式：DEFERRED、IMMEDIATE和实验性的CONCURRENT模式。
+文章详细解释了这些模式的工作原理和使用场景。
+作者进行了基准测试，比较了不同事务模式在各种场景下的性能表现。
+测试结果显示：
+IMMEDIATE模式在写入操作中通常优于DEFERRED模式
+CONCURRENT模式在某些情况下可以提高并发性能，但也有一些潜在的问题和限制
+文章讨论了CONCURRENT模式的一些注意事项，如对预写日志（WAL）的依赖和可能的冲突问题。
+最后，文章提供了进一步阅读的资源和如何运行基准测试的指导。
+总的来说，这篇文章深入探讨了SQLite在服务器端应用中的事务处理机制，为读者提供了有关如何在不同场景下选择合适的事务模式的见解。
+https://reorchestrate.com/posts/sqlite-transactions/
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 229 | f014976 | https://rustcc.cn/article?id=91810b6e-feaf-4cd1-bac8-632d0eba5073 | 2024-08-08 | weekly-newsletter-links ===
+【Rust日报】2024-08-08 RoboPLC - 使用Rust开发Linux实时应用 - Rust语言中文社区
+1 capture
+14 Jan 2026
+Dec
+JAN
+Feb
+14
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260114202052/https://rustcc.cn/article?id=91810b6e-feaf-4cd1-bac8-632d0eba5073
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-08-08 RoboPLC - 使用Rust开发Linux实时应用
+Mike Tang
+发表于 2024-08-12 08:45
+RoboPLC - 使用Rust开发Linux实时应用
+大家好，
+今年我们推出了 RoboPLC，这是一个免费的开源框架和工具包，用于在 Linux 上创建和管理实时 Rust 应用程序。
+好消息：我们正在积极开发该项目，以下是一些新功能：
+锁定策略：现在支持三种不同的锁定策略，适用于不同的实时应用需求。
+远程执行：可以在提供的虚拟终端中调试程序，无需通过 ssh 复制/运行二进制文件。
+低级组件：已移至单独的 RTSC crate。
+RVideo：用于调试计算机视觉程序的工具。
+RFlow：类似聊天的 HMI，用于运行时与程序通信。
+容器支持：CLI 现在可以一键创建包含 RoboPLC 管理实例和用户程序的 Docker 镜像。
+RoboPLC 已在我们的生产环境中广泛使用，包括 PLC 程序实例和嵌入式固件。它也帮助我们快速创建测量、监控和控制现有嵌入式 Linux 设置的小工具。
+https://github.com/roboplc/roboplc/
+数据导向设计（DOD）在 Copper Robotics 中的应用
+这篇文章深入介绍了数据导向设计（DOD）在 Copper Robotics 中的应用，重点在于如何通过优化数据结构和内存访问模式来提升机器人系统的性能。文章解释了 DOD 如何与传统的面向对象设计不同，更注重数据的排列方式，以提高缓存命中率和处理效率。通过实践示例，展示了 DOD 在减少延迟和提高系统响应速度方面的优势，并讨论了如何在机器人开发中有效应用这种方法。
+更多详情请参阅原文：Copper Robotics。
+用Rust从头开发一个编程语言解释器
+这篇文章是关于如何从头开始构建一个编程语言解释器的教程的第一部分。作者详细解释了基本概念，包括抽象语法树（AST）、词法分析器和解析器的作用，并逐步演示了如何在 Rust 中实现这些组件。文章的目标是帮助读者理解解释器的基础原理，并为后续的更复杂部分打下基础。
+更多详情请参阅原文：Programming Language Interpreter from Scratch - Part 1。
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+泰晓科技
+| Ruby China
+| 电鸭远程社区
+| IPFS中文社区
+鸣谢：
+迅达云
+赛贝
+LongHash
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 230 | f014978 | https://rustcc.cn/article?id=bac815fd-7636-40f7-bccf-1dcc2d2337b4 | 2024-08-12 | weekly-newsletter-links ===
+【Rust日报】2024-08-12 通过Flutter实现Rust GUI库的开发 - Rust语言中文社区
+1 capture
+23 Jan 2026
+Dec
+JAN
+Feb
+23
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260123113134/https://rustcc.cn/article?id=bac815fd-7636-40f7-bccf-1dcc2d2337b4
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-08-12 通过Flutter实现Rust GUI库的开发
+gensmusic
+发表于 2024-08-12 16:52
+通过Flutter实现Rust GUI库的开发
+本文介绍了利用Flutter和flutter_rust_bridge库来创建Rust GUI的方法。
+方案优势
+Flutter成熟且流行，拥有庞大的生态系统和跨平台能力。
+支持热重载，加快UI开发速度。
+代码可同时运行在Android、iOS、Linux、MacOS、Windows和Web平台。
+方案劣势
+非纯Rust方案（Rust状态/逻辑，Flutter UI）。
+存在对Web平台的批评，认为它更适合开发应用而非静态网页。
+Flutter包含大量样板代码。
+原文链接
+用Rust实现Lua解释器
+这系列文章介绍用Rust语言从零开始实现一个Lua解释器
+Rust语言个性鲜明，也广受欢迎，然而学习曲线陡峭。作者在读完《Rust程序设计语言》并写了些练习代码后，深感必须通过一个较大的项目实践才能理解和掌握。
+实现一个Lua解释器就很适合作为这个练习项目。因为其规模适中，足够涉及Rust的大部分基础特性而又不至于难以企及；目标明确，无需花费精力讨论需求；另外Lua语言本身也是一门设计优秀且应用广泛的语言，实现一个Lua解释器不仅可以实践Rust语言技能，还能深入了解Lua语言。
+原文链接
+通过Rust绑定使用io_uring
+作者介绍了如何利用Rust语言结合io_uring库来构建异步Web服务器。
+文章提供了一个清晰的指南，从安装liburing到生成Rust绑定，再到实现基本的io_uring操作。
+原文链接
+使用Rust创造175种字体
+作者分享了他使用Rust语言创造175种字体的经验和过程
+作者编写了自己的Rust程序pifo来创建像素字体，该程序可以处理图像、计算字距、生成轮廓，并最终导出为TTF文件, 最终成功地使用该工具在itch.io上发布了175种像素字体
+原文链接
+使用Rust构建简单的VM
+作者在本系列教程中介绍了用Rust语言构建编程语言虚拟机的过程，灵感来源于BEAM VM，并旨在创建一个性能合理、容错性强、支持集群的VM。
+目标
+性能：与Python相当。
+容错性：健壮的错误处理。
+应用控制平台：用于管理运行中的应用。
+集群支持：跨服务器的VM集群。
+解释器类型
+树遍历：简单但慢。
+基于栈：常见，如JVM和Python VM。
+基于寄存器：接近硬件，性能好，但复杂。
+作者选择了基于寄存器的VM，因为它更有趣且教程较少。
+原文链接
+--
+From 日报小组 BobQ, FBI小白
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+泰晓科技
+| Ruby China
+| 电鸭远程社区
+| IPFS中文社区
+鸣谢：
+迅达云
+赛贝
+LongHash
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 231 | f015006 | https://rustcc.cn/article?id=8acecc39-a317-4db7-8ced-2f3a6488a5ec | 2024-09-14 | weekly-newsletter-links ===
+【Rust日报】2024-09-14 Rust中的错误处理为什么在嵌入式中很适用 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-09-14 Rust中的错误处理为什么在嵌入式中很适用
+Mike Tang
+发表于 2024-09-17 14:32
+使用 Rust 构建跨平台 Hacker News 阅读器
+作者首先介绍了命令行界面(CLI)、文本用户界面(TUI)和图形用户界面(GUI)等不同类型的界面。然后作者解释了为什么选择使用 Rust 语言,列举了使用 Rust 的优势,如性能、安全性和并发能力。
+接下来,作者详细介绍了使用 Rust 构建 TUI 应用程序的过程。他使用了 ratatui 和 reqwest 这两个 Rust 库,分别用于构建 TUI 和进行网络抓取。文章还介绍了使用 GitHub Actions 进行持续集成和持续部署(CI/CD)的过程。
+https://medium.com/codex/hacker-pulse-building-a-cross-platform-hacker-news-reader-in-rust-72965e5700b9?sk=e4109da4baedf105e0a93d5e55734851
+Rust中的错误处理为什么在嵌入式中很适用
+错误和无结果情况在编程中是无法避免的。Rust语言通过Option和Result两种特殊类型优雅地处理这些情况。
+Option表示一个值可能存在或不存在。None表示无值,Some(x)表示有值x。我们可以用match表达式或if let语法来处理Option。
+Result表示一个操作可能成功(Ok(x))或失败(Err(e))。我们同样可以用match或?符号来处理不同情况。
+Option和Result是Rust独有的类型,编译器可以静态检查是否正确处理了可选值和错误情况,帮助我们减少bug。
+Rust的这些设计使得错误处理变得优雅简洁,提高了程序员的幸福感。
+关于嵌入式Rust,你提出了在ESP32上如何控制CPU执行、设置存储器映射等问题,这些都是嵌入式系统开发中需要解决的重要问题。
+https://bitfieldconsulting.com/posts/rust-errors-option-result
+Rust中的类型证人
+这个代码库提供了Rust中类型证人(type witness)的几种使用示例。类型证人的概念是通过构造一种类型来验证某些属性,主要优点是在编译期就完成了检查,不需要运行时开销。
+代码库中列出了三种主要的类型证人用法:
+在不进行类型擦除的情况下进行trait检查([bears])
+将一个值提升为类型([auth])
+将一个类型转换为值([i18n])
+附加:类型同构([equals])
+第一个例子展示了如何在不擦除具体类型的情况下,通过构造一个Certified包装器类型来确保某个值实现了Bear trait。这样既能调用Bear trait方法,又能访问具体类型的方法。
+https://github.com/tinybeachthor/bear_witness
+Dune: 一个新型Shell
+本文介绍了一种名为Dune的新型Shell,旨在提供强大的脚本编程能力。Dune结合了Bash和Lisp的特性,一方面可以执行常规的Shell操作,如管道、文件重定向和运行程序;另一方面还提供了标准库和函数式编程抽象,用于各种编程和系统管理任务。
+文章给出了用Cargo安装Dune的方法,并解释了.dune-prelude文件的作用,该文件可用于设置环境变量、定义函数等。作者解释了创建Dune的初衷,希望它能提供比Bash更加亲切、个性化和可定制化的Shell体验。文中还列出了Dune支持的算术运算符,并强调它们的行为类似于Python。总的来说,Dune旨在成为一种功能强大、个性化的新型Shell。
+https://adam-mcdaniel.github.io/dune-website/
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+asuper
+2024-09-18 15:26
+他这套东西，是静态检查，编译器肯定是知道所有静态信息的，我觉得主要是用来防止人出错，比如防止写出let animal = Dog;。
+他的例子不好，没有充分表达出来。
+另外，我不确定，这个assert!真的不会产生运行期的代码吗？
+--
+👇
+zylthinking: We want to be sure our animal is a Bear, but we don't want to erase the concrete type.
+这没有意义, 从编译器角度, 你不擦除具体类型, 那编译器天然知道这个 animal 到底是什么, 它是 Bear, 就能调用 Bear 方法, 它不是, 就调用不了. 根本不需要人工 be sure 多此一举
+zylthinking
+2024-09-18 09:45
+We want to be sure our animal is a Bear, but we don't want to erase the concrete type.
+这没有意义, 从编译器角度, 你不擦除具体类型, 那编译器天然知道这个 animal 到底是什么, 它是 Bear, 就能调用 Bear 方法, 它不是, 就调用不了. 根本不需要人工 be sure 多此一举
+1
+共 2 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 232 | f015044 | https://rustcc.cn/article?id=3540ca55-c9be-46cb-bc4b-c1517b683499 | 2024-10-24 | weekly-newsletter-links ===
+【Rust日报】2024-10-24 gRPC基准测试，Rust 表现很好 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-10-24 gRPC基准测试，Rust 表现很好
+Mike Tang
+发表于 2024-10-29 13:43
+rfc8441 - 定义了一种在单个 HTTP/2 连接的单个流上运行 WebSocket 协议的机制
+rfc8441 定义了一种在单个 HTTP/2 连接的单个流上运行 WebSocket 协议的机制。它通过扩展 HTTP CONNECT 方法来实现这一点,允许在 HTTP/2 流上建立一个隧道来运行 WebSocket 协议(或任何其他协议)。
+主要内容包括:
+引入了一个新的 HTTP/2 设置参数 SETTINGS_ENABLE_CONNECT_PROTOCOL,用于启用扩展的 CONNECT 方法。
+扩展了 CONNECT 方法,允许指定要连接的协议名称,而不是外部主机。
+定义了在扩展的 CONNECT 隧道上引导 WebSocket 协议的过程和示例。
+讨论了设计考虑因素、中介问题和安全注意事项。
+为新的 HTTP/2 设置参数和 HTTP 升级令牌分配了 IANA 代码点。
+这使 WebSocket 能够在单个 HTTP/2 连接上运行,从而更高效地利用网络。
+https://datatracker.ietf.org/doc/html/rfc8441
+gRPC基准测试 - Rust 表现很好
+一个gRPC基准测试结果，比较了各种编程语言和框架在gRPC中的性能表现。测试包括每秒请求数(req/s)、平均延迟、90/95/99百分位延迟、平均CPU利用率和平均内存使用。
+总体来看,Rust的实现表现最佳,例如rust_wtx每秒可处理67502个请求,平均延迟12.45毫秒。其次是Go的一些实现,如go_vtgrpc和go_grpc。C++的实现也不错。而Java、Python、Erlang等语言的实现则相对较慢。
+这个基准测试为选择合适的gRPC框架和语言提供了很好的参考,可以根据具体需求对性能、资源使用等指标进行权衡。值得注意的是,实际应用场景下的性能可能与基准测试有所差异,但这个测试结果仍然具有一定的指导意义。
+https://github.com/LesnyRumcajs/grpc_bench/discussions/475
+metrics - 收集和分析与Diesel ORM相关的指标和分析数据的代码和资源
+该仓库包含了用于收集和分析与Diesel ORM相关的指标和分析数据的代码和资源。主要内容包括:
+.github/workflows目录下存放GitHub Actions的工作流程配置文件。
+metrics目录可能包含与指标收集和处理相关的Rust代码。
+Readme.md是仓库的自述文件,解释了该项目的用途和使用说明。
+analytics.R可能是用于分析收集到的指标数据的R语言脚本文件。
+该仓库旨在通过收集和分析指标数据,帮助diesel-rs团队更好地了解Diesel ORM的使用情况,并根据这些数据进行项目改进和优化。这对于提高Diesel的性能、可用性和开发者体验至关重要。
+https://github.com/diesel-rs/metrics
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 233 | f015081 | https://rustcc.cn/article?id=dde70904-3c84-47a1-bfe2-3aa195f641dd | 2024-12-02 | weekly-newsletter-links ===
+【Rust日报】2024-12-02 Leptos 发布 v0.7.0  - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-12-02 Leptos 发布 v0.7.0
+Mike Tang
+发表于 2024-12-05 13:24
+Leptos 发布 v0.7.0
+Leptos 发布 v0.7.0 重大更新:
+框架内部进行了重写,目标是保持向后兼容性、改善异步处理、减小 WASM 和 HTML 大小、加快渲染速度、增强跨线程通信等。
+新增了对 .await 资源和在  中使用 async 的支持,简化了资源加载的处理方式。
+引入了引用计数的信号类型 (ArcRwSignal 等),避免内存泄漏,同时提供 .read() 和 .write() 方法来获取信号值的可变/不可变引用。
+支持自定义 HTML 外壳,提高了定制能力。
+提供了 Axum 和 Actix 的启动模板,方便新手上手。
+为未来工作做好了基础,如反应式存储、客户端路由和原生 UI 工具集成等。
+总的来说,这是一个重大升级,提升了框架的性能、异步处理能力、内存管理和定制能力。
+https://github.com/leptos-rs/leptos/releases/tag/v0.7.0
+ArrayObject - 一种自描述的用于存储数组的二进制格式
+ArrayObject 这个 Rust crate 提供了一种自描述的二进制格式,用于存储整数、实数、复数和字符串数组,主要设计目标是用于对象存储、数据库和单文件存储。ArrayObject具有以下主要特点:
+数据是自描述的,可以自动解压至相应的类型变量。
+没有嵌套结构、元组或数据集名称,始终是一个简单的统一数据类型的数组。
+使用通用整数和浮点类型来吸收不同类型大小的差异。
+自动使用变长整数/浮点数编码和字典编码来压缩字符串,从而将数据存储为最小大小。
+支持与Vec<_>、[T; N]、ndarray和nalgebra的相互转换。
+该crate目前正在开发中,格式规范可能会有所变化。它提供了Rust代码示例,展示了如何将数据转换为二进制格式、存储和恢复。数据格式根据不同的数据类型自动选择最小的存储方式,如整数使用Zig-zag编码、浮点数使用定长或变长编码等。
+ArrayObject适合于存储多维数组数据、对象存储等, 它与原始二进制文件的主要区别在于提供了类型检查和根据类型进行压缩的功能。未来的计划包括在其他编程语言中实现、支持半精度浮点数和其他特性。
+https://github.com/YShoji-HEP/ArrayObject
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 234 | f015085 | https://rustcc.cn/article?id=f55fd8ed-2246-4809-aec6-6c09027ebbe9 | 2024-12-06 | weekly-newsletter-links ===
+【Rust日报】2024-12-06 Steel - 嵌入式scheme方言，Rust实现 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-12-06 Steel - 嵌入式scheme方言，Rust实现
+Mike Tang
+发表于 2024-12-11 00:49
+Steel - 嵌入式scheme方言，Rust实现
+Steel 是一个可嵌入的 Scheme 解释器，包含一个独立的命令行工具。该语言主要受到 Racket 的启发，旨在成为一个符合人体工程学的 Scheme 变体，既适合嵌入到应用程序中，也可以单独使用，并且具有用 Rust 实现的高性能函数。语言实现本身包含一个相当强大的宏系统，基于 syntax-rules 风格，以及一个字节码虚拟机。目前，它并没有明确遵循任何单一的 Scheme 规范。
+https://github.com/mattwparas/steel
+boa - 使用Rust实现的JS引擎
+已有5k+星。能嵌入Rust中使用，在Rust中执行JS程序。
+https://github.com/boa-dev/boa
+imageformat - 快速检测文件格式
+imageformat 快速探测各种图像格式的格式，而无需读取整个文件。
+该 crate 的目标是能够在不加载不必要数据的情况下，检测受支持图像的格式，并且不引入更多的依赖项。大多数读取操作只需要 16 个字节或更少。
+https://github.com/AllenDang/imageformat
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 235 | f015086 | https://rustcc.cn/article?id=94794f50-7bda-415b-95ab-9456d96500f8 | 2024-12-07 | weekly-newsletter-links ===
+【Rust日报】2024-12-07 不行，我们怀念臭名昭著的Try Catch - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-12-07 不行，我们怀念臭名昭著的Try Catch
+Mike Tang
+发表于 2024-12-11 00:50
+不行，我们怀念臭名昭著的Try Catch
+为了让生活更加艰难一点，作者为Rust开发了Try Catch库。作者太幽默了。
+针对 Rustaceans 的“罪恶”（Features or "Sins Against Rustaceans"）
+重现 throw 和 catch：当你以为唯一的投掷与接球只会出现在高中棒球队时，我们赋予了它全新的意义——让开发者彻夜难眠的噩梦工具。
+Panic 恢复：因为捕获 panic 总比修复代码更有道理，不是吗？
+通用异常处理：捕获一切！谁需要类型安全？让我们欢迎更多的神秘 bug！
+Finally 块：善后你的灾难，或者不善后，我们不做评判。
+可读性？不存在的：这不是 bug，这是特性！在曾努力避免混乱语法的语言中，拥抱意大利面条式的回调地狱吧。
+为什么？
+因为 Rust 的错误处理太安全了
+Rust 的 Result 和 Option 类型实在太完美了，开发者几乎被迫认真思考错误并负责任地处理它们。哪里还有运行时崩溃的刺激？Rust 应该拥抱 try-catch 的不可预测性，让我们重新体验凌晨两点调试堆栈追踪的快感——这才是真正的程序员生活。
+我们想念嵌套的金字塔代码
+没有 try-catch，我们被迫使用 .and_then() 和 ? 操作符编写线性、可读的错误处理代码。*恶心！*我们想回到深深嵌套的时代，让 try { try { try { ... } catch { ... } } catch { ... } } 这种迷宫般的代码成为维护者的终极探险。
+世界需要更多的 "catch exception (e)" 笑话
+在 try-catch 的世界中，可以随处丢一个泛型的 catch exception (e) 块，然后自信地称之为“错误处理”。调试几个小时后才意识到某个 catch 吞掉了一个从未记录的错误，这是一种必经的程序员体验。Rust 用户难道不配拥有这样的仪式感吗？
+生活已经够难了
+Rust 的 unwrap() 方法被过度污名化了。要是我们能把所有可能的错误都塞进一个 catch 块里然后一了百了，岂不美哉？当开发者不再需要担心程序是否真的正常工作时，生产力将直线上升。
+Rust 需要戏剧性
+rust-try-catch 将引发关于是否应该使用异常还是 Result 的激烈争论。这些争论可能会比经典的“苹果 vs 橙子”大战更有趣。目前，Rust 的论坛和 Reddit 讨论太专注于生产力了。混乱在哪里？
+我花了两年时间用Rust重建我的算法交易平台，不再后悔
+这个标题似曾相识，没错，就是之前那个说花了18个月用Rust重建算法交易平台，后悔死了的家伙。
+坚持下来后，现在完全改变了观点。
+https://nexustrade.io/blog/i-spent-2-years-rebuilding-my-algorithmic-trading-platform-in-rust-i-have-noregrets-20241205
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+leowei1234567
+2024-12-13 15:59
+黑的如此自然
+1
+共 1 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 236 | f015089 | https://rustcc.cn/article?id=846a9be7-8cc1-4f4b-9f21-ebbc528a9a9d | 2024-12-10 | weekly-newsletter-links ===
+【Rust日报】2024-12-10 Dioxus 0.6 发布 - Rust语言中文社区
+2 captures
+23 Jan 2025 - 14 Apr 2026
+Mar
+APR
+May
+14
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260414102243/https://rustcc.cn/article?id=846a9be7-8cc1-4f4b-9f21-ebbc528a9a9d
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-12-10 Dioxus 0.6 发布
+Mike Tang
+发表于 2024-12-11 00:52
+Dioxus 0.6 发布
+今天我们发布了 Dioxus 0.6！
+Dioxus 是一个框架，可以用单一代码库构建全栈的 Web、桌面和移动应用。我们的目标是打造一个“更好的 Flutter”。Dioxus 专注于一流的全栈 Web 支持、类型安全的服务端/客户端通信，以及极致的性能表现。
+本次更新的重点是使 Dioxus 更易于使用、改善开发者体验，并修复了一些问题。
+版本亮点：Dioxus CLI 的全新改造
+dx serve 支持移动端：可以在 Android 和 iOS 模拟器及设备上运行您的应用。
+魔法般的热重载：支持格式化字符串、属性以及嵌套 rsx!{} 的热重载。
+交互式 CLI：重新设计的 CLI，用户体验受 Astro 启发。
+内联堆栈跟踪：直接在终端中捕获 WASM 崩溃和日志。
+原生平台的服务器函数：为桌面和移动端提供内联的服务器 RPC。
+全面提升开发者体验
+我们在整个框架中改进了开发者体验，包括修复长期存在的问题并增强工具支持：
+Toast 和加载屏幕：在开发 Web 应用时增加新的 toast 和加载屏幕。
+改进自动补全：极大提升了 RSX 的代码补全能力。
+asset! 稳定化：为原生应用集成的链接器资产系统稳定下来。
+流式 HTML 支持：支持从服务器到客户端的流式传输悬念组件和错误边界。
+支持 SSG 和 ISG：新增静态站点生成和增量静态生成功能。
+简化错误处理：在事件处理器、任务和组件中使用 ? 简化错误处理。
+元元素支持：新增 Head、Title、Meta 和 Link 元素用于设置文档属性。
+同步事件处理：在所有平台上同步处理 prevent_default。
+onresize 和 onvisible 事件处理器：无需使用 IntersectionObserver 即可追踪元素的大小和可见性。
+WGPU 集成：支持在 WGPU 表面和子窗口上作为叠加渲染 Dioxus。
+跨平台打包支持：完善了 Web、iOS 和 Android 平台的 dx bundle 支持。
+JSON 模式：CLI 消息可以以 JSON 格式输出，便于第三方工具和 CI/CD 管道使用。
+全新模板：新增三个跨平台应用的入门模板。
+教程和指南更新：为 Dioxus 0.6 和未来版本提供了新的教程和指南。
+二进制补丁原型：推出了一个全新的纯 Rust 热重载引擎原型。
+Dioxus Labs 官方博客。
+在Linux终端下管理蓝牙
+https://github.com/pythops/bluetui
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+泰晓科技
+| Ruby China
+| 电鸭远程社区
+| IPFS中文社区
+鸣谢：
+迅达云
+赛贝
+LongHash
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 237 | f015095 | https://rustcc.cn/article?id=ba089e06-9537-4159-8a8d-85eee7003f50 | 2024-12-16 | weekly-newsletter-links ===
+【Rust日报】2024-12-16 spren - 英语到命令行的AI转换 - Rust语言中文社区
+1 capture
+11 Mar 2026
+Feb
+MAR
+Apr
+11
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260311033253/https://rustcc.cn/article?id=ba089e06-9537-4159-8a8d-85eee7003f50
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-12-16 spren - 英语到命令行的AI转换
+Mike Tang
+发表于 2024-12-18 23:29
+1216
+mc - 现代cp
+mc，一款快速且用户友好的文件复制工具，使用 Rust 编写。可以把它看作是 cp 的现代替代品，但具有更好的用户体验！与 cp 不同的是，它显示进度、验证数据完整性，并支持高级功能。
+🔑 主要特点：
+轻松复制文件或整个文件夹。
+🔄 显示进度条，实时更新状态。
+🔐 使用哈希验证，确保数据完整性。
+🔗 支持硬链接和符号链接。
+⚡ 比 Finder 或 Explorer 更快。
+🛏️ 在大文件传输过程中保持系统唤醒。
+https://github.com/thewh1teagle/mc
+spren - 英语到命令行的AI转换
+Spren 是一款由 AI 驱动的智能命令行助手，可以将自然语言转化为精准的 shell 命令。无论你是命令行新手还是专家，Spren 都能通过理解你的意图，帮助你更高效地工作，并为 PowerShell、Bash 或 CMD 提供正确的命令建议。
+功能特点：
+🤖 使用 AI 将自然语言转化为 shell 命令
+🔄 跨平台支持：Windows（PowerShell/CMD）、Linux（Bash）和 macOS
+🛡️ 安全执行：提供命令预览和安全确认
+🧠 智能错误分析和命令建议
+⚡ 支持多种 shell（Bash、PowerShell、CMD）
+https://github.com/smadgulkar/spren
+dakia - 跟着我一起学习编写一个全功能网关
+Dakia 是一款强大且灵活的 API 网关，专为现代 Web 应用设计。
+功能特点：
+完全可编程：通过自定义插件和中间件（支持多种编程语言），根据您的特定需求定制 API 网关。
+可配置：使用 YAML、JSON 等多种格式轻松管理 API 配置，支持 HTTP API 调用。
+可扩展：支持通过自定义中间件和插件（可使用任何编程语言如 Rust、Java、C++ 等）添加新功能。
+零停机升级：在不影响服务可用性的情况下进行升级和重启。
+动态中间件：可以即时添加、移除或修改中间件而不影响服务运行。
+请求和响应管理：在请求到达上游之前修改请求，或读取/写入响应以满足应用需求。
+实时配置：使用 HTTP API 调用实时修改网关配置，无需停机。
+https://github.com/ats1999/dakia
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+泰晓科技
+| Ruby China
+| 电鸭远程社区
+| IPFS中文社区
+鸣谢：
+迅达云
+赛贝
+LongHash
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 238 | f015100 | https://rustcc.cn/article?id=a5b5eb9d-2fe0-41b9-b3a9-b191b42b0fb5 | 2024-12-21 | weekly-newsletter-links ===
+【Rust日报】2024-12-21 NATS + Pathway: Kafka + Flink的替代方案 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-12-21 NATS + Pathway: Kafka + Flink的替代方案
+Mike Tang
+发表于 2024-12-21 23:33
+1221
+NATS + Pathway: Kafka + Flink的替代方案
+无缝集成：Pathway的NATS连接器简化了数据摄取过程。
+高性能与低延迟：NATS处理快速消息传递；Pathway即时处理数据。
+可扩展性与可靠性：NATS的集群功能和Pathway的分布式工作负载帮助实现扩展性和容错性。
+灵活的数据格式：支持JSON、纯文本和原始字节。
+轻量级与高效：NATS的发布-订阅模型比完整的Kafka部署更不复杂。
+高级分析与Rust驱动的引擎：Pathway支持实时机器学习、图处理、复杂转换，并由可扩展的Rust引擎驱动——支持多线程、多进程和分布式计算以优化性能。
+https://pathway.com/blog/build-real-time-systems-nats-pathway-alternative-kafka-flink/
+为Rust异步开发构造一个心智模型
+这篇博客文章讨论了在编写异步程序时建立一个心理模型的重要性，尤其是在Dart和Rust等语言中。作者指出，异步编程中的错误通常难以发现和重现，因此预防措施非常有价值。文章提出了一个通用的异步编程心理模型，不关注特定语言的实现细节，而是着重于如何思考异步程序以避免错误。
+文章首先解释了为什么使用任务（tasks）而不是进程（processes）或线程（threads）。任务比进程更轻量，消耗更少的内存，切换任务也比在操作系统级别切换进程更加高效。在典型的HTTP后端，框架会为每个请求创建一个任务，这通常是对用户隐藏的。
+随后，文章介绍了异步程序的调用图（call graph），并通过一个简单的程序示例展示了异步函数如何在执行过程中挂起和恢复。重点强调了工作窃取（work stealing）模型，其中多个工作线程共享同一个任务队列，能够彼此“偷取”任务以平衡负载。这种模型在Golang中被称为M:N调度模型。
+最后，文章探讨了在这种工作窃取环境下编程时需要注意的并发问题，特别是在代码可以跨多个线程执行的情况下，如何确保代码的正确性。为了说明这一点，文章使用了Go语言的一个示例，展示了在并发环境下如何使用同步机制（如WaitGroup）来确保计数器的正确递增。
+总体而言，文章通过构建一个关于异步编程的心理模型，帮助开发者理解和调试异步程序，并提出了避免常见异步错误的策略。
+https://rainingcomputers.blog/dist/building_a_mental_model_for_async_programs.md
+Arroyo - Rust写的流处理引擎
+Arroyo 0.13.0版本发布，带来了多项新功能和改进，旨在进一步提升其作为云原生流处理引擎的性能和易用性。此次更新包括：
+首先，支持从源头读取元数据，这使得用户可以更加灵活地处理数据流，并更好地理解和管理数据来源。其次，引入了一个新的RabbitMQ Streams连接器，增强了与RabbitMQ消息队列的集成，提供了更丰富的消息处理选项。接着，增加了原子更新输出的功能，确保在更新数据时保持一致性。还增加了对Kafka的IAM认证支持，提升了与Kafka集成的安全性。
+此外，运算符链（operator chaining）是一个关键的新特性，它通过将多个运算符组合到一个线程中执行来减少延迟，提高了数据处理的效率。2024年是Arroyo项目和社区非常活跃的一年，这次更新吸引了来自多家公司的贡献者，体现了社区的活跃度和对项目的支持。
+总的来说，Arroyo 0.13.0版本通过这些新功能和改进，继续致力于简化流处理，提升数据流的处理能力和安全性，同时保持其易于部署和使用的特点。无论是通过Linux、MacOS、Docker还是Kubernetes，用户都可以轻松地开始使用或升级到新版本。
+https://www.arroyo.dev/blog/arroyo-0-13-0
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 239 | f015110 | https://rustcc.cn/article?id=c0ad6f71-1b2b-4a80-8c5c-1f90cad3c653 | 2024-12-29 | weekly-newsletter-links ===
+【Rust日报】2024-12-29 将 Rust 编译为 WebAssembly 新尝试 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2024-12-29 将 Rust 编译为 WebAssembly 新尝试
+Jancd
+发表于 2023-12-29 21:21
+Tags：rust,news
+将 Rust 编译为 WebAssembly 新尝试
+作者先前介绍过如何在没有 Emscripten 的情况下将 C 语言编译为 WebAssembly，也就是说，在没有默认工具的情况下编译 WebAssembly。在 Rust 中，让 WebAssembly 变得简单的工具叫做 wasm-bindgen，这次我们尝试不使用它！同时，Rust 也有一点不同，那就是 WebAssembly 长期以来一直是一流的目标，而且标准库的布局也支持 WebAssembly。
+详情请看：https://surma.dev/things/rust-to-webassembly/
+实践 - 用 Rust 构建信息流。
+作者用 rust 实践，开发消息流平台（消息流平台不同于普通的消息代理）。
+详情请看：https://blog.iggy.rs/posts/building-message-streaming-in-rust/#future
+From 日报小组 @Jancd
+社区学习交流平台订阅：
+Rust.cc论坛: 支持rss
+微信公众号：Rust语言学习交流
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 240 | f015116 | https://rustcc.cn/article?id=9bb22d8d-9666-4b03-bc1a-e9f20275f25f | 2025-01-04 | weekly-newsletter-links ===
+【Rust日报】2025-01-04 Arnis - 一键把你的城市导入到Minecraft中 - Rust语言中文社区
+1 capture
+19 Jan 2025
+Dec
+JAN
+Feb
+19
+2024
+2025
+2026
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20250119105054/https://rustcc.cn/article?id=9bb22d8d-9666-4b03-bc1a-e9f20275f25f
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-01-04 Arnis - 一键把你的城市导入到Minecraft中
+Mike Tang
+发表于 2025-01-05 22:15
+DOM_SMOOTHIE - 又一个DOM解析器
+把Web内容解析出来。示例：
+use std::error::Error;
+use dom_smoothie::Readability;
+fn main() -> Result<(), Box<dyn Error>> {
+let cfg = dom_smoothie::Config {
+classes_to_preserve: vec!["caption".into()],
+..Default::default()
+};
+let html = include_str!("../test-pages/ok/001/source.html");
+let mut readability = Readability::new(html, Some("http://fakehost/test/"), Some(cfg))?;
+let article = readability.parse()?;
+println!("Title: {}", &article.title);
+println!("Content:\n {}", &article.content);
+Ok(())
+}
+https://github.com/niklak/dom_smoothie
+Pilgrimage：基于 Rust 的消息代理
+我很高兴与大家分享我正在开发的一个项目，名为 Pilgrimage。这是一个用 Rust 编写的消息代理，带有基于 Web 的管理控制台和客户端身份验证功能。以下是一些核心特性：
+核心特性：
+基于主题的发布/订阅模型
+通过分区实现可扩展性
+持久化消息（基于日志文件）
+主/从复制
+故障检测和自动恢复
+通过确认（ACK）保证消息递送
+完整实现的主节点选举机制
+分区复制
+消息模式注册表（用于管理消息模式并确保兼容性）
+自动扩展
+代理集群支持
+并行处理消息
+认证和授权机制
+数据加密
+基于 CLI 的控制台
+基于 Web 的控制台
+目前，这还不是一个完美的实现，代码需要重构，但它已经可以运行了。我们尽可能在实现核心功能时减少对外部依赖的使用，并计划在未来进一步减少依赖。
+我非常欢迎大家提出建议和反馈！
+GitHub: https://github.com/mila411/pilgrimage
+Arnis - 一键把你的城市导入到Minecraft中
+什么都不说了，太牛了！
+https://github.com/louis-e/arnis
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+泰晓科技
+| Ruby China
+| 电鸭远程社区
+| IPFS中文社区
+鸣谢：
+迅达云
+赛贝
+LongHash
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 241 | f015122 | https://rustcc.cn/article?id=897e1a52-df8c-47e3-8899-206e2d93316e | 2025-01-10 | weekly-newsletter-links ===
+【Rust日报】2025-01-10 使用Wasm实现Rust的插件系统 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-01-10 使用Wasm实现Rust的插件系统
+Mike Tang
+发表于 2025-01-13 18:10
+跟着 @compiler-errors 给 Rustc 做贡献
+在2024年12月，
+@compiler-errors在Rust编译器中做出了一些显著的贡献。以下是他的工作概要：
+错误信息和诊断改进：
+修复了tail_expr_drop_order lint的问题，使其在cargo check和cargo build中行为一致。这涉及到将该lint的检查从编译流程的较晚阶段移到较早阶段，确保在所有相关情况下都能触发。
+针对宏的错误提示和建议进行了改进，特别是处理了宏展开中的元变量（如$expr）。这还包括对版本迁移lint的改进，使得错误提示和建议在涉及宏时更为准确。
+通过调整错误信息模板，减少了重复信息的输出，对于关联类型错误消息进行了优化，使其更易于理解和处理。
+Rust 2024版准备工作：
+在即将发布的Rust 2024版中，
+@compiler
+-errors确保了style_edition配置选项的稳定性，允许用户在rustfmt.toml中指定样式版本为"2024"，以便更好地适应新版的编码风格。
+其他贡献：
+还涉及了一些关于错误消息显示的微调，如针对extern {}块的安全性关键词的正确显示。
+这些改动主要集中在提高编译器的错误检测和报告质量上，确保开发者能够更容易地理解和修复代码中的问题，特别是在面对新版Rust特性时。
+https://hackmd.io/@compiler-errors/errs-december-2024
+使用Wasm实现Rust的插件系统
+这篇文章探讨了在 Rust 生态中使用 WebAssembly (Wasm) 构建插件系统的优势与挑战。Wasm 支持多语言插件开发，提供了安全高效的运行时（如 Wasmi），但生态仍不成熟，文档和实际案例稀缺，增加了开发难度。
+Wasm 的局限在于仅支持传递基础数值类型，无法直接处理字符串或向量等复杂数据结构，需要深入内存模型并使用如 std::ffi::CString 或自定义内存管理等繁琐方法，不利于跨语言移植。
+为解决这些问题，社区提出了多种方案，包括早期的 WAI (Wasm Interfaces) 和 Extism，以及当前主流的 Wasm Component Model。Component Model 是 WASI 的一部分，支持命名空间、自定义数据类型等高级功能，但相关工具（如 .wit 文件和 Wasmtime）仍缺乏详尽文档，实际应用困难。
+作者创建了一个代码库，提供了构建和托管 Rust 插件的简明示例，帮助开发者掌握 Wasm Component Model 的基本用法。尽管 Wasm 潜力巨大，其生态系统仍在完善，这类实践性资源对开发者尤为重要。
+https://www.reddit.com/r/rust/comments/1hvaz5f/rust_wasm_plugins_example/
+https://github.com/tliron/rust-wasm-plugins-examples
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 242 | f015164 | https://rustcc.cn/article?id=eed72b2f-dd48-4d02-b043-9a42ea7a3085 | 2025-03-21 | weekly-newsletter-links ===
+【Rust日报】2025-03-21 Yōzefu: 在 Kafka 集群中搜索数据 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-03-21 Yōzefu: 在 Kafka 集群中搜索数据
+Yuan YQ
+发表于 2025-03-21 16:25
+ratrod：一个隧道工具
+ratrod 是一个 TCP/UDP 隧道工具，它提供基于公私钥对的加密通信。类似于 ssh -L，它可以在一台主机上打通通信隧道（Tunneling）。
+用起来很简单，在要打隧道的主机上使用 ratrod serve 命令启动服务，客户机使用 ratrod connect 命令连接服务器，然后，就可以了。
+Github 仓库：https://github.com/twitchax/ratrod
+Yōzefu: 在 Kafka 集群中搜索数据
+Yōzefu，它是一个用于在 Kafka 集群中搜索数据的交互式终端用户界面（TUI）应用程序。
+作者所在团队负责将数据同步到 Elasticsearch 集群，使用基于 Kafka 和 Java 的 ETL 数据管道。但出现 Elasticsearch 文档更新延迟问题，由于涉及多个非团队负责的组件（数据库、Elasticsearch、Kafka、网络等），诊断延迟原因的范围受限。同时，现有工具在诊断延迟时存在不足，如只能在单个主题搜索、搜索功能有限、多为基于网页的应用，鼠标交互繁琐。
+所以，他们决定开发一个应用来解决上面的问题。Yōzefu 是采用 Rust 语言 + Ratatui 框架开发的，可以完全用键盘来操作，无需鼠标。
+Github 仓库：https://github.com/MAIF/yozefu
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 243 | f015166 | https://rustcc.cn/article?id=b09a5d9c-bced-4abc-baa6-26baeb5d3152 | 2025-03-25 | weekly-newsletter-links ===
+【Rust日报】2025-03-25 Fastrace：一个现代化的分布式追踪系统 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-03-25 Fastrace：一个现代化的分布式追踪系统
+Yuan YQ
+发表于 2025-03-25 09:55
+探索更优的异步磁盘 I/O 方案
+这篇文章围绕异步 Rust 磁盘 I/O 展开研究，作者所在团队因构建数据库 Tonbo 的需求，开发 Fusio 以优化磁盘 I/O 效率，并通过基准测试对比多种方案，得出不同场景下的性能结论。
+研究背景：
+在构建基于异步 Rust 的分层存储数据库 Tonbo 时，磁盘 I/O 效率至关重要，但异步 Rust 的磁盘 I/O 存在不足，主要是由于全异步文件 I/O API 在主流操作系统中较新。为此开发 Fusio，它是一个低成本抽象层，能在不同平台提供统一异步数据访问，还可在不同异步运行时（如 Tokio、tokio-uring、monoio 和 WASM executor）间无缝切换。
+测试设计
+测试场景：聚焦顺序写入和随机读取两种场景，因为多数平台和存储介质对其支持良好，且基于这两种操作可构建高效数据库，如 Tonbo 使用的 Parquet 文件结合 LSM-Tree 适用于这种读写模式。
+测试环境：在 AWS EC2 t3a.xlarge 实例上进行基准测试，运行 Linux Kernel 6.1.119 - 129.201.amzn2023.x86_64，Amazon Linux 2023 系统，cargo 1.85.1。
+对比方案：对比 fusio/monoio（使用 io_uring 作为 I/O API 的 async 运行时）、tokio（最流行的异步 Rust 运行时，磁盘 I/O 使用线程池）、fusio/tokio（利用 spawn_blocking 和 block_in_place 结合 write 和 pread 减少随机读取系统调用开销），在有计算负载场景中还引入 Apache Opendal（使用 spawn_blocking + pwrite/read 作为底层 I/O API）。
+测试结果
+无负载场景：4KB 随机读取测试中，原生 Tokio 比最快的 fusio/tokio 慢 44 倍，原因是 I/O 线程与线程池工作线程同步开销和额外的 seek 系统调用，monoio 读写效率接近 write 和 pread；顺序写入测试中，fusio/monoio 和 fusio/tokio 表现优于原生 Tokio。
+有负载场景：Parquet 文件随机读取测试中，fusio/tokio 性能最佳；顺序写入测试中，fusio/tokio 表现较好，而 Opendal 的用户空间位置控制结合 pwrite 对顺序写入不理想。同时，monoio 在负载下随机读取性能不如无负载测试，原因是 Parquet 及其数据访问 API 内部默认运行时的工作窃取机制与基于 io_uring 的 Rust 异步运行时不兼容，产生额外同步开销，且 io_uring 的设计在高并发和 I/O 压力下更注重吞吐量，会牺牲一定延迟性能。
+无负载场景对比：
+random read (4KB)
+╔══════════════════════════════════════════════════╗
+tokio        ╢██████████████████████████████████████████████████╟ 110.02
+fusio/monoio ╢██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╟ 3.7844
+fusio/tokio  ╢█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╟ 2.4747
+╠══════════════════════════════════════════════════╣
+0                                                  110.02 / µs
+sequential write (4KB)
+╔══════════════════════════════════════════════════╗
+tokio        ╢██████████████████████████████████████████████████╟ 66.49
+fusio/tokio  ╢█████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╟ 28.243
+fusio/monoio ╢███████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╟ 25.609
+╠══════════════════════════════════════════════════╣
+0                                                  66.49 / µs
+(lower is better)
+原文：https://tonbo.io/blog/exploring-better-async-rust-disk-io
+Fastrace：一个现代化的分布式追踪系统
+在当今的微服务和分布式系统中，理解应用程序内部的运行情况极具挑战。传统的日志记录方法在面对用户请求涉及多个服务的场景时显得不足，分布式追踪能够创建请求跨服务边界的连接视图，帮助识别性能瓶颈、调试组件间复杂交互、理解依赖关系、分析延迟分布和异常值，以及将日志和指标与请求上下文关联起来。
+tokio-rs/tracing是 Rust 开发者常用的应用程序检测解决方案，通过初始化追踪订阅者、创建跨度（span）记录数据，以及使用属性宏来检测函数。但是也面临一些挑战：一是生态系统碎片化，其自定义的日志宏与标准log crate 存在差异，导致库作者在选择使用时面临兼容性与可观测性的两难抉择，并且应用程序使用时还需额外配置  tracing-log 桥接器。二是对库的性能影响较大，库作者需要在始终检测带来的性能开销、不检测导致的可观测性缺失以及创建额外的功能标志系统增加维护负担之间做出选择。三是缺乏上下文传播，在分布式系统中，这会导致追踪不完整，难以跟踪请求流程、隔离性能问题和理解服务间的因果关系。
+因此，有了 Fastrace，它具有以下特性：
+零成本抽象：当禁用时，其检测代码在编译时完全省略，不会产生运行时开销，适合对性能敏感的库。
+生态系统兼容性：专注于分布式追踪，通过可组合设计与现有 Rust 生态系统无缝集成，与标准log crate 兼容，库可以在不限制用户日志设置的情况下实现全面追踪。
+简单易用：API 设计直观，只需少量样板代码，在满足常见用例的同时具备扩展性。
+性能卓越：专为高性能应用设计，能处理大量跨度，对 CPU 和内存使用影响小。
+对应用和库都友好：库使用fastrace时，在应用未启用相关功能时无性能损失；启用后，库中的检测代码生效，应用可全面了解库的行为。
+无缝上下文传播：为流行框架提供配套的 crate，自动处理上下文传播，如在 HTTP、gRPC、数据访问等场景中无需手动处理上下文即可实现开箱即用的分布式追踪。
+Github 仓库：https://github.com/fast/fastrace
+LibrePCB 1.3.0 发布，首次引入 Rust 代码
+LibrePCB 是一款免费的、跨平台且易于使用的电子设计自动化套件，可用于绘制原理图以及设计印刷电路板。无论是创客、学生还是专业人士，从初学者到专家，都能使用它。在完全使用 C++ 开发 LibrePCB 超过 10 年后，1.3.0 版本包含了用 Rust 编程语言编写的首批代码。
+这背后的原因在博客文章《LibrePCB 2.0 的 NGI0 资助》（https://librepcb.org/blog/2024-10-17_roadmap_2.0/）中有解释。虽然这在 LibrePCB 应用程序中并不直接可见，但用户仍能从潜在的更高稳定性和更快开发速度中间接受益。
+在这个版本中，有两个用 Rust 实现的软件模块：交互式 HTML 生成器，以及用于读写 ZIP 文件的库。
+官网：https://librepcb.org/
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 244 | f015171 | https://rustcc.cn/article?id=de160b7a-dec8-4bf7-81e2-27e5e88c2717 | 2025-04-01 | weekly-newsletter-links ===
+【Rust日报】2025-04-01 Ariel OS: 一款适用于 MCU 的嵌入式库操作系统 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-04-01 Ariel OS: 一款适用于 MCU 的嵌入式库操作系统
+Yuan YQ
+发表于 2025-04-01 10:34
+Ariel OS: 一款适用于 MCU 的嵌入式库操作系统
+Ariel OS 首个版本发布，这是一款基于 Rust 语言的嵌入式库操作系统。艾瑞尔操作系统可以在诸如 nRF5x、RP2xxx、STM32 和 ESP32 等小型微控制器上运行。它基于 Embassy 构建，并将其转变为一个功能完备的实时操作系统（RTOS），具备抢占式多核调度功能以及许多类似操作系统的便利特性。
+它提供了一组可能很有趣的新特性组合：支持以异步代码和多线程代码的形式编写应用程序，并且可以混合使用这两种方式；网络功能、线程与多核支持、随机数生成、闪存存储等功能都可以开箱即用，并且具有合理且通常可自定义的默认配置。
+它有助于编写可移植的应用程序。艾瑞尔操作系统的应用程序一开始就可以完全移植到所有支持的开发板上，然后再进行特定优化。对于库的开发者来说，这也可能很有吸引力，因为这样可以简化在多个平台上的测试工作。
+它有可以很好地处理不同微控制器之间的细微差异。例如，rustc 目标配置、是否使用 defmt、使用 probe-rs 还是 esp-flash 等，都只是构建系统的标志。Ariel OS 的元构建系统会处理必要的 Cargo 和工具配置。
+它集成了 embedded-test 模块，可在真实硬件上进行一站式测试。
+在底层，它集成了 Embassy、smoltcp、embedded-hal (-async)、embedded-nal (-async) 等组件，并且如果有需要，不使用这些抽象层也很容易。
+目前正在进行的工作有：
+基于稳定版的 Rust 进行开发
+支持蓝牙低功耗（BLE）
+开发一个优秀的领域特定语言（DSL）来定义开发板，目标是实现应用程序的无代码移植
+低功耗处理
+开发一个原生的 “端口”，使 Ariel OS 能够作为 Linux 或 OSX 应用程序运行
+Github 仓库：https://github.com/ariel-os/ariel-os
+promkit v0.9.0 发布
+promkit 是一个构建交互式提示的工具包，此次 v0.9.0 的主要变化是调整了项目的包的机构：
+promkit-core: 完成终端基本操作和窗格管理的核心函数
+promkit-widgets: 文本框、列表框、树型等各种 UI 组件
+promkit: 高级预置设置以及用户界面
+promkit-derive: 简化交互式输入的派生宏（新增加的）
+Github 仓库：https://github.com/ynqa/promkit/tree/v0.9.0
+uniocr： 一个用 Rust 编写的通用 OCR 库
+uniOCR 是一个用 Rust 编写的通用 OCR 引擎，旨在提供跨平台的 OCR 解决方案，支持多种 OCR 提供者，包括 macOS 原生 Vision Kit API、Windows OCR 引擎、Tesseract OCR 以及自定义的云服务提供商。以下是对该仓库的详细介绍：
+主要特性
+多平台支持：支持 macOS、Windows 和 Linux 等主流操作系统，针对不同平台提供原生的 OCR 解决方案。
+多 OCR 提供者集成：
+macOS：使用原生的 Vision Kit API 进行 OCR 识别。
+Windows：利用 Windows OCR 引擎进行识别。
+Tesseract：支持 Tesseract OCR，并可使用自定义模型，具备快速初始化和缓存功能。
+自定义云服务：支持自定义的 OCR 提供者，可通过 API 进行识别。
+统一 API 接口：提供单一的接口来调用不同的 OCR 提供者，方便切换和使用，同时支持批量处理。
+高性能设计
+采用 async/await 机制，支持并行处理。
+注重内存效率，对不安全代码的内存泄漏进行了严格测试。
+Github 仓库：https://github.com/mediar-ai/uniOCR
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 245 | f015172 | https://rustcc.cn/article?id=210f2fb8-5424-426b-b2ff-8004c72d158d | 2025-04-02 | weekly-newsletter-links ===
+【Rust日报】2025-04-02 PackHub: 去中心化 Linux 软件包仓库 - Rust语言中文社区
+3 captures
+15 Apr 2025 - 10 Dec 2025
+Nov
+DEC
+Jan
+10
+2024
+2025
+2026
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20251210234535/https://rustcc.cn/article?id=210f2fb8-5424-426b-b2ff-8004c72d158d
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-04-02 PackHub: 去中心化 Linux 软件包仓库
+Yuan YQ
+发表于 2025-04-02 09:53
+Bake 1.2.0 发布
+Bake 是一款用 Rust 语言编写的通用跨平台脚本运行器，可用于任何类型的项目或应用程序。
+从本质上讲，你只需将任务写入一个 YAML 文件中。然后，通过交互式的命令行界面（CLI）、文本用户界面（TUI）以及图形用户界面（GUI）来运行这些任务，这样你的同事（以及六个月后已经忘记所有命令的你自己）只需点击一个按钮，就能执行你编写的命令！
+Bake 还能帮助用户安装依赖项并设置环境变量。此外，它支持插件系统，允许你将其他人的 bakefile.yaml 配置导入到自己的项目中。
+Github 仓库：https://github.com/ali77gh/bake-rs
+PackHub: 去中心化 Linux 软件包仓库
+PackHub 是一个用于创建去中心化 Linux 软件包仓库的项目，允许用户直接从 GitHub Releases 安装 Linux 软件包，而无需依赖集中式仓库。它可以动态创建虚拟的 Linux 软件包仓库（如 apt、dnf、yum 等），并直接从 GitHub Releases 中拉取软件包。它具有以下特点：
+去中心化：直接从 GitHub Releases 安装软件包，无需维护单独的仓库。
+无缝更新：自动获取最新的发布版本并更新软件包管理器。
+智能版本选择：检测系统版本并选择最兼容的软件包。
+开发者自由：开发者无需依赖维护者或单独的仓库。
+用户便利：用户可以立即获取所需的应用程序，无需等待仓库更新或手动下载。
+Github 仓库：https://github.com/mominul/packhub
+jnv 0.6.0 发布
+jnv 是一个交互式 JSON 查看器和 jq 过滤器编辑器。
+它有以下特性：
+支持 JSON 语法高亮显示
+可使用 jaq 应用 jq 过滤器，这让用户无需自行准备 jq
+可通过 TOML 配置文件对功能进行自定义设置
+切换提示信息的显示状态
+调整用户界面的响应性（防抖时间和动画速度）
+编辑器的外观和行为
+JSON 查看器的样式设置
+调整自动补全功能的显示和行为
+自定义快捷键
+能够处理多种格式
+输入方式：文件输入、标准输入
+数据类型：单个 JSON 或多个可通过流式反序列化器进行反序列化的 JSON 结构，例如 JSON 行格式
+过滤器支持自动补全，仅支持以下情况：
+恒等运算
+对象标识符 - 索引
+数组索引
+提供用于评估过滤器的提示信息
+Github 仓库：https://github.com/ynqa/jnv
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+泰晓科技
+| Ruby China
+| 电鸭远程社区
+| IPFS中文社区
+鸣谢：
+迅达云
+赛贝
+LongHash
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 246 | f015174 | https://rustcc.cn/article?id=c7c0d022-c4f9-4a21-ab4b-3654dafd729d | 2025-04-04 | weekly-newsletter-links ===
+【Rust日报】2025-04-04  Ariel OS - 一款嵌入式OS - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-04-04  Ariel OS - 一款嵌入式OS
+Mike Tang
+发表于 2025-04-05 22:03
+promkit - 帮助你写交互式自动提示的工具箱
+https://github.com/ynqa/promkit
+Ariel OS - 一款嵌入式OS
+Ariel OS 是一个为安全、内存安全、低功耗物联网（IoT）设计的操作系统。它从底层开始基于 Rust 构建，并支持基于 32 位微控制器架构的硬件（包括 Cortex-M、RISC-V 和 Xtensa）。
+目标与设计
+Ariel OS 建立在嵌入式 Rust 生态系统的现有项目之上，包括 Embassy、esp-hal、defmt、probe-rs、sequential-storage 和 embedded-test。虽然这些项目为广泛的嵌入式应用提供了高质量的构建模块，但它们并未提供开发者在现代基于 C 的微控制器操作系统（如 RIOT 或 Zephyr）中所熟悉的高度集成。
+因此，Ariel OS 采取了一种方法，即同时集成许多异构的现有 crate，并添加缺失的操作系统功能，例如抢占式多核调度器、可移植的外设 API、额外的网络安全设施，以及 laze——一个将所有这些整合在一起的元构建系统。结果如何？一个强大的框架，允许开发者以最小的样板代码编写可移植的嵌入式 Rust 应用程序，提供“开箱即用”的体验。还有疑问吗？请查看我们的 FAQ 和/或阅读《Ariel OS 手册》。
+https://github.com/ariel-os/ariel-os
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 247 | f015177 | https://rustcc.cn/article?id=4a6bb95c-7bf3-4637-b071-af4aa0e0f118 | 2025-04-09 | weekly-newsletter-links ===
+【Rust日报】2025-04-09 wrkflw 提供完备的 TUI 界面 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-04-09 wrkflw 提供完备的 TUI 界面
+Yuan YQ
+发表于 2025-04-09 15:28
+wrkflw 提供完备的 TUI 界面
+wrkflw 是一个不需要 Github 环境即可执行 Github Actions 的命令行客户端，现在它提供了 TUI 版本。完整的特性如下：
+TUI 界面：一个功能齐全的终端用户界面，用于管理和监控工作流的执行情况。
+验证工作流文件：检查 GitHub Actions 工作流文件中的语法错误和常见错误。
+在本地执行工作流：使用 Docker 容器在您的计算机上直接运行工作流。
+模拟模式：通过在本地模拟容器环境，可选择在不使用 Docker 的情况下执行操作。
+作业依赖关系解析：根据作业依赖关系自动确定正确的执行顺序。
+Docker 集成：在设置了合适环境的独立 Docker 容器中执行工作流步骤。
+GitHub 上下文环境：提供类似 GitHub 的环境变量和工作流命令。
+多种运行时模式：可在 Docker 容器和本地模拟之间进行选择，以实现最大的灵活性。
+操作支持：支持多种 GitHub Actions 类型：
+Docker 容器操作
+JavaScript 操作
+复合操作
+本地操作
+特殊操作处理：对常用操作（如 actions/checkout）进行原生处理。
+输出捕获：查看日志、步骤输出和执行详情。
+并行作业执行：并行运行独立的作业，以加快工作流的执行速度。
+Github 仓库：https://github.com/bahdotsh/wrkflw
+r-routersploit：一个基于 Rust 语言开发的模块化漏洞探测框架
+r-routersploit 是一个基于 Rust 语言开发的模块化漏洞利用框架，其灵感来源于 RouterSploit。该框架允许用户对嵌入式设备（如路由器）运行各类模块，包括漏洞利用、扫描以及凭据检查等功能。
+Github 仓库：https://github.com/s-b-repo/r-routersploit/tree/main
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 248 | f015188 | https://rustcc.cn/article?id=05ee73e2-78e9-473a-9455-9ed7181ff4a1 | 2025-04-24 | weekly-newsletter-links ===
+【Rust日报】2025-04-24 cargo-seek：TUI 的 crate 管理工具 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-04-24 cargo-seek：TUI 的 crate 管理工具
+Yuan YQ
+发表于 2025-04-24 10:42
+Rust 真的会让软件更加安全吗？
+文章通过研究西门子 Nucleus 实时操作系统中发现的 DNS 响应处理漏洞（影响超 30 亿设备），对比 C 和 Rust 编写代码的安全性。团队让工程师用 Rust 实现 RFC1035 风格 DNS 消息解码，经压力测试发现，Rust 代码无任意代码执行漏洞，且在测试完备性、开发效率上表现更好，有力证明使用 Rust 能让软件更安全。
+实验过程
+给 2 名实习生和 2 名员工布置用 Rust 实现 RFC1035 风格 DNS 消息编码的任务，要求 3 - 4 小时完成，然后对他们的代码进行 6 个正常路径测试和 12 个压力测试。结果如下：
+实现
+正常路径测试
+压力测试
+Nucleus NET
+全部通过
+多个失败，含严重问题
+工程师 1
+1 个失败
+多数通过，无严重问题
+工程师 2
+全部通过
+多数通过，无严重问题
+工程师 3
+全部通过
+多数通过，无严重问题
+工程师 4
+全部通过
+多数通过，无严重问题
+从测试过程总结如下：
+安全性：Rust 实现无任意代码执行漏洞，未使用 unsafe 关键字。
+错误可恢复：所有 Rust 解决方案都能避免软件异常终止。
+测试完备：工程师在规定时间内编写单元测试和模糊测试，发现关键错误。
+开发高效：Rust 开发速度快，C 实现安全版本耗时至少 3 倍。
+原文：https://tweedegolf.nl/en/blog/152/does-using-rust-really-make-your-software-safer
+Ubuntu 计划在 25.10 版本将核心工具包迁移至 rust-coreutils
+Ubuntu 计划在 25.10 版本将核心工具包迁移至 rust-coreutils 作为新默认选项。由于核心工具包的重要性，采用重命名现有包、引入新包并设置复杂依赖关系的方式迁移。这一迁移存在镜像体积增大（Docker 镜像从 75MB 增至 93MB）、AppArmor 配置问题等影响。
+原文：https://discourse.ubuntu.com/t/migration-to-rust-coreutils-in-25-10/59708
+cargo-seek v0.1 发布：TUI 的 crate 管理工具
+cargo-seek 是一个 TUI 的 cargo 包管理器，可以搜索、添加和安装 cargo crate。
+特性：
+搜索
+排序依据：相关性、名称、下载量、近期下载量、最近更新时间、新添加时间
+搜索范围：在线、项目、已安装或全部
+直观标记项目依赖项和已安装的二进制文件
+分页
+向项目中添加、移除 crate
+安装、卸载 cargo 二进制文件
+打开文档
+打开存储库
+在 crates.io 上打开 crate
+在 lib.rs 上打开 crate
+Github 仓库：https://github.com/tareqimbasher/cargo-seek
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 249 | f015208 | https://rustcc.cn/article?id=f585df55-7ede-41cf-8061-b78e343ae3ed | 2025-05-24 | weekly-newsletter-links ===
+【Rust日报】2025-05-24 GCC 编译器后端现在可以完全引导 Rust 编译器 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-05-24 GCC 编译器后端现在可以完全引导 Rust 编译器
+苦瓜小仔
+发表于 2025-05-24 23:03
+Tags：日报
+合辑《This Week in Rust》第 600 期
+Rust 每周资讯和社区文章。
+阅读：https://this-week-in-rust.org/blog/2025/05/21/this-week-in-rust-600/
+合辑《The Embedded Rustacean Issue》第 46 期
+嵌入式 Rust 的半月刊，聚集最新的文章、资讯、教程。
+阅读：https://www.theembeddedrustacean.com/p/the-embedded-rustacean-issue-46
+--
+这个网站还自制书籍（不免费，但有样章和开源的代码示例）
+《Simplified Embedded Rust: ESP Core Library Edition》
+仓库：https://github.com/theembeddedrustacean/ser-no-std
+《Simplified Embedded Rust: ESP Standard Library Edition》
+仓库：https://github.com/theembeddedrustacean/ser-std
+样章下载：https://www.theembeddedrustacean.com/c/downloads
+目录：
+Introduction to Embedded Systems
+Microcontroller Concepts
+Embedded Rust & ESPs
+Programming Embedded Applications
+Programming GPIO
+Programming ADCs
+Programming Timers & Counters
+Programming PWM
+Programming Serial Communication
+Programming IoT & Network Services （仅 Standard Library Edition）
+The Embassy Framework（仅 Core Library Edition）
+公告《GCC 编译器后端现在可以完全引导 Rust 编译器了》
+它现在可以对 Rust 编译器进行完整的第 3 阶段引导！
+这是将 Rust 引入更多平台的激动人心的一步。
+虽然引导过程仅在 x86_64 Linux 上进行了测试，但我们计划在未来测试更多架构。这包括一些 Rust 目前根本不支持的架构！
+不要误会我的意思 - 还有很多工作要做，cg_gcc 还没有完全准备好。测试、错误修复 - 甚至更多测试。尽管如此，未来是光明的，我们正在以极快的速度前进！
+请密切关注带有详细 bug + 修复解释的东西。
+仓库：https://github.com/rust-lang/rustc_codegen_gcc
+Reddit：https://www.reddit.com/r/rust/comments/1ktph3c/media_the_gcc_compiler_backend_can_now_fully/
+文章《Introducing Rust At Your Current Company》
+作者：filtra
+这篇文章探讨了如何在当前公司引入 Rust 语言。
+调查发现，约一半的 Rust 开发者是在加入公司后才开始使用 Rust 的。
+成功引入 Rust 的人大多是高级开发者（83.3%），但 Rust 的具体经验与推动能力关系不大。
+公司接受 Rust 的原因包括领导层支持、技术优势（如内存安全和速度）以及内部概念验证的成功。
+引入 Rust 的公司规模和行业分布广泛，但机器人、物联网和国防领域的企业更倾向于采用 Rust。
+公司对 Rust 开放的迹象包括允许开发者选择语言、技术栈尚未确定、之前对 Rust 有兴趣或个人对工具和架构有决策权。
+阅读：https://filtra.io/rust/career-help/how-to-get-a-rust-job-II
+Reddit：https://www.reddit.com/r/rust/comments/1kt4uxc/how_to_get_a_rust_job_part_ii_introducing_rust_at/
+文章《Async from scratch 3: Pinned against the wall》
+作者：natkr
+这篇文章是关于 Rust 异步编程的第三部分，主要探讨了“pinning”（固定）的概念。
+文章首先介绍了 Rust 中的关联类型（associated types）和泛型的区别，并通过示例说明了关联类型在类型推导中的作用。
+接着，文章通过一个“trick-or-treat”示例，展示了如何将异步函数转换为状态机和自定义的 Future 实现，并解释了在实现过程中遇到的生命周期问题。
+为了解决这些问题，文章引入了 Pin，这是一个用于限制对值的移动和部分修改的工具，从而允许安全地创建自引用结构。文章详细介绍了 Pin 的使用方法，包括如何安全地创建和操作 Pin，以及如何通过 pin-project 宏简化投影操作。
+最后，文章展示了如何使用 Pin 和 pin-project 来实现一个安全的 TrickOrTreat 异步状态机，并讨论了实现过程中的注意事项和潜在问题。
+阅读：https://natkr.com/2025-05-22-async-from-scratch-3/
+Reddit：https://www.reddit.com/r/rust/comments/1kthwfc/async_from_scratch_3_pinned_against_the_wall/
+Capter - 跨平台的屏幕截图工具
+Capter 是一个功能强大且易于使用的跨平台屏幕截图工具，支持多种操作系统，并提供便捷的安装方式。
+它不仅具备基本的截图功能，还配备了丰富的标注工具，方便用户进行精确的屏幕捕捉和内容标注。
+功能：支持全屏、窗口或自定义区域的截图，提供窗口选择辅助功能，内置强大的标注工具（如矩形、圆形、线条、箭头、自由手绘、高亮和文本），界面简洁友好，支持一键复制到剪贴板，便于快速分享。
+安装方式：支持多种操作系统，包括 Windows（通过 winget 安装）、Arch Linux、Debian（从发布页面下载）、Mac OS（从发布页面下载）和 Rust 的 Cargo 包管理器。
+仓库：https://github.com/decipher3114/Capter
+Reddit：https://www.reddit.com/r/rust/comments/1kswjab/screenshot_and_annotation_tool_iced/
+KelpsGet - 轻量级且多功能的下载器
+KelpsGet 是一个用 Rust 编写的现代、轻量级且多功能的下载器，支持通过命令行界面（CLI）和图形用户界面（GUI）进行快速可靠的文件下载。
+它支持 HTTP/HTTPS、FTP、SFTP 以及通过 Transmission 集成的 Torrent 下载（磁力链接）。
+KelpsGet 提供实时速度和预计完成时间跟踪的进度条、自定义输出文件名、MIME 类型检测、跨平台支持（Linux、macOS、Windows）、静默模式、自动空间检查、自动重试、文件名验证、详细下载信息显示、高级下载模式（支持并行分块和断点续传）、代理支持、自动压缩和缓存以及速度限制和连接控制等功能。
+仓库：https://github.com/davimf721/KelpsGet
+Reddit：https://www.reddit.com/r/rust/comments/1kt69vh/after_5_months_of_development_i_finally_released/
+Sguaba - 难以误用的 rigid body transforms 库
+sguaba 是一个 Rust 编写的库，旨在为工程师提供难以误用的 rigid body transforms（空间数学）功能，帮助那些更关注其他事务而非线性代数的工程师。
+它提供了 Coordinate 和 Vector 类型，用于表示坐标空间中的点和向量，这些类型基于 CoordinateSystem 泛型，以防止不同坐标系统之间的错误混用。通过 system! 宏，用户可以定义具有特定语义的额外坐标系统，如 NedLike 或 FrdLike。
+该库支持多种坐标系统，包括 WGS84（经纬度）、ECEF（地心地固坐标系）、NED（北、东、地）和 FRD（前、右、地）。它提供了从一个坐标系统转换到另一个坐标系统的数学构造，如刚体变换和旋转。此外，还提供了更易于理解的工程模块，包含如 Pose 和 Orientation 等类型。
+sguaba 还提供了工程和数学两种 API 风格，以满足不同背景用户的需求。
+仓库：https://github.com/helsing-ai/sguaba
+Reddit：https://www.reddit.com/r/rust/comments/1ktfixl/sguaba_hardtomisuse_rigid_body_transforms_without/
+Index-set - 支持原子操作的 bitset 库
+index-set 是一个用 Rust 编写的位集（bitset）实现库，支持原子操作。
+它旨在以极低的内存占用和极快的查找性能跟踪大量用户的在线/离线状态。该库具备以下特点：
+重复使用从集合中移除的标识符。
+提供原子和线程安全的操作。
+插入、移除和查找操作均为 O(1) 时间复杂度。
+每个标识符仅占用内存中的一个比特位，例如 1MB 内存可存储 8388608 个唯一标识符。
+标识符唯一且尽可能小。
+它提供了 AtomicBitSet、BitSet 和 BitSetMut 等类型和 traits，方便用户在不同场景下使用。
+仓库：https://github.com/nurmohammed840/index-set
+Reddit：https://www.reddit.com/r/rust/comments/1ktrrtm/announcing_indexset_an_bitset_implementation_that/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+hohowt
+2025-05-26 14:41
+👍
+1
+共 1 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 250 | f015224 | https://rustcc.cn/article?id=79b20c8f-8816-4600-aac6-8c99323dcc55 | 2025-06-10 | weekly-newsletter-links ===
+【Rust日报】2025-06-10 Munal OS - 基于 WASM 的图形化操作系统 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-06-10 Munal OS - 基于 WASM 的图形化操作系统
+苦瓜小仔
+发表于 2025-06-10 09:14
+Tags：日报
+文章《Is Rust faster than C?》
+作者：Steve Klabnik
+文章探讨了“Rust是否比C更快”的问题，指出比较两者的性能很难，因为“相同条件”很难定义。
+通过内联汇编示例（Rust和C代码生成相同汇编代码），说明在某些情况下两者性能相同。
+但Rust和C在语义和默认行为上存在差异，如Rust的结构体字段重排序优化、运行时边界检查等，这些可能导致不同代码生成和性能表现。
+作者认为，从理论上讲，Rust可以实现与C相同的性能，但在实际工程中，由于开发者能力、项目需求等因素，很难得出通用结论。
+阅读：https://steveklabnik.com/writing/is-rust-faster-than-c/
+Reddit：https://www.reddit.com/r/rust/comments/1l7bvb0/is_rust_faster_than_c/
+文章《Why doesn't Rust care more about compiler performance?》
+作者：Kobzol
+文章探讨了Rust编译器性能问题，指出尽管Rust编译器性能在持续改进（如过去三年中，某些项目编译速度几乎翻倍），但对许多开发者来说，编译速度仍不够快。
+作者认为，Rust在某些特定场景下有潜力实现近乎即时的增量编译，但这需要权衡，如牺牲部分运行时性能。
+尽管Rust团队有诸多改进编译速度的想法（如并行前端、智能增量编译等），但实施面临技术挑战、工作优先级和人力不足等问题。
+作者强调，编译器性能只是Rust众多关注点之一，改进需要长期投入和社区共同努力。
+阅读：https://kobzol.github.io/rust/rustc/2025/06/09/why-doesnt-rust-care-more-about-compiler-performance.html
+Reddit：https://www.reddit.com/r/rust/comments/1l77jso/why_doesnt_rust_care_more_about_compiler/
+文章《Nine Rules for Scientific Libraries in Rust》
+作者：Carl M. Kadie
+文章总结了在 Rust 中开发科学计算库的九条规则，基于作者在 SciRustConf 2025 的演讲。
+内容包括支持 Python（使用 PyO3 和 maturin）、异步云 I/O、并行计算（使用 Rayon）、SIMD、CI 和良好 API 设计。
+这些主题反映了会议中讨论的热点，文章还链接了更深入的技术资料。
+阅读：https://medium.com/@carlmkadie/nine-rules-for-scientific-libraries-in-rust-6e5e33a6405b
+Reddit：https://www.reddit.com/r/rust/comments/1l79vrm/nine_rules_for_scientific_libraries_in_rust_from/
+文章《When is a Rust function "unsafe"?》
+作者：crescentrose
+文章探讨了Rust中unsafe关键字的使用场景和争议。
+unsafe通常与内存安全相关，但作者指出，它也可能涉及其他类型的安全性问题。文章列举了几种unsafe的常见用法，包括访问非法内存、破坏数据布局、使用外部函数接口等。
+同时，作者提出了几种有争议的场景，如违反运行时不变量、可能导致逻辑错误的函数，以及可能对现实世界造成危害的操作。
+最后，作者提出了一个“坏主意”：引入unsafe上下文，允许开发者在使用unsafe函数时明确其风险，并限制其使用范围。
+阅读：https://crescentro.se/posts/when-unsafe/
+Reddit：https://www.reddit.com/r/rust/comments/1l740r4/when_is_a_rust_function_unsafe/
+Munal OS - 基于 WASM 的图形化操作系统
+Munal OS 发布了第一个版本，它采用单内核设计，以简化代码为目标，不实现传统OS的许多功能，如引导程序、页面映射、虚拟地址空间和中断。
+它将整个系统编译为单个EFI二进制文件，使用UEFI系统时钟，不重新映射地址空间，通过VirtIO驱动与QEMU通信，采用轮询而非中断驱动。
+系统运行在一个全局事件循环中，使用WASM引擎实现应用沙箱化，提供“系统调用”API供应用与系统交互。
+功能：
+高清分辨率的全图形界面，支持鼠标和键盘
+带有窗口管理器和上下文径向菜单的桌面 shell
+网络驱动程序和 TCP 堆栈
+可定制的 UI 工具包，提供各种小部件、响应式布局和灵活的文本渲染
+嵌入式定制应用程序选择包括：
+支持 DNS、HTTPS 和非常基本的 HTML 的 Web 浏览器
+文本编辑器
+Python 终端
+仓库：https://github.com/Askannz/munal-os
+Reddit：https://www.reddit.com/r/rust/comments/1l7av38/media_munal_os_a_fully_graphical_experimental_os/
+Tombi - TOML Language Server
+Tombi 是一个全新 TOML 语言服务器，用来替代 taplo。
+它提供 Formatter, Linter, 和 Language Server，针对 Rust 的 Cargo.toml 和 Python 的 uv 进行了优化，并具有使用 JSON Schema Store 的自动验证功能。
+可以在 VSCode、Cursor、Windsurf、Zed 和 Neovim 上安装它。
+文档：https://tombi-toml.github.io/tombi/
+仓库：https://github.com/tombi-toml/tombi
+Reddit：https://www.reddit.com/r/rust/comments/1l75r5o/tombi_new_toml_language_server/
+Arc-slice - 更通用和高效的 tokio-rs/bytes 库
+arc-slice 是一个用于处理共享内存切片的 Rust 库，提供了 ArcSlice 和 ArcSliceMut 类型，支持多种布局和缓冲区类型。
+它比 bytes 更通用和高效，支持任意缓冲区和元数据，避免隐式重新分配，并提供可选的 OOM 处理和引用计数饱和处理。
+性能测试表明，arc-slice 在某些操作上比 bytes 更快。它还支持小字符串优化，并可通过特定布局进一步优化性能。
+仓库：https://github.com/wyfo/arc-slice/
+Reddit：https://www.reddit.com/r/rust/comments/1l744cq/arcslice_010_a_generalized_and_more_performant/
+Smallrand - 轻量级的 Rust 随机数生成库
+smallrand 是一个轻量级的 Rust 随机数生成库，提供与 rand 类似的功能，但依赖更少且无 unsafe 代码。
+它实现了 Xoshiro256++ 和 ChaCha12 算法，支持生成均匀分布的整数和浮点数。
+该库易于审核，仅依赖 getrandom（非 Linux/Unix 平台），且可作为 no-std 使用。
+在 Apple M1 上的基准测试中，smallrand 总体上比 rand 稍快，尤其在生成指定范围的 u64 时速度快 2.6 倍。
+仓库：https://github.com/hpenne/smallrand
+Reddit：https://www.reddit.com/r/rust/comments/1l7ct3e/introducing_smallrand_sorry/
+Elpe - 基于 Rust+Ocaml 的配置代码构建系统
+Elpe 是一个用 Rust 和 OCaml 编写的新型配置即代码的不可变构建系统，旨在弥合 Nix 和 Debian/Ubuntu 等主流包管理器之间的差距。
+它通过容器运行脚本，支持使用 Ubuntu 包而非完全自举。
+Elpe 重新思考了 Nix 的语言设计和安全问题，目标是简化构建环境的描述和运行。
+目前仅支持 Linux，但有潜力扩展到其他平台。
+文章：https://pijul.org/posts/2025-06-08-elpe/
+仓库：https://nest.pijul.com/pmeunier/elpe
+Reddit：https://www.reddit.com/r/rust/comments/1l76jzo/elpe_a_configascode_build_system_in_rustocaml/
+讨论：使用 Rust 实现哪些常用的工具、库或框架？
+高赞回答：
+“一个 SAT 求解器。它们是工业级的组合求解器，但它们维护的不变量从根本上与“Rust 思维模式”不相容（大量的可变性无法很好地突破数据结构的界限）。Rust 中存在一些求解器，但它们的效率都达不到最先进的水平。”
+“uv 版本的 gradle。”
+Reddit：https://www.reddit.com/r/rust/comments/1l6ypys/what_tools_do_you_wish_someone_has_done_it_in_rust/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 251 | f015239 | https://rustcc.cn/article?id=ac47401e-fe2d-44ee-b980-7b7c4079dcc0 | 2025-06-25 | weekly-newsletter-links ===
+【Rust日报】2025-06-25 利用 AI 将 GPU 着色器移植到 Rust 的速度提高 30 倍 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-06-25 利用 AI 将 GPU 着色器移植到 Rust 的速度提高 30 倍
+苦瓜小仔
+发表于 2025-06-25 09:10
+Tags：日报
+文章《利用 AI 将 GPU 着色器移植到 Rust 的速度提高 30 倍》
+作者使用 AI 将 Sascha Willems 的 Vulkan 示例中的 GPU 着色器移植到 Rust 语言的过程。
+借助 Rust GPU 项目，作者在四天内完成了大约 90% 的着色器移植工作，相比手动移植速度提升了 30 倍。
+这些 Rust 着色器能够编译成有效的 SPIR-V 格式，并无缝集成到原有的 C++ Vulkan 渲染管线中，无需修改宿主代码，只需调整构建系统。
+文章还详细介绍了 Rust GPU 对 Vulkan 各种着色器类型和高级技术的支持情况，以及作者在使用 AI 进行代码生成时的策略和遇到的限制。
+阅读：https://rust-gpu.github.io/blog/2025/06/24/vulkan-shader-port/
+Reddit：https://www.reddit.com/r/rust/comments/1ljawa6/porting_gpu_shaders_to_rust_30x_faster_with_ai/
+文章《将 Go 的微服务重写为 Rust》
+Grab 的 Integrity Data Platform 团队将一个高 QPS 的 Golang 微服务重写为 Rust，节省了 70% 的基础设施成本，性能相似。
+文章详细介绍了选择重写服务的标准、重写方法、遇到的困难（如 Rust 的借用检查器和异步编程的学习曲线）以及最终的影响。
+重写后，Rust 服务的资源消耗仅为原 Golang 服务的 20%，尽管 P99 延迟略高。这次重写证明了 Rust 在效率上的优势，但也显示了 Golang 在性能上的竞争力。
+阅读：https://engineering.grab.com/counter-service-how-we-rewrote-it-in-rust
+Reddit：https://www.reddit.com/r/rust/comments/1li50bn/counter_service_how_we_rewrote_it_in_rust/
+文章《在 Blender 中创建可热重载的 Rust 扩展》
+作者：Lars Helge Scheel
+这篇文章介绍了如何在 Blender 中创建一个可热重载的 Rust 扩展。
+作者通过 PyO3 将 Rust 代码封装为 Python 轮文件，使其可以在 Blender 的 Python 扩展中调用。
+为了实现热重载，作者使用了 hot-lib-reloader，通过不断为共享库生成新名称来强制操作系统从磁盘加载最新版本。
+这种方法允许在不重启 Blender 的情况下更新 Rust 核心逻辑，但需要注意避免在 API 更改时进行热重载，以防止未定义行为。
+阅读：https://algebraic.games/blog/rust_extension_api/
+Reddit：https://www.reddit.com/r/rust/comments/1lidczj/rust_blender_extension_api_with_hot_reloading/
+文章《从 Flutter + Rust 转向 Rust + egui》
+作者：jdiaz97
+这篇文章分享了作者从 Flutter + Rust 转向 Rust + egui 的个人经历。
+作者提到，尽管 Flutter + Rust 能够通过 flutter_rust_bridge 生成大量代码，但偶尔的生成失败、FFI 问题以及设计友好 API 的精力消耗让他感到沮丧。
+转向 Rust + egui 后，他发现这种组合能减少复杂性，因为他可以理解项目中的每一行代码，并且 egui 的即时模式 UI 编程范式更适合他，无需复杂的回调或状态管理框架，性能也有所提升。
+阅读：https://jdiaz97.github.io/greenblog/posts/flutter_to_egui/
+Reddit：https://www.reddit.com/r/rust/comments/1lje61s/why_i_switched_from_flutter_rust_to_rust_egui/
+wxDragon：发布 v0.8.1 - 跨平台的 GUI 框架
+wxDragon v0.8.1 是 Rust 绑定的 wxWidgets 的重大更新版本。
+wxWidgets 哲学是尽可能使用平台原生小部件，虽在现代外观和动画效果方面不如 Qt、Flutter 和 Egui，但适合创建实用软件。
+它能生成零依赖、小体积、低资源消耗的跨平台可执行文件，适合在旧电脑上运行。
+与 fltk-rs 相比，它功能更丰富，布局系统更强大。
+v0.8.1 的主要改进包括：99%+ 的构建时间减少，从 20-30 分钟缩短到 20-30 秒（macOS）和 70 秒（Windows 交叉编译），通过从 GitHub 下载预构建的 wxWidgets 库实现。
+新功能包括全面的光标 API、暗模式支持、增强的窗口管理、高级文本编辑、自定义 DataView 渲染器、细粒度特性门、增强的异步支持、新小部件和组件、系统集成以及跨平台卓越性，支持 Linux、macOS、Windows 和跨编译。
+仓库：https://github.com/AllenDang/wxdragon
+Reddit：https://www.reddit.com/r/rust/comments/1lj5s97/wxdragon_v081_released_cross_platform_gui/
+Sqlx-d1：Cloudflare D1 的 SQLx 接口
+sqlx-d1 是一个为 Cloudflare D1 提供 SQLx 接口的 Rust 库，支持编译时 SQL 验证。
+它通过在宏上下文中加载 sqlx-sqlite 来绕过 D1 的限制。
+它无需环境变量或 .env 文件，支持本地 D1 模拟器和离线模式。
+它不支持事务、连接池和 derive Type、Encode、Decode 等特性。
+仓库：https://github.com/ohkami-rs/sqlx-d1
+Reddit：https://www.reddit.com/r/rust/comments/1lj9185/just_released_sqlxd1_v020_supporting_worker_v06/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 252 | f015240 | https://rustcc.cn/article?id=465a4b6a-b87b-473c-90b6-9d5ac804b4da | 2025-06-26 | weekly-newsletter-links ===
+【Rust日报】2025-06-26 OpenAI 使用 Rust 重写 Codex CLI - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-06-26 OpenAI 使用 Rust 重写 Codex CLI
+苦瓜小仔
+发表于 2025-06-26 13:32
+Tags：日报
+This Week in Rust - 每周 Rust 回顾
+阅读：https://this-week-in-rust.org/blog/2025/06/25/this-week-in-rust-605/
+文章《Rust for Linux 中的 Coccinelle for Rust 工具进展》
+Tathagata Roy 与 Inria（法国计算机科学与自动化研究所）合作，分享了由 Collabora 共同赞助的 Coccinelle for Rust 项目在过去一年中取得的进展。
+Coccinelle 是一种用于自动程序匹配和转换的工具，最初为修改 Linux 内核中的 C 代码而开发。
+随着 Linux 内核开始采用 Rust，该项目旨在将 Coccinelle 的强大功能扩展到 Rust 代码库。
+报告展示了Coccinelle for Rust（CfR）的示例用法，包括自动修复代码模式和修改函数签名及其调用。
+自 2024 年以来，CfR 在核心模式匹配引擎、SmPL 解析、规则定义和语言特性等方面取得了进展。未来，团队将致力于实现规则依赖、脚本功能以及性能提升。
+阅读：https://www.collabora.com/news-and-blog/blog/2025/06/25/coccinelle-for-rust-progress-report/
+Reddit：https://www.reddit.com/r/rust/comments/1lkewwo/coccinelle_for_rust_progress_report/
+文章《OpenAI 放弃 TypeScript，使用 Rust 重写 Codex CLI》
+OpenAI 正在用 Rust 重写 Codex CLI，一个终端编码代理人 (coding agent) 工具。
+最初使用 TypeScript 和 React-based Ink 开发的 Codex CLI，虽便于快速原型，开发但随着功能成熟，其局限性显现。Rust 在安装体验、安全绑定、运行时性能等方面更具优势，且支持跨语言扩展。
+目前，Rust 版本仍在开发中，OpenAI 正努力使其与 TypeScript 版本功能一致，未来将完全取代 TypeScript 版本。
+阅读：https://analyticsindiamag.com/global-tech/openai-is-ditching-typescript-to-rebuild-codex-cli-with-rust/
+Reddit：https://www.reddit.com/r/rust/comments/1lkdu2m/openai_is_ditching_typescript_to_rebuild_codex/
+文章《迪士尼用 Rust 编写 WASM 客户端部署在 Web 上》
+迪士尼推出 Disney+ 应用开发工具包（ADK），助力合作伙伴将 Disney+ 应用移植到多种设备。
+ADK 包括用 C'99 编写的 NCPv2 运行时、C++'98 编写的原生视频引擎、硬件抽象层 Steamboat、应用运行二进制文件 Merlin 以及用 Rust 编写并编译为 WebAssembly 的 Disney+ 客户端应用。
+其设计支持多平台和应用，提供测试工具与自动化，确保 Disney+ 在不同设备上的一致体验。
+阅读：https://www.reddit.com/r/rust/comments/1lkccqf/disney_using_rust/
+Reddit：https://www.reddit.com/r/rust/comments/1lkccqf/disney_using_rust/
+Schemars：发布 1.0 - 从 Rust 类型生成 JSON Schema
+6 年前，我在这个子版块上发了一篇帖子，介绍我当时的 Rust 项目 schemars，它可以从 Rust 类型生成 JSON Schema 文档。
+我很高兴地宣布，就在上周，schemars 1.0.0 版本终于发布了（紧接着发布了第一个修复漏洞的版本）！
+发布这么久的原因之一是对 API 稳定性的信心不足——如果我要发布某物的 v1 版本，我希望能承诺它相对稳定。最终，在许多建议、改进和修复之后，我最终决定，即使它并不完美，它也“足够好”，可以支持典型未来的功能，而无需破坏性更改。
+如果未来需要破坏性更改（特别是对派生宏的更改），那么我打算使用类似 semver-trick 的方法，或者引入一个没有派生宏的 schemars_core（类似于 serde_core），以尽量减少干扰，使 JsonSchema 特性在 v1 和 v2+ 之间保持一致。
+仓库：https://github.com/GREsau/schemars
+Reddit：https://www.reddit.com/r/rust/comments/1lkcl0m/schemars_v1_is_now_released/
+lstr：极简的目录树查看器
+lstr 是一个用 Rust 编写的快速、极简的目录树查看器，灵感来源于命令行程序 tree，并带有强大的交互模式。
+它支持经典和交互模式，可显示文件图标、权限、大小，还支持 Git 集成。
+它尊重系统的 LS_COLORS 环境变量，支持智能过滤。可通过 Homebrew 或从源码安装，适用于多种平台。
+仓库：https://github.com/bgreenwell/lstr
+Crabstep：将 Apple 的 typedstream 数据反序列化为跨平台数据结构
+crabstep 是一个 Rust 库，用于将 Apple 的 typedstream 数据反序列化为跨平台数据结构。
+它是纯 Rust 实现，无 Apple 框架依赖，具备强大的错误处理能力，支持高效安全的反序列化。
+仓库：https://github.com/ReagentX/crabstep
+Reddit：https://www.reddit.com/r/rust/comments/1lkbb3q/announcing_crabstep_a_pure_rust_crossplatform/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 253 | f015268 | https://rustcc.cn/article?id=eecc9e02-2691-40e2-89ac-219f9b0c56d3 | 2025-07-24 | weekly-newsletter-links ===
+【Rust日报】2025-07-24 Rust WebAssembly 工作组（rustwasm）的 GitHub 组织即将停用并归档 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-07-24 Rust WebAssembly 工作组（rustwasm）的 GitHub 组织即将停用并归档
+苦瓜小仔
+发表于 2025-07-24 11:36
+Tags：日报
+Rust 公告《Rust WebAssembly 工作组（rustwasm）的 GitHub 组织即将停用并归档》
+作者：Alex Crichton
+Rust WebAssembly 工作组（rustwasm）工作组成立于 2018 年，曾推动 Rust 对 WebAssembly 的支持蓬勃发展，开发了诸如 wasm-bindgen 和 wasm-pack 等重要工具。
+然而，自 2019 年以来，该组织的活动大幅减少，大多数项目已处于维护模式近 5 年。
+2025 年 9 月，rustwasm 组织将被完全归档，以明确其不再是 Rust 和 WebAssembly 的中心枢纽。wasm-bindgen 项目将被转移到一个新的组织中，并引入新的维护者。
+其他仓库将被归档或转移给现有维护者。文章还提供了关于如何处理依赖关系和如何为现有仓库寻找新维护者的指导。
+阅读：https://blog.rust-lang.org/inside-rust/2025/07/21/sunsetting-the-rustwasm-github-org/
+Reddit：https://www.reddit.com/r/rust/comments/1m658j4/sunsetting_the_rustwasm_github_org/
+文章《用 Rust 重写 SQLite 数据库入门指南》
+这篇文章是一篇关于 Turso DB（一个用 Rust 重写的 SQLite 数据库）的入门指南，作者通过实验性地修改 Turso 的代码，使其在查询时返回固定的值（如 42）。
+文章详细介绍了如何获取和编译 Turso，以及如何通过修改 op_column 操作码来实现自定义逻辑。
+作者还探讨了如何通过 PRAGMA 语句配置数据库，并尝试将其与连接挂钩。此外，作者提到了 Turso 的测试框架（DST）以及如何运行模拟器来查找错误。
+尽管作者在实验中遇到了一些问题，但他认为 Turso 是一个适合新手开始贡献数据库项目的好地方，因为 Rust 的易用性和可访问性。
+阅读：https://avi.im/blag/2025/rickrolling-turso/
+文章《PackWorld：Unity 让我筋疲力尽，Rust 让我重新振作 - 编写一个自定义 Rust 游戏引擎》
+这篇文章由 Ryan Rothweiler 发布在 Medium 上，讲述了他在开发游戏《PackWorld: Open packs build a world》时，从 Unity 转向 Rust 的经历。
+他指出 Unity 的 ECS 架构虽然理论上优秀，但依赖关系的不明确和运行时检查导致了问题。相比之下，Rust 的所有权模型虽然增加了开发难度，但也促使他重新思考架构设计。
+他特别介绍了自己设计的“UpdateSignals”系统，通过消息传递来解耦模块，使得代码更清晰、易于测试和调试。他总结说，Rust 让他能够摆脱 Unity 的限制，探索更好的架构设计。
+阅读：https://medium.com/@ryanrothweiler/packworld-unity-burned-me-out-rust-pulled-me-back-in-writing-a-custom-rust-game-engine-8e81eee0f391
+ParvaOS -  用 Rust 语言从头开发的操作系统
+它支持 64 位 x86 架构，具备 VGA 文本模式、串行输出、CPU 异常管理、分页、堆分配、基本外壳、时间管理、ATA PIO 模式驱动、自定义文件系统（ParvaFS）、磁盘保存文件和图形用户界面等功能。
+仓库：https://github.com/gianndev/ParvaOS
+讨论：Alternative ergonomic ref count RFC
+Reddit：https://www.reddit.com/r/rust/comments/1m5x1ih/alternative_ergonomic_ref_count_rfc/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 254 | f015286 | https://rustcc.cn/article?id=9f9630cf-920a-47e2-944e-7a09604a23f7 | 2025-08-10 | weekly-newsletter-links ===
+【Rust日报】2025-08-10 Paddler：开源的 LLMOps 平台，在其自有基础设施中托管和扩展开源模型 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-08-10 Paddler：开源的 LLMOps 平台，在其自有基础设施中托管和扩展开源模型
+苦瓜小仔
+发表于 2025-08-11 19:40
+Tags：日报
+Paddler：开源的 LLMOps 平台，在其自有基础设施中托管和扩展开源模型
+Paddler 是一个开源的 LLMOps 平台，旨在帮助企业在其自有基础设施中托管和扩展开源模型，满足隐私、可靠性、成本控制和独立于第三方供应商的需求。它具备以下关键特性：
+内置 llama.cpp 引擎：支持推理服务，能够生成文本和嵌入向量。
+负载均衡：通过动态添加代理实现，支持与自动扩展工具集成。
+请求缓冲：允许从零主机开始扩展。
+内置 Web 管理面板：用于管理、监控和测试，支持实时查看和测试 Paddler 设置。
+可观测性指标：提供详细的性能和资源使用数据。
+Paddler 适用于需要在产品中集成 LLM 推理和嵌入的产品团队、需要大规模运行和部署 LLM 的 DevOps/LLMOps 团队、处理敏感数据且有高合规性和隐私要求的组织（如医疗、金融等），以及希望实现可预测的 LLM 成本而非按 token 计价的组织。它还为产品领导者提供了可靠的模型性能，以维持基于 AI 的功能的稳定用户体验。
+Paddler 的安装方式灵活，可以通过下载最新发布版本或从源代码构建来获取二进制文件。其工作原理简单易懂，包含两个主要组件：balancer 和 agents。balancer 提供推理服务、管理服务和 Web 管理面板，而 agents 负责将请求分配到 slots，生成 token 和嵌入向量。Paddler 还提供了详细的文档和 API 文档，帮助用户快速上手。
+仓库：https://github.com/intentee/paddler
+Reddit：https://www.reddit.com/r/rust/comments/1ml5ogd/i_just_rewrote_llamacpp_server_in_rust_most_of_it/
+Ferriskey：开源 IAM 解决方案，旨在成为 Keycloak 的一个严肃替代品
+v0.1.0 主要功能：
+✅ OIDC / OAuth2
+🏢 多租户领域
+🔑 客户端与服务账户
+👤 用户与角色映射
+🔐 MFA（TOTP）与必需操作
+🧮 位运算角色系统
+📊 使用 Grafana 的可观测性
+仓库：https://github.com/ferriskey/ferriskey
+Reddit：https://www.reddit.com/r/rust/comments/1mkvspu/media_ferriskey_v010_an_opensource_iam_in_rust/
+exhaustive-map：针对枚举体这种 Finite 类型的 map
+use exhaustive_map::{Finite, FiniteExt};
+#[derive(Finite, Debug, PartialEq)]
+enum Color {
+Red,
+Green,
+Blue,
+}
+let all: Vec<_> = Color::iter_all().collect();
+assert_eq!(all, vec![Color::Red, Color::Green, Color::Blue]);
+仓库：https://github.com/tyilo/exhaustive-map
+Reddit：https://www.reddit.com/r/rust/comments/1mkzqpi/exhaustivemap_an_exhaustive_map_for_types_with/
+讨论：有没有类似 manim 的库来制作数学动画
+Reddit：https://www.reddit.com/r/rust/comments/1mkuel7/manimlike_crate/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 255 | f015358 | https://rustcc.cn/article?id=0e22679d-183e-4a2d-bc20-478a84778a1d | 2025-11-07 | weekly-newsletter-links ===
+【Rust日报】2025-11-07 Night Core™ Worker: WASM 的安全运行环境 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-11-07 Night Core™ Worker: WASM 的安全运行环境
+Yuan YQ
+发表于 2025-11-07 11:01
+Night Core™ Worker: WASM 的安全运行环境
+Night Core™ Worker 是一个开源 Rust 框架，旨在安全、隔离地运行 WebAssembly 模块，并提供端到端的可验证执行与审计能力。
+核心目标
+构建一个 信任最小化（trustless） 的多租户 WASM 模块执行环境，确保每个模块：
+来源于可信维护者（通过数字签名验证）
+未被篡改（通过 SHA-256 完整性校验）
+在隔离沙箱中运行（使用 Wasmtime + WASI）
+所有执行行为可审计（生成 HTML 与 JSONL 日志）
+架构简介
+验证层（Verification Layer）
+在执行前处理信任与证明。
+验证 Ed25519 签名和 SHA-256 哈希值。
+对任何验证失败的模块予以拒绝，并记录完整的审计上下文。
+执行层（Execution Layer）
+基于 Wasmtime 37 与 WASI P1 提供安全的沙箱化执行环境。
+针对每个租户设置占用资源限制。
+支持顺序执行和并行执行两种模式。
+审计层（Audit Layer）
+生成 HTML 与 JSONL 格式的日志以确保透明性。
+日志包含时间戳、SHA-256 摘要和状态码。
+支持仅验证模式（--proof），无需实际执行即可完成验证。
+Github: https://github.com/xnfinite/nightcore-worker
+Apache Fory v0.13.1 发布
+Apache Fory v0.13.1 包含了来自 11 个贡献者的 28 个 PR，主要变更内容有：
+支持 Rust 枚举变体（enum variant）及元组/结构体风格枚举的模式演进（schema evolution）
+支持 Rust 元组的序列化及模式演进
+支持 Rust 的 skip 宏属性
+Apache Fory 是一个高性能跨语言序列化框架，旨在为 Java、Python、Go、JavaScript 等多种语言提供高效、安全且兼容的序列化能力。
+完整更新说明：https://fory.apache.org/blog/fory_0_13_1_release/
+官网：https://fory.apache.org/
+Github: https://github.com/apache/fory
+send_ctrlc: 向子进程发送 Ctrl-C
+这是一个跨平台的，可以向子进程发送 Ctrl-C / SIGINT 的库。支持同步模式和异步模式。
+Github: https://github.com/nu11ptr/send_ctrlc
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 256 | f015359 | https://rustcc.cn/article?id=30b7d3ba-62ac-4195-bffa-76c29ad7431d | 2025-11-10 | weekly-newsletter-links ===
+【Rust日报】2025-11-10 cookie-monster: 给 Axum 用的 Cookie 管理器 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-11-10 cookie-monster: 给 Axum 用的 Cookie 管理器
+Yuan YQ
+发表于 2025-11-10 11:10
+Rust 将成为 Debian 包管理器的强制依赖
+简报：Debian 正在将其核心 APT 包管理器整合 Rust 语言，并计划在 2026 年 5 月前将 Rust 列为强制性依赖项。官方公告详述了这一计划，旨在提升这一发行版最关键工具之一的内存安全性和长期可维护性。
+深入解析：
+此次更新将重点用 Rust 重写关键组件，例如软件包解析器和签名验证器，以彻底消除 C++ 中常见的整类内存安全漏洞。
+面向 Alpha、PA-RISC 和 m68k 等旧架构移植版的维护者面临严格期限：必须在六个月内为其平台提供可用的 Rust 工具链，否则这些移植版将被终止支持。
+这一决策与更广泛的行业趋势一致——继 Linux 内核等项目之后，越来越多基础性、底层代码开始采用 Rust 以增强安全性。
+核心要点：此举标志着 Debian 做出了战略性取舍——优先保障未来安全性，而非继续支持陈旧的小众硬件。这也进一步巩固了 Rust 作为构建高可靠、关键基础设施的默认语言的地位。
+官方公告：https://lists.debian.org/debian-devel/2025/10/msg00285.html?utm_campaign=debian-requires-rust-for-core-package-manager&utm_medium=referral&utm_source=cargo-run.news
+Kosame ORM 0.2: 带有类型推断和自动完成的 SQL 风格的语句
+Kosame 是一个还处于积极开发中的 ORM 框架，其设计目标是在提供高级抽象的同时，不牺牲对数据库的底层控制能力。
+Kosame 0.2 已经支持在 PostgreSQL 中执行 SELECT、 INSERT、 UPDATE 和 DELETE 语句，甚至还支持 CTE （公用表表达式）和子查询。在许多情况下，它能够在宏调用期间直接推断出数据库列的类型，并自动生成对应的 Rust 结构体，整个过程甚至无需连接数据库！如果某个列的类型无法自动推断，你也可以手动指定。
+Github: https://github.com/kosame-orm/kosame
+cookie-monster: 给 Axum 用的 Cookie 管理器
+cookie-monster 是一个用于解析和管理 HTTP Cookie 的 Rust 库，旨在为 Web 开发者提供类型安全、灵活且易于使用的 Cookie 操作接口。
+核心功能
+Cookie 解析与序列化：支持标准 HTTP Cookie 的创建、解析、验证和格式化。
+CookieJar 管理：提供 CookieJar 类型，用于在请求/响应周期中集中管理多个 Cookie（如添加、获取、删除）。
+安全选项支持：例如 HttpOnly、Secure、SameSite（Strict / Lax / None）等策略。
+Github: https://github.com/joeydewaal/cookie-monster
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 257 | f015362 | https://rustcc.cn/article?id=3f91fb8b-028f-4037-9e5c-b6b68803ce6c | 2025-11-13 | weekly-newsletter-links ===
+【Rust日报】2025-11-13 egui-arbor: 功能丰富的树形组件 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-11-13 egui-arbor: 功能丰富的树形组件
+Yuan YQ
+发表于 2025-11-13 09:37
+apk-info：apk 文件解析器
+这是一个用来解析 apk 文件的工具，主要功能有：
+在解析过程中可以防止恶意软件。近期，大量恶意软件开始采用 BadPack 技术，这种技术会破坏“常规”的 ZIP 解析器。本库能在不跳过内容的前提下完整处理此类文件
+功能完备的 Android 二进制 XML（AXML）和 Android 资源（ARSC）解析器
+支持提取 APK 签名块 42 中包含的信息：
+APK 签名方案 v1
+APK 签名方案 v2
+APK 签名方案 v3
+APK 签名方案 v3.1
+Stamp Block v1
+Stamp Block v2
+APK 渠道块（Apk Channel Block）
+Google Play Frosting（已有计划，但目前相关信息极度匮乏）
+基于 Android 系统实际行为，准确提取 MainActivity
+提供 Python 3.10+ 的绑定并包含类型提示
+解析效率极高
+Github: https://github.com/delvinru/apk-info
+egui-arbor: 功能丰富的树形组件
+这是一个为 egui 开发的树形组件，使用灵活，功能丰富。其灵感来源于 Blender 的大纲视图（Outliner），专为可视化和编辑层级数据结构（如文件系统、场景图、UI 组件树等）而设计。以下是版本兼容表：
+egui-arbor
+egui
+bevy
+bevy_egui
+0.2.0
+0.31
+0.16
+0.34
+功能特性
+层级树形视图：以集合（collections）和实体（entities）形式展示嵌套的数据结构
+展开/折叠：通过箭头在树形层级中展开或折叠节点
+拖拽操作：鼠标拖拽对节点进行重排和重组，支持“之前/之后/内部”三种定位方式
+多选支持：完整支持多选操作，配合键盘修饰键使用（Ctrl / Cmd 切换单个节点，Shift 选择连续范围）
+操作图标：内置可见性、锁定和选择切换按钮，并支持自定义图标
+Blender 风格的可见性：父节点的可见性变更会自动级联应用到所有子节点
+内联编辑：双击节点即可重命名，支持键盘快捷键操作
+可定制样式：可配置缩进、颜色、图标和间距等视觉属性
+基于 Trait 的集成：适用于任何实现了 OutlinerNode trait 的数据结构
+Bevy 集成：全面支持 Bevy 游戏引擎，可与 3D 场景实现实时同步
+egui 内存集成：跨帧自动持久化 UI 状态（如展开/选中状态）
+Github: https://github.com/kyjohnso/egui-arbor
+stft-rs v0.4.0 新增 Mel 频谱
+stft-rs 是一个低依赖的 Rust crate，用于执行短时傅里叶变换（Short Time Fourier Transform）。本次 0.4.0 版本中，新增了 Mel 频谱图（Mel spectrograms） 功能，该功能常用于语音识别软件。
+功能特性
+批处理：一次性处理整个音频缓冲区
+**流式支持：支持增量处理，适用于实时应用场景
+**高保真重建：重建信噪比（SNR）超过 138 dB
+双重建模式：
+OLA（Overlap-Add）：适用于频谱处理的最优模式
+WOLA（Weighted Overlap-Add）：标准实现方式
+多种窗函数：支持 Hann、Hamming、Blackman 等窗函数
+NOLA/COLA 验证：确保重建满足无失真条件
+灵活的缓冲区管理：提供三种内存分配策略
+多声道音频支持：支持立体声、5.1、7.1+ 等声道布局，兼容 planar 和 interleaved 格式
+泛型浮点支持：兼容 f32、f64 及其他浮点类型
+类型别名：提供如 StftConfigF32、BatchStftF32 等便捷别名，提升代码可读性
+频谱操作工具：内置幅度/相位操作、滤波及自定义频谱处理的辅助函数
+Mel 频谱图：支持基于感知的频率分析，包含 HTK/Slaney 频率刻度、对数 Mel 谱、以及 Delta 特征
+无外部张量库依赖（No External Tensor Libraries）：直接使用 Rust 切片，不依赖外部张量库
+Github: https://github.com/wizenink/stft-rs
+--
+From 日报小组 Yuan YQ
+社区学习交流平台订阅：
+Rustcc 论坛: 支持 RSS
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 258 | f015374 | https://rustcc.cn/article?id=e2ec31ec-65e1-4c63-ba9e-bd24662a50e0 | 2025-11-27 | weekly-newsletter-links ===
+【Rust日报】2025-11-27 walrus：分布式消息流平台，比 Kafka 快 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-11-27 walrus：分布式消息流平台，比 Kafka 快
+苦瓜小仔
+发表于 2025-11-27 11:47
+Tags：日报
+This Week in Rust
+https://this-week-in-rust.org/blog/2025/11/26/this-week-in-rust-627/
+EuroRust 演讲：Ergot 库中的不安全结构
+深入探索 ergot 消息传递库中那些不安全的内部结构。从侵入式的链​​表、手动实现的虚函数表，到类型，James 将讲解如何让这个库即使在最小的设备上也能正常运行。
+Ergot 是一个消息传递库，可以在各种不同尺寸的设备上运行，从大型台式机/服务器 PC 到非常小的单核微控制器，让开发者享受一个连贯的设备网络，无论设备的大小或用于连接它们的传输介质如何。
+它包含类型安全的套接字 、 寻址和路由 。在最小的 MCU 尺寸配置中，它不需要内存分配器，并且与 no_std 兼容。在较大的 PC 尺寸配置中，为了性能和便利性，可以使用内存分配器。
+观看：https://www.youtube.com/watch?v=33l3gNPBpzc
+文章《用 Rayon 并行处理图算法》
+这是一篇关于在 Rust 链接器 Wild 中利用 Rayon 并行处理图算法的介绍：
+核心挑战：处理工作量未知的图遍历（如可达性分析），任务需动态发现且涉及共享状态修改，无法直接使用简单的并行迭代。
+方案对比：
+Scoped Spawning（作用域生成）：利用 scope 和 spawn 动态派发任务。优点是代码逻辑清晰、组合性极佳；缺点是闭包会导致少量的堆分配开销。
+Channel + par_bridge：尝试用通道传递任务以减少内存分配。结果发现极难通过借用检查（Borrow Checker），且存在死锁风险，代码结构变得僵化且不可维护。
+最终决策：作者决定回退到 Scoped Spawning。结论是：为了微小的性能提升而牺牲代码的可组合性和安全性是不值得的。
+阅读：https://davidlattimore.github.io/posts/2025/11/27/graph-algorithms-in-rayon.html
+讨论：https://www.reddit.com/r/rust/comments/1p7omoh/thoughts_on_graph_algorithms_in_rayon/
+walrus：分布式消息流平台，比 Kafka 快
+Walrus 是一个用 Rust 开发的分布式消息流平台，旨在超越 Kafka。
+极致性能：单节点写入达 120 万次/秒，利用 io_uring 优化，基准测试击败 Kafka 和 RocksDB。
+架构创新：数据与元数据分离，Raft 仅管理元数据，数据写入不经共识算法以消除瓶颈。
+智能运维：支持自动分段轮替与负载均衡，无需手动配置。
+严谨验证：使用 TLA+ 形式化验证分布式逻辑。
+灵活性：可独立部署或作为 Rust 库嵌入使用。
+仓库：https://github.com/nubskr/walrus
+讨论：https://www.reddit.com/r/rust/comments/1p7mi2m/i_built_a_distributed_message_streaming_platform/
+Hurl v7.1.0 更新
+Hurl 是基于 Rust 开发的命令行 HTTP 测试工具），在该版本中：
+自动美化 (核心特性)：默认对 JSON 响应进行格式化和语法高亮，无需通过管道传输给 jq 即可获得清晰易读的输出。
+新功能增强：新增了 isObject 和 isList 断言（Predicates），以及 utf8Decode / utf8Encode 过滤器。
+体验升级：不仅是 HTTP 客户端，更是强大的 API 测试工具，通过视觉优化进一步提升了终端调试体验。
+讨论：https://www.reddit.com/r/rust/comments/1p7309p/hurl_710_the_pretty_edition/
+讨论：标准库的文件写入 API 可能会静默地丢失数据
+在某些文件系统（尤其是 NFS）上，close 操作可能用于刷新内部缓冲区，并可能返回写入错误。Rust 会默默地丢弃这些错误，导致数据悄无声息地丢失。
+这在几年前被报告过 https://github.com/rust-lang/rust/issues/98338。
+讨论：https://www.reddit.com/r/rust/comments/1p7by82/standard_library_file_writing_can_lead_to_silent/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 259 | f015380 | https://rustcc.cn/article?id=62275307-8ce8-496d-89ef-3d0b7034958c | 2025-12-03 | weekly-newsletter-links ===
+【Rust日报】2025-12- 04 Ferrocene 包含首个通过 SIL 2 认证的 Rust 核心库子集 | Wasmi 1.0 发布 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-12- 04 Ferrocene 包含首个通过 SIL 2 认证的 Rust 核心库子集 | Wasmi 1.0 发布
+苦瓜小仔
+发表于 2025-12-03 23:34
+Tags：日报
+Ferrocene 25.11.0 包含首个通过 IEC 61508 (SIL 2) 认证的 Rust 核心库子集
+Ferrous Systems 正式发布了 Ferrocene 25.11.0，这是其开源安全认证 Rust 编译器工具链的重大更新。本次发布标志着 Rust 在安全关键领域（Safety-Critical）应用的一个里程碑，因为它不仅更新了编译器，还填补了生态系统中缺失的关键一环。
+核心突破：首个通过 SIL 2 认证的 Rust Core 库
+本次更新最大的亮点是包含了通过 IEC 61508 (SIL 2) 标准认证的 Rust core 库子集。在 Rust 开发中，core 库是所有其他库的基础，对于不依赖操作系统（no_std）的嵌入式开发至关重要。此前，由于缺乏官方认证的基础库，开发者在构建合规系统时面临巨大的验证成本。此次 Ferrous Systems 与 TÜV SÜD 合作完成认证，直接消除了这一障碍，使得汽车、工业自动化等受监管行业的开发者能够直接在合规项目中使用 Rust 的核心功能，大幅降低了安全认证的门槛和成本。
+紧跟上游：集成 Rust 1.89 和 1.90 特性
+Ferrocene 25.11.0 继续保持与上游 Rust 生态的紧密同步，集成了 Rust 1.89 和 1.90 的最新特性。关键技术改进包括：
+Const Generics 增强：支持显式推断常量泛型参数，提升了代码的灵活性。
+FFI 互操作性提升：在 extern "C" 函数中增加了对 u128 和 i128 类型的支持，增强了 Rust 与 C 语言遗留系统的交互能力。
+开发者体验优化：引入了新的静态分析检查（Lints）以及支持交叉编译的文档测试（Doctests），进一步保障代码质量。
+行业影响与展望
+通过提供经认证的编译器和基础库，Ferrocene 25.11.0 为高安全等级软件开发提供了一套完整的解决方案。这不仅巩固了 Rust 作为 C/C++ 在嵌入式领域强有力竞争者的地位，也向业界证明了开源语言在严苛工业标准下的可行性。随着认证范围的扩大，未来更多高安全等级（如 ASIL D）的应用将变得触手可及。
+阅读：https://ferrous-systems.com/blog/ferrocene-25-11-0/
+文章《Hyper-util 发布可组合连接池：重塑 Rust 网络连接管理》
+Sean McArthur 宣布在 hyper-util v0.1.19 中正式推出了可组合连接池（Composable Pools）。这一更新彻底改变了 hyper 生态中连接管理的构建方式，旨在通过高度模块化的设计，解决传统连接池功能臃肿且难以定制的问题。
+核心变革：基于 Tower 的模块化设计
+新的连接池架构被拆解为一系列独立的 tower Layer。开发者不再被迫使用一个包含所有功能的巨型连接池，而是可以根据具体需求，像搭积木一样灵活组合不同的策略。首批发布的四个基础组件包括：
+Singleton：仅维护单一活跃连接，完美适配 HTTP/2 的多路复用特性。
+Cache：提供标准的连接复用缓存，支持连接竞赛（如 Happy Eyeballs）以降低延迟。
+Negotiate：支持协议协商，能根据握手结果（如 ALPN）在 HTTP/1 和 HTTP/2 之间智能切换。
+Map：充当路由角色，根据请求特征将流量映射到特定的连接器，支持自定义键值逻辑。
+// Note: some noise has been trimmed
+let http1 = (
+pool::cache(exec),
+util::http1_request_target(),
+util::http1_set_host(),
+util::meta(MyMetaIdleAt::new),
+conn::http1(),
+);
+let http2 = (
+pool::singleton(),
+conn::http2(),
+);
+let pool_layers = tower::layer::layer_fn(move |svc| {
+pool::negotiate::builder()
+.fallback(http1.clone())
+.upgrade(http2.clone())
+.inspect(|conn| conn.is_negotiated_h2())
+.connect(svc)
+.build()
+});
+let pool_map = pool::map::builder::<http::Uri>()
+.keys(|dst| scheme_and_auth(dst))
+.values(move |_dst| {
+pool_layers.layer(connector.clone())
+})
+.build();
+实际应用与优势
+这种“按需付费”的设计显著提升了性能和灵活性。著名的 HTTP 客户端库 reqwest 已率先采用此架构重构了其内部连接池，成功实现了复杂的连接过期策略和并发限制，证明了该设计的成熟度。未来，开发者还可以轻松插入自定义层（如基于主机的限流），而无需分叉或修改上游代码。
+阅读：https://seanmonstar.com/blog/hyper-util-composable-pools/
+Wasmi 1.0 发布
+Wasmi 1.0 发布：八年磨一剑，迈向稳定新篇章
+Wasmi 1.0 正式发布，标志着这一专注于嵌入式环境的高效 WebAssembly 解释器在历经八年开发后，终于迎来了 API 稳定性的里程碑。本次发布由 Stellar 发展基金会（SDF）赞助，核心聚焦于标准兼容、安全性加固及可用性提升。
+主要更新内容：
+广泛的标准支持：不仅支持所有 Wasm 2.0 特性，还提前实现了 multi-memory、memory64、custom-page-sizes 和 simd（可选）等 Wasm 3.0 提案，显著增强了对复杂应用的支持能力。
+安全性与精简：通过了 Runtime Verification 的专业安全审计，并接入 Google OSS-Fuzz 进行持续测试。同时，将外部依赖大幅削减至仅剩 spin 和 wasmparser 两个，极大地降低了攻击面和维护成本。
+开发者体验升级：引入了官方 C-API 绑定，支持跨语言集成；新增“可加油的恢复调用”（Refueled Resumable Calls），允许在 fuel 耗尽时暂停并在补充后恢复执行，非常适合构建类似操作系统的任务调度机制。
+展望未来，Wasmi 2.0 已在研发中，将通过引入多种指令分发模式（如直接线程化分发），重新将焦点回归到极致的执行性能上。
+公告：https://wasmi-labs.github.io/blog/posts/wasmi-v1.0/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 260 | f015398 | https://rustcc.cn/article?id=e817240c-e22a-4bbe-bacd-8a3c734dcfa4 | 2025-12-22 | weekly-newsletter-links ===
+【Rust日报】2025-12-22 微软利用 AI 加速从 C/C++ 向 Rust 迁移 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-12-22 微软利用 AI 加速从 C/C++ 向 Rust 迁移
+苦瓜小仔
+发表于 2025-12-22 19:33
+Tags：日报
+Rustup 1.29.0 现已开启测试
+核心更新是通过并发下载与解压组件显著提升了工具链的安装性能。
+该版本新增了对两个 Solaris 平台以及 tcsh 和 xonsh Shell 的支持。
+改进了对 rust-analyzer 的处理逻辑，并在环境变量处理中将空值视作未设置。
+用户可以通过设置 RUSTUP_UPDATE_ROOT 环境变量来切换至开发环境参与此次测试。
+阅读：https://blog.rust-lang.org/inside-rust/2025/12/20/rustup-1.29.0-beta-cft/
+微软利用 AI 加速从 C/C++ 向 Rust 迁移
+由微软 CoreAI 首席软件工程师 Galen Hunt（曾任 Azure Sphere 负责人、Singularity 研究项目负责人）发布。
+微软正通过 AI 技术（由系统老兵 Galen Hunt 领衔）解决 C/C++ 迁移到 Rust 的高昂成本问题，标志着“AI 驱动的大规模系统重构”时代的到来。
+重大战略转向：Galen Hunt 宣布微软正在发起一项大规模倡议，旨在利用人工智能（AI）辅助编码技术，将其庞大的 legacy（遗留）C/C++ 代码库迁移到 Rust。
+AI 的角色：文章强调，手动将数千万行 C/C++ 代码重写为 Rust 在工程量上是不可行的。微软现在正利用大语言模型（LLMs）和专门的 AI 工具（来自 CoreAI 团队）来自动化这一过程，包括处理内存所有权转换、借用检查等 Rust 的复杂特性。
+系统安全与可靠性：这一举动的根本目的是彻底解决内存安全问题。作为微软系统的功勋专家，Hunt 指出，利用 AI 克服 Rust 学习曲线和重写成本，是实现“安全系统”愿景的必经之路。
+Galen Hunt 的角色变化：他本人已从 Azure Sphere 团队转向微软的 CoreAI 团队。他现在的研究重心是“将 LLM 应用于解决系统软件中的长期挑战”，而代码迁移正是这一方向的首个重大应用。
+行业影响：这一消息在 Reddit 和开发者社区（如 r/programming）引发了巨大讨论。它被视为微软对“内存安全编程”承诺的进一步落实，同时也展示了 AI 在底层系统工程（而不只是应用层）中发挥的关键作用。
+讨论：https://www.reddit.com/r/rust/comments/1pr625d/my_goal_is_to_eliminate_every_line_of_c_and_c/
+EuroRust 演讲：使用 GPU-UI 以每秒 100 万像素的速度渲染
+现代计算机速度飞快，但现代软件很少能充分发挥其性能极限。我们将探讨 Zed 的图形框架 (GPUI)，以及它如何帮助你用 Rust 构建一个跨平台应用程序，实现每 8 毫秒渲染一帧到整个屏幕。其编程模型类似于 React，UI 以声明式树的形式呈现，但它并非使用笨重的 JavaScript，而是由完全用 Rust 构建的超高速渲染管线驱动。
+演讲者信息：康拉德·欧文 (Conrad Irwin) 是一位毕生致力于技术的专家。他创造了许多令人愉悦的工具，帮助人们提高工作效率。康拉德目前正在开发 Zed，这是一款面向下一代的代码编辑器，旨在实现人与人工智能之间的高效协作。作为一个大型 Rust 开源项目，Zed 在解决技术难题和实现构建革命性 IDE 所需的无限发展路线图之间取得了完美的平衡。他曾是 Superhuman 的联合创始人兼首席技术官，该公司提供全球最快的电子邮件体验。他因打造了使用户收件速度提升一倍的技术和团队而入选《福布斯》30 岁以下精英榜。康拉德是开源的坚定拥护者。他曾为多个项目贡献代码，从 libxml2 到 sqlite，从 git 到 Firefox。他坚信技术社区应该倡导知识共享和协作改进的文化。
+观看：https://youtu.be/sheIOOf-xRo
+文章《Postfix macros and let-place》
+作者：nadrieril
+作者在文中探讨了 Rust 社区长期处于停滞状态的“后缀宏”提案，并提出了一种名为 let place 的新机制来解决其核心设计难题。
+后缀宏的困境：无回溯原则
+后缀宏（Postfix Macros）允许像 expr.macro!() 这样调用宏。该提案迟迟无法推进的核心原因是 “无回溯原则”（No-backtracking rule）：
+问题：如果宏直接接收 expr 的原始 Token（标记），它理论上可以解析并改变 expr 的含义（例如，根据后面的内容改变前面表达式的语义）。这会破坏 Rust 解析器从左到右、不回溯的特性，给 IDE 和编译器带来巨大压力。
+例子：在 x.is_some().while! { ... } 中，如果 while! 宏能直接操作 x.is_some() 的 Token，事情会变得非常复杂且难以预测。
+核心方案：let place 机制
+为了解决上述问题，作者引入了 let place 这一概念。其核心想法是：“计算一次位置（Place），多次使用。”
+语法：let place p = <expr>;
+作用：它将 <expr> 评估为一个“位置”（即内存地址/变量路径），而不是将其转换为一个具体的值（不发生 Place-to-Value 强制转换）。
+别名化：变量 p 成了该位置的一个“别名”。这意味着你可以通过 p 进行读写，而不会触发移动（Move）或拷贝（Copy）。
+副作用一致性：<expr> 中的任何副作用（如函数调用）只会在 let place 这一行评估一次。
+如何通过 let place 实现后缀宏
+作者提议，后缀宏不应该接收原始 Token，而应该被编译器自动脱糖（Desugar）为使用 let place 的形式：1.  编译器先将接收者表达式转换为一个 let place 别名。2.  宏在内部使用这个别名进行操作。
+脱糖示例：
+// 假设有后缀宏调用
+my_expr.my_macro!(args)
+// 脱糖为
+{
+let place receiver = my_expr;
+// 宏展开后的代码，内部引用 receiver 别名
+my_macro_expansion!(receiver, args)
+}
+通过这种方式，my_expr 被提前评估，宏无法“回溯”去改变它的 Token 含义，从而保护了解析器的线性一致性。
+let place 的技术细节与安全性
+能力限制：let place 别名不能被重新赋值，也不能手动通过 drop(p) 结束生命周期（因为它只是别名）。
+借用检查：为了保证安全，编译器会在 let place 处插入“伪借用”（Fake borrows）和“伪读取”（Fake reads）。这确保了在别名有效期间，原始位置不会被意外修改或破坏。
+简洁性：作者发现这种机制在 MIR（中级中间表示）层面的实现非常简单，远比想象中轻量。
+总结与展望
+这篇文章的意义在于为 Rust 的两个难题提供了联动的解决方案：
+对后缀宏：提供了一种既能保持语法连贯（Piping style），又不破坏编译器原则的方法。
+对语言底层：let place 本身就是一个有用的特性，它允许开发者以更精细、更安全的方式控制内存位置的别名，而不需要像引用（Reference）那样显式地处理生命周期和借用权限。
+作者认为，let place 可能是通往更易用的后缀宏（如 .match!, .if_let!, .unwrap_or!{ continue }）的关键拼图。
+阅读：https://nadrieril.github.io/blog/2025/12/09/postfix-macros-and-let-place.html
+文章《Block Pattern》
+作者：John Nunley (notgull)
+作者在文中介绍了一种他称之为“块模式”（Block Pattern）的编程手法。
+这种模式利用了 Rust 中“一切皆表达式”的特性，通过将逻辑封装在代码块 { ... } 中来提升代码的可读性和健壮性。
+什么是“块模式”？
+在 Rust 中，代码块本身就是一个表达式，可以返回一个值。
+let foo = {
+let x = 1;
+let y = 2;
+x + y // 返回 3
+};
+作者建议将复杂的初始化逻辑或多步骤的操作包裹在这样的块中，而不是散落在函数的主体空间里。
+块模式的三大优势
+意图先行（Intent First）：
+代码以 let variable = { ... } 开头，阅读者立刻就能明白接下来的代码块是为了计算这个变量，而不必读完所有细节才明白目的。这降低了阅读长函数时的认知负担。
+减少命名空间污染（Namespace Pollution）：
+在计算过程中产生的临时变量（如中间步骤的字符串、索引等）会被限制在块的作用域内。一旦离开代码块，这些变量就会被销毁，主函数的命名空间保持整洁。
+限制可变性（Restrict Mutability）：
+这是该模式最强大的地方。你可以在块内部使用 let mut data = ... 来进行复杂的原地修改，最后返回一个不可变的值给外部变量。这样就将“可变性”锁在了最小的范围内，防止后续代码意外修改数据。
+与“重构为函数”的对比
+虽然将逻辑提取为独立函数也能实现上述目标，但“块模式”在以下场景更具优势：
+保持上下文连贯：对于简短且只用一次的逻辑，放在块内可以避免阅读者在不同函数间跳跃，保持思维连贯。
+无需显式传递参数：块可以直接访问闭包外的变量，而不需要像定义新函数那样显式地声明和传递大量参数。
+作者认为“块模式”是一种廉价且高效的架构手段。它不需要复杂的抽象，仅仅通过 Rust 原生的块表达式特性，就能让代码实现“高内聚、低耦合”，是编写健壮 Rust 代码的一项重要技巧。
+阅读：https://notgull.net/block-pattern/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 261 | f015404 | https://rustcc.cn/article?id=011c4a44-bfa9-46ef-b49b-ebd68790800c | 2025-12-28 | weekly-newsletter-links ===
+【Rust日报】2025-12-28 Ratatui  支持 no_std 环境、引入 Flex 布局系统 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2025-12-28 Ratatui  支持 no_std 环境、引入 Flex 布局系统
+苦瓜小仔
+发表于 2025-12-28 20:23
+Tags：日报
+Ratatui  发布 v0.30：支持 no_std 环境、引入 Flex 布局系统
+Ratatui v0.30 是该库演进中的重要里程碑，其核心突破是实现了对 no_std 环境的基础支持。通过将核心逻辑与 Rust 标准库解耦，Ratatui 现在可以在嵌入式系统、固件及受限的 WASM 环境中运行，极大地扩展了终端 UI 在非桌面场景下的应用边界。
+在功能层面，该版本引入了革命性的 Flex 布局系统。借鉴 CSS Flexbox 逻辑，开发者利用 Layout::flex 即可轻松实现组件的比例分配、对齐及间距控制，显著降低了构建复杂响应式界面的难度。
+在开发者体验（DX）方面，v0.30 进行了重大 API 简化：Frame 结构体移除了对 Backend 的泛型依赖。这使得函数签名更加简洁，消除了大量样板代码。此外，新增的 Constraint::Fill 约束让布局能更智能地填充剩余空间。
+其他更新还包括：增强的滚动条（Scrollbar）交互、更精细的文本折行控制以及对 Color 类型的优化。
+v0.30 通过 no_std 带来的极致便携性与 Flex 布局带来的开发效率提升**，标志着 Ratatui 正式从一个基础绘图工具进化为功能完备、全平台适配的现代化 UI 框架。
+阅读：https://ratatui.rs/highlights/v030/
+PicoRDM：Redis 终端管理器
+PicoRDM 是一款基于 Rust 编写的轻量级 Redis 终端 UI (TUI) 管理工具，旨在作为重量级 GUI 客户端（如 RedisInsight）的极简替代方案。
+极简高效：利用 Ratatui 框架构建，二进制文件仅约 2MB，启动极速且内存占用极低。
+功能完备：支持多连接管理（含 TLS）、Key 实时搜索与批量处理、服务器状态监控（内存/连接数等）以及集成的原生 CLI 交互模式。
+交互友好：提供丰富的快捷键支持并兼容鼠标操作，支持通过剪贴板快速导入连接字符串。
+跨平台：原生支持 Windows、macOS 和 Linux。
+仓库：https://github.com/osdodo/picordm
+lisp-in-types：用 Rust Trait System 实现的 Lisp 求值器
+作者完全利用 Rust 的类型系统（通过 Trait 编程）实现了一个 Lisp 解释器。这意味着所有的计算都在编译期完成，而不是在程序运行时。
+初衷：作者提到是因为“太无聊了”，所以决定挑战 Rust 类型系统的极限。尽管是在类型系统中实现的，该项目的功能却出奇地完整：
+基础语法：支持 defun（定义函数）、let（局部变量）、begin（顺序执行）和 apply。
+高级特性：甚至支持限定延续（Delimited Continuations），通过 call/ec 实现。
+数值计算：目前默认支持 0 到 8124 的数字。
+技术细节与局限：
+编译器负担：由于复杂的类型递归计算，运行该项目通常需要增加 rustc 的堆栈大小。
+可扩展性：作者在 build.rs 中生成了数字定义，用户可以修改它来支持更大的数字范围，但代价是编译时间和内存消耗会激增。
+计算模型：这证明了 Rust 的 Trait 系统是图灵完备的，可以用来编写复杂的逻辑，尽管这并不是它的设计初衷。
+仓库：https://github.com/playX18/lisp-in-types/
+讨论：基于完成的异步 IO 模式
+如何在 Rust 中以优雅且高性能的方式建模“基于完成”（Completion-based）的异步 I/O 模式（如 io_uring），以及 Rust 现有的异步生态对此支持的局限性。
+核心背景：极致性能的追求
+楼主（servermeta_net）正在开发一个基于 io_uring 的高性能 Web 服务器，目标是利用 Linux 内核 6.12+ 的最新特性实现零拷贝、零分配。
+惊人的数据：楼主声称其原型在 4 核环境下达到了 7000 万+ RPS（32 字节请求）和 20Gbps 的带宽（尽管社区对其准确性有争议，但这反映了 io_uring 的巨大潜力）。
+技术栈：使用了 io_uring（多扇区接收、批处理）、kTLS（内核态加密）、零拷贝缓冲区管理。
+面临的技术痛点
+尽管性能极高，但楼主遇到了“Rust 风格”建模的难题：
+状态机 vs Future：目前使用自定义状态机来管理请求，虽高效但难以编写和维护。楼主想知道如何将其转换为标准的 async/await 语法。
+缓冲区所有权：在“基于完成”的模型中，内核在 I/O 完成前拥有缓冲区的所有权。这与 Rust 传统的 AsyncRead/AsyncWrite（基于“就绪”/Readiness 模式，用户拥有缓冲区）冲突，导致楼主不得不大量使用 unsafe 代码。
+生命周期与取消：当一个异步操作被取消时，必须确保内核不再访问该内存，否则会发生内存损坏，这在 Rust 的 poll 模型下极难安全实现。
+对现有框架的评述
+讨论中深度剖析了现有 Rust 异步库在处理 io_uring 时的短板：
+Tokio：被认为“根基上就是错的”。因为 Tokio 是为 epoll（基于就绪通知）设计的，将 io_uring 强行塞入 Tokio 会导致跨线程传递 Ring 等不符合底层设计的做法，且无法发挥 io_uring 的批处理优势。
+Monoio / Compio / Glommio：这些库虽然比 Tokio 更贴近 io_uring，但仍被认为存在局限。例如 Monoio 依赖的底层库版本较旧，Compio 为了跨平台（Windows/Linux）在性能和特性上做了妥协。
+推荐关注：axboe-uring（更接近原作者 liburing 的实现）、ringolo、以及 without.boats 关于 io_uring 的深度解析博客。
+社区核心观点与建议
+所有权是关键：在 io_uring 中，Future 必须在操作期间“租借”或“锁定”缓冲区所有权。现有的 AsyncRead 接口已不适用，社区正在探索新的 Completion 驱动接口。
+批处理的力量：楼主强调，io_uring 的真正性能提升来自于“批处理提交/完成”以及减少内存屏障（Memory Fences），而目前的通用异步运行时往往在每个操作上都消耗了过多开销。
+不成熟的现状：大家公认 Rust 目前的异步标准（基于 poll 的 readiness 模型）与现代硬件/内核趋势（completion 模型）存在根本性不兼容，这可能需要 Rust 在编译器或标准库层面引入新的异步原语才能完美解决。
+总结结论： 这是一个关于“底层性能极限”与“高级语言抽象”之间冲突的讨论。它揭示了即便是在 Rust 中，想要在不牺牲安全性的前提下发挥 io_uring 的全部威力，仍然是一个尚未被完全攻克的难题。
+Reddit：https://www.reddit.com/r/rust/comments/1ptw1sk/modeling_modern_completion_based_io_in_rust/
+--
+From 日报小组 苦瓜小仔
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 262 | f015440 | https://rustcc.cn/article?id=052ee289-cd10-488f-8994-4dcb506816c8 | 2026-02-28 | weekly-newsletter-links ===
+【Rust日报】2026-02-28 Rust 还是 Zig 用于小型 WASM 数值计算？ - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-02-28 Rust 还是 Zig 用于小型 WASM 数值计算？
+Mike Tang
+发表于 2026-03-02 03:03
+Rust学习路径咨询：应该深入了解哪个crate？
+学习背景
+学习Rust已有一个月
+刚完成借用(borrowing)和函数部分的学习
+下一步计划学习生命周期(lifetimes)
+主要问题
+1. 如何巩固Rust基础？
+寻求建议以扎实掌握和理解Rust基础知识
+2. 异步编程学习规划
+Rust异步编程是接下来的学习路径
+询问除了Rust默认的async之外，是否有特定的crate需要学习
+何时学习这些crate：在学习async之前还是之后？
+https://old.reddit.com/r/rust/comments/1rgc5ww/what_crate_in_rust_should_i_understand_the_most/
+Rust 还是 Zig 用于小型 WASM 数值计算？
+一位开发者正在构建 numpy-ts（TypeScript 版的 NumPy 数值库），已完成 1.0 版本并覆盖了 94% 的 NumPy API。现在需要为计算密集型操作（如线性代数、排序等）选择 WASM 加速方案。
+测试结果
+性能和体积几乎相同：两种语言编译出的 WASM（启用 SIMD128）性能相当，压缩后体积均为 ~7.5 KB（5个内核文件）
+都通过 LLVM 编译，WASM 输出基本一致
+Rust 的优势
+生态系统更丰富：如需特殊数学函数（erf、gamma 等）支持更好
+开发者采用度更广：降低项目风险，社区支持更强
+Zig 的优势
+@setFloatMode(.optimized)：让 LLVM 自动向量化归约操作，无需手写 SIMD
+向量类型更符合人体工程学：@Vector(4, f64) 比 Rust 的 core::arch::wasm32 内置函数更易用
+无需 unsafe 包装：对于本质上是原始指针运算的代码，不需要 unsafe 块（在这种场景下 Rust 的借用检查器显得多余）
+https://old.reddit.com/r/rust/comments/1rgi2mh/rust_or_zig_for_small_wasm_numerical_compute/
+context-logger - Rust 结构化日志上下文库
+项目简介
+context-logger 是一个轻量级、符合人体工程学的 Rust 库，用于为日志添加结构化上下文信息。它增强了标准的 Rust log crate 生态系统，允许在不改变现有日志模式的情况下，为日志消息附加丰富的上下文信息。
+主要特性
+无缝集成：与现有的 Rust log crate 生态系统兼容
+上下文传播：自动将上下文信息附加到日志消息中
+异步支持：支持异步函数并能在 .await 点之间传播日志上下文
+基本使用方法
+添加依赖：在 Cargo.toml 中添加 context-logger、log 和 env_logger
+创建包装器：使用 ContextLogger 包装现有的日志记录器
+添加默认记录：可以设置默认的上下文字段（如版本号）
+创建上下文：使用 LogContext::new() 创建上下文并添加键值对
+进入上下文：调用 .enter() 激活上下文
+记录日志：正常使用 info! 等宏，上下文信息会自动附加
+异步上下文传播
+使用 FutureExt trait 的 .in_log_context() 方法
+上下文会自动在异步调用链中传播
+可以在任何位置使用 LogContext::add_record() 添加额外的上下文信息
+许可证
+MIT 许可证
+https://github.com/alekseysidorov/context-logger
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 263 | f015452 | https://rustcc.cn/article?id=ebb62462-6fbb-4b1c-83d4-cd58cad7e726 | 2026-03-15 | weekly-newsletter-links ===
+【Rust日报】2026-03-15  Rust开发者薪资指南2026 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-03-15  Rust开发者薪资指南2026
+Mike Tang
+发表于 2026-03-19 13:57
+bnum - Rust 任意精度整数库
+主要功能
+bnum 是一个 Rust 库，提供了灵活的任意精度整数类型，支持自定义位宽和溢出行为。
+核心特性
+泛型整数类型：Integer<S, N, B, OM> 支持：
+S: 有符号/无符号
+N: 位宽（任意大小）
+B: 内部表示
+OM: 溢出模式（wrapping/saturating/panic）
+便捷的宏：
+n!(): 创建整数字面量，支持类型推断
+t!(): 定义自定义整数类型
+代码示例说明
+多项式函数示例：
+// p(x) = 2x³ + 3x² + 5x + 7
+// 可接受任意位宽、任意符号、任意溢出行为的整数类型
+类型定义示例：
+U24w: 24位无符号整数，溢出时环绕（wrapping）
+I1044s: 1044位有符号整数，溢出时饱和（saturating）
+U753p: 753位无符号整数，溢出时触发panic
+溢出行为演示：
+环绕模式：p(U24w::MAX) 结果溢出后自动环绕
+饱和模式：p(I1044s::MAX) 结果溢出后固定为最大值
+Panic模式：p(U753p::MAX) 溢出会导致程序panic
+https://docs.rs/bnum/latest/bnum/
+Rust开发者薪资指南2026
+本指南提供了Rust开发者在不同经验水平、地区和行业的全面薪资数据（年度基本工资，以美元计）。
+按职位划分的薪资范围
+职位
+全球平均
+美国
+欧洲
+远程
+后端工程师
+$110K - $195K
+$150K - $270K
+$90K - $155K
+$115K - $220K
+系统工程师
+$120K - $210K
+$160K - $290K
+$100K - $165K
+$125K - $235K
+嵌入式工程师
+$105K - $185K
+$140K - $250K
+$85K - $150K
+$110K - $210K
+基础设施工程师
+$115K - $200K
+$155K - $280K
+$95K - $160K
+$120K - $230K
+区块链开发者
+$130K - $230K
+$170K - $320K
+$105K - $180K
+$135K - $260K
+数据库/数据处理工程师
+$130K - $225K
+$170K - $310K
+$105K - $175K
+$135K - $255K
+按工作经验划分的薪资
+初级（0-2年）：$75K - $120K
+中级（2-5年）：$120K - $185K
+高级（5-10年）：$170K - $280K
+资深/首席（10年以上）：$250K - $320K
+按地区划分的薪资
+美国：$150K - $320K
+欧洲：$90K - $170K
+英国：$95K - $180K
+德国：$90K - $165K
+荷兰：$85K - $160K
+远程（全球）：$115K - $250K
+远程与现场工作薪资对比
+现场（主要科技中心）：$140K - $290K
+混合（每周2-3天到岗）：$130K - $270K
+远程（完全分布式）：$115K - $250K
+按行业划分的薪资
+金融科技与区块链：$155K - $320K
+云基础设施：$145K - $290K
+网络安全：$140K - $275K
+汽车与嵌入式：$125K - $240K
+游戏与图形：$115K - $220K
+网络与电信：$130K - $255K
+数据库与数据处理：$150K - $310K
+影响薪资的关键因素
+经验水平 - 专业工作年限是薪资的最强预测指标
+地理位置 - 美国（旧金山、纽约、西雅图）薪资最高
+行业领域 - 金融科技、区块链和云基础设施公司支付溢价
+公司阶段与规模 - 后期创业公司和大型科技公司提供更高总薪酬
+开源贡献 - 活跃贡献者拥有更强的议价能力
+专业深度 - 分布式系统、编译器内部或性能优化等领域专家可获得更高薪酬
+薪资谈判建议
+研究市场行情 - 利用薪资指南了解市场价值
+考虑总薪酬 - 关注股权、奖金、福利、远程灵活性和职业发展预算
+强调专业技能 - 突出Rust特定专业知识和生态系统贡献
+利用竞争offer - 多个offer能增强谈判地位
+把握谈判时机 - 在收到书面offer后再谈判，而非初次面试时
+https://rustjobs.dev/salary-guide
+--
+From 日报小组 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 264 | f015493 | https://rustcc.cn/article?id=55f21f35-3a24-4eaf-9f68-0fdc3971c49b | 2026-05-05 | weekly-newsletter-links ===
+【Rust日报】2026-05-05 Embassy - 新一代嵌入式应用开发框架 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-05-05 Embassy - 新一代嵌入式应用开发框架
+Mike Tang
+发表于 2026-05-05 09:07
+Embassy - 新一代嵌入式应用开发框架
+Embassy 是一个用于嵌入式应用的现代化框架，利用 Rust 编程语言及其异步功能来编写安全、正确且高能效的嵌入式代码。
+核心特点
+Rust + 异步 ❤️ 嵌入式
+Rust 语言运行速度快、内存效率高，无需运行时、垃圾回收器或操作系统
+编译时内存和线程安全检查，强大的类型系统可在编译阶段捕获大量错误
+异步/等待（async/await）机制使嵌入式系统的多任务处理变得简单高效
+任务在编译时转换为状态机并协作运行，无需动态内存分配
+单栈运行，无需调整每个任务的栈大小
+取代传统 RTOS 内核上下文切换，性能更快、体积更小
+主要功能
+硬件抽象层（HAL）
+为多种硬件提供安全的 Rust API，无需直接操作寄存器
+支持 STM32、Nordic nRF 系列、树莓派 RP2040、ESP32 等芯片
+时间管理
+全局可用的时间 API，无需手动配置硬件定时器
+提供不会溢出的 Instant、Duration 和 Timer 类型
+原文链接：https://embassy.dev/
+Aube - 新一代 Node.js 包管理器
+Aube (发音 "ohb") 是一个快速的 Node.js 包管理器，可以无缝集成到现有的 JavaScript 和 TypeScript 项目中，无需迁移锁文件。
+核心亮点
+01 速度优势
+比 pnpm 快 4.6 倍
+比 bun 快 2.6 倍
+是目前最快的 Node.js 包管理器
+02 锁文件兼容性
+支持读写现有的 yarn.lock、pnpm-lock.yaml 或 package-lock.json
+无需强制团队进行迁移
+直接在原有锁文件上工作
+03 智能脚本运行
+aubr test 命令会在依赖变更时自动安装
+重复运行时自动跳过安装步骤
+提供 aubx 用于一次性工具执行
+04 磁盘空间节省
+比 npm 节省 90% 的磁盘空间
+原文链接：https://aube.en.dev/
+Rust 枚举转换实现的安全性问题
+背景
+一位开发者在编写国际象棋引擎时，希望实现枚举(enum)与数字之间的双向转换。虽然枚举转数字很简单（使用 as usize），但反向转换较为复杂。
+当前实现方案
+开发者使用了 unsafe 代码和 std::mem::transmute 来实现 usize 到 Piece 枚举的转换：
+检查输入值是否 ≤ 5
+使用 transmute 将 u8 强制转换为 Piece 枚举
+超出范围则返回错误
+核心问题
+开发者询问这种实现方式是否可靠，会不会在后续开发中产生问题。
+潜在风险
+使用 unsafe 代码需要格外小心
+transmute 依赖于枚举的内存布局，可能因编译器优化而改变
+如果未来修改枚举定义（如调整顺序、添加字段），可能导致未定义行为
+更安全的替代方案
+社区通常建议使用 match 语句或第三方库（如 num_enum、strum）来实现此类转换，避免使用 unsafe 代码。
+原文链接：https://www.reddit.com/r/rust/comments/1t372r1/is_this_a_bad_idea/
+Black Sea - 终端多人航海游戏
+Black Sea 是一款基于终端的多人航海游戏，游戏背景设定在斯德哥尔摩群岛。玩家可以通过真实的 GIS 海岸线数据驾驶船只，探索岛屿，并与其他玩家聊天。
+安装方式
+macOS 系统（通过 Homebrew）：
+直接下载二进制文件：
+macOS（Apple Silicon）：black-sea-client-macos-aarch64
+macOS（Intel）：black-sea-client-macos-x86_64
+Linux：black-sea-client-linux
+Windows：black-sea-client-windows.exe
+游戏操作
+按键
+功能
+方向键
+驾驶船只
+Enter
+发送聊天消息
+Esc
+退出游戏
+从源码构建
+系统要求： Rust 1.85+
+原文链接：https://github.com/dtennander/black-sea
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 265 | f015500 | https://rustcc.cn/article?id=bb9650e7-fa6d-4b2b-b066-5de61a6a5b53 | 2026-05-12 | weekly-newsletter-links ===
+【Rust日报】2026-05-12 iroh 1.0.0-rc.0 - 首个候选发布版本 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-05-12 iroh 1.0.0-rc.0 - 首个候选发布版本
+Mike Tang
+发表于 2026-05-12 09:08
+iroh 1.0.0-rc.0 - 首个候选发布版本
+iroh 发布了首个 1.0 版本的候选版本（rc.0）。iroh 是一个用 Rust 编写的模块化网络协议栈，用于在设备之间建立直接连接。经过四年开发和 50 多个版本迭代后，终于迎来了首个 1.0 候选版本。
+主要变更
+API 优化
+精简了 API 表面，消除了几乎所有来自 1.0 之前版本的类型重导出
+noq（QUIC 实现）也获得了 1.0 候选版本，将与 iroh 一起稳定发布
+改进了 NAT 穿透功能和修复了多个错误
+功能模块迁移
+为了实现独立的版本控制和发布周期，部分可选功能已迁移到独立的代码库：
+DhtAddressLookup 迁移至 iroh-mainline-address-lookup 包
+MdnsAddressLookup 迁移至 iroh-mdns-address-lookup 包
+AccessLimit 迁移至 iroh-util 包
+API 改进亮点
+路径观察 API 重新设计
+将原来的 PathWatcher 拆分为两个独立的基础组件：
+Connection::paths() - 返回当前打开路径的快照
+Connection::path_events() - 返回路径变化事件流
+原文链接：https://www.iroh.computer/blog/iroh-1-0-0-rc-0
+Ratty：一款支持内联 3D 图形的终端模拟器
+核心概念
+Ratty 是一个使用 GPU 渲染的终端模拟器，支持内联 3D 图形显示。它受 TempleOS 启发，使用 Rust 和 Ratatui 构建。
+灵感来源
+TempleOS 的独特设计：作者被 TempleOS 中 Terry Davis 设计的命令行功能所震撼——可以将图像、3D 网格和宏（可点击链接）直接插入命令行，而不仅仅是文本
+命令行中的精灵图：TempleOS 允许在源代码文件中直接包含精灵数据，实现代码与图形资源的统一管理
+创新理念：命令行成为一切操作的直接界面——编写代码、与系统交互和渲染图形都在同一个地方完成
+技术实现
+使用 Rust 编程语言
+基于 Ratatui 框架
+GPU 渲染支持
+设计了自定义终端图形协议
+项目意义
+Ratty 实现了“如果终端是 3D 的会怎样”这一设想，让终端光标可以是旋转的老鼠模型，整个终端环境支持 3D 渲染。
+原文链接：https://blog.orhun.dev/introducing-ratty/
+Ferrous-Browser：纯Rust浏览器自动化工具
+项目简介
+Ferrous-browser是一个快速、异步的Rust浏览器自动化库，通过Chrome DevTools Protocol (CDP)实现，无需Node.js依赖。
+核心优势
+零Node.js依赖 — 纯Rust实现，单个二进制文件
+异步优先 — 基于Tokio构建，无缝集成异步Rust项目
+正确的多页面隔离 — 追踪CDP会话ID，避免并发页面事件交叉污染
+无竞态条件 — 在触发命令前注册事件处理器
+人性化API — 受Playwright启发的locator()、evaluate()等接口
+主要功能
+导航等待模式：
+DomContentLoaded — 等待DOM解析完成
+Load — 等待所有资源加载（默认）
+NetworkIdle — 等待500ms无网络活动（适合SPA应用）
+定位器API：
+点击元素：locator("button#submit").click()
+输入文本：locator("input").type_text()
+原文链接：https://github.com/theoxfaber/ferrous-browser
+Spotify 零延迟歌词 TUI 工具 (Rust 实现)
+项目背景
+开发者因为无法忍受 Spotify Web API 的延迟，使用 Rust 构建了一个 Spotify 歌词工具。
+技术实现要点
+绕过 Web API：使用 zbus 监听用户会话中的 org.mpris.MediaPlayer2.Player D-Bus 接口
+架构设计：
+使用少量 tokio actors 和 mpsc 通道
+D-Bus 轮询组件
+60Hz 刷新率的计时器实现平滑插值
+LRCLIB 歌词获取器
+ratatui 循环处理界面
+开发挑战
+异步编程并非最大难点
+主要困难：在 NixOS 中处理 C 链接器，以生成能在其他发行版上正常运行的 100% 静态 MUSL 二进制文件
+反馈需求
+开发者希望获得关于 actors 之间通道同步的反馈意见
+项目地址：https://github.com/Jirevelaz/sptlrx-rs
+原文链接：https://github.com/Jirevelaz/sptlrx-rs
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 266 | f015507 | https://rustcc.cn/article?id=fcd8780b-a36d-4c4f-8a7c-64e56ec6f121 | 2026-05-19 | weekly-newsletter-links ===
+【Rust日报】2026-05-19 Needle-rs：纯Rust + WebAssembly的工具调用运行时 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-05-19 Needle-rs：纯Rust + WebAssembly的工具调用运行时
+Mike Tang
+发表于 2026-05-19 09:10
+Needle-rs：纯Rust + WebAssembly的工具调用运行时
+项目概述
+needle-rs 是一个纯Rust + WebAssembly实现的运行时环境，用于运行Cactus Compute开发的Needle模型。这是一个2600万参数的transformer模型，能够将（查询语句 + 工具列表）转换为JSON函数调用，仅需一次前向传播即可完成。
+核心优势
+轻量级部署：整个agent仅占23 MB，相比传统方案（如llama.cpp需700+ MB）大幅减小
+无需服务器：不需要API密钥，完全本地运行
+多平台支持：可部署到浏览器、边缘计算节点、CLI、Python和嵌入式系统
+隐私保护：数据不离开本地设备
+性能对比
+与OpenAI函数调用、llama.cpp等方案相比：
+部署大小：仅258 KB + 22 MB模型
+延迟：约280毫秒
+成本：完全免费
+准确度：相同的路由准确率
+技术特点
+编码器-解码器架构：编码器读取查询和工具定义，解码器逐token生成JSON函数调用
+INT4量化：使用4位量化降低内存占用，支持AVX2、NEON等加速
+受约束解码：确保输出始终是语法正确的JSON
+支持两种schema格式：兼容扁平格式和OpenAI格式
+贪婪解码：仅使用argmax，不支持随机采样
+原文链接：https://github.com/Geekgineer/needle-rs
+Weave - Git 的实体级语义合并工具
+Weave 是 Ataraxy Labs 开发的一款智能 Git 合并驱动程序，通过理解代码结构来解决 Git 无法处理的合并冲突。
+核心问题
+Git 采用基于行的合并方式，当两个分支在同一文件添加代码时（即使是完全不同的函数），Git 会因为行范围重叠而报告冲突。这种情况在多个 AI 代理协同工作时尤为常见，导致大量误报冲突需要人工介入。
+Weave 的解决方案
+Weave 实现了实体级合并机制：
+语义解析：使用 tree-sitter 将代码解析为语义实体（函数、类、JSON 键等）
+智能匹配：根据名称、类型和作用域匹配不同版本的实体
+实体级合并：
+不同实体的修改 → 自动解决
+同一实体的修改 → 尝试内部合并
+一方修改、一方删除 → 标记有意义的冲突
+性能对比
+测试场景对比（31个真实合并场景）：
+Weave: 31/31 清洁合并（100%）
+Mergiraf: 26/31（83%）
+Git: 15/31（48%）
+原文链接：https://github.com/Ataraxy-Labs/weave
+bonsai-bt v0.12.0 发布：引入实时可视化功能
+主要更新内容
+bonsai-bt crate 发布 v0.12.0 版本
+新增实时可视化功能，通过 visualize 特性标志启用
+可通过浏览器访问实时图形界面
+便于调试行为树和执行流程
+项目信息
+仓库地址：https://github.com/Sollimann/bonsai
+关于行为树
+行为树本质上源自有限状态机（FSM）
+相比有限状态机，行为树在状态空间增长时，更易于维护和构建复杂的条件逻辑
+原文链接：https://github.com/Sollimann/bonsai
+Rust应用的Rails风格REPL工具
+作者创建了名为rhai-console的Rust crate，旨在为Rust应用提供类似Ruby Rails Console或Python Django Shell的运维REPL功能。
+主要特点
+交互式REPL和脚本运行器：用户只需提供应用状态和模块注册，即可获得一个CLI工具
+基于Rhai脚本层：使用Rhai作为脚本引擎，简化了运维任务DSL的配置
+运维导向：专为应用的运维操作设计，可直接与应用代码交互
+项目状态
+当前版本：v0.0.1（早期阶段，存在一些粗糙之处）
+开发者欢迎反馈和试用
+相关资源
+博客文章：https://iancarey.ie/blog/rhaiconsole（介绍构建动机和灵感来源）
+Crate地址：https://crates.io/crates/rhai-console
+源代码：https://github.com/careyi3/rhai-console
+示例应用：https://github.com/careyi3/rhai-ops
+原文链接：https://iancarey.ie/blog/rhaiconsole（介绍构建动机和灵感来源）
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 267 | f015523 | https://rustcc.cn/article?id=83c61b63-d413-47d2-b902-6b760487c65e | 2026-06-04 | weekly-newsletter-links ===
+【Rust日报】2026-06-04 fff：专为 AI Agent 设计的最快文件搜索工具包 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-06-04 fff：专为 AI Agent 设计的最快文件搜索工具包
+Mike Tang
+发表于 2026-06-04 09:04
+fff：专为 AI Agent 设计的最快文件搜索工具包
+fff（dmtrKovalenko/fff）是以 Rust 为核心实现的高性能文件搜索工具包，最初为 Neovim 插件，现已扩展为支持 Claude Code、Codex、OpenCode、Cursor 等主流 AI 编程工具的 MCP Server。相比 ripgrep / fzf 等工具，fff 在长驻进程场景下速度显著更快，搜索结果更精准。
+核心能力
+ffgrep：内容搜索，支持路径过滤、大小写、上下文与游标分页；自动检测正则，零匹配时回退到模糊搜索
+fffind：路径与文件名搜索，基于 frecency 排名（常用文件优先）
+频次记忆（Frecency）：自动从 git 历史热身，真实使用排名逐步迭代
+定义优先提示：Rust 侧识别代码定义行，减少 LLM prompt 消耗
+Git 感知注解：Modified/Untracked/Staged 文件自动标注，让 Agent 优先抓住正在修改的文件
+MCP Server、Neovim 插件、Node.js 包三种模式均支持；Claude Code 用户一行命令即可接入。目前 GitHub 7500+ 星，今日新增 95 星。
+原文链接：https://github.com/dmtrKovalenko/fff
+driftwm：trackpad 优先的无限画布 Wayland 混成器
+driftwm 是用 Rust + Smithay 构建的实验性 Wayland compositor：窗口以原生尺寸生活在无限 2D 画布上，显示器只是这张画布的"摄像机"视角。相邻窗口自动吸附成隐式分组，三指滑动平移，双指捏合缩放，四指跳转。不做 tiling，不做 workspaces，为笔记本用户提供全新的大屏感工作流。目前处于实验阶段，GitHub 1016 星，今日新增 70 星。
+原文链接：https://github.com/malbiruk/driftwm
+RustFS：比 MinIO 快 2.3 倍的 S3 兼容对象存储
+RustFS 是用 Rust 编写的开源 S3 兼容高性能分布式对象存储系统（Apache 2.0），4KB 小对象读写速度比 MinIO 快 2.3 倍，100% S3 API 兼容，兼容 1500+ 应用与集成，二进制不足 100MB。以 Rust 内存安全优势直接转化为存储系统可靠性与高并发能力，无 AGPL 知识产权风险，企业友好。
+原文链接：https://github.com/rustfs/rustfs
+abtop：监控 AI 编程 Agent 的 htop
+abtop 是用 Rust 实现的类 htop 终端监控工具，专门实时追踪 Claude Code、Codex CLI 等 AI 编程 Agent 会话状态：token 消耗、context window 占用、API 速率限制、端口监听状态一览无余。对于同时跑多个 Agent 任务的开发者，避免 token 超限或 rate limit 撞墙时才发现问题。GitHub 2457 星，今日新增 21 星。
+原文链接：https://github.com/graykode/abtop
+From Rust中文社区 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 268 | f015524 | https://rustcc.cn/article?id=b2fe4131-5600-4031-88fc-577012d0e7c0 | 2026-06-05 | weekly-newsletter-links ===
+【Rust日报】2026-06-05 NVIDIA OpenShell：AI Agent 的安全私有运行时 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-06-05 NVIDIA OpenShell：AI Agent 的安全私有运行时
+Mike Tang
+发表于 2026-06-05 09:04
+NVIDIA OpenShell：AI Agent 的安全私有运行时
+NVIDIA 开源了 OpenShell（NVIDIA/OpenShell），一个为自主 AI Agent 设计的安全、私有沙箱运行时，用 Rust 构建，通过声明式 YAML 策略防止未授权文件访问、数据泄露和不受控网络活动。
+核心能力
+沙箱执行：每个 Agent 运行在独立容器中，策略强制出口路由，支持 Docker/Podman/MicroVM
+L7 精细策略：HTTP 方法和路径级别的允许/拒绝规则，无需重启即可热更新
+内置 Agent 支持：默认包含 claude、opencode、codex、copilot，可直接在沙箱内运行
+Kubernetes 路径：实验性 Helm chart，已发布至 GHCR
+快速安装：一行 curl 安装或 uv tool install openshell
+OpenShell 定位为"AI Agent 时代的基础设施层"，将每次 Agent 调用限定在可审计的策略边界内。GitHub 6769 星，今日新增 77 星。
+原文链接：https://github.com/NVIDIA/OpenShell
+Microsoft MXC：Rust 驱动的策略化跨平台 AI 沙箱
+Microsoft 开源了 MXC（microsoft/mxc），一个用 Rust 实现核心的跨平台沙箱执行系统，专为运行不可信代码（AI 模型输出、插件、工具调用）设计，支持 Windows、Linux 和 macOS。
+设计亮点
+多沙箱后端：ProcessContainer、Windows Sandbox、LXC、Bubblewrap、Seatbelt（macOS）、MicroVM（NanVix）、Hyperlight、WSLC，统一 JSON schema 和 TypeScript SDK
+策略驱动：文件系统路径、网络代理、UI 策略（剪贴板/显示/GUI）可独立声明
+状态感知生命周期：provision → start → exec → stop → deprovision 完整沙箱流程
+TypeScript SDK：@microsoft/mxc-sdk，支持一次性和状态感知两种 API 模式
+目前为早期预览，当前策略配置存在已知宽松情况，不应视为安全边界。GitHub 364 星，今日新增 100 星。
+原文链接：https://github.com/microsoft/mxc
+herdr：住在终端里的 AI Agent 多路复用器
+herdr（ogulcancelik/herdr）是用 Rust 构建的终端原生 Agent 多路复用器，专为同时运行多个 AI 编程 Agent 设计，提供工作区（workspace）、标签页（tab）、分栏（pane）三级组织，所有 Agent 状态（blocked / working / done）一栏尽览。
+核心特性
+后台服务器模式：关闭客户端后 Agent 继续运行，随时重新 attach
+原生终端视图：显示 Agent 自己的终端，而非"解释层"
+Agent 感知：通过进程名和终端输出识别 blocked/working/done/idle 状态
+官方集成：支持 Claude Code、Codex、OpenCode、GitHub Copilot 的 session 状态恢复
+支持 Linux 和 macOS，一行 brew install herdr 安装
+GitHub 4307 星，今日新增 216 星（今日 Rust 趋势榜最高）。
+原文链接：https://github.com/ogulcancelik/herdr
+skills-manager：统一管理 15+ AI 编程工具技能的桌面应用
+skills-manager（xingkongliang/skills-manager）是用 Rust + Tauri 构建的轻量级桌面应用，帮助开发者在 Cursor、Claude Code、Codex、Copilot 等 15+ AI 编程工具之间统一管理、同步和组织 Agent 技能。
+主要功能
+统一技能库：从 Git 仓库、本地目录、.zip/.skill 压缩包或 skills.sh 市场安装
+Marketplace + AI 搜索：内置市场浏览和关键词搜索，支持 SkillsMP AI 检索
+预设（Presets）：将技能分组为命名预设，一键激活/停用
+跨工具同步：单击通过 symlink 或 copy 将技能同步到任意工具
+适合同时使用多个 AI 编程工具的开发者，避免"技能散落各处"的困扰。GitHub 1923 星，今日新增 35 星。
+原文链接：https://github.com/xingkongliang/skills-manager
+From Rust中文社区 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+还没有评论
+1
+共 0 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+
+=== ROW 269 | f015528 | https://rustcc.cn/article?id=3bcf235b-40a8-464e-9d16-49e374db4769 | 2026-06-09 | weekly-newsletter-links ===
+【Rust日报】2026-06-09 TokioConf 2026 视频全部公开，2027 大会落地波特兰 - Rust语言中文社区
+Rust语言中文社区
+Search
+RSS
+帐户
+< 返回版块
+【Rust日报】2026-06-09 TokioConf 2026 视频全部公开，2027 大会落地波特兰
+Mike Tang
+发表于 2026-06-09 09:07
+TokioConf 2026 视频全部公开，2027 大会确定落地波特兰
+Tokio 团队宣布：首届 TokioConf 2026 的所有演讲视频已在 YouTube 公开（播放列表含全部场次）。同时官宣了 2027 年续集：
+时间：2027 年 4 月 26–27 日
+地点：美国俄勒冈州波特兰
+会场交流催生了新 API 提案——spawn_compute（为 CPU 密集型任务提供独立线程池），目前已开放 Issue 讨论
+本届 TokioConf 视频覆盖 async Rust 运行时核心议题，可作为深入理解 Tokio 架构、FutureLock、异步取消、调度策略的第一手资料。
+视频列表：https://www.youtube.com/playlist?list=PLgVIJ9TpEgOmHj0ADDpf-qGckYEJs4QCE
+原文链接：https://tokio.rs/blog/2026-05-29-tokioconf-2026-videos
+结构感知模糊测试实验：生成式 vs 变异式，哪种更有效？
+Rust 模糊测试生态核心维护者 fitzgen（Wasmtime、cargo-fuzz、libfuzzer-sys、arbitrary、wasm-smith 作者）发布了一项系统性实验报告，比较了结构感知模糊测试中生成式与变异式策略的代码覆盖率。
+实验设计：以 WebAssembly 合法指令序列为载体，实现了生成式（含三种子策略）和变异式两大方向，以 Wasmtime 为被测目标，基于 libfuzzer-sys 对比随时间积累的代码覆盖率。
+生成式：① 无约束生成 + 后修复 pass；② 自底向上正向生成；③ 自顶向下逆向生成
+变异式：随机插入/删除/替换指令 + 相同修复 pass 确保合法性
+结论：生成式覆盖更宽泛，变异式在深挖已知语料路径上有优势。报告含量化对比数据，对需要为编译器、VM、协议设计 fuzz 方案的 Rustaceans 有直接参考价值。
+原文链接：https://fitzgen.com/2026/06/01/structure-aware-fuzzing-experiment.html
+Q1 2026 Rustls 性能报告：与 OpenSSL、BoringSSL 的横向对比
+Prossimo（ISRG 内存安全项目）发布 2026 年第一季度 Rustls 性能测评，覆盖握手吞吐量、延迟、内存占用，与 OpenSSL、BoringSSL、aws-lc-rs 等主流 TLS 实现横向对比。
+主要结论：
+握手密集型场景（如短连接服务）下，Rustls 吞吐量已与 OpenSSL/BoringSSL 持平或超越
+使用 aws-lc-rs 密码学后端相比默认 ring 后端有显著性能提升
+内存安全的实现代价在现代硬件上几乎可忽略不计
+Rustls 是纯 Rust 实现的高性能 TLS 库，无需依赖 OpenSSL，已被 Firefox 部分组件、Nginx（rustls-mod）等采用。本报告为正在评估 TLS 替换方案的团队提供了数据依据。
+原文链接：https://www.memorysafety.org/blog/26q1-rustls-performance/
+From Rust中文社区 Mike
+社区学习交流平台订阅：
+Rustcc论坛: 支持rss
+微信公众号：Rust语言中文社区
+评论区
+写评论
+evolighting
+2026-06-09 11:51
+说道Tokio,这是目前异步rust的事实标准了吗?
+1
+共 1 条评论, 1 页
+友情链接：
+Ideavibes.ai
+| Ruby China
+| Mike Tang X
+| Alex Zhang X
+©2016~2020 Rust.cc 版权所有
+Powered by
+Forustm &
+Rusoda &
+Sapper
+蜀ICP备20010673号-1
+

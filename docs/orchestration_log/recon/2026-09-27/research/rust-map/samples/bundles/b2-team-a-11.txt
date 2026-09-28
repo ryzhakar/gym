@@ -1,0 +1,1719 @@
+=== ROW 55 | f010976 | https://github.com/rust-lang/rfcs/pull/3503 | 2024-04-23 | rfc;twir-links ===
+RFC: Syntax for embedding cargo-script manifests
+
+---
+
+@epage · 2023-09-26T19:40:34Z:
+[Rendered](https://github.com/rust-lang/rfcs/blob/master/text/3503-frontmatter.md)
+
+This is for the T-lang side of #3502
+
+Example:
+````rust
+#!/usr/bin/env cargo
+
+---
+[dependencies]
+clap = { version = "4.2", features = ["derive"] }
+---
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Args {
+    #[clap(short, long, help = "Path to config")]
+    config: Option<std::path::PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+    println!("{:?}", args);
+}
+````
+
+[FCP](https://github.com/rust-lang/rfcs/pull/3503#issuecomment-1930765966)
+
+---
+
+@thomcc · 2023-09-27T00:28:54Z:
+In [PL/Rust](https://github.com/tcdi/plrust) (a Rust subset that works as a postgres procedural language handler) we use a somewhat hacky syntax like (see <https://github.com/tcdi/plrust/blob/main/doc/src/dependencies.md> for example source)
+
+```rs
+[dependencies]
+rand = "0.8"
+
+[code]
+use rand::Rng;
+Ok(Some(rand::thread_rng().gen()))
+```
+
+I greatly prefer the approach in this RFC (and will likely push PL/Rust transition to it if the RFC is accepted) but it's probably worth noting as prior art.
+
+---
+
+@bstrie · 2023-09-27T00:36:09Z:
+I would like to consider alternative 7, the extended shebang. I don't think the backticks and the redundant `cargo` specifier should be necessary, producing this:
+
+```
+#!/usr/bin/env cargo
+# [dependencies]
+# foo = "1.2.3"
+
+fn main() {}
+```
+
+I think this looks quite good. It's fewer lines than the proposed syntax, and mirrors both the shebang syntax and the attribute syntax.
+
+I understand that people might want this to be generalizable/extensible, but this could suffice for now and any discussion about how to generalize the "info" portion can be left for a future discussion. If people think that it's important to make it generalizable right now, then I'd be interested to hear some concrete use cases.
+
+EDIT: although I suppose an unmentioned downside of this is that `# [dependencies]` might look a bit *too* much like an attribute.
+
+---
+
+@est31 · 2023-09-27T00:42:32Z:
+If you think this RFC a little bit further, then you could generalize this to make rustc ignore all ``` delimitered blocks, to say that rustc should just ignore all these sections and leave them to other tools similarly to how it does it already for the shebang. And then you'd see how similar triple backtick blocks are to `/* */` comments. From there to just adding `/* */` comments to the AST it's only a small step.
+
+IMO it's bad style to add cargo specific extensions to Rust's syntax. Just say that ``` delimitered blocks are ignored by rustc and that parser implementations are suggested to add them.
+
+---
+
+@epage · 2023-09-27T00:42:42Z:
+> In [PL/Rust](https://github.com/tcdi/plrust) (a Rust subset that works as a postgres procedural language handler) we use a somewhat hacky syntax like (see https://github.com/tcdi/plrust/blob/main/doc/src/dependencies.md for example source)
+
+Thanks!
+
+I've added this as prior art and would love more interoperability (one of the stated motivations for the cargo script RFC)
+
+---
+
+@epage · 2023-09-27T00:51:36Z:
+> If you think this RFC a little bit further, then you could generalize this to make rustc ignore all ``` delimitered blocks, to say that rustc should just ignore all these sections and leave them to other tools similarly to how it does it already for the shebang. And then you'd see how similar triple backtick blocks are to `/* */` comments. From there to just adding `/* */` comments to the AST it's only a small step.
+
+Is this meant to positive suggest something or to point out a slipper slope?  I'm not too sure the intent.
+
+> IMO it's bad style to add cargo specific extensions to Rust's syntax. Just say that ``` delimitered blocks are ignored by rustc and that parser implementations are suggested to add them.
+
+I'm not seeing how this is different than the suggested future state. We are starting with it being locked to cargo initially as we work out the design / usage and then can remove that restriction which is noted Future Possibilities.
+
+---
+
+@Aloso · 2023-09-27T13:43:44Z:
+I feel like 'front matter' would be a better syntax:
+
+- People know that it has to be the first thing in the file, which is even implied from the name. With ` ```cargo `, it is not immediately obvious that it can't appear in the middle or at the end of a file
+
+- It better conveys the purpose of the syntax: Front matter is used to add metadata to a file, while markdown code blocks are typically used to highlight some content as code
+
+- The proposed syntax only allows a subset of CommonMark code blocks. The CommonMark spec allows both ` ``` ` and `~~~` as code fences; it allows code fences to be indented by up to 3 spaces; and it allows the closing code fence to be longer than the opening code fence. Deviating from the CommonMark spec could lead to confusion, and implementing the spec would add a lot of complexity. Front matter on the other hand is much easier to parse correctly (if the content is just parsed as "raw text" by rustc)
+
+- The proposed syntax blurs the line between source code and documentation comments (where markdown is already supported). So people might incorrectly assume that doc-tests can appear outside of doc comments, or that ` ```cargo ` also works inside a doc comment.
+
+To address the mentioned downsides:
+
+> - Too general that people might abuse it
+
+I actually like that it is more general (it doesn't use the word 'cargo'), so it can be used for other build systems as well. Rust _the language_ shouldn't require any particular build system. What is considered 'abuse' is subjective; allowing front matter might enable various other use cases, and I wouldn't call them 'wrong' just because they're not what this feature was originally intended for.
+
+> - We've extended the frontmatter syntax, undoing some of the "familiarity" benefit
+
+On the other hand, familiarity with markdown syntax might backfire because the _semantics_ are so different here.
+
+> - People are used to YAML going in frontmatter (though some systems allow other syntaxes)
+
+We could use `+++` front matter instead of `---`.
+
+> - Doesn't feel very rust-like
+
+Care to elaborate?
+
+---
+
+@VitWW · 2023-09-27T16:15:17Z:
+Alternative 8: several loaders
+```rust
+#!/usr/bin/env cargo
+[dependencies]
+foo = "1.2.3"
+
+#!/usr/bin/rustc
+fn main() {}
+```
+
+---
+
+@est31 · 2023-09-28T01:31:22Z:
+> Is this meant to positive suggest something or to point out a slipper slope? I'm not too sure the intent.
+
+My intent was to suggest that the feature suggested by this RFC is quite close already to the solution I have been advertising multiple times already, using special kinds of comments.
+
+> I'm not seeing how this is different than the suggested future state.
+
+The suggested future state is to allow multiple specific specifiers and have them mean different things to cargo.
+
+What I am suggesting is that cargo should still error when it finds the backtick blocks in other places than the beginning and with other headers than `cargo`. But the error should not be at the parser level, but at the cargo level. rustc shouldn't hardcode the string "cargo", but just leave triple backticked things to preprocessors like cargo.
+
+> We are starting with it being locked to cargo initially as we work out the design / usage and then can remove that restriction which is noted Future Possibilities.
+
+I don't think much is gained from restricting it at the parser level in rustc: I doubt that we ever want to do rustc specific processing of any of the backtick blocks. If you want to forbid them initially, you can also forbid them at the cargo level.
+
+I'm fine with adding cli args to rust that were added because of cargo, but they were usually formulated quite generically. cargo passes a bunch of cli args to rustc that could be expressed much more concisely if one could just say "cargo mode" (e.g. json error output, etc). But it doesn't, and that's the better design choice. Similarly, here, I think it is fine to add triple backticks to the language so that tooling like rustfmt understands that it should not touch it, and so that parser developers like syn have something specified to work with.
+
+---
+
+@petrochenkov · 2023-09-28T03:45:01Z:
+I don't think that lexical structure, the "foundation" of the language, should be extended to support a build system feature.
+
+From the language point of view the new added data is a comment.
+Rust already supports all kinds of comments, regular and doc, at crate and module roots, the new data should also fit into the existing setup.
+
+It can always be reconsidered if the feature proves to be super popular in the future, in which I'm not sure.
+
+---
+
+@Aloso · 2023-09-28T04:52:49Z:
+@est31
+> If you want to forbid them initially, you can also forbid them at the cargo level.
+
+I don't think that's possible, because cargo doesn't look at the Rust source files, only the manifest (except when the manifest happens to be a Rust script).
+
+---
+
+@jplatte · 2023-09-28T06:35:41Z:
+The latest comments just got me thinking: even if we don't want to use comment syntax, does rustc really need to parse the header? Could cargo possibly just pass an offset (idk if bytes or lines is better) into the file at which rustc should start parsing? That would allow experimentation with all kinds of build system headers in different build tools without further changes to rustc. 
+
+---
+
+@epage · 2023-09-28T13:48:22Z:
+> I don't think that lexical structure, the "foundation" of the language, should be extended to support a build system feature.
+> 
+> From the language point of view the new added data is a comment. Rust already supports all kinds of comments, regular and doc, at crate and module roots, the new data should also fit into the existing setup.
+> 
+> It can always be reconsidered if the feature proves to be super popular in the future, in which I'm not sure.
+
+We need a block of text that is generally ignored by the language but has special semantics.  We already have a similar concept baked into the language, doc comments.  Those are for a specific set of tools/applications (rustdoc).  We are needing something similar.  We can make a new form of structured comment which would be a breaking change and require an edition to start using which puts a specific deadline on this feature or requires us waiting 4 more years for this.  Another problem with basing it off comment syntax is they need a full rust lexer / parser to extract which is fine for rustdoc as it needs to be grammar aware but is terrible for random tools.  We could restrict this new structured comment syntax but that would break from users expectations in working with them.
+
+---
+
+@epage · 2023-09-28T14:01:27Z:
+> The latest comments just got me thinking: even if we don't want to use comment syntax, does rustc really need to parse the header? Could cargo possibly just pass an offset (idk if bytes or lines is better) into the file at which rustc should start parsing? That would allow experimentation with all kinds of build system headers in different build tools without further changes to rustc.
+
+If we did something like that, I can only see that existing for the purpose of [rust compiling bundled code](https://internals.rust-lang.org/t/jar-for-rust-single-file-crate-support-for-rustc/19576/6) or as a nightly-only feature for experimenting.  For this to be used widely by tools, this is making a wild west where we throw interoperability out the window.
+
+Interoperability is one of the goals with cargo-script.   We need a syntax that we can get cargo, the play ground, rust analyzer, [random editor plugins](https://github.com/Saecki/crates.nvim), etc to be able to work with.
+
+I also feel like doing something like this means the file is no longer "rust" and we'd need a new extension.  I don't think that cognitive load is worth it (and there is little precedence for doing so among the [various solutions](https://dbohdan.com/scripts-with-dependencies)).  This also has an ecosystem cost as tooling has to be updated and percolate out with support for the new extension.  The delays from this also impacts the usability of this feature.
+
+---
+
+@est31 · 2023-09-29T02:11:20Z:
+@Aloso 
+
+> > If you want to forbid them initially, you can also forbid them at the cargo level.
+>
+> I don't think that's possible, because cargo doesn't look at the Rust source files, only the manifest (except when the manifest happens to be a Rust script).
+
+Yeah and only there do these things have meaning, or we care about them. I think that's the setup we should aim for.
+
+@jplatte 
+
+> Could cargo possibly just pass an offset (idk if bytes or lines is better) into the file at which rustc should start parsing?
+
+In fact, there is such parameters already, namely env vars `UNSTABLE_RUSTDOC_TEST_LINE` and `UNSTABLE_RUSTDOC_TEST_PATH`. Named that way as they were added for `rustdoc`.
+
+Note that even with these parameters, one still needs to think about rustfmt, and there is some independent parsers of rust as well.
+
+@epage 
+
+> We need a block of text that is generally ignored by the language but has special semantics. We already have a similar concept baked into the language, doc comments. Those are for a specific set of tools/applications (rustdoc). We are needing something similar.
+
+100% agree with this.
+
+>  We can make a new form of structured comment which would be a breaking change and require an edition to start using which puts a specific deadline on this feature or requires us waiting 4 more years for this.
+
+No edition is needed. cargo-script is a novel feature, so in theory, any input to cargo-script would be possible. If you want, you could make it parse java :). It would be nice however if rust with embedded manifests would still be something that e.g. rustfmt can process. With comments, code paths/tools outside of cargo-script would just treat them as comments. Say when this is found in a multi-file package, or via some other build system, those will treat these sections as comments and ignore them.
+
+> Another problem with basing it off comment syntax is they need a full rust lexer / parser to extract which is fine for rustdoc as it needs to be grammar aware but is terrible for random tools. We could restrict this new structured comment syntax but that would break from users expectations in working with them.
+
+The restrictions you would need wouldn't be larger than the restrictions existing for `//!` rustdoc tags already, or the restrictions that this RFC puts on ```s. I cannot speak for @petrochenkov but personally I would be really happy if every time this RFC mentions triple backslashes, you'd replace the mention with `/*%` or `*/` for where you would have placed the closing triple backslash.
+
+The `rustc_lexer`  crate is 100% stable Rust so that re-use is easy. I think it has everything cargo needs for parsing the `/*% ... */` blocks.
+
+Cargo can then, for future compat sake, make a full lexing run over the .rs manifest and error for any `/*% ... */` block that is not at the top of the file right after the shebang. rustc would still treat them as comments, as would rustfmt. Eventually, rustfmt could gain support to format these manifests like is proposed for `Cargo.toml`, at which point rustc would need some minor parsing support, but that could be totally opportunistic and not result in an error if something invalid is found.
+
+---
+
+@epage · 2023-09-29T02:24:43Z:
+> No edition is needed. cargo-script is a novel feature, so in theory, any input to cargo-script would be possible. If you want, you could make it parse java :). It would be nice however if rust with embedded manifests would still be something that e.g. rustfmt can process. With comments, code paths/tools outside of cargo-script would just treat them as comments. Say when this is found in a multi-file package, or via some other build system, those will treat these sections as comments and ignore them.
+
+While cargo script is a novel feature, my comment was about giving syntactic meaning to these comments like we do for doc comments.  That applies everywhere.
+
+> The restrictions you would need wouldn't be larger than the restrictions existing for //! rustdoc tags already, or the restrictions that this RFC puts on ```s. 
+
+We can put those kinds of restrictions on them but then we are breaking users expectations for formatting of comment syntax.
+
+> The rustc_lexer crate is 100% stable Rust so that re-use is easy. I think it has everything cargo needs for parsing the /*% ... */ blocks.
+
+If we need to pull in rustc_lexer, then that doesn't work for [random editor plugins](https://github.com/Saecki/crates.nvim).  It also adds logistical problems (e.g. cargo gets published but that crate isn't regularly published, publish order between the two repos, etc)
+
+---
+
+@epage · 2023-09-29T18:22:09Z:
+@est31 
+> The suggested future state is to allow multiple specific specifiers and have them mean different things to cargo.
+
+I had over looked this comment before.  I think I was unclear; that is not a suggested future state but a "in case we need it".  I tried to clarify that in 97ca09a
+
+---
+
+@est31 · 2023-09-30T23:32:27Z:
+> While cargo script is a novel feature, my comment was about giving syntactic meaning to these comments like we do for doc comments. That applies everywhere.
+
+To the end user? Yes. But the "end user" view of a language is broken all the time. Say when `todo!()` is added, suddenly each place that uses `unimplemented!()` is legacy. the times someone has `/*% */` comments in their code should be quite limited. There is no need for an edition boundary there, but even if, we have the 2024 edition around the corner.
+
+---
+
+@epage · 2023-10-03T21:30:18Z:
+> > While cargo script is a novel feature, my comment was about giving syntactic meaning to these comments like we do for doc comments. That applies everywhere.
+> 
+> To the end user? Yes. But the "end user" view of a language is broken all the time. Say when `todo!()` is added, suddenly each place that uses `unimplemented!()` is legacy. the times someone has `/*% */` comments in their code should be quite limited. There is no need for an edition boundary there, but even if, we have the 2024 edition around the corner.
+
+I'm not referring to user perception but how we parse the syntax.
+
+And yes, we have an edition right around a corner but it would be very limiting if a feature like this can only b used with `edition="2024"` or newer.
+
+---
+
+@ahicks92 · 2023-10-04T01:09:16Z:
+I think it's worth noting that the proposed syntax exactly reverses the meaning of fenced code blocks: these "turn code off" but in markdown they turn code on.
+
+I also think it's worth leaving a fly-by comment at least to advocate for not using markdown fenced code blocks (I will try to respond; personal life means I may not, thus fly-by. I care but time).
+
+It seems to me that the biggest motivation for this is perceived learnability, but the effect is that in all contexts that use markdown not taking the extra step of escaping means breaking the code.  This is called out in the RFC but if I don't have a lot of time and I want to give someone a repro of something I want to just copy/paste it and not remember that there's this extra specific Rust step.  Someone has to deal with that.  I am almost sure that even Rust veterans reporting issues who happen to be in a hurry at the moment are going to forget.  It's an annoying chore for the reporter or an annoying chore for the maintainer and it's often already hard enough to get people reporting/finding time to deal with things.  Of course if this is ever extended that goes from annoying to potentially much more problematic: should it ever not only be used at the top of files, then it's time to play hunt the problems and, from that perspective, begins closing doors to any future extensions.  The only advantage I can see for making this choice is learnability, and I'm skeptical that the effect is as large as it seems (for one thing Jira doesn't really use markdown as it is; the implicit assumption is that a new coder knows markdown).
+
+The static site generator alternative of using `---` is just as learnable: "this is like insert-blog-thing, we will learn about all the content later".  But without the foot-guns.
+
+I will add that I was involved in another discussion like this back on the un-indented strings RFC, was told in that discussion that fences could still be escaped, and had to look it up for this comment anyway.  Not only for fences, but how to write \`\`\` by itself in a sentence.  Not to mention that markdown isn't exactly a standard beast so who knows if what I used on GitHub works elsewhere?  I don't personally know of problematic implementations but given the lack of standards/conformation to spec, are we even sure there isn't some issue tracker somewhere where "overloading" markdown like this isn't possible because it doesn't respect the escaping?  It seems to me that the unspoken assumption is "if x claims to be using markdown, then x will work in this specific way" and that's never really been true.
+
+TLDR: it really feels messy when there's other non-overloaded syntactical constructs that would work, most of which are even in the RFC.  Learners only learn it once, the rest of us deal with it forever
+
+---
+
+@epage · 2023-10-04T01:35:36Z:
+> TLDR: it really feels messy when there's other non-overloaded syntactical constructs that would work, most of which are even in the RFC. Learners only learn it once, the rest of us deal with it forever
+
+If advocating for another solution, please also address the concerns with that format.
+
+---
+
+@epage · 2023-10-04T02:06:55Z:
+> it's obviously up to the cargo team to decide on the final format, though IMHO the doc-comment alternative would be much more beneficial and easier to support across the ecosystem since no parser changes are necessary to support files with an embedded manifest.
+
+Sorry, forgot to call this out earlier but I think an important note for anyone reviewing this RFC is that this is not a cargo team decision but a language team decision.  There are subjective aspects of this.  There are aspects where people will prioritize things differently than others.  I've geared things towards what I expect will work for the language team and will adjust as they direct otherwise.  This does not mean that input isn't useful but it has already improved the RFC and can help provide more perspectives for my recommendation and for the language team in their decision.   Let's make sure we recognize that multiple experienced, well reasoned people can come to different conclusions on this and it might not look like our ideal (myself included).
+
+---
+
+@ahicks92 · 2023-10-04T15:53:13Z:
+I would be happy with any other option.  I'm not addressing specific alternatives because all other alternatives have two extremely useful properties:
+
+- There are no questions over what a markdown implementation does.
+- At 2 AM or whatever, when I'm in a hurry, etc, and I have a repro or something like a useful devops script/utility, ctrl+a ctrl+v works for me and also doesn't introduce problems for the maintainer because I forgot a step which is unnecessary in any other language I know (or reversed, if I'm the maintainer, etc).
+
+I am not aware of any other language which knowingly decided that requiring editing the program in order to paste into issue trackers etc. would be necessary because it chose to embed a subset of markdown because (as the RFC currently reads to me)it decided that was the most learnable option.  And indeed, here is what I would consider a likely problem with learnability anyway:
+
+- Student 1 figures out something neat or a bug, or whatever and wants to share.
+- Student 1 goes to whatever's using markdown to share with student 2, but makes the mistake of not fixing the markdown.
+- Student 2 copy/pastes and now the program doesn't work and they have to fix it.
+
+I'm not the person to ask about readability.  I'm actually blind and in addition I'm one of those weirdos who doesn't find C++ that bad so any opinion I have there is likely not great. For the record I favor `---` because it's the same as a code block (e.g. can copy/paste manifests back and forth) but will embed in any text markup I'm aware of as long as it's inside a code block (which we must do for other code anyway).  I'm not a huge personal fan of prefixes because I can't easily select the non-prefixed text with the mouse, but eh, the 99% matter so if that's what people like go for it.  My preference for isn't what I consider important, it's my strong preference against.
+
+As an example of a "fast" (e.g. ctrl+a ctrl+v) system where I'd expect this to break, I've seen Slack treat markdown in a copy/paste as formatting.  I believe you have to toggle something on to get markdown (I forget; it's useful for me because I can type formatting without clicking around).  Snippets exist and clearly are the right answer but me and my coworkers don't bother with them half the time.
+
+One great thing about Rust is that while it has edge cases, most of them don't compile and most of the rest don't break the program; markdown fences, by contrast, silently break sharing with others.
+
+---
+
+@epage · 2023-10-05T13:39:49Z:
+@bestouff that is a slight variant of [one of the options](https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#alternative-3-attribute) and I'd recommend talking to the downsides if proposing it.
+
+Note that you left off the manifest being a string.  That is dependent on whether the attribute parsing code can correctly handle TOML syntax (now and in the future) being embedded with in it which I've not tried to verify.  In using strings, unless we try to shift people's style to single quotes, it will likely require a raw string literal.
+
+---
+
+@bestouff · 2023-10-05T13:49:13Z:
+@epage Yes sorry I found it simpler to learn than Alternative 3 but not sure it's rustc-parseable. I removed my comment but you were too quick !  
+For the record my proposal was:
+```rust
+#!/usr/bin/env cargo
+#[cargo(
+[dependencies]
+clap = { version = "4.2", features = ["derive"] }
+)]
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Args {
+    #[clap(short, long, help = "Path to config")]
+    config: Option<std::path::PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+    println!("{:?}", args);
+}
+```
+
+---
+
+@tmandry · 2023-10-07T00:25:12Z:
+With my lang hat on, I don't see a reason we should RFC a feature that only allows `cargo` front matter, without specifying a path to generalizing it to other tooling. If we want to be conservative in what we stabilize, let's approach that in the stabilization rather than in the RFC.
+
+At the language level we should acknowledge that not all projects get to use cargo, and the generalization here seems trivial to do in the RFC. Note that I'm fine with the RFC being conservative in other ways (only allowing one, right after the shebang, etc).
+
+Taking off my lang hat now – using `cargo` sure makes it awkward to extend to embedding a second front matter with Cargo.lock. It'd be nice if the RFC addressed that. (Maybe just say "we can use `cargo-lock` for consistency with `cargo`"?)
+
+---
+
+@epage · 2023-10-08T02:18:50Z:
+> With my lang hat on, I don't see a reason we should RFC a feature that only allows `cargo` front matter, without specifying a path to generalizing it to other tooling. If we want to be conservative in what we stabilize, let's approach that in the stabilization rather than in the RFC.
+> 
+> At the language level we should acknowledge that not all projects get to use cargo, and the generalization here seems trivial to do in the RFC. Note that I'm fine with the RFC being conservative in other ways (only allowing one, right after the shebang, etc).
+
+Had considered loosening this up before any more official word from the lang team and realized there are syntax questions we don't really have an answer to (and our source of inspiration doesn't have good answers for).  I expanded on this and also gave a suggested starting point for syntax if we decide to bring those decisions into this RFC.
+
+> Taking off my lang hat now – using cargo sure makes it awkward to extend to embedding a second front matter with Cargo.lock. It'd be nice if the RFC addressed that. (Maybe just say "we can use cargo-lock for consistency with cargo"?)
+
+I figured what the string should be would be best left for #3502 (as noted [here](https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#rationale-and-alternatives)) which [goes into more detail](https://github.com/epage/rfcs/blob/script/text/3502-cargo-script.md#embedded-manifest-format).  Feel free to add your thoughts there!
+
+If you feel that is a t-lang or a joint t-lang + t-cargo decision, we can talk about it!
+
+---
+
+@ProfDoof · 2023-10-14T18:22:06Z:
+So, I've been following along a bit and had a couple of comments.
+
+I am also an instructor and a CS Ed researcher. I think that no matter what we do, we are going to increase the cognitive load for students unless it's extraordinarily explicit in its immediate interpretation. I don't think that code fences give you that. 
+
+The reason for that is 2-fold. 
+
+First, the code fence means that you have no distinguishing factor inline with the embedded toml. This means that students will basically have to switch modes when they are looking at different parts of the file. The only way this becomes even slightly viable is with syntax highlighting but even then, now you have to mix syntax highlighting for toml (which isn't a lot but does exist) and rust into one file adding to the complexity of ensuring you have a diverse enough color palette to maintain good contrast and instant recognition. 
+
+Second, code fences are not explicit in their intent. There's nothing about them that inherently says, oh, by the way, we have an embedded file here. I don't think anyone has really managed to do that phenomenally from what I've seen but I will grant that I haven't looked that hard for languages that embed other languages inside of them. JSX, Bash here docs, and Doc comments come to mind but that's all I've got currently. 
+
+My personal opinion is that if the goal is to ensure minimal increase in cognitive load, there are a few general approaches that I would suggest:
+
+1. Comments. Already discussed this extensively, my two cents is that comments already tell students and programmers that this isn't something that will be in the code. You can disregard it unless you're trying to do something with it at the moment. I will add that a danger I see with comments is that sometimes people see comments as vestigial and ignorable while an embedded cargo.toml is anything but that. 
+
+2. If we're already adding support for the bash shebang, why not make it possible to embed files beneath it as well. Something like 
+```
+#!/blah
+#= cargo.toml
+#+ stuff
+#+ goes 
+#+ here
+```
+
+But a bit more thought out and considered in the extension to the syntax. 
+
+3. Allow specifying dependencies on the use statements instead and have that be collected into a file format that can be used by cargo or other build tools.
+
+4. Extend the extern keyword to allow either externing an embedded file for users to link to or consume somehow or to simply allow for users to again specify dependencies by saying extern crate lib with name and version and features and stuff. 
+
+All of these feel to me like they address the idea of remaining explicit and not locking people into cargo.
+
+Final thoughts, even if we do use code fences or whatever, many students don't fully comprehend what a use or import or whatever your language adds to support including libraries and other code until much later. They just type it out because they know that if they don't have it, their code will break. I don't think it's wrong to simply provide a well documented template file to students at the beginning. Make sure it covers the common libraries they will be using. Then, through the semester/quarter you take opportunities to come back to it and refine their understanding of why the things in the template are there until they can begin adding dependencies on their own. 
+
+As it is, as an instructor, I prefer to autograde students programs and I would never in a million years use their dependency list. That's a quick way for a clever student to decide that they want to access the container that the autograder is running in and then try to either manipulate it, access the answers when they shouldn't using something I'm not familiar with, or do something more malicious or mischievous. It's the same reason playground doesn't let you use your own cargo.toml file. It's just not worth the risk. Especially when the machines I'm using are either mine, my universities, or a free services. All of which would probably not take kindly to a student mucking around inside of their stuff or not take kindly to what may appear to be a spike of usage from me. 
+
+---
+
+@epage · 2023-10-16T21:38:47Z:
+@ProfDoof thanks for taking the time to share those thoughts!
+
+It looks like I left out of this RFC the guiding principles for why we chose to embed the manifest.  That is now included in 6d8782c.
+
+We are not optimizing for one specific angle (e.g. university student cognitive load) but trying to balance out several.  Annotating `use` or `extern` is a solution.  Some examples of problems we run into with that
+- You still need a way for specifying other fields from a manifest, if desired, like `package.edition`
+- We'd need to have separate spaces for documentation for these very different approaches
+- Answers on stackoverflow, reddit, etc would not be immediately applicable but the users would need to understand both and how to translate between them
+- Conversion between the two systems is more work and would likely require machine assistance (my general rule for design is machines are to augment but not be required)
+- Cargo would need to parse arbitrary rust syntax.  We'd either need to rely on rustc somehow to extract the data (heavy, slow process) or we'd need to use an alternative parser (e.g. `syn`) which will then mask any of the high quality rustc errors, replacing them with lower quality ones
+
+> `It's` the same reason playground doesn't let you use your own cargo.toml file.
+
+Hmm, I thought I had talked with @shepmaster about support for this in the playground and they were open to it but the only related thread I see [doesn't include that](https://users.rust-lang.org/t/call-for-contributors-to-the-rust-playground-for-upcoming-features/87110).
+
+---
+
+@epage · 2023-10-16T21:54:23Z:
+Had a recent observation in my use of #3502 that I thought would be relevant to share.
+
+Its been around 1.5 years that I've been using this feature regularly, first as [rust-script](https://rust-script.org/), then [cargo-script-mvs](https://github.com/epage/cargo-script-mvs/issues), and now I run my scripts out of `cargo` master.  Pretty much every bug report for clap or other libs I maintain gets re-written into a script.  I probably average 2-3 scripts per month as a conservative estimate (I occasionally wipe `dump/` so I can't say for sure). 
+
+I started off using single-line doc-comments and thought that was fairly lightweight, especially compared to the macro options.  However, I still ended up copy/pasting from previous script and I blamed it on the whole experience (she-bang, file permissions, commonly used dependencies, embedded manifest syntax) but felt there wasn't any more room to get this lighter to avoid the copy/pasting.  For context, one of the limitations I put on this effort is to not consider script scaffolding (e.g. `cargo new`) support until we have everything designed, forcing us to use this regularly to see how successful we were in making this "lightweight".
+
+Some people suggested multi-line doc-comments should be the recommended style and so I switched to that to see what the experience would be like first hand.  It made copy/pasting manifest content in-and-out easier but I was still copy/pasting the scripts themselves.
+
+I recently wrote my first script using code-fences (which this experience would equally apply to more traditional frontmatter).  I didn't copy/paste and it felt ... good.  Something about it shifted the dynamics in me enough that I'm ok with handling the shebang and permissions and writing these from scratch.
+
+Yes, I am the author of this RFC but for that entire time I was using doc comments, I was advocating for that solution, so I don't think there is much personal bias influencing this as the biases during each period were the same, I went into with the assumption that I was still going to need to copy/paste, and I'm observing what actions I took in response and.  Each person will also experience that tipping point between templates and hand-written differently.
+
+---
+
+@ProfDoof · 2023-10-16T22:57:24Z:
+No problem! I'm really enjoying seeing where this is going!
+
+I felt like I should chime in with my 2 cents since I saw multiple references to concerns from an instructor and wanted to offer up a different viewpoint. 
+
+And just to clarify what I meant with extern, I was more thinking
+
+```
+pub extern "cargo" static depfile: &str = "your actual toml here";
+```
+
+Or something silly like that. Basically allowing you to embed files and then tell rustc to do something with them while also still maintaining something that looks like rust. But I'm not familiar enough with the internals to know how extern actually works and what it's doing to know whether something like that would be viable and/or simple to accomplish. Once I'm done with my PhD, maybe I'll finally have time to learn about the internals of rust. 
+
+I think that gives you the extendability for the future as well because now part of rustc can be rustc communicating with build systems. 
+
+However looking at it now, I can see the amount of extra work that would probably and and it's probably not worth it.
+
+It could also just be an attribute attached to a static string if that can make a temporary file somewhere that build systems or other consumers of the embedded files can easily find. 
+
+The nixpkg style could also be interesting but could require a lot of buy in from the community and a lot of work implementing something that cargo already does wonderfully so seems out of scope. Just a thought that popped into my head.
+
+If there's a good spot to chat I'd love to discuss the concerns of the instructor more as that's more my background. 
+
+(Also super embarrassed that I missed the extended shebang in the alternatives already.)
+
+---
+
+@epage · 2023-10-16T23:11:09Z:
+Have you seen the rust-edu effort? One aspect of it is feedback into the Project.
+
+---
+
+@bstrie · 2023-10-30T17:23:57Z:
+> Some people suggested multi-line doc-comments should be the recommended style and so I switched to that to see what the experience would be like first hand. It made copy/pasting manifest content in-and-out easier but I was still copy/pasting the scripts themselves. I recently wrote my first script using code-fences (which this experience would equally apply to more traditional frontmatter). I didn't copy/paste and it felt ... good
+
+@epage I don't quite follow here. The experience of using a code fence vs. a multi-line comment shouldn't be much different, AFAICT. Upon re-reading the RFC, all of the downsides listed under Alternative 5 (multi-line comment) would apply equally (or even more severely!) to the front matter syntax that the RFC proposes. Can you elaborate further on why you prefer it over multi-line comments?
+
+---
+
+@epage · 2023-10-30T18:56:16Z:
+> @epage I don't quite follow here. The experience of using a code fence vs. a multi-line comment shouldn't be much different, AFAICT.
+
+Note that I was comparing with multi-line doc comments.  I suspect my experience would be similar with Alt 5 though.
+
+Keep in mind I was writing up what I felt when doing it.  Ascribing it to anything will most likely be a guess.  That said, my best guess is the relative simplicity of typing it (short, mostly repeated characters, no shifting).  Within the context of an entire Rust program, it might seem small but I've noticed that reducing friction, even in small amounts, can result in dramatic differences in user behavior.
+
+> Upon re-reading the RFC, all of the downsides listed under Alternative 5 (multi-line comment) would apply equally (or even more severely!) to the front matter syntax that the RFC proposes.
+
+I'm a bit confused by the statement that multi-line comments are equal or better.   
+
+Stepping through the top-level downsides:
+- Unfamiliar syntax
+  - Heredoc's and bespoke syntaxes are unfamiliar to rust development but code fences are familiar, even if its in a new location.
+- ...crash course...
+  - None of these apply to code fences.
+  - The teachers were involved in making the comparisons.
+- New style of structured comment
+  - Doesn't apply, code fences aren't adding structure to an existing unstructured syntax
+- Parser complexity
+  - Doesn't apply, the code fence syntax is significantly easier to parse than arbitrary Rust comments.  Yes, we can quibble about "arbitrary" but the more we deviate from the unstructured syntax we're leveraging, the worst it exacerbates other items on this list.
+
+---
+
+@scottmcm · 2023-11-01T17:25:34Z:
+We discussed this in the lang triage meeting today.  I didn't feel like we had consensus (Josh has opened https://github.com/rust-lang/lang-team/issues/232 to discuss it further), so here's my personal thoughts from it, not speaking for the team.
+
+My biggest question here is how much it should be thought of as tied to the script use, and thus to the `#!`.
+
+My instinct is that either
+
+1. This is tied to the shebang, so there's only one of them, to be consumed only by whatever tool is in the shebang, and rustc completely ignores it, like we completely ignore the shebang line.  And thus the "````` ``` ````` right after the shebang" syntax seems entirely reasonable to me.
+2. This is a general tool feature, for which there will be multiple of them, and for which they'd want something like tool attribute namespacing so there's a clear route to lots of them under understood namespaces, and are a full part of the parsed structure of the crate, maybe included in rustdoc, etc.  (Like perhaps `--document-private-items` on a crate would show an embedded `rustfmt::config` block somewhere, one day.)
+
+
+
+---
+
+@epage · 2023-11-01T17:38:41Z:
+@scottmcm I intentionally hardcoded this to `cargo` in the hopes to bypass discussions like that.  By leaving it to future RFCs or MCPs to discuss this, we can leverage the use cases motivating the RFC/MCP to provide insight into which direction we should go.
+
+(I see that Josh is thinking similar made a similar note in the lang-team repo)
+
+I feel like a lot of my work around creating and stabilizing RFCs and MCPs has been on finding what we can cut to allow more forward movement and would encourage others to be doing the same.
+
+---
+
+@nikomatsakis · 2023-11-02T00:47:11Z:
+@scottmcm (one quibble, I think that even if it is hardcoded to shebang, there is no reason to limit it to one) 
+
+I've been thinking about this discussion since the meeting. I am totally a fan of incremental progress, so I am sympathetic to @epage and @joshtriplett's pov on keeping things narrowly scoped. I'm trying to decide why it sits a bit odd with me in this instance, I'm not quite sure. 
+
+---
+
+@traviscross · 2023-11-22T00:04:23Z:
+@rustbot labels -I-lang-nominated
+
+As noted above, this was discussed extensively in a triage meeting.  No consensus emerged from that, and it seems, both from the meeting and from the posts here, that people may need some time to think about this.  This is also now the subject of a proposal for a [design meeting](https://github.com/rust-lang/lang-team/issues/232).
+
+Given that, there's probably not much more that's ripe for discussion in triage right now.  So we'll unnominate it.  But of course, if there are specific questions or new ideas that should be discussed then please renominate this.
+
+---
+
+@epage · 2023-12-15T18:07:16Z:
+I've clarified in the RFC that a decision is not being made about the long term direction of this infostring and that the current design of hard coding `cargo` is what keeps that door open for the future (see https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#optional-or-additional-infostrings).
+
+Also, as I myself am concerned about the usability of this syntax when sharing code through markdown (e.g. Github issues, Zulip messages), I explored more alternatives with Josh.  I ended up back where I started but we now have more options captured here and I drew specific attention to this problem and why some syntaxes were specifically excluded from consideration.
+
+At the suggestion of Josh:
+
+@rustbot labels I-lang-nominated
+
+---
+
+@epage · 2024-01-12T18:40:29Z:
+We've added support for more syntaxes to cargo to let people get first hand experience with what is being discussed
+
+These should now be in nightlies for use
+
+Backticks, infostring is optional (rust-lang/cargo#13241)
+````rust
+#!/usr/bin/env cargo
+```
+[dependencies]
+clap = { version = "4.2", features = ["derive"] }
+```
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Args {
+    #[clap(short, long, help = "Path to config")]
+    config: Option<std::path::PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+    println!("{:?}", args);
+}
+````
+
+Dashes (rust-lang/cargo#13241)
+```rust
+#!/usr/bin/env cargo
+---
+[dependencies]
+clap = { version = "4.2", features = ["derive"] }
+---
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Args {
+    #[clap(short, long, help = "Path to config")]
+    config: Option<std::path::PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+    println!("{:?}", args);
+}
+````
+
+Hashes (rust-lang/cargo#13241)
+```rust
+#!/usr/bin/env cargo
+###
+[dependencies]
+clap = { version = "4.2", features = ["derive"] }
+###
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Args {
+    #[clap(short, long, help = "Path to config")]
+    config: Option<std::path::PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+    println!("{:?}", args);
+}
+````
+
+Line-prefixes (rust-lang/cargo#13247)
+```rust
+#!/usr/bin/env cargo
+## [dependencies]
+## clap = { version = "4.2", features = ["derive"] }
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Args {
+    #[clap(short, long, help = "Path to config")]
+    config: Option<std::path::PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+    println!("{:?}", args);
+}
+````
+
+---
+
+@mattheww · 2024-02-01T23:55:05Z:
+How does this interact wth [`include!`]?
+
+Would `include!` strip frontmatter (as it does a shebang)?
+
+[`include!`]: https://doc.rust-lang.org/std/macro.include.html
+
+---
+
+@epage · 2024-02-02T01:22:11Z:
+If it strips shebang, I think it should strip frontmatter.  I'll update the RFC to call this out.
+
+---
+
+@tmandry · 2024-02-06T21:17:42Z:
+I think @epage has done a great job of considering all the options and evaluating them one-by-one. Personally, I'm happy with the RFC in its current state. I think it is limited in a way that focuses it on the intended use case, general enough that it doesn't assume cargo as the only build system, and flexible enough that it is forward-compatible with all the possible extensions we discussed on the lang team.
+
+@rfcbot fcp merge
+
+---
+
+@rfcbot · 2024-02-06T21:17:44Z:
+Team member @tmandry has proposed to merge this. The next step is review by the rest of the tagged team members:
+
+* [x] @joshtriplett
+* [x] @nikomatsakis
+* [ ] @pnkfelix
+* [ ] @scottmcm
+* [x] @tmandry
+
+No concerns currently listed.
+
+Once a majority of reviewers approve (and at most 2 approvals are outstanding), this will enter its final comment period. If you spot a major issue that hasn't been raised at any point in this process, please speak up!
+
+cc @rust-lang/lang-advisors: FCP proposed for lang, please feel free to register concerns.
+See [this document](https://github.com/rust-lang/rfcbot-rs/blob/master/README.md) for info about what commands tagged team members can give me.
+
+---
+
+@traviscross · 2024-02-09T03:41:22Z:
+> I think @epage has done a great job of considering all the options and evaluating them one-by-one. Personally, I'm happy with the RFC in its current state. I think it is limited in a way that focuses it on the intended use case, general enough that it doesn't assume cargo as the only build system, and flexible enough that it is forward-compatible with all the possible extensions we discussed on the lang team.
+
+Agreed with @tmandry here.  Rereading the RFC it looks good to me also.  +1.  Thanks to @epage for pushing forward on this.
+
+---
+
+@joshtriplett · 2024-02-09T10:33:40Z:
+I agree, @epage has spelled out all the alternatives here (viable/reasonable and otherwise), and explored them thoroughly. While the `---` syntax isn't my favorite, I find the primary argument against ```` ``` ```` (namely difficulty of pasting into Markdown) sufficiently compelling, and once that familiar syntax is ruled out, many of the rest are roughly on par with each other and `---` is good enough.
+
+I do personally like the `##` syntax better, and I don't think line prefixes are too much of an imposition, but I *do* think it's problematic that a `#` line prefix plus a TOML `[heading]` looks too much like a Rust `#[attribute]`.
+
+@rfcbot reviewed
+
+---
+
+@joseluis · 2024-02-09T18:31:02Z:
+> Multiple frontmatters
+> At least for cargo's use cases, the only other file that we would consider supporting is `Cargo.lock`
+
+It would be nice to be able configure the `cargo.config` options as well which would allow e.g. no_std arch-specific scripts:
+```toml
+[build]
+target = "x86_64-unknown-none"
+rustflags = ["-C", "link-args=-N", "-C", "relocation-model=static"]
+```
+
+> When parsing Rust source, after stripping the shebang (#!), rustc will strip the frontmatter:
+
+I want to confirm whether that should work as well when a script is imported as a module. Right now the same script containing a frontmatter, correctly compiled using `cargo +nightly -Zscript script.rs`, when it's imported from `lib.rs` the library will fail to compile using `cargo +nightly build -Zscript`, although the shebang is stripped correctly.
+
+---
+
+@epage · 2024-02-09T18:42:31Z:
+> It would be nice to be able configure the cargo.config options as well which would allow e.g. no_std arch-specific scripts:
+
+This is out of scope for the initial cargo implementation (even more core features, like libs, are out of scope as well) and you would have to make the case to the Cargo team since the discussion previously was that anything beyond `Cargo.toml` and maybe `Cargo.lock` should likely be a multi-file package.
+
+>  I want to confirm whether that should work as well when a script is imported as a module. Right now the same script containing a frontmatter, correctly compiled using cargo +nightly -Zscript script.rs, when it's imported from lib.rs the library will fail to compile using cargo +nightly build -Zscript, although the shebang is stripped correctly.
+
+`include!` was raised earlier and the text was modified then to clarify the stripping of the frontmatter happens anywhere shebang stripping happens.  I believe that means it will be stripped when imported as a module and that it will go unused by tools like cargo.
+
+What you are likely seeing is that the nightly feature is implemented as a hack.  There is no unstable support for stripping in `rustc` and instead cargo does the stripping.  This was done to make it lightweight to experiment with different syntaxes (cargo currently supports 3 or 4).  As we work to implement and stabilize these RFCs, cargo's stripping will be moved to rustc.
+
+---
+
+@kurtbuilds · 2024-02-15T05:17:37Z:
+I haven't seen it considered yet in this discussion to just use existing block comment syntax.
+
+The following looks perfectly reasonable and lightweight to me. It has the compelling advantage of not adding new syntax, which means LSP, editor highlighting, etc. are already compatible with it.
+
+```rs
+#!/usr/bin/env cargo
+/**Cargo.toml
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+ */
+```
+
+Might not even be necessary to tag it with `Cargo.toml`.
+
+
+---
+
+@epage · 2024-02-15T12:41:27Z:
+That is covered in the RFC at https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#alternative-5-regular-comment
+
+---
+
+@kurtbuilds · 2024-02-15T14:09:08Z:
+Got it, sorry I missed it.
+
+I'll start with a high level discussion and then go point by point on the already-described trade-offs.
+
+The `---` is really surprising to me because it is not Rust syntax, but all these are still (presumably) `.rs` files. Which causes me to ask the question, is `---` yet another form of comment, or is it an actual proposed extension to the Rust language?
+
+If it's yet another comment, the main question I'd ask is, why increase confusion with yet another block comment style? There's already something like 8 types of comments (docstring vs regular (`//` vs `///`); block vs single line (`///` vs `/**`) ; inner vs outer (`//!` vs `///`). If `---` is a new comment syntax, then it'd be logical to me that `---` blocks could be put anywhere in a file of Rust code, which I think would look very strange, but under the proposal, would be syntactically valid and a no-op (i.e. the block doesn't change behavior). And I think it's preferable, when possible, to err towards the side of "make invalid (in this case, non-operative) states unrepresentable."
+
+If it's not a comment, and it's a proposed extension to the Rust language, then why is the top of a life below a shebang a privileged location? Why can't I put a `---` block anywhere else in arbitrary Rust code.
+
+Now, onto the trade offs list directly:
+
+In [frontmatter](https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#frontmatter), I agree that it's lightweight, but I think it dramatically undersells how surprising or unusual the syntax is. If you're using `hugo`, `commonmark` or `jekyll` all day, then sure, it's unsurprising. But if you write Rust all day, then - if I'm counting correctly - a *9th* comment style is very, very surprising.
+
+I think untagged frontmatter (just `---`) also misses an important downside, which is that it fully bakes in an assumption about what the frontmatter is and what format it's in. The block isn't tagged with `Cargo.toml`, so for all Rust code everywhere and in perpetuity, that frontmatter block is only usable by `cargo` and only with `toml` format. What if I want to make a alternative to `cargo-script` that uses different metadata? Using untagged frontmatter, I'm entirely out of luck.
+
+For [regular comments](https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#frontmatter), the first blocker doesn't really make sense to me. Neither of these proposals is parsed by `syn` today, and both proposals need new code added to `cargo`/`cargo-script` to allow parsing. 
+
+It lists `unfamiliar syntax` as a downside. As above, I'd argue the exact opposite. If you write `jekyll` files all day, sure it's different. But, we're talking about Rust files. In a Rust file, Regular Comments is much more familiar. There's already precedence that `/* */` is a block style comment, and modifiers just after the `/*` cause changes in behavior. `/*!` is an inner comment, `/**` is a docstrong, and so on. Adding `/*Cargo.toml` is an incredibly natural and intuitive extension of that concept. Moreover, there's an interchangeability behavior to Rust comments that this new syntax violates. With Rust comment styles today, `/*!` and `//!` are interchangeable, depending on the preferences of the author and the size of the comment block. With the proposed `---`, it's saying, there's a new comment style, and by the way, unlike other comment styles in Rust, it doesn't have a single-line dual.
+
+> When discussing with a Rust crash course teacher, it was felt their students would have a hard time learning to write these manifests from scratch
+
+Saying one Rust crash course teacher thought it might be confusing to students, sounds incredibly hypothetical to me. As described in the previous paragraph, `/** Cargo.toml` or `/* Cargo.toml` is a very natural extension of how the various comment syntaxes are used in Rust. In contrast, introducing a new comment syntax, `---`, easily leads to other questions (Where else can I put a `---` block comment? What other data can I put inside it?) I'd also argue it's less Google-able for a learner. "3 dashes block in rust" wouldn't immediately lead you to the syntax of a `Cargo.toml` file, whereas seeing a comment with `Cargo.toml` immediately says to the reader, "this data follows the format of a `Cargo.toml` file.
+
+> New style of structured comment for the ecosystem to support with potential compatibility issues, likely requiring a new edition
+
+This is a vague statement (what exactly would cause the need for a new edition?). But I think it's asking the question of what happens to an existing Rust file that has a comment that starts `/* Cargo.toml`. However, this is an entirely new command `cargo-script`, so any existing comment would just be ignored, as it should be, because it's a comment. The new behavior is only activated when it's getting called by `cargo-script`.
+
+---
+
+@epage · 2024-02-15T14:38:24Z:
+> If it's yet another comment, the main question I'd ask is, why increase confusion with yet another block comment style? 
+
+I'd recommend reading over https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#syntax as that lays out a lot of the background for the brief pros/cons list given for that alternative.
+
+> I think untagged frontmatter (just ---) also misses an important downside, which is that it fully bakes in an assumption about what the frontmatter is and what format it's in. The block isn't tagged with Cargo.toml, so for all Rust code everywhere and in perpetuity, that frontmatter block is only usable by cargo and only with toml format. What if I want to make a alternative to cargo-script that uses different metadata? Using untagged frontmatter, I'm entirely out of luck.
+
+It is specified that the wrapping tool gets to interpret the infostring or not.  If you are running it within cargo, then cargo defines the meaning.  If you are running it in buck2, then buck2 does.  If you make your own cargo-script, then you get to define it.
+
+> For [regular comments](https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#frontmatter), the first blocker doesn't really make sense to me. Neither of these proposals is parsed by syn today, and both proposals need new code added to cargo/cargo-script to allow parsing.
+
+A lot of this gets back to https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#syntax
+
+We either need a restricted syntax that we can write our own parser for or we need a full Rust parser.  Requiring every tool that interacts with these blocks to have a full Rust parser was proposed to be unacceptable
+
+> This is a vague statement (what exactly would cause the need for a new edition?). But I think it's asking the question of what happens to an existing Rust file that has a comment that starts /* Cargo.toml. However, this is an entirely new command cargo-script, so any existing comment would just be ignored, as it should be, because it's a comment. The new behavior is only activated when it's getting called by cargo-script.
+
+The feedback I got from at least one T-lang member (the approvers of this RFC) is that to use comments would need to be a first-class citizen like doc comments.  Doc comments are syntactically recognized within the Rust language and are syntactic sugar for `#[doc()]` attributes.  This would be a language-level change and not just "cargo-script is a new context so we can interpret existing code however we want".
+
+---
+
+@epage · 2024-02-19T15:54:04Z:
+I'd recommend actually weighting your thoughts on the solutions and describing why you gave them the weights you did.  A blanket "everything is less desirable than what I want" is not as actionable of feedback because if there are reasons beyond what you covered (which there are, see below) for going with a different solution, this doesn't give us insight into factors to consider.
+
+> Proposed "frontmatter" syntax and its associated Alternative 1 variants
+> If it's to become the accepted solution, it may be helpful to use characters other than "<", ">", "-", and "+" for a reason I didn't find mentioned. Common line-oriented code tooling, such as [diff(1)](https://man.freebsd.org/cgi/man.cgi?query=diff&sektion=1) and [git diff](https://github.com/freebsd/freebsd-src/commit/8e04fe5af3800d1710ff6d5e1d7c210839bbf5e2), uses those characters, and in some cases even in sets of three[0]. The use across tool output and code alike may be sufficiently visually noisy to degrade ergonomics.
+
+To double check my understanding, your concern is if you run `git diff` then you'd see something like the following:
+```patch
+diff --git i/crates/snapbox/src/data/normalize.rs w/crates/snapbox/src/data/normalize.rs
+index 316bcba..0c0476b 100644
+--- i/script.rs
++++ w/script.rs
+@@ -21,6 +21,11 @@ impl Normalize for NormalizeNewlines {
+- ---
+- [dependencies]
+- clap = "4"
+- ---
+```
+and, to you, the ergonomics of this alone are sufficient for rejecting this syntax? And to double check, you understand this is a syntax supported by other file formats?  Have you seen this be a real world problem for people using those formats?
+
+> FWIW, the compilation of my script failed the first time because of an empty line between the shebang and the "frontmatter" block. I'm as leary of significant lines as I am significant spaces.
+
+I saw similar problems in another user report and updated the RFC to allow newlines before the frontmatter.  The cargo implementation hasn't been updated to support it yet.
+
+> Alternative 4: Attribute
+> More desirable due to being, IIUC, consistent with the purpose of an existing [language feature](https://doc.rust-lang.org/reference/attributes.html).
+
+FYI, due to the downsides, this is pretty much a non-starter.  We should not require a full rust compiler to extract these tool-focused "attributes".  `syn` is a "lighter weight" parser but still difficult for tools to integrate.  Even if they use `syn`, they will get poor error messages, masking the high quality error messages rustc has been working to provide.
+
+---
+
+@withoutboats · 2024-02-20T11:41:27Z:
+(NOT A CONTRIBUTION)
+
+I wonder why this needs to be language feature at all. `cargo script` or any other runner that uses frontmatter has to parse the file anyway, can't it pass rustc only the Rust portion of the file?
+
+---
+
+@epage · 2024-02-20T16:28:46Z:
+@withoutboats this was more talked about indirectly or on the other RFC.  I've added a new section to specifically cover this topic at https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#why-add-to-rust-syntax-rather-than-letting-cargo-handle-it
+
+---
+
+@dlight · 2024-02-29T22:02:12Z:
+> The `---` is really surprising to me because it is not Rust syntax
+
+Could this become Rust syntax? Or at least, be recognized by rustc in order to give high quality error messages (or to just ignore it and assume it has been handled by an external tool).
+
+(Sorry if this has been proposed already) I think that there should at least be an idiom to optionally wrap this into a Rust comment, like this:
+
+```rust
+#!/usr/bin/env cargo
+
+/*
+---
+[dependencies]
+clap = { version = "4.2", features = ["derive"] }
+---
+*/
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct Args {
+    #[clap(short, long, help = "Path to config")]
+    config: Option<std::path::PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+    println!("{:?}", args);
+}
+```
+
+That way, a `cargo-script` program is still considered a Rust program.
+
+---
+
+@kurtbuilds · 2024-02-29T22:12:41Z:
+The question when adding something should always be, "why should it be included?", not "Why not include it?" In this case, the specific question is, why should it become Rust syntax?
+
+I argue above, that it shouldn't. It becomes a 9th (I think?) comment syntax, leading to all kinds of downstream questions. Can I put it elsewhere? Does it work like docstrings? What's the single-line analog of it? All questions that add complexity to learning the language.
+
+You raise an excellent point in your post, though. If there's comments around or before the frontmatter - what impact does that have. It would imply that the frontmatter handler has to know something about comment syntax to handle those cases correctly. At which point, I'd ask the question, why not just put the "frontmatter" block inside existing comment blocks? It doesn't need the full weight of a rust syntax parser, just enough to handle comment blocks - which seems like no more or no less machinery than a `---` block parser.
+
+
+---
+EDIT: There's another prior art discussion that I don't think has been brought up before. There's large precedent for comments being used for somewhat-out-of-band tooling. Directives for formatters and linters is the main one. Putting a `Cargo.toml` within a plain old comment block fits very nicely within that pattern and mental model. 
+
+---
+
+@epage · 2024-03-18T19:29:16Z:
+@dlight 
+
+> Could this become Rust syntax? Or at least, be recognized by rustc in order to give high quality error messages (or to just ignore it and assume it has been handled by an external tool).
+
+That is what this proposal is about is making `---` blocks Rust syntax.
+
+> (Sorry if this has been proposed already) I think that there should at least be an idiom to optionally wrap this into a Rust comment, like this:
+
+See https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#alternative-5-regular-comment
+
+
+---
+
+@epage · 2024-03-18T19:34:57Z:
+@kurtbuilds 
+
+>  At which point, I'd ask the question, why not just put the "frontmatter" block inside existing comment blocks? It doesn't need the full weight of a rust syntax parser, just enough to handle comment blocks - which seems like no more or no less machinery than a --- block parser.
+
+This does not solve any of problems laid out in the RFC
+- We are still adding structure to an unstructured syntax
+- At minimum, we then need to be able to handle the given types of Rust comments
+  - Unless we put further restrictions on the comment, we have to deal with not just comments but the full Rust grammar.
+  - If we put restrictions on the comment, we are taking something with few rules and added special rules to it, making it harder to intuit and work with as there is a gap in power between how the tool they are using can generally be used and how it can be used in this one case.
+
+> EDIT: There's another prior art discussion that I don't think has been brought up before. There's large precedent for comments being used for somewhat-out-of-band tooling. Directives for formatters and linters is the main one. Putting a Cargo.toml within a plain old comment block fits very nicely within that pattern and mental model.
+
+Besides shebang, which has syntactic meaning, the Rust ecosystem doesn't rely on this precedence.  For example, `rustfmt` and clippy use attributes over comments.
+
+---
+
+@LunarLambda · 2024-04-11T08:44:26Z:
+A good argument against embedding the manifest in comments is that it will make it harder for tooling like treesitter (used in various text editors for syntax handling) to handle them properly.
+
+For example, many editors have no issues highlighting code blocks in Markdown with the appropriate language, since code blocks are a separate syntactical element from the rest. However, as of today I think only a couple editors (I'm only aware of VS Code) highlights markdown syntax embedded in Rust doc-comments, which is harder to do since it's embedded inside of an existing syntactical element (comments), which are commonly line-based and not block-based as well. (How many people write `/**` doc comments?).
+
+Additionally, changing and controlling (e.g. where it can appear, etc.) a separate syntax element on Rust's side of the equation is a lot easier than trying to do the same with comments.
+
+Allowing tools to provide good integration with the feature without technical compromises is an important aspect of this feature's design after all.
+
+---
+
+@nikomatsakis · 2024-04-11T11:18:30Z:
+@rfcbot reviewed -- thanks for your patience and hard work on this, @epage 
+
+---
+
+@rfcbot · 2024-04-11T11:18:35Z:
+:bell: **This is now entering its final comment period**, as per the [review above](https://github.com/rust-lang/rfcs/pull/3503#issuecomment-1930766014). :bell:
+
+---
+
+@rfcbot · 2024-04-21T11:30:44Z:
+The final comment period, with a disposition to **merge**, as per the [review above](https://github.com/rust-lang/rfcs/pull/3503#issuecomment-1930766014), is now **complete**.
+
+As the automated representative of the governance process, I would like to thank the author for their work and everyone else who contributed.
+
+This will be merged soon.
+
+---
+
+@jsgf · 2024-04-21T21:09:00Z:
+This all looks great and my initial questions and concerns were all addressed by the text of the rfc itself.
+
+My principle concern is that we can support non cargo, both so that non cargo can ignore this and also make use of the machinery for its own purposes. I think the infostrings will be fine though I guess "missing" will default to cargo, or maybe depend on that the interpreter is.
+
+For cargo, isn't config.toml also a plausible thing here? For example for target specific code, or use of special rustc flags?
+
+---
+
+@kennytm · 2024-04-22T10:54:53Z:
+> For cargo, isn't config.toml also a plausible thing here? For example for target specific code, or use of special rustc flags?
+
+I suppose that has been addressed in the [Future possibilities](https://github.com/epage/rfcs/blob/frontmatter/text/3503-frontmatter.md#multiple-frontmatters) part.
+
+```rust
+#!/usr/bin/env -S cargo +nightly -Zscript
+--- Cargo.toml
+[dependencies]
+serde = "1"
+---
+
+--- .cargo/config.toml
+[profile.dev]
+panic = "abort"
+---
+
+use serde::Deserialize;
+...
+```
+
+---
+
+@epage · 2024-04-22T14:56:56Z:
+> For cargo, isn't config.toml also a plausible thing here? For example for target specific code, or use of special rustc flags?
+
+The important part for this RFC is that we leave room for future expansion *if* its needed.  If nothing else, there is the chance of needing support for `Cargo.lock` (though I personally hope we can find ways to avoid that)
+
+For what gets supported for embedding, the more relevant RFC is rust-lang/rfcs#3502.  Specifically, the Cargo team wanted all of this to focus more on an MVP.  We don't even support workspaces in the first iteration.  On that RFC, configs are worthwhile to discuss as for how likely of a future possibility they are.  My quick note on that though is they are unlikely to ever be supported.  Configs are environmental and not project configuration.  It doesn't make sense to embed them in the project and it mixes up their roles (which are already muddled enough as-is).  Instead, the focus should be on rust-lang/cargo#12738.  Again, if you want to discuss this further, rust-lang/rfcs#3502 is a better place for this.
+
+---
+
+@jsgf · 2024-04-23T00:01:11Z:
+Really I was just commenting on the wording:
+> At least for cargo's use cases, the only other file that we would consider supporting is Cargo.lock...
+
+"Only" seems pretty strong there. But you're right that's in the weeds as far as this RFC goes.
+
+---
+
+@jwnrt · 2024-05-04T17:48:02Z:
+I have a question about the alternatives that use macros (4 and 6). These are blocked on:
+
+> Either we expose `syn`s lesser parse errors or we skip errors, deferring to rustc’s, but then have the wrong behavior on commands that don’t invoke rustc, like `cargo metadata`
+
+I agree that `syn` isn't a good option here but using `rustc` as the parser seems ideal. Do you happen to know the reason that commands like `cargo metadata` cannot invoke `rustc` when they're used on a cargo script file? It seems reasonable to require `rustc` be installed.
+
+I hope I'm understanding correctly that this would work similarly to how you can run `rustc --print crate-name` on a file containing `![crate_name = "foo"]` and get `foo` back without `rustc` doing a full compilation. I thought maybe `rustc` defaulting to the 2015 edition would cause problems here, but that command works fine on files containing `async` functions (for example) and also worked on files using dependencies.
+
+(aside: sorry if it's bad etiquette to discuss an RFC after it's accepted, I can take this elsewhere if necessary)
+
+---
+
+@epage · 2024-05-04T19:37:51Z:
+Some approaches to parsing include
+- `syn` for which we have to decide between reporting poor errors or sometimes ignoring the manifest when rustc isn't invoked to error on our behalf
+- `rustc_lexer` (and maybe more parsing mechanisms) this would get in the way of this being focused on any editor tool being able to operate on
+- creating a new mechanism for dumping any attribute with `rustc --print`.  This wasn't considered in the original design.  An important aspect is that we be able to edit the embedded manifest.  We'd have to write this to include span information of the attribute's string which is quite specialized (since this is a generic attribute dumping feature and attributes can come in many forms) and would require special handling for the print to generate parseable content for cargo.
+
+> (aside: sorry if it's bad etiquette to discuss an RFC after it's accepted, I can take this elsewhere if necessary)
+
+In my experience, re-litigating RFCs without there being dramatically new information is not very productive.
+
+---
+
+@jwnrt · 2024-05-04T20:08:01Z:
+> We'd have to write this to include span information of the attribute's string which is quite specialized (since this is a generic attribute dumping feature and attributes can come in many forms) and would require special handling for the print to generate parseable content for cargo.
+
+This is definitely an issue. The output of `rustc --print` would ideally be the "processed" string that doesn't include escaped characters etc, but the span would need to be the "raw" string which could even include things like `concat!(...)`. It doesn't feel impossible to solve, though.
+
+> In my experience, re-litigating RFCs without there being dramatically new information is not very productive.
+
+Understood, I really don't want to waste everyone's time. I don't have new information beyond the concerns [raised previously](https://github.com/rust-lang/rfcs/pull/3503#issuecomment-1946171142) and should have gotten involved before the FCP.
+
+I'll stick my concern at the bottom of this comment but don't really want to restart discussion here. I suppose a new RFC would be needed to propose an alternative.
+
+---
+
+My concern is that this syntax feels unlike any existing concept in Rust. It conflicts with prior art, by which I mean other tools (`rustfmt`, `clippy`, `rustdoc`) that interface using attributes and other embedded languages (asm and markdown) which go into macros and comments/attributes respectively. Subjectively it "feels ugly" which I know doesn't carry much weight, but even in Markdown it feels like a bodge that breaks everywhere outside Zola and Hugo. I do feel that an attribute and a `cargo! { ... }` macro for convenience would be more explicit and integrate better with other Rust concepts like `include_str`.
+
+Apologies if this is too critical of the proposal that I know you put a lot of time and work into.
+
+---
+
+@epage · 2024-05-04T20:42:05Z:
+Have you used it in practice or is this from only reading the RFC?
+
+---
+
+@jwnrt · 2024-05-04T20:45:20Z:
+Just the examples in the RFC. I'm enjoying cargo-script but haven't tried the frontmatter syntax.
+
+---
+
+@epage · 2024-05-04T21:00:40Z:
+I'd recommend having first hand experience with it as well as making sure you are familiar with all of the background information in the section leading up to describing each of the options.
+
+For context where I'm coming from, I used the doc comment syntax for about 6 months with 4 months for backtick and dash frontmatter each.  Just over the last 8 months, I've written about 50 scripts from scratch as I use it to reproduce nearly every bug report I get.
+
+---
+
+@epage · 2023-09-27T00:45:43Z:
+@bstrie (moved here for context / easier to follow)
+> I would like to consider alternative 7, the extended shebang. I don't think the backticks and the redundant `cargo` specifier should be necessary, producing this:
+> 
+> ```
+> #!/usr/bin/env cargo
+> # [dependencies]
+> # foo = "1.2.3"
+> 
+> fn main() {}
+> ```
+> 
+> I think this looks quite good. It's fewer lines than the proposed syntax, and mirrors both the shebang syntax and the attribute syntax.
+> 
+> I understand that people might want this to be generalizable/extensible, but this could suffice for now and any discussion about how to generalize the "info" portion can be left for a future discussion. If people think that it's important to make it generalizable right now, then I'd be interested to hear some concrete use cases.
+> 
+> EDIT: although I suppose an unmentioned downside of this is that `# [dependencies]` might look a bit _too_ much like an attribute.
+
+
+
+---
+
+@epage · 2023-09-27T00:48:38Z:
+As you mentioned, there is the syntax ambiguity and backticks let us "escape" this block of `#` lines.
+
+Yes, the cargo specifier is redundant to the reader but each use of `cargo` is for a different purpose
+- One is for execution
+- One is for parsing
+
+I've noted in the Future Possibilities that we could relax the requirement on having `cargo` in the infostring in the future.  I would lean towards defaulting to cargo rather than parsing the shebang because shebang parsing is messy.
+
+We also wanted to leave the door open (slightly) for adding additional frontmatter blocks, like if we decide to embed lockfiles.
+
+---
+
+@programmerjake · 2023-09-27T06:59:44Z:
+```suggestion
+- When discussing with a Rust crash course teacher, it was felt their students would have a hard time learning to write these manifests from scratch
+```
+
+---
+
+@jplatte · 2023-09-27T07:31:48Z:
+Does this refer to markdown inside multiline TOML strings? It's not really clear. Do any of Cargo's manifest fields even support markdown syntax?
+
+---
+
+@bstrie · 2023-09-27T07:43:59Z:
+It may be referring to general usage outside of Rust source files, for example if I wanted to express this syntax here in this comment I would have to escape the backticks somehow (or indent by four spaces, but that doesn't allow syntax highlighting).
+
+---
+
+@bstrie · 2023-09-27T07:49:13Z:
+For the macro approach, I don't think it would be necessary to embed any Cargo-specific knowledge in std. In every other approach the data here is stored in a glorified comment, which means we're fine if it gets thrown away as far as Rust is concerned. The macro here could simply expand to nothing, and trust that other tooling will parse the macro body as needed (which is easier than it sounds, since the macro body should just be treated as raw tokens rather than anything that needs parsing). Rather than calling it cargo, call it `build!` or `meta!` or something. Although I suppose the fact that it will still need to lex to Rust tokens might be limiting compared to a string or a comment, unless we want to make it magical.
+
+---
+
+@jplatte · 2023-09-27T07:49:35Z:
+Ooohh I see. In that case there's also the option of using the (older, I think?) syntax of prefixing the `.rs` snippet with four spaces instead of ````` ```` `````, though I'm not sure it it's as well-known as code fences, and it has the downside of not supporting language tags.
+
+---
+
+@pksunkara · 2023-09-27T09:09:56Z:
+What is the main reason for not including this in this proposal?
+
+---
+
+@epage · 2023-09-27T13:48:45Z:
+Fixed in bb26c75b
+
+---
+
+@epage · 2023-09-27T13:51:40Z:
+394387b5 adds some context.  This is about sharing snippets over github or zulip.  Since you are putting a code fence inside of a code fence, the outer one needs to use 4 backticks
+
+---
+
+@epage · 2023-09-27T13:53:05Z:
+I clarified this a little in 842f7228
+
+---
+
+@epage · 2023-09-27T13:53:53Z:
+Basically, we want to start with the absolute minimal approach and see what we feel needs to be relaxed from there (which is backwards compatible) rather than make a lot of assumptions and then regret them,
+
+---
+
+@epage · 2023-09-27T13:55:59Z:
+I added mention of `meta!` in 42077b7f.  I don't bother exploring it due to the other problems with macros.
+
+---
+
+@epage · 2023-09-27T13:59:01Z:
+@Aloso (moving here for easier following of the thread)
+
+> I feel like 'front matter' would be a better syntax:
+> 
+>   * People know that it has to be the first thing in the file, which is even implied from the name. With `` ```cargo ``, it is not immediately obvious that it can't appear in the middle or at the end of a file
+> 
+>   * It better conveys the purpose of the syntax: Front matter is used to add metadata to a file, while markdown code blocks are typically used to highlight some content as code
+> 
+>   * The proposed syntax only allows a subset of CommonMark code blocks. The CommonMark spec allows both `` ``` `` and `~~~` as code fences; it allows code fences to be indented by up to 3 spaces; and it allows the closing code fence to be longer than the opening code fence. Deviating from the CommonMark spec could lead to confusion, and implementing the spec would add a lot of complexity. Front matter on the other hand is much easier to parse correctly (if the content is just parsed as "raw text" by rustc)
+> 
+>   * The proposed syntax blurs the line between source code and documentation comments (where markdown is already supported). So people might incorrectly assume that doc-tests can appear outside of doc comments, or that `` ```cargo `` also works inside a doc comment.
+> 
+> 
+> To address the mentioned downsides:
+> 
+> > * Too general that people might abuse it
+> 
+> I actually like that it is more general (it doesn't use the word 'cargo'), so it can be used for other build systems as well. Rust _the language_ shouldn't require any particular build system. What is considered 'abuse' is subjective; allowing front matter might enable various other use cases, and I wouldn't call them 'wrong' just because they're not what this feature was originally intended for.
+> 
+> > * We've extended the frontmatter syntax, undoing some of the "familiarity" benefit
+> 
+> On the other hand, familiarity with markdown syntax might backfire because the _semantics_ are so different here.
+> 
+> > * People are used to YAML going in frontmatter (though some systems allow other syntaxes)
+> 
+> We could use `+++` front matter instead of `---`.
+> 
+> > * Doesn't feel very rust-like
+> 
+> Care to elaborate?
+
+
+
+---
+
+@epage · 2023-09-27T14:13:49Z:
+> The proposed syntax only allows a subset of CommonMark code blocks.
+
+I was going off of memory of the spec.  0e671bf9 updates it to align with the spec or call out where we intentionally diverge.
+
+> I actually like that it is more general (it doesn't use the word 'cargo'), so it can be used for other build systems as well. Rust the language shouldn't require any particular build system. What is considered 'abuse' is subjective; allowing front matter might enable various other use cases, and I wouldn't call them 'wrong' just because they're not what this feature was originally intended for.
+
+Note that we called out adding an infostring to it and through working on this option, we'd like switch it where the infostring is required and we have the option of removing it in the future.  So this benefit is negated.
+
+Note also that we extended fenced code-block like rules to this which also deviates from standard what people expect for YAML frontmatter
+
+> > Doesn't feel very rust-like
+>
+> Care to elaborate?
+
+A T-lang person I spoke to felt it didn't stylistically fit / match / align with Rust syntax or the Rust workflow.  I actually agree and this (along with our extensions of frontmatter syntax) are the main reasons we switched from this being our primary solution to fenced code blocks.
+
+---
+
+@Emilgardis · 2023-09-27T17:19:16Z:
+typo
+```suggestion
+  - Unlike commonmark, it is an error to not close the fenced code block seeing to detect problems earlier in the process seeing as the primary content is what comes after the fenced code block
+```
+
+---
+
+@Emilgardis · 2023-09-27T17:54:37Z:
+I feel like this concern applies to all alternatives
+
+---
+
+@Emilgardis · 2023-09-27T17:55:54Z:
+how can the other alternatives not be leveraged by these alternative build systems?
+
+---
+
+@Emilgardis · 2023-09-27T17:59:44Z:
+this section seems to be missing.
+
+---
+
+@epage · 2023-09-27T18:20:13Z:
+Some were added in 97c6658.  Frankly, the downsides are big enough that it doesn't even seem worth exploring and I personally don't see much benefit to it that it took a bit of a work to write anything. 
+
+---
+
+@epage · 2023-09-27T18:21:45Z:
+8ac0bc4c adds the important qualifier to this: easily
+
+Most of the solutions require going through a lot of hoops and pulling in big, rust-version-specific dependencies.
+
+---
+
+@epage · 2023-09-27T18:25:00Z:
+Applied them where it makes sense in 48c385c
+
+Part of it is that conversation was specifically about doc-comments and the main reason is we had already eliminated all of the other solutions at that point (which led to YAML frontmatter which led to code fence frontmatter)
+
+---
+
+@Emilgardis · 2023-09-28T05:47:16Z:
+Putting aside that its direct feedback from a specific user, I'm still unclear on why this doesnt apply to all the alternatives.
+
+---
+
+@epage · 2023-09-28T14:08:43Z:
+I made changes based on your comment.  Are there cases I didn't change that you feel should be?  Could you elaborate on which?
+
+---
+
+@Emilgardis · 2023-09-29T08:17:13Z:
+I guess what I'm really asking for is what about the location and content is unpredictable. Is the downside that "there can be regular (doc-)content before the embedd"
+
+also note, I think I misinterpreted "unpredictable" as "unexpected" first :)
+
+---
+
+@Turbo87 · 2023-09-29T09:18:18Z:
+this seems quite errorprone to me. is there a technical reason for this?
+
+---
+
+@Turbo87 · 2023-09-29T09:18:49Z:
+```suggestion
+  - We are intentionally only supporting a subset of commonmark code fences in supporting backticks but not tilde code fences or indented fenced code blocks
+```
+
+---
+
+@Turbo87 · 2023-09-29T09:22:04Z:
+It also requires all of the Rust parsers, syntax-highlighters, editors, etc. to support this new syntax, even if only interested in the Rust part of the file. IMHO that seems like quite a significant drawback.
+
+---
+
+@Turbo87 · 2023-09-29T09:57:47Z:
+https://github.com/rust-lang/rfcs/pull/3502 mentions that `publish = false` is used, but having such scripts inside a regular lib project would still allow them to be published. are we sure we want to allow/encourage this?
+
+---
+
+@Turbo87 · 2023-09-29T10:37:05Z:
+I think the point being made is that this downside also applies to the code fences solution, and having it presented as a downside of doc-comments here makes it seem like that was not the case.
+
+I tend to agree with @Emilgardis that the "hard time learning to write these manifests from scratch" part sounds like it is less about a specific syntax and more about the manifest concept in general. but then again you participated in the discussion and probably know more about the details than we do :D
+
+---
+
+@Turbo87 · 2023-09-29T10:39:02Z:
+do we necessarily have to use `syn` for this? if we only allow `//! ` then we could "just" filter out lines beginning with that prefix and in the `toml_edit` spans do `col += 4`
+
+---
+
+@Turbo87 · 2023-09-29T10:42:57Z:
+I'm not entirely convinced by this. Extracting the manifest from the comment does not seem like it would need a fullblown markdown parser, and if we see a module-level doc-comment but no valid manifest block it should be possible to show a warning to the user.
+
+---
+
+@Turbo87 · 2023-09-29T10:43:55Z:
+I'm missing a "Downsides" list for the proposed solution. This feels a bit one-sided compared to the alternatives 😅 
+
+---
+
+@epage · 2023-09-29T17:44:35Z:
+> I guess what I'm really asking for is what about the location and content is unpredictable. Is the downside that "there can be regular (doc-)content before the embedd"
+
+I believe the person was concerned about the location within the document (there can be things put before the doc comment) and the location within the comment (you can have other content in it)
+
+> I think the point being made is that this downside also applies to the code fences solution, and having it presented as a downside of doc-comments here makes it seem like that was not the case.
+
+How so?  The code fence has a very predictable location; always at the top before everything but shebang.
+
+> I tend to agree with @Emilgardis that the "hard time learning to write these manifests from scratch" part sounds like it is less about a specific syntax and more about the manifest concept in general. but then again you participated in the discussion and probably know more about the details than we do :D
+
+For context: before RustConf, we had narrowed our options down to attributes and doc comments.  Through these conversations, attributes were quickly shot down.  These concerns were raised as we were finalizing the plan for doc comments.  Through talking through the problem, the idea of YAML frontmatter came up (which later led to fenced code block frontmatter).  The person felt these concerns did not apply to either.
+
+---
+
+@epage · 2023-09-29T17:52:13Z:
+Part of this comes from our mirroring the concept of "frontmatter" (unsure about YAML spec but at least [jekyll requires the `---` to be first, no newlines](https://github.com/jekyll/jekyll/blob/master/lib/jekyll/utils.rb#L141)).   This also lends itself to the "predictability" side.  The only technical aspect is keeping the detection simple (e.g. avoid disambiguating code fences in strings)
+
+I also see this as something to start with being strict about and see what we learn before deciding what should be relaxed (with a better understanding of why).
+
+---
+
+@epage · 2023-09-29T18:02:58Z:
+Noted though in a lot of IDE / syntax-highlighting cases, they tend to be loose with the syntax already so there isn't a rush to get something to work (compounding with the fact that not all scripts will use frontmatter).
+
+---
+
+@epage · 2023-09-29T18:05:18Z:
+I don't think I'm quite seeing the concern.  They can be included in a published package much the same way you can include random data files.  We can't really do anything about random data files.  If its specifically about a `.rs` file that is both `mod`ed and a script, is there a reason we need to actively work to prevent that as its also unusable like data files?
+
+---
+
+@epage · 2023-09-29T18:06:30Z:
+- If we only allow `//!` then they are no longer doc comments
+  - When discussing doc comments, not everyone is agreed on a single style
+- There can still be parse ambiguities, like doc comments that appear in string
+
+---
+
+@epage · 2023-09-29T18:10:13Z:
+> Extracting the manifest from the comment does not seem like it would need a fullblown markdown parser
+
+We could go to the commonmark spec and hand write a subset of a markdown parser just to deal with code fences.  [I've done that before](https://github.com/assert-rs/trycmd/blob/main/src/schema.rs#L192) and just through this RFC I've found I have bugs in it. Having two separate parsers means you have two different semantics you are dealing with.  This was a big reason why `cargo add` took so long to be merged: the cargo team wanted only a single set of semantics for TOML while not giving up format preserving.
+
+---
+
+@epage · 2023-09-29T18:27:02Z:
+I can understand.  I normally feel like when there isn't a Downsides, the problem hasn't been thought about enough.  However, this has been an exception so far. 
+
+Frankly, in the initial discussions, none came up.  I just went through all of the pros and cons of the other options, and I don't see any of them applying here as a downside.  I also went back through this thread.  Most comments seem to be more about a preference for another approach, a dislike for this approach, or a philosophical discussions about what justifies syntax support. Maybe I'm not giving enough weight to something but most of the reasons for other approaches or the reasons against come down to details that feel like a stretch to be included in a Downsides.
+
+---
+
+@Aloso · 2023-09-30T16:47:00Z:
+> A T-lang person I spoke to felt it didn't stylistically fit / match / align with Rust syntax or the Rust workflow
+
+I understand, but if you mention it as a downside, you should be able to explain why. Design decisions shouldn't be based on gut feelings.
+
+---
+
+@Aloso · 2023-09-30T17:36:29Z:
+If you're looking for more downsides, let me rephrase parts of my previous comments:
+
+1\. You mention that the familiar syntax is an upside. I consider it a downside, because someone who is familiar with the syntax might assume that it has similar semantics as in markdown. This is not the case:
+
+- The proposed syntax is for specifying metadata, whereas markdown code blocks are part of the document; they just change how the content is displayed (e.g. monospace font, syntax highlighting), so the purpose is completely different
+- The proposed syntax is allowed only at the beginning of the file, while markdown code blocks can appear anywhere
+- There are several (intentional) syntactic differences between the CommonMark spec and this proposal, which most people won't be aware of
+
+So someone who knows markdown may make incorrect assumptions about this feature. I think another, unfamiliar syntax that doesn't mislead people would be better.
+
+2\. The proposed syntax blurs the line between source code and documentation comments (where markdown is already supported). So people might incorrectly assume that doc-tests can appear outside of doc comments, or that ` ```cargo ` also works inside a doc comment.
+
+3\. Hard-coding the word "cargo" (and TOML as the only supported language) excludes other build tools
+
+4\. Since this syntax is ignored by the compiler, it is effectively a new kind of comment, but Rust already has `//` and `/* */` comments
+
+---
+
+@Turbo87 · 2023-09-30T18:02:18Z:
+> Hard-coding the word "cargo" (and TOML as the only supported language) excludes other build tools
+
+FWIW, the manifest file in a regular package is also called `Cargo.toml` 😉 
+
+> I just went through all of the pros and cons of the other options, and I don't see any of them applying here as a downside.
+
+as I've mentioned a couple of times now: supporting this new syntax needs significant changes in existing parsers. that seems like a significant downside to me compared to a comment-based approach.
+
+another IMHO big downside is that it introduces another syntax to learn. it might looks roughly like a markdown codefence, but as the previous comment already explained, it is quite restricted and has potential for confusion. doc comments with code fences and those code fences potentially having semantics (doc tests), however is already a concept that Rust users are familiar with. to me it feels like the mental step from doc test comment to cargo manifest comment is smaller than the step from nothing to using code fences directly in the code.
+
+
+---
+
+@Turbo87 · 2023-09-30T18:05:16Z:
+> * If we only allow `//!` then they are no longer doc comments
+
+can you expand on that? I'm not sure I understand that point
+
+> * There can still be parse ambiguities, like doc comments that appear in string
+
+I guess that's true. seems unlikely, but not technically impossible :D
+
+---
+
+@Turbo87 · 2023-09-30T18:10:06Z:
+I guess the only potential concern I see is people being confused about the dependencies in the embedded manifest not being cared about at all. That might just be a theoretical concern though.
+
+the comment above was meant a genuine open question, to figure out if anyone could think of any concerns like that. aside from the above I don't currently see any major issues with it.
+
+---
+
+@Turbo87 · 2023-09-30T18:13:22Z:
+if we go ahead with the codefences I would advocate to at least allow having a single optional blank line between the shebang and the code fence. that would give the manifest a bit of breathing room and makes it harder to miss that there is a shebang line in the file.
+
+---
+
+@est31 · 2023-09-30T23:26:03Z:
+> FWIW, the manifest file in a regular package is also called Cargo.toml 
+
+That's fair, but Cargo.toml lives outside of what rustc processes, or the rust language parsing logic. This RFC wants to add `cargo` as a hardcoded string that is whitelisted as allowed, while all other specifiers aren't. That's why I suggested above to disallow non-cargo triple backtick blocks on a *cargo* level: then you don't have to hardcode anything into the compiler, and just error out on a cargo level (which is where this block is being parsed anyways, rust just throws it away as another comment kind). Right now, `cargo` is none of the [compiler builtin symbols](https://doc.rust-lang.org/nightly/nightly-rustc/rustc_span/symbol/sym/index.html) for example.
+
+---
+
+@LukeMathWalker · 2023-10-02T08:45:49Z:
+I don't fully buy into this objection and the one above: not everything has to be explained as a pre-requisite to it being used in a course.
+Let's take `println!` as an example: [the Rust book](https://doc.rust-lang.org/book/ch01-02-hello-world.html#anatomy-of-a-rust-program) introduces `println!` in the first chapter but it doesn't provide any macro discussion beyond "`println!` is a macro, we'll talk about that later", where "later" is in chapter 19 (!).
+
+I don't see what makes a `cargo` attribute any different here from `println!` or a `#[derive(Debug)]`.
+
+---
+
+@LukeMathWalker · 2023-10-02T08:48:23Z:
+Elaborating further: aren't we over-indexing on language newcomers here? 
+
+---
+
+@epage · 2023-10-03T21:28:22Z:
+While I can't speak for that person (hoping they'll pipe in soon), for myself, I agree (though I had been quieting my different concerns over just wanting "something").  It doesn't fit in with the style of other syntax used.  This is a subjective measure though at times we have to rely on subjective measures.
+
+---
+
+@epage · 2023-10-03T21:35:43Z:
+> Let's take println! as an example: [the Rust book](https://doc.rust-lang.org/book/ch01-02-hello-world.html#anatomy-of-a-rust-program) introduces println! in the first chapter but it doesn't provide any macro discussion beyond "println! is a macro, we'll talk about that later", where "later" is in chapter 19 (!).
+
+While I'm speaking for myself and not that person, I feel there is a big difference between `println!` and 
+```rust
+#![cargo(manifest = r#"
+[package]
+edition = "2018"
+"#)]
+```
+
+With `println!` the name (mostly) makes sense and it was a weird `!` after it that can be glossed over.  Thats less the case with attributes.
+
+> Elaborating further: aren't we over-indexing on language newcomers here?
+
+I suspect we under-index on language newcomers.
+
+That aside, one of the big use cases for this specific feature is helping users of all levels figure out how to write the code they need, including looking at written material (books, blogs, messages from coworkers, etc).
+
+---
+
+@epage · 2023-10-03T21:56:31Z:
+I've at least called this out in 38cf0ee9.
+
+---
+
+@epage · 2023-10-03T21:58:23Z:
+Along those lines, someone has brought up for #3502 the idea of allowing examples and doc tests to declare dependencies independent of everything else.  Not sure how I feel about it but if we were to do it, it would give credence to "random files" having their dependencies respected and might cause confusion as it sometimes matters and sometimes doesn't.
+
+---
+
+@epage · 2023-10-03T22:00:01Z:
+> > If we only allow //! then they are no longer doc comments
+>
+> can you expand on that? I'm not sure I understand that point
+
+If we deviate from the [syntax of doc comments](https://doc.rust-lang.org/reference/comments.html#doc-comments), even if its a subset, then it becomes a thing of its own.
+
+---
+
+@epage · 2023-10-04T01:30:35Z:
+First off, I overlooked copying the following down into that section
+
+> When sharing in markdown documents (e.g. GitHub issues), requires people escape markdown code fences with an extra backtick which they are likely not used to doing (or aware even exists)
+
+@Aloso 
+
+> So someone who knows markdown may make incorrect assumptions about this feature. I think another, unfamiliar syntax that doesn't mislead people would be better.
+
+I have a slightly different take that I'm phrasing as
+
+> Familiar syntax in an unfamiliar use may make users feel unsettled, unsure how to proceed.
+
+See e0707546
+
+@Aloso 
+
+> 2. The proposed syntax blurs the line between source code and documentation comments (where markdown is already supported). So people might incorrectly assume that doc-tests can appear outside of doc comments, or that ```cargo also works inside a doc comment.
+
+Maybe I'm not seeing this from the right perspective but this feels like a bit of a stretch to me.
+
+@Aloso 
+
+> 3. Hard-coding the word "cargo" (and TOML as the only supported language) excludes other build tools
+
+I think there is a misunderstanding here.  The hard coding is only meant as as starting place as we figure all of this out and is not uncommon in Rust.  For example, last I heard about cfg accessible, they were looking at hard coding it for the standard library.  Rustdoc already has first class syntactic support, with an attribute.  Clippy has a built-in attribute as well.  I've now noted this in 5479104a
+
+> 4. Since this syntax is ignored by the compiler, it is effectively a new kind of comment, but Rust already has // and /* */ comments
+
+Covered this in 7bcaca9e
+
+---
+
+@epage · 2023-10-04T01:33:41Z:
+@Turbo87 
+
+> as I've mentioned a couple of times now: supporting this new syntax needs significant changes in existing parsers. that seems like a significant downside to me compared to a comment-based approach.
+
+Yes, and this has been answered multiple times now.  Updates to most parsers is not pressing.  For the parsers that get updated, the change is relatively trivial. 
+
+In addition to those., the Rust grammar is already hard enough to deal with that the number of unique parsers will be relatively low.  That is contrasted with the tools that can operate on `Cargo.toml`.  Frontmatter solutions are the easiest solution for those tools to work with.
+
+---
+
+@LukeMathWalker · 2023-10-04T08:32:20Z:
+I'm not saying we should discount newcomers entirely, but 
+
+> including looking at written material (books, blogs, messages from coworkers, etc).
+
+mostly involves copy-pasting snippets. After looking at one or two examples they should become accustomed to the syntax and able to use it, regardless of them understanding the ins and outs of attributes.
+
+---
+
+@bestouff · 2023-10-05T13:43:13Z:
+Yes, just teach this as a magic syntax at first. Later on people will understand what it means.
+
+---
+
+@tmandry · 2023-10-07T00:29:43Z:
+As a general comment.. I don't agree with this as a downside. I'm not even sure what you mean by "abuse" since that varies greatly by use case. Will people embed 1,200 source files in a single file? In general probably not, but if they do, they probably have a good reason.
+
+For example, if I want to run a minimizer like [creduce](https://github.com/csmith-project/creduce) (which supports Rust) to reproduce a compiler issue, it requires embedding my reproducer in a single file. Some tooling assumes this because C/C++ compilation units can always be embedded in a single file, unlike Rust. Then the tool can take care of minimizing for me. Obviously I wouldn't do this for every day software development, but in my mind it's a completely valid use case.
+
+---
+
+@tmandry · 2023-10-25T00:39:53Z:
+I think we should specify this in the RFC, so it's clear what it should map to in Rust ASTs (just like doc comments map to [`syn::Attribute`](https://docs.rs/syn/latest/syn/struct.Attribute.html)).
+
+---
+
+@tmandry · 2023-10-25T00:40:12Z:
+I like this as a starting point.
+
+---
+
+@davidbarsky · 2023-11-01T20:04:03Z:
+(Commenting here since I can't find any other spot to comment)
+
+I think that [Bazel's optional crate naming scheme](https://github.com/bazelbuild/rules_rust/discussions/1008) is honestly extremely interesting approach that tries to make declaring dependencies inside of a source file. It's not _exactly_ the same thing as this, but it's not that different either.
+
+---
+
+@kennytm · 2024-02-07T07:38:35Z:
+`````````suggestion
+````md
+---Cargo.toml
+---
+
+---Cargo.lock
+---
+````
+
+Continuous blocks
+````md
+---Cargo.toml
+---Cargo.lock
+---
+````
+`````````
+
+Also, the current RFC requires
+
+> Opens with 3+ dashes followed by 0+ whitespace, ***an optional identifier***, 0+ whitespace, and a newline 
+
+so the infostring can't be `Cargo.toml`/`Cargo.lock` but something like `Cargo_toml`/`Cargo_lock`.
+
+
+---
+
+@programmerjake · 2024-02-07T09:48:17Z:
+I think we should just support infostrings with `.` characters, I'm thinking we support the regex `([^,\r\n],?)*` where each comma-separated item (with optional trailing comma) has leading and trailing whitespace trimmed, that way you get a list of items and allows using file names or paths as well as specifying options (e.g. if file permissions (not the main .rs file, but the embedded file) might change something for some tool, there could be a `unix_permissions=0755` option).
+
+obviously cargo would limit the syntax to something it likes, probably just `Cargo.toml` and `Cargo.lock` for now, but I can imagine wanting a `rust-toolchain.toml` file or `.cargo/config.toml` or similar
+
+---
+
+@epage · 2024-02-07T14:37:44Z:
+@kennytm 
+
+> Also, the current RFC requires
+> 
+> > Opens with 3+ dashes followed by 0+ whitespace, _**an optional identifier**_, 0+ whitespace, and a newline
+> 
+> so the infostring can't be `Cargo.toml`/`Cargo.lock` but something like `Cargo_toml`/`Cargo_lock`.
+
+
+
+@programmerjake 
+
+> I think we should just support infostrings with `.` characters, I'm thinking we support the regex `([^,\r\n],?)*` where each comma-separated item (with optional trailing comma) has leading and trailing whitespace trimmed, that way you get a list of items and allows using file names or paths as well as specifying options (e.g. if file permissions (not the main .rs file, but the embedded file) might change something for some tool, there could be a `unix_permissions=0755` option).
+> 
+> obviously cargo would limit the syntax to something it likes, probably just `Cargo.toml` and `Cargo.lock` for now, but I can imagine wanting a `rust-toolchain.toml` file or `.cargo/config.toml` or similar
+
+
+
+---
+
+@epage · 2024-02-07T14:38:52Z:
+Thanks!  I updated the code block.  Splitting out the syntax question to a separate thread for easier tracking of distinct items
+
+---
+
+@epage · 2024-02-07T14:43:57Z:
+I've changed it to 
+
+> one or more characters excluding whitespace and commas
+
+---
+
+@joshtriplett · 2024-02-09T10:32:39Z:
+```suggestion
+- `#` prefix plus a TOML `[heading]` looks too much like a Rust `#[attribute]`.
+
+```
+
+I don't find the other downsides compelling, and I would *otherwise* argue in favor of this solution, but I do find this counterargument sufficiently compelling.
+
+---
+
+@epage · 2024-02-09T15:06:10Z:
+I added your line in and better highlighted this by pointing out an example with a table.
+
+For myself, I think it is heavier syntactically and I think that should still be called out.  I was redundant on saying that though, so I removed the last line.  I also clarified what I meant by copy/paste.
+
+---
+
+@Emilgardis · 2024-02-09T19:36:01Z:
+typo `use use`
+
+---
+
+@the8472 · 2024-02-29T09:51:03Z:
+My argument is that it's not a "house of lies" but more of a container format. Like a tar, mime multipart or computational notebook style format.
+
+The unpacking of the container format and any necessary adjustments could be extracted into a library so it can be shared among tools, just like unpacking tars is done with a library.
+
+This kind of protocol/format layering allows more complex composite files to be handled by more specialized tools in the future (e.g. computational notebooks, multi-file documentation examples merged into a single file, REPL replays) which may not be possible if script functionality is baked directly into rust.
+
+A source line adjustment/mapping feature might also be useful for other things such as generated source code or doc tests.
+
+---
+
+@epage · 2024-03-18T19:26:14Z:
+Yes, treating it as a container format is one potential direction to go.  Each of the directions comes with different technical trade offs but also potential ecosystem effects that we are trying to predict.
+
+For myself, a cargo-specific container format would create a "second class", "non-native" experience for this.  We'd be going from "this is rust" and any tools that know how to work with Rust Just Work to "this is a special cargo format" and now every tool must be adapted to work with this, every syntax highlighter updated (with a new standardized name for it), etc.  I suspect this will lead to a lot more of patch-work of support within editors, editor extensions, command-line tools, web tools, etc.
+
+For myself, I see having first-class support being able to have a major shift in how people program Rust and communicate about Rust.  This will be viewed as Rust and tacking it on as "this other" format dampens the potential for this.
+
+There is also precedence.  Just recently, Python accepted [PEP 723](https://peps.python.org/pep-0723/) though they went with route of repurposing unstructured comments to have structure as defined by a regex.
+

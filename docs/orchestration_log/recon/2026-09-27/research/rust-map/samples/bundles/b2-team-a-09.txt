@@ -1,0 +1,1708 @@
+=== ROW 37 | f009097 | https://rust-blog.github.io/post/wasm-time-panic-traps | 2026-09-16T00:00:00 | individual-blogs;twir-links ===
+Time and Panic Traps in WebAssembly: It Compiles, but It Crashes in the Browser
+Skip to content
+rust-blogPostsAboutRSS
+← Back to articles
+rustwasmleptos
+Time and Panic Traps in WebAssembly: It Compiles, but It Crashes in the Browser
+Sep 13, 2026·11 min read·suradet-ps
+If you have ever put Rust on the web with Leptos, Yew, or Sycamore, you have probably run into this: everything passes on your machine, but the browser gives you a blank page or just RuntimeError: unreachable executed.
+In this post I want to walk through the traps I hit myself while building a local-first app, and how many rounds it took before I found the root cause. I hope it helps you debug the same symptoms faster.
+The root cause is that wasm32-unknown-unknown is not an operating system. It has no clock, no threads, and no filesystem. Some std functions are therefore just empty shells. They compile fine, but the moment you call them, they panic.
+Worse, cargo test runs on your machine, not on wasm, so bugs like this slip through CI easily. Let’s go through the traps one by one.
+1. Why CI Cannot Catch These Bugs
+Think about what the tools we use every day actually check.
+cargo test runs code on your machine (macOS/Linux), where std works fully, so it never hits the problem.
+cargo check --target wasm32-unknown-unknown only checks that the code compiles, and an empty shell compiles too.
+cargo clippy --target wasm32-unknown-unknown checks lints, which have nothing to do with runtime behavior.
+trunk build --release only assembles files. It never runs the code.
+So everything is green, but the moment you open the page you get RuntimeError: unreachable executed, a blank page, or worse, the app keeps running with quietly wrong values. CI says pass, users say broken.
+2. Trap 1: std::time Does Not Work on wasm
+The first thing I hit was time. If you look at the std source, on a platform with no clock, SystemTime::now() and Instant::now() are written like this:
+rustCopyimpl Instant {
+pub fn now() -> Instant {
+panic!("time not implemented on this platform")
+}
+}
+impl SystemTime {
+pub fn now() -> SystemTime {
+panic!("time not implemented on this platform")
+}
+}
+Code that calls SystemTime::now() compiles fine, but it panics the moment it runs in the browser. The good news is that std::time::Duration still works, because it is just a numeric value. It is only reading the clock that fails.
+The usual fix is web-time, a drop-in replacement for std::time. On wasm it uses Date.now() and performance.now(), and on your machine it just re-exports std::time. The same code runs in both places, and you can still test it natively.
+tomlCopy# Cargo.toml
+web-time = { version = "1", default-features = false, features = ["serde"] }
+I like to keep all clock reads in one place, for example core/time.rs, and let the rest of the app go through that file.
+rustCopyuse web_time::{SystemTime, UNIX_EPOCH};
+/// Current time as an RFC-3339 / ISO-8601 string (stable, no locale drift).
+pub fn now_iso() -> String {
+let secs = SystemTime::now()
+.duration_since(UNIX_EPOCH)
+.map_or(0, |d| d.as_secs() as i64);
+chrono::DateTime::from_timestamp(secs, 0)
+.map_or_else(String::new, |d| d.to_rfc3339())
+}
+The nice part is that chrono only turns numbers into text and never reads the clock itself, so web_time stays the single place that touches time. That makes it easy to audit, and the value it returns is UTC RFC-3339, which compares cleanly and does not depend on the locale.
+3. Trap 2: Turning Off default-features and Forgetting to Turn a Feature Back On
+This one hurts because the symptoms are exactly the same as Trap 1, but the cause is in Cargo.toml. wasm projects like to disable a dependency’s default-features to shrink the binary, and chrono is usually one of them. The feature people forget is wasmbind.
+By default, chrono 0.4 enables wasmbind for you. But if you write this:
+tomlCopychrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+then wasmbind disappears too, and Utc::now() reaches for std::time::SystemTime::now() internally. Same panic as Trap 1. The fix is just to add it back:
+tomlCopychrono = { version = "0.4", default-features = false, features = [
+"clock", "std", "wasmbind",
+] }
+The lesson: the moment you disable default-features, you are signing a contract to turn the necessary features back on yourself. Leave a comment about why you chose that set, or six months later you will be wondering where wasmbind came from.
+Another interesting case is uuid. On wasm you have to pick a source of randomness explicitly. If you forget to enable the js feature (or rng-getrandom / rng-rand), you get a compile error at build time, not a runtime panic. That is actually good, since the compiler catches it early, but you should still know about it: the error points straight at the feature and does not tell you what you forgot.
+Client-side ids do not have to use uuid, though. I generate mine from a timestamp plus Math.random() through wasm-bindgen directly. That is plenty for data stored in localStorage on a single machine.
+rustCopy/// Generate a short, collision-resistant id for client-side records.
+pub fn generate_id() -> String {
+let secs = SystemTime::now()
+.duration_since(UNIX_EPOCH)
+.map_or(0, |d| d.as_millis());
+let rand: u32 = js_sys_random();
+format!("{secs:x}{rand:x}", rand = rand & 0xff_ffff)
+}
+fn js_sys_random() -> u32 {
+#[wasm_bindgen]
+extern "C" {
+#[wasm_bindgen(js_namespace = Math)]
+fn random() -> f64;
+}
+(random() * f64::from(u32::MAX)) as u32
+}
+4. Trap 3: Instant and SystemTime Are Not the Same
+Once the panic is fixed, the next trap is using the wrong type. web-time gives you both Instant and SystemTime, but they do different jobs.
+SystemTime sits on Date.now(). Use it to record what time it is.
+Instant sits on performance.now(). Use it to measure elapsed time between two points.
+SystemTime follows the real clock, which the user or the system can change at any time (NTP sync, or someone setting the clock by hand). If you subtract two SystemTime values to measure duration, the result can go negative or drift. Instant is a monotonic clock that only moves forward, which makes it the right tool for durations.
+Timezones do not affect the stored value at all, since they only matter when you format it as local text.
+For local-first data, I always store time as UTC RFC-3339 and convert to local time only for display. Day handling goes through helpers, so it never depends on the browser timezone.
+rustCopy/// Number of days from now as an `YYYY-MM-DD` date string.
+pub fn date_plus_days(days: i64) -> String {
+let secs = SystemTime::now()
+.duration_since(UNIX_EPOCH)
+.map_or(0, |d| d.as_secs() as i64);
+let target = secs + days * 86_400;
+/* ... format as %Y-%m-%d ... */
+}
+/// Whole days between `a` and `b` (`b - a`), or `None` if either is invalid.
+pub fn days_between(a: &str, b: &str) -> Option<i64> {
+use chrono::NaiveDate;
+let da = NaiveDate::parse_from_str(a, "%Y-%m-%d").ok()?;
+let db = NaiveDate::parse_from_str(b, "%Y-%m-%d").ok()?;
+Some((db - da).num_days())
+}
+days_between works for both spaced repetition schedules (1/3/7/14/30 days) and a weekly streak counter. Dates are stored as plain YYYY-MM-DD strings, which compare directly with no timezone conversion.
+Watch out Adding 86_400 seconds is always one UTC day. If you need calendar days in the user’s local time (which has DST), that is a separate timezone problem. Do not let a simple formula turn into a silent bug.
+5. Trap 4: Panics That Tell You Nothing
+The big problem with panics on wasm is that they tell you nothing. You see unreachable executed, or some browsers show only RuntimeError. The fix is to install a panic hook that pushes the message and stack trace to the console.
+rustCopy#[wasm_bindgen(start)]
+pub fn start() {
+// Install this first so every panic from here on is readable.
+console_error_panic_hook::set_once();
+console_log::init_with_level(log::Level::Debug).ok();
+mount_to_body(|| {
+view! { <App /> }
+});
+}
+set_once() is the best-value line in this whole file. Without it, you waste time hunting for a panic with an empty message. Always call it first inside #[wasm_bindgen(start)].
+As for a release profile with panic = "abort" (which is already the default for wasm32-unknown-unknown), you still get the full panic message, because the hook runs before the abort.
+6. Trap 5: Wait with JS Timers, Not std::thread
+Code that needs to wait, such as a Pomodoro timer or a debounce, is where several traps stack up.
+First, std::thread does not work on wasm.
+std::thread::spawn is unsupported, because the browser has no OS threads.
+std::thread::sleep panics with can't sleep (and even with +atomics you should not use it, because blocking the main thread freezes the UI).
+What works is the browser’s setInterval / setTimeout through web-sys. That leads to the second layer of the trap: Closure.
+A Closure has to be kept alive as long as the timer is running. If you let it drop, the next interval tick throws closure invoked recursively or after being dropped.
+The fix is mem::forget after the interval is set successfully.
+rustCopylet closure: Closure<dyn Fn()> = Closure::wrap(Box::new(tick));
+let window = web_sys::window().expect("no window");
+let h = window.set_interval_with_callback_and_timeout_and_arguments_0(
+closure.as_ref().unchecked_ref(),
+1000,
+);
+if let Ok(h) = h {
+// Keep the closure alive for the lifetime of the interval.
+std::mem::forget(closure);
+handle.set(Some(h));
+}
+And when the component unmounts, always clear the interval, or the timer keeps running in the background.
+rustCopylet clear = move || {
+if let Some(h) = handle.get_untracked() {
+web_sys::window().expect("no window").clear_interval_with_handle(h);
+handle.set(None);
+}
+is_running.set(false);
+};
+on_cleanup(clear);
+Trade-off mem::forget makes the timer work correctly, but the closure’s memory is never returned, even after you clear the interval. For an app with a single timer that is acceptable, but if you create and destroy timers often, keep the Closure in a signal alongside the handle and drop it when you stop. That is cleaner.
+7. Trap 6: cargo test Passes but the Real Thing Breaks
+All of the above is why a wasm project should have CI touch wasm32-unknown-unknown, not just run cargo test. The gate I use looks like this:
+yamlCopy- name: clippy
+run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
+- name: cargo check (wasm)
+run: cargo check --target wasm32-unknown-unknown
+- name: cargo test
+run: cargo test
+- name: Build
+run: trunk build --release
+But the trick that helps more is separating the clock from the logic. Let one module read SystemTime::now(), and have every other function take time in as a parameter or a date string. Then all the date logic becomes pure functions you can test on your machine right away.
+rustCopy#[test]
+fn days_between_is_signed_and_correct() {
+assert_eq!(days_between("2026-07-12", "2026-07-19"), Some(7));
+assert_eq!(days_between("2026-07-19", "2026-07-12"), Some(-7));
+assert_eq!(days_between("nonsense", "2026-07-19"), None);
+}
+If some code truly has to run in the browser, like a timer or a service worker, add wasm-bindgen-test and write #[wasm_bindgen_test] tests. That is the last line of defense for the things native tests cannot reach.
+8. Summary
+If you want a short list to review before writing code, try to remember these:
+std::time::SystemTime::now() panics with time not implemented on this platform. Fix: use web-time.
+Instant::now() panics the same way. Fix: use web_time::Instant.
+chrono with default-features off makes Utc::now() panic. Fix: add the wasmbind feature.
+uuid without the js feature gives a compile error at build time. Fix: add the js feature (or rng-getrandom / rng-rand).
+std::thread::spawn / sleep panic or freeze the UI. Fix: use setInterval / setTimeout.
+A dropped Closure throws closure invoked recursively or after being dropped. Fix: keep the closure alive and clear the timer in on_cleanup.
+Panics with no message show only unreachable executed. Fix: console_error_panic_hook::set_once().
+Native tests passing alone lets bugs reach production. Fix: add cargo check/clippy --target wasm32 and wasm-bindgen-test.
+If you only remember one sentence, remember this: compiling does not mean it runs. Especially on wasm32-unknown-unknown, where much of std is an empty shell waiting to panic.
+Three habits help a lot: read the clock in one place, keep time logic pure so it can be tested natively, and make CI check the wasm target every time. Do all three and these traps get caught before you even open the browser, so you never have to guess what caused that unreachable executed again.
+Related articles
+Sep 12, 2026·7 min read
+อ่านได้ แต่ห้ามเขียน ป้องกัน MySQL ด้วย Read-only 3 ชั้น
+เจาะลึกโค้ดจริงจากโปรเจกต์ DrugItems ว่าทำไมคำสัญญาอ่านฐานข้อมูลอย่างเดียว ถึงต้องมีเกราะป้องกันถึง 3 ชั้น
+rustsecuritytauri
+Sep 3, 2026·7 min read
+ลด binary 4 เท่าและไขปริศนา target บวม การทดลองวัดผลจริงจากโปรเจคต์ med-recon
+บันทึกผลการทดลองปรับแต่ง build configuration เพื่อลดขนาดโฟลเดอร์ target/ และ binary ของโปรเจกต์ Med Recon (Tauri 2 + Leptos 0.8 CSR)
+rusttaurileptoswasm
+rust-blog · © 2026
+GitHubAboutRSS
+
+=== ROW 38 | f009157 | https://internals.rust-lang.org/t/todo-should-prevent-unused-variables-warning/20542 | 2024-03-26 | internals ===
+`todo!()` should prevent "unused_variables" warning
+
+@Danvil · 2024-03-26T23:23:50.506Z:
+It would be great if this code would not trigger unused_variables warnings:
+fn foo(a: i32) {
+todo!()
+}
+fn main() {
+foo();
+}
+This has been discussed before Make #[allow(unused_variables)] implicit when calling todo!() and  Don't warn on unused arguments in unimplemented (sic: todo) functions.
+The request seems to be generally in favor, but gets closed or times out. I am not sure what the next step is. Can I help with anything?
+
+---
+
+@jhpratt · 2024-03-27T00:17:33.165Z:
+Danvil:
+The request seems to be generally in favor, but gets closed or times out.
+You can flag a topic and ask for it to be reopened
+
+---
+
+@josh · 2024-03-27T00:44:53.562Z:
+This has come up multiple times, but there isn't a team consensus in favor of it. It's a matter of preference: some people prefer that todo!() suppress warnings, others want to continue to see those warnings until they're fixed. In the absence of a consensus to change, we keep the current behavior.
+
+---
+
+@mathstuf · 2024-03-27T07:06:36.071Z:
+While todo! can be compiler magic, I question how a macro would apply an attribute to the enclosing scope. By what mechanism could this be described? Would it apply to the enclosing fn no matter how nested? What about within a closure within a function?
+I have a related nit when implementing the default behavior for a trait method that doesn't use all parameters: I want to keep the name as used in common cases instead of prefixing with _ and also avoid using "ignore all unused variables" instead of "just this one". C and C++ have (void)unused; to indicate it; I don't think Rust has such a spelling beyond #[used] on the declaration (which doesn't work very narrowly for conditionally used variables).
+
+---
+
+@scottmcm · 2024-03-27T07:15:35.587Z:
+drop(foo); used to work, but I think at least clippy complains about it now.
+Maybe _ = foo;?
+
+---
+
+@eggyal · 2024-03-27T08:59:38.766Z:
+scottmcm:
+drop(foo); used to work, but I think at least clippy complains about it now.
+Maybe _ = foo;?
+But the macro wouldn't know what identifiers to do that with?
+Couldn't the lint suppress itself/consider variables to to have been used in the event that todo!() is encountered within their scope?
+
+---
+
+@josh · 2024-03-27T09:36:11.343Z:
+mathstuf:
+I question how a macro would apply an attribute to the enclosing scope.
+#![allow(unused_variables)] works in a function, if you want to make a different macro that includes that attribute.
+
+---
+
+@eggyal · 2024-03-27T10:01:25.562Z:
+But only if invoked at the start of the scope?  And the todo!() might not only appear after other statements, but furthermore within some nested scope?
+
+---
+
+@Danvil · 2024-03-27T20:26:15.981Z:
+It's not about the "right" behavior, but about providing a configurable mechanism so people can choose. The default can by all means stay as is.
+My question is how can Rust be extended so that those who want a more sophisticated treatment of todo!() can configure their workflow accordingly, and also how could I help to implement this.
+I don't want to repeat the previous discussions but the major points which seemed to stand out where:
+Disabling all "unused_variables" does not work, because it is an important warning.
+Putting an additional hint for those functions (like #![allow(unused_variables)]) adds considerable overhead and is dangerous as one might forget to remove it.
+todo!() has different semantics than unimplemented!().
+I am unfortunately not familiar with the Rust compiler, but couldn't something like this work: Analyze a function and find out if any execution paths ends in "todo!()". If so first produce a (optional) warning a la "warning: you have still work to do!" and then (optionally) suppress other "unused_variables" warnings triggered by this function.
+
+---
+
+@dlight · 2024-03-28T05:06:10.364Z:
+It would be great if it were possible to have a function-like macros!() called inside a function generate an #[attribute] in the enclosing function.
+Something like
+fn f() {
+mymacro!();
+}
+becomes
+#[something]
+fn f() {
+// expanded macro here
+}
+This would enable creating a todo!() alternative that also applied #[allow(unused_variables)] to the enclosing function.
+
+---
+
+@Neutron3529 · 2024-03-28T06:49:55.565Z:
+What about a using clause?
+for example:
+let _=arg1;
+let _=arg2;
+let _=arg3;
+todo!("format string {}", extra_informations);
+becomes:
+todo!(using arg1,arg2,arg3; "format string {}", extra_informations);
+since using xx is not part of the todo! grammar, so such extension might be acceptable.
+
+---
+
+@toc · 2024-03-28T17:44:52.955Z:
+Neutron3529:
+todo!(using arg1,arg2,arg3; "format string {}", extra_informations);
+This feels like it makes sense, but doesn't really solve the normal loop of "write a function with todo, get a warning, go back and suppress the warning". todo! is supposed to make it quick and easy.
+I think most helpful/general would be a way to suppress warnings within a function from within a function, so the todo! macro could just include that suppression. But that still might be more effort than it's worth, if this is its only use. And it still doesn't quite cover todos that aren't top level in a function, but it still might be enough.
+
+---
+
+@CAD97 · 2024-03-28T21:03:37.739Z:
+Ultimately my experience has been that in the transient state of a module where I'd have todo!s, I generally want a blanket #[allow(unused)] on the whole module anyway, because I'll have partial function/type drafts present which aren't "used" yet.
+The papercut that annoys me more is todo! triggering unreachable_code on (and thus also sometimes hiding some borrowck errors in) anything following; I want to be able to use todo! as a hole (potentially multiple) in the interior of a function while I sketch it out top-down control flow (without needing to write out the holes' function signatures until necessary for type inference[1]).
+My opinion: either todo! should suppress unused_variables or it shouldn't cause unreachable_code. Having unused_variables is nice when using todo! as a typed impl hole, but unreachable_code ends up discouraging such non-tail usage.
+One reasonably straightforward case (although quite adhoc and probably far from simple to detect during lint passes) would be a function body of only a todo!. That case shouldn't lint for unused function parameters for the same reason trait method declarations without default bodies don't — in this state it's obviously just a declaration for an impl to be applied to later.
+(But when param bounds permit, I do like to use todo!("fn_name({arg_name:?})") for quicker identification, which does actually use the parameters.
+Maybe I should familiarize myself with the "generate function" intent in my IDE more... ↩︎
+
+---
+
+@quinedot · 2024-03-28T22:24:21.920Z:
+CAD97:
+I want to be able to use todo! as a hole (potentially multiple) in the interior of a function while I sketch it out top-down control flow
+I do this too (and ignore unused when refactoring and expanding API space as well).  I hadn't thought of the annoying aspects from the perspective of function boundaries:
+// This issues no warnings
+pub fn f(i: i32) {
+let j: i32 = (|| todo!())();
+println!("{}", i + j);
+}
+(Macro version.)
+I was pretty ambivalent around the original proposal,[1] but this behavior is nicer for non-tail todo!().  Perhaps there should be a single warning per "lazy todo" or a separate warning category.[2]
+for variety of reasons ↩︎
+I generally grep for todos (that may also be in comments, say) as part of reaching a dev milestone, but warnings are more reliable. ↩︎
+
+---
+
+@CAD97 · 2024-03-28T22:44:43.776Z:
+quinedot:
+single warning per "lazy todo" or a separate warning category.[1]
+FWIW, clippy has clippy::todo for linting uses of todo! (although that doesn't catch // TODO comments, ofc).
+quinedot:
+// This issues no warnings
+That is interesting how type inference works here (I suppose due to !'s pseudotype status and closures' inference hacks). If you enable #![feature(never_type)] and annotate the closure as returning !, then you get an unreachable_code warning again. If you don't, then the type inference favors giving the closure the return type determined by usage, pushing the ! as i32 coercion into the body of the closure, thus "hiding" the fact that anything after the closure is invoked is unreachable.
+If you're sticking it in a macro anyway, might as well stick #[track_caller] on the closure to strip the otherwise meaningless closure stack frame. Your value_of! is basically a declval except guarded by a runtime panic instead of a codegen error.
+I generally grep for todos (that may also be in comments, say) as part of reaching a dev milestone, but warnings are more reliable. ↩︎
+
+---
+
+@vincenzopalazzo · 2024-03-29T13:27:33.359Z:
+Mh, I think this is a matter of preference but also a matter of use cases.
+If you are a library implementor the todo! is good for emitting warnings, if you are a library user todo! may avoid emitting warnings because maybe the feature that the library is forcing you to implement (with a trait) it not a priority for you.
+I am most of the time myself inside the library implementor side, but I think we can allow the user to define a top-level feature to tell (Please do not emit winning when I was the todo macro), this should make everyone happy.
+
+---
+
+@eggyal · 2024-03-29T14:05:50.133Z:
+vincenzopalazzo:
+maybe the feature that the library is forcing you to implement (with a trait) it not a priority for you.
+This is one of those situations where I distinguish between todo!() ("I am going to implement this, but just haven't got around to it yet") and unimplemented!() ("I might never implement this, because it's not required").
+
+---
+
+@afetisov · 2024-03-29T16:37:26.577Z:
+Another annoying feature of todo!() is that you can't use it in functions returning impl Trait, i.e. this code is an error
+fn foo() -> impl Bar { todo!() }
+because inference treats a panic as (), and it doesn't implement Bar in general.
+I get why in general panics are treated that way, but for todo!() specifically it would be very useful if the type checker would just shut up and acted as if everything typechecks. That's the way assume, believeme etc directives work in dependently-typed languages, for example. Whatever obligations were outstanding, they are discharged.
+
+---
+
+@newpavlov · 2024-03-29T16:40:42.397Z:
+I agree that todo!() should not trigger the unreachable_code warning, but I don't think it should silence unused_variables by default. It would be better to allow it to explicitly accept values to mark them as "used", i.e. we could write todo!(foo, bar);. It would have no effect on the panic message, but for programmers it would be an indication to "add code which uses foo and bar".
+UPD: We already can write todo!("{foo} {bar}"), but it requires implementation of a formatting trait by the types.
+
+---
+
+@dlight · 2024-03-30T01:58:11.452Z:
+It would be nice if todo!() returned ! here and somehow we guaranteed that ! implemented Bar and other traits automatically (with all associated types also set to ! and all methods panicking)
+
+---
+
+@toc · 2024-03-30T02:07:59.414Z:
+newpavlov:
+It would be better to allow it to explicitly accept values to mark them as "used", i.e. we could write todo!(foo, bar);. It would have no effect on the panic message, but for programmers it would be an indication to "add code which uses foo and bar".
+The point of todo! is that you don't want to deal with the details yet. As well, in a slightly broader context it is already clear that code should be added which uses foo and bar.
+fn fun(foo: Foo, bar: Bar) { // ← `foo` and `bar` are listed here
+todo!()
+}
+
+---
+
+@quinedot · 2024-03-30T03:00:39.337Z:
+dlight:
+It would be nice if todo!() returned ! here
+It does. (That's why it works with any concrete return type.)
+dlight:
+and somehow we guaranteed that ! implemented Bar and other traits automatically (with all associated types also set to ! and all methods panicking)
+That's the part that's missing.  There's some discussion here.[1]  Note that there are some thorny questions as that would mean ! implements Copy and Drop, implements other sets of mutually exclusive traits should we get those, implements Trait and !Trait given some version of negative implementations, etc.
+Also it "should" implement a trait with "all" associated types for the desired result, or this still won't compile:
+fn example() -> impl Iterator<Item = String> { todo!() }
+And elsewhere but that's the one I found off-hand. ↩︎
+
+---
+
+@Noratrieb · 2024-03-30T09:00:35.033Z:
+! should very much not just implement all traits. Traits have contracts that need to be upheld, and in many cases a trait doesn't require having a value of the type already, so this would just be wrong. And it would introduce a bunch of surprising panics.
+
+---
+
+@quaternic · 2024-03-30T10:09:39.027Z:
+quinedot:
+Also it "should" implement a trait with "all" associated types for the desired result, or this still won't compile:
+fn example() -> impl Iterator<Item = String> { todo!() }
+Noratrieb:
+! should very much not just implement all traits.
+Rather, example would ideally be compiled as if you had defined a brand new type and implemented Iterator<Item = String> for it.
+Earlier this week I found the macro very useful when translating some pseudo-code to Rust, since I could just write expressions like if todo!("x < y") { ... } before even creating the impls. I.e. deciding how I'd like the call-site to look before starting to implement it. I'd then unwrap them one by one, fixing any issues that pop up.
+Most of those issues were due to code following todo! being considered unreachable:
+let x = 4;
+todo!("use x");
+x = 5;
+This compiles, but once the macro is removed, you need to make x mutable. There were some similar issues with borrows. I think it could be more useful if it was considered diverging only when strictly necessary.
+
+---
+
+@dlight · 2024-03-30T10:39:03.716Z:
+quaternic:
+Rather, example would ideally be compiled as if you had defined a brand new type and implemented Iterator<Item = String> for it.
+Did someone ever proposed this? I think this should get its own discussion. It seems very promising.
+This seems like an strategy that enables type-checking any function with a diverging body and that returns an existential. Just create a new type and make your ! unify with it.
+
+---
+
+@toc · 2024-04-01T00:30:00.942Z:
+Noratrieb:
+! should very much not just implement all traits. Traits have contracts that need to be upheld, and in many cases a trait doesn't require having a value of the type already, so this would just be wrong. And it would introduce a bunch of surprising panics.
+As far as I know ! (the "never type") very much should implement all traits. There is no instance of such a type, and yes it is very easy to derive contradictions assuming an instance of such a type, but having a simple name for it is not wrong.
+
+---
+
+@scottmcm · 2024-04-01T04:52:50.612Z:
+toc:
+As far as I know ! (the "never type") very much should implement all traits.
+The standard counter-example is Default, which very much should not be implemented for !.
+
+---
+
+@afetisov · 2024-04-02T23:50:37.401Z:
+! can't implement any traits which have associated functions (i.e. don't take self or &(mut)self). The standard reasoning why ! should implement a trait with only methods is that one can always implement such traits yourself in a canonical way: empty match on the value of ! in the receiver can return a value of whatever type the method returns.
+trait Trait {
+fn foo(&self, _: Foo) -> Bar;
+}
+impl Trait for ! {
+fn foo(&self, _: Foo) -> Bar {
+match *self {}
+}
+}
+That's not necessarily the correct implementation of the trait. For example, perhaps it would be more appropriate to call some Bar-returning method on Foo. But at least it's well-defined and canonical, thus may be provided automatically.
+Disregarding any other semantic requirements of a trait, it just isn't possible to provide an implementation of it for ! if the trait has associated functions. There is nothing to match on, so the only canonical (i.e. not depending on the exact trait signature and the methods of its types) implementation is a diverging one: either panic!() or loop {}. That's just no good, it silently introduces a runtime error (or worse, a hang) into the trait implementation.
+Even worse if the trait has associated constants or types. There is just nothing meaningful you can put as their values.
+
+---
+
+@kpreid · 2024-04-03T00:13:25.820Z:
+afetisov:
+! can't implement any traits which have associated functions … Disregarding any other semantic requirements of a trait, it just isn't possible to provide an implementation of it for ! if the trait has associated functions. … Even worse if the trait has associated constants or types.
+To clarify: it is only impossible to automatically implement such traits for !. Manual implementations are quite often possible.
+I think you do understand this distinction, but it might not be clear to future readers (I had to reread the subthread a couple times to understand the context of the claim), so I thought it is worth describing in some more detail. For example, I have a trait with an associated type, which (without irrelevant details) is:
+pub trait Allocator {
+type Handle: fmt::Debug + 'static;
+fn allocate(&self) -> Option<Self::Handle>;
+// (and handles free themselves on drop)
+}
+This has a straightforwardly reasonable implementation for !:
+impl Allocator for ! {
+type Handle = !;
+fn allocate(&self) -> Option<Self::Handle> {
+match *self {}
+}
+}
+But this isn't possible for all associated types, since ! may not meet their bounds (e.g. type Handle: Default; would not be satisfiable) or might not be appropriate (if the associated type is used as an input rather than an output).
+I have another trait with an associated constant which is a bool answering the question “when interacting with instances of this type, do you need to compute and provide this expensive input?" The answer to that question for ! can be false, since the input will never be read. (Or it could be true — no difference, since the situation never comes up.) Again, quite possible to do manually; impossible to do automatically.
+
+---
+
+@afetisov · 2024-04-03T00:26:21.418Z:
+Right. That's what I imply by speaking about "canonical" implementations. There may be implementations for specific traits with specific parameter types, methods and bounds on generics, but there is no way to write an impl for ! which is parametric on all of those parameters and doesn't depend on any way on their specific values. In some cases one could make choices (like a specific value of bool or u32), but no choice is better in any sense than all other choices. In other cases the choice is impossible.
+Canonicity is important, because it's a kind of fixed point for whatever property one considers. Canonical things tend to compose into other canonical things, and canonical things are usually (relatively) easy to understand. Non-canonical things (values, impls etc) either don't compose, or produce gibberish in more complex cases. If we made arbitrary non-canonical choices for associated types, consts and functions, it's likely that more complex trait bounds would be impossible to satisfy anyway, because instantiating the parameters in different order would give conflicting results.
+
+---
+
+@soundlogic2236 · 2024-04-04T19:57:40.238Z:
+It would benefit from a way to abstract over traits, but could also be done as a small extension for object safe traits today.
+With a lang item with a shape like
+// Ignoring the need for phantom data for ease right now
+pub enum NeverForTrait<T: ?Sized> {}
+One could permit impls of the form
+impl<T> Iterator for NeverForTrait<dyn Iterator<Item=T>> {
+type Item = T
+...
+}
+And have that be the default coercion result and such.
+It would have to be a lang item to make it the default result, and similar to how dyn safety works with how the compiler effectively autogenerates impls for impl Trait for dyn Trait, it could also be automated (actually probably much more easily, as we don't even need vtables!). This could be especially important for trait hierarchies, as otherwise you potentially get a lot of boilerplate drilling down it, as there is no way to specify an impl which covers all the Ts you could put in that it 'should' have.
+Though the fully automatic creation of those dyn impls is possibly a misfeature, and the balancing of consistency with that vs the semvar hazard of such would be an important decision.
+Unfortunately, as there is no proper way to abstract over traits, while you can define new types to set what values any associated types or consts, you can't use dyn in its current form since dyn NonObjectSafeTrait is not allowed at all. And really using dyn at all is a hack, since the argument to NeverForTrait really is supposed to be a trait, not a type.
+As for the broader topic, formally speaking I agree that it should prevent unused_variables warnings. While implementation-wise any implementation of todo!() besides a panic would be at minimum confusing, one could imagine an implementation where it uses a little time machine to actually extract your code from the future and acts as a marker to remind you to close the time loop.
+This shows that the return type of ! is actually too broad, since that implementation would instead return a subfunction that takes all the other arguments and passes them in, meaning none of the variables would be used. Basically having todo!() expand to gen_rest_probably_via_panic::<fn(Currently,Unused,Variable,Types)->ReturnType>()(unusedvariable1,unusedvariable2,unusedvariable3,unusedvariable4) (where gen_rest_probably_via_panic is fn<T>() -> T which errors post-monomorphization if it can't fill in the rest of your code [which it always can because it panics, and so we don't have to worry about the time machine not coming back with code]) is the abstractly correct though very silly thing to literally do, which results in the warning being suppressed.
+Rather annoyingly, you can't even do todo!()(unusedvariable1,unusedvariable2,unusedvariable3,unusedvariable4) today. This would probably be fixed via the above improvement to defaulting, but makes the whole situation even more silly, and then more silly on top of that because we already have fn as 'canonical' implementations for the Fn{..} to show they are all '! safe' and show how already integrated to the compiler they are!
+As for if it should in practice suppress the warning... I think also probably yes, though perhaps there should be a warning for todo!() itself (if there isn't already? I didn't see one by default on the playground and I didn't see any mention in the reference, but I didn't check the full list of warnings one can turn on).
+Back to the specific case of !, similar to the dyn Trait impls for dyn-safe traits, we could also have !-safe traits and (more radically) ()-safe traits. Implementing these, as they don't involve vtables, could be done far more easily in safe code. !-safe being ones that are satisfied by ! (probably most traits, and usually with a unique implementation), and ()-safe would be a more radical option for 'defaulting', effectively a Default but for traits. Though the wisdom of having Iterator::next(Default::default()) compile without errors to what is (after inlining) None is... far more debatable.
+
+---
+
+@tczajka · 2024-04-05T11:50:53.194Z:
+afetisov:
+trait Trait {
+fn foo(&self, _: Foo) -> Bar;
+}
+impl Trait for ! {
+fn foo(&self, _: Foo) -> Bar {
+match *self {}
+}
+}
+That's not necessarily the correct implementation of the trait.
+Every other implementation of that trait for ! would be equivalent to this: it is impossible to enter the body of the function because it is impossible to instantiate self, so the compiler might as well not generate any code for the function regardless of what is in the body.
+
+---
+
+@CAD97 · 2024-04-05T15:30:52.437Z:
+Actually, by the current draft opsem, &! is considered inhabited and the compiler mustn't DCE anything until it's dereferenced. For most practical purposes you're correct though.
+
+---
+
+@soundlogic2236 · 2024-04-06T02:58:23.527Z:
+While being able to manually implement the code might be good, and not automatically opting into !-safe traits might be good, it still seems like an autogen option would be good.
+Compare dyn-safe traits. Are we even allowed to have anything but 'use v-table' as the implementation for T for dyn T? That is definitely automatically opted into, and I don't think there is an option to manually implement alternate code either?
+
+---
+
+@simonbuchan · 2024-04-09T02:10:44.204Z:
+I'm feeling really dumb: why is Default for ! bad?  Is it that generic code can't propagate the fact that the default() call must be unreachable?
+
+---
+
+@toc · 2024-04-09T02:21:58.030Z:
+simonbuchan:
+why is Default for ! bad
+Assuming the existence of any function fn foo(_: !, ...) is fine because we can never get to calling such a function, we first need to get a value of !. It's therefore fine to automatically implement traits that define such functions.
+But functions and traits with ! as a type parameter can have reachable code, thus implementing Default for ! implies that we can call this code and it does something:
+<! as Default>::default();
+But what does it do?
+
+---
+
+@afetisov · 2024-04-09T02:40:07.787Z:
+Worse, <!>::deafult() specifically must produce an instance of !, which doesn't exist. For some trait Foo { fn foo(); } one can at least imagine a sensible if unlikely impl for !, while an impl of Default would be UB.
+
+---
+
+@simonbuchan · 2024-04-09T02:40:37.623Z:
+Right, but that seems to be a really general issue:  if you can resolve Fn::Output to !, for example. I assume it's not specific to Default, but I'm struggling to understand why it's not already an issue, I guess?
+(One approach for an auto ! trait impl would just be to panic on every call, I guess? Pretty lame, but an answer.)
+
+---
+
+@RalfJung · 2024-04-09T07:39:38.818Z:
+CAD97:
+Actually, by the current draft opsem, &! is considered inhabited and the compiler mustn't DCE anything until it's dereferenced. For most practical purposes you're correct though.
+Which draft? Miri and MiniRust both consider that type to be uninhabited, and the Reference also says such a type has no valid values.
+But IMO the discussion of trait impls here is largely a distraction from the original question of todo! vs unused variables. FWIW I agree with the OP that these warnings should be silenced. In the current situation, warnings are largely noise while there are still todo! in the code. Useful warnings are drowned in the noise. I just ignore warnings entirely during development, which can lead to me missing lints that I actually should heed (like forgetting a ? that triggers a #[must_use] warning, or useful Clippy lints).
+
+---
+
+@CAD97 · 2024-04-09T08:28:30.528Z:
+RalfJung:
+Which draft? Miri and MiniRust both consider that type to be uninhabited,
+Must've been mixing up things, I suppose… I know with partially inhabited types it's more interesting.
+
+---
+
+@afetisov · 2024-04-09T13:27:59.806Z:
+Probably you were thinking about *mut !. That type should be inhabited, because could operate on it in generic code:
+use std::mem::MaybeUninit;
+fn set_value<T>(f: impl FnOnce() -> T) -> T {
+unsafe {
+let mut x = MaybeUninit::<T>::uninit();
+// When `T == !`, this is `*mut !`.
+let p: *mut T = x.as_mut_ptr();
+p.write(f());
+x.assume_init()
+}
+}
+fn main() {
+set_value(|| loop {});
+}
+Offtopic: is there an existing discussion on the soundness of MaybeUninit<ZST>::uninit().assume_init(), or transmute::<ZST1, ZST2>()? This looks sound for "normal" ZSTs, i.e. unit types, non-capturing closures, function types, and compositions of those. But I have just realized that it is assumed that size_of::<Uninhabited>() == 0, while the above expressions where one of ZSTs is uninhabited are unsound.
+
+---
+
+@bjorn3 · 2024-04-09T15:08:35.518Z:
+Even for normal ZSTs it isn't sound to create one using transmute or assume_init if the existence of the ZST is used as unforgable token. For example to indicate that some initialization has happened or that interrupts are disabled.
+
+---
+
+@afetisov · 2024-04-09T16:04:12.955Z:
+That's library UB, not language UB. Depending on the way one uses the forged value, it may not be unsound.
+My use case is deserializing adapter types (like adapters of iterators or futures) which accept non-capturing closures. There is no way to put a "function or non-capturing closure" bound on the type, and there is still no way to create functions and non-capturing closures, given their type, even though it's known that the type has a unique value. I have a newtype adapter for such clsoures & functions which implements Deserialize and Default via transmute::<(), F>(), and basically the only thing one can do with the resulting value is call the wrapped value, provided that F: FnMut. The FnMut bound is satisfied only for real closures and functions, not user-defined tokens (yes, this is also not strictly guaranteed, but it's true and looks unlikely to change in foreseeable future).
+! type throws a wrench, because it implements FnMut, even though it's not really a function (actually, it doesn't, but I don't know whether it's a deliberate decision or an accident; the "! implements everything it can" logic would suggest the latter).
+
+---
+
+@toc · 2024-04-09T21:00:00.534Z:
+afetisov:
+(actually, it doesn't )
+Side note, what is that error/help message supposed to mean. Reproduced:
+fn f<F: FnMut()>() {}
+fn main() {
+f::<u32>();
+}
+----
+error[E0277]: expected a `FnMut()` closure, found `u32`
+...
+= note: wrap the `u32` in a closure with no arguments: `|| { /* code */ }`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^???
+
+---
+
+@quinedot · 2024-04-09T21:48:18.661Z:
+A suggestion that's maybe applicable when the closure is an argument. Should be suppressed when there is no argument and/or when an explicit type that doesn't meet the bound has been specified (e.g. by turbofish).
+Seems like a sort of iffy suggestion in general if the type doesn't match the return type of the closure, IMO.
+
+---
+
+@fmease · 2024-04-12T23:18:14.144Z:
+I'm late to the party since I only found out about this thread through a related GH issue and since I don't use IRLO.
+Regarding ! impl'ing all traits in existence / making todo!() (with inference fallback ! instead of ()) work as the return expression of -> impl Trait functions, we've had extensive technical discussions about this in Return-position impl Trait is not satisfied by divergent/never type · Issue #113875 · rust-lang/rust · GitHub which I'm assigned to and which @compiler-errors and I are inclined to close as WONTFIX as soon as we document it as a language / type system guarantee in the Reference (with a lang or types FCP).
+I've only skimmed this thread but you've also started to dig into the technical details (traits with associated types, etc.).
+I've stalled on opening a PR to the Reference but let me do that right now.
+
+---
+
+@gloria_mundi · 2024-04-13T02:11:36.916Z:
+quaternic:
+Rather, example would ideally be compiled as if you had defined a brand new type and implemented Iterator<Item = String> for it.
+This would require implementing the trait for this brand new type, which causes problems in exactly the same cases where we cannot implement the trait for !, since it is possible to witness the real type of an existential.
+I don't think it is possible to coerce ! to impl Trait if Trait has associated functions. Consider the following:
+trait Trait { fn f() -> !; }
+fn g<T: Trait>(_: fn() -> T) -> ! { T::f() }
+fn h() -> impl Trait { todo!() }
+fn what() -> ! { g(h) }
+By its type, what must diverge, but where? h is never called, and no other part of the code panics or loops.
+That being said, if Trait doesn't have associated types (or all associated types have been explicitly specified) and all functions of Trait accept an argument of type Self, &Self or &mut Self, the "brand new type" approach seems sensible.
+
+---
+
+@Vorpal · 2024-04-13T09:24:30.462Z:
+fmease:
+Regarding ! impl'ing all traits in existence / making todo!() (with inference fallback ! instead of ()) work as the return expression of -> impl Trait functions, we've had extensive technical discussions about this in Return-position impl Trait is not satisfied by divergent/never type · Issue #113875 · rust-lang/rust · GitHub  which I'm assigned to and which @compiler-errors and I are inclined to close as WONTFIX as soon as we document it as a language / type system guarantee in the Reference (with a lang or types FCP).
+I see that the last comment (over a month ago) in that thread is so one suggesting more helpful diagnostics. Implementing that would help alleviate  some of the problems with this.
+I don't think the bug you linked shouldn't be closed as won't fix until the diagnostics have been improved.
+
+---
+
+@system · 2024-07-12T09:25:12.259Z:
+This topic was automatically closed 90 days after the last reply. New replies are no longer allowed.
+
+=== ROW 39 | f009201 | https://internals.rust-lang.org/t/discussion-adding-grammar-information-to-procedural-macros-for-proper-custom-syntax-support-in-the-toolchain/21496 | 2024-09-06 | internals ===
+Discussion: Adding grammar information to Procedural Macros for proper custom syntax support in the toolchain
+
+@chipnertkj · 2024-09-06T11:12:52.568Z:
+I am writing this post here on the Internals Forum in order to start a discussion on the matter as well as gather more information.
+I'm not a toolchain developer or a member of any of the Working Groups, so I have little knowledge on whether this is something that is actively being worked on. The latest semi-relevant discussion on the forum was, as far as I am aware, here, but perhaps I have missed something. In my eyes we lack a good place to discuss this.
+Problem and use cases
+The reason why I would like this to be discussed here is multifaceted.
+The lack of grammar information in proc macros affects many areas of the toolchain, and there have been isolated attempts at bringing this up in projects like rust-analyzer and rustfmt, but what I believe we need is a unified interface that both of these projects - and any other that would benefit - can use. I will focus on these two purely because that's as far as my knowledge on the topic can reach.
+This is neither the responsibility of an IDE integration nor any formatting tool. If rust-analyzer were to implement something like this for its purposes, rustfmt would need to have its own implementation, due to rustfmt not being dependent on the other. The rustfmt developer team also understandably has little interest in implementing this themselves. It's a heavy effort that is outside the scope of the project.
+Function-like macros with custom syntax appear in crates that have wide usage throughout the ecosystem. Examples include serde_json with 310 million downloads (although usage of the json! macro isn't extremely common), sqlx with 19 million, delegate with 2.5 million, yew with 1.3 million, leptos with 0.6 million, and so on (as of writing). This does to my knowledge currently mostly impact frontend frameworks, since basically all of them use some flavor of JSX or RSX written using macros, but it is not limited to those either.
+rustfmt
+rustfmt already has partial support for formatting some function-like macros (Does rustfmt format macro calls? · rust-lang/rustfmt · Discussion #5437 · GitHub), but the user experience while working with macros that use non-compliant syntax would be significantly improved by, for example, implementing a hook that libraries could use to define their own formatting rules and parsers for syntax trees.
+This requires additional design work but would improve Rust toolchain's ability to handle other kinds of syntax and in turn make function-like macros much more appealing to use. It would also remove the need for library developers to maintain their own CLI tools for formatting macros specifically. This would both remove the pain of having to configure formatting differently for every project (these CLI tools do not have a unified interface) on the user's side, while also making it easier for developers to offer a positive experience for library consumers.
+Examples of such CLI tools include dioxus-cli, leptosfmt (this one is a drop-in for rustfmt thankfully), yew-fmt (also compatible, but an unofficial tool!).
+A solution to this problem is something that has been requested and mentioned on multiple occasions in different projects.
+See examples:
+let proc-macro's provide a formatting hook for rustfmt · Issue #5656 · rust-lang/rustfmt · GitHub
+(Suggests rustfmt implements said hook - low priority since last year.)
+format rsx using rustfmt · Issue #747 · DioxusLabs/dioxus · GitHub
+(Links to rust-lang/rustfmt#3705 and rust-lang/rustfmt#5254, falls back to dioxus-cli as a workaround.)
+Option: format named macro usage with standard module/function/... formatter · Issue #5254 · rust-lang/rustfmt · GitHub
+format macros · Issue #8 · rust-lang/rustfmt · GitHub
+(Still no satisfying solution since it was proposed in 2015.)
+Add unstable `format_brace_macros` option by trevyn · Pull Request #5538 · rust-lang/rustfmt · GitHub
+Allow manually-specifying which macros should be formatted and how · Issue #3705 · rust-lang/rustfmt · GitHub
+(Needs formatting for Rust syntax in a specific scenario.)
+Does rustfmt format macro calls? · rust-lang/rustfmt · Discussion #5437 · GitHub
+(Explains current approach and comments on the issue at hand.)
+How to format custom proc macro? - help - The Rust Programming Language Forum
+(Expresses interest in having formatting in custom-syntax macros.)
+rust-analyzer
+The IDE integration could potentially benefit from proper syntax highlighting, attributing the correct documentation items to selected keywords, as well as code completion, in the context of custom-syntax macros.
+You can develop IDE extensions for libraries as a workaround to adding grammar metadata to macros.
+Those suffer from the same problems as external formatting tools. They are often unofficial hacks that become outdated over time and are of lower quality than something that could be provided by library developers. Leaving that task to library maintainers is an option, but in practice that just doesn't happen. Major frontend frameworks, all except for  dioxus, don't have official extensions, and the one provided by dioxus - dioxuslabs.dioxus - only wraps functionality from dioxus-cli. It doesn't provide any of the things mentioned earlier.
+This has been considered, among others, here:
+Allow proc macros to expose their grammar to rust analyzer for syntax error understanding · Issue #7402 · rust-lang/rust-analyzer · GitHub
+(Asks for this exact feature.)
+Editor tooling scenarios in expression proc macros · rust-lang/rust-analyzer · Discussion #15452 · GitHub
+(Current workarounds, in practice this doesn't really offer what we want to the extent it could. See any of the frontend frameworks for results.)
+How to use LanguageService for custom syntax in positional proc macros? · Issue #7441 · rust-lang/rust-analyzer · GitHub
+(Points to rust-lang/rust-analyzer#5389 and rust-lang/rust-analyzer#7402.)
+[Proposal] Allow embedding other languages in macros · Issue #5389 · rust-lang/rust-analyzer · GitHub
+(Dead since 2022, hoping for rust-lang/rust-analyzer#7402.)
+VSCode plugin for Hydroflow/Mermaid · Issue #340 · hydro-project/hydro · GitHub
+(VSCode extension - low priority, no comment since last year. Many more like this one.)
+VSCode/rust-analyzer plugin for better integration/highlighting/mermaid · Issue #273 · hydro-project/hydro · GitHub
+(Same as hydro-project/hydroflow#340 - waiting on rust-lang/rust-analyzer#5389.)
+setup with rust and leptos? · Issue #42 · ThePrimeagen/htmx-lsp · GitHub
+(Rightfully claims rust-lang/rust-analyzer#5389 is unlikely to go through due to labels E-hard and S-unactionable.)
+Feature request: Code completion for `rsx!` macros in Dioxus · Issue #9957 · intellij-rust/intellij-rust · GitHub
+(Expresses interest in having code completion. Points to intellij-rust/intellij-rust#6367.)
+Adding support for custom syntax introduced by proc macros · Issue #6367 · intellij-rust/intellij-rust · GitHub
+(Links to related rust-analyzer issues and workarounds.)
+No one seems to want to or know how to deal with this, while I see it is a viable improvement. Addressing this lacking could greatly enhance library development experience and streamline tool integration. Being able to expose the expected input syntax would be a great tool in the hands of library developers. I encourage everyone to share their thoughts and experiences to help us potentially move towards a solution. It is not the first time this is brought up, and unlikely to be the last.
+I would love to elaborate on the exact details of what kind of interface would need to be exposed for the use cases here, but I have very limited information on the internal design of the toolchain.
+I implore you to share your thoughts, though. I did what I could with the information I had. There are still many questions to be asked!
+Hopefully this is of high enough quality for my first interaction with the Forum...
+
+---
+
+@jgarvin · 2024-09-08T00:43:23.420Z:
+I thought it might be useful to point out the prior art on this from emacs lisp, since the same problem exists there. Macros in emacs lisp can have a declare "special form" (really just means something that looks like a function call but is actually directly implemented by the compiler) that lets the macro author either select from a few popular preset ways of doing indentation or provide an arbitrary function.
+I can't speak to the merit of having an API for communicating a grammar versus having an API for handing control over indentation over to the macro author, but I can say that a grammar by itself is not enough information. There are many possible ways to format the same grammar, and which makes sense may depend on the specific macro semantics.
+
+---
+
+@chipnertkj · 2024-09-08T10:29:25.999Z:
+Thank you for providing your point of view!
+I agree that adding grammar metadata by itself would not directly solve anything - what I'm advocating is that it would provide a starting point for developing a solution to the issues mentioned.
+A similar problem was mentioned in this comment at rust-lang/rustfmt#8 in response to this forum post, where @calebcartwright correctly pointed out that if rustfmt were to theoretically use exposed grammar to format macros, there wouldn't be enough information to decide how to do so - whether because there would need to be a place for macro authors to define certain rules, because formatting should be configurable, or, because, as you pointed out, some of that information might be context dependent in general.
+I don't have an answer to the question of what would suffice, but this is exactly why I opened this discussion thread. If we were to imagine a formatting tool that does take advantage of grammar metadata in macros, the first approach that comes to my mind is that tool exposing its own interface for providing style information for formatting the input, in addition to consuming grammar information.
+The reason why I would leave it up to the consumer of such an API is, style information would not really be useful to other consumers, and as such, the burden of accessing that data would fall on said tool. If a user were to develop their own formatting tool with diverging functionality, it would likely need an interface for accessing it different from that one, too. This would allow a tool to tailor its interface to the kind of data it needs to operate - different tools have different fundamental values and goals.
+This is kind of like how rustfmt has its own config file, instead of using something like Cargo.toml to set formatting preferences. While part of the toolchain, it's also a standalone tool. Grammar can be used without formatting rules to achieve things different from formatting, such as solving the problems that the users of rust-analyzer have reported. It's a one-way dependency. Only the formatting tool needs both.
+Regarding the counterproposition of:
+an API for handing control over indentation over to the macro author
+I definitely do see merit in that, as it would be the much simpler solution to the problem of adding formatting, and I am all for reducing its complexity. The problem I have with it is, it would not address issues raised by the users of rust-analyzer, while exposing grammar would open up the possibility of doing so. A macro developer would also be able to provide support for many consumers by implementing the same interface once, with the exception of tools that require additional information.
+Perhaps, if I find time, which right now is unfortunately unlikely, I could develop a proof-of-concept library + CLI tool and share my findings. But for now, I encourage anyone with perspective on this to share their side.
+
+---
+
+@dhardy · 2024-09-08T10:54:39.561Z:
+I'd love to see something like this happen, but ... how?
+rustfmt uses rustc_ast while proc-macros (usually) use a custom AST built over syn.
+Just focussing on formatting (since that's one operation, vs the many that rust-analyzer supports), I can see a few options:
+Tell rustfmt to "try formatting this as if it were a specified AST type, failing silently on error". This is the cheap, cheaty limited option (which would also put pressure on rustfmt and rustc_ast to be more permissive).
+Support an optional custom formatter alongside proc-macro definitions. This is flexible but hacky (pushing proc-macro authors to re-implement formatters however they see fit). It also doesn't scale to the many functions that rust-analyzer supports.
+Re-implement via syn: separate parse and apply steps in a proc-macro definitions, expecting that the AST yielded from the first step support a reformat operation. Have syn support this reformat operation on its types, duplicating the behaviour observed from rustfmt. User-defined ASTs must also implement this, but can base their impls on the syn impls. This option would be a lot of work (duplicating various behaviour), but might be the most viable — except that, when it comes to rust-analyzer, there are many operations which these AST types would be expected to support (requiring a lot of redundant code).
+Stabilise the AST used by rustc, replacing or merging with syn. This involves a lot less duplicated code than the prior option, but places major constraints on rustc. (There are approaches allowing the Rust grammar to still evolve, such as supporting multiple backwards-compatible versions on the AST, but this may be placing more burden on rustc developers than the prior option does on everyone else.)
+Of the above, (3) appears the most viable to me. It would, however, require that custom proc-macros define types, not functions (or in the case of custom attribute macros, a type for the result of parsing the attribute and another type representing the result of parsing (but not expanding) the item). These types would then need to implement some trait covering required functionality (parse, expand) and optional functionality (reformat, suggest expansions for some cursor, ...)
+
+---
+
+@chrefr · 2024-09-08T12:48:00.271Z:
+This is difficult to accomplish for rustfmt because to correlate the macro with its settings, rustfmt will have to perform name resolution, but name resolution in Rust is a complicated process that involves expanding macros and is fixpoint. I strongly oppose to doing that in rustfmt, as IMO it should remain very lightweight - something I can easily run every now and then or even automatically on save.
+For rust-analyzer it's doable, but will require more than just syntactic information.
+
+---
+
+@chipnertkj · 2024-09-08T14:45:10.292Z:
+I did some tinkering locally and arrived at the exact same conclusion of (3) making the most sense. I do dislike the amount of code duplication it would introduce... I would like to avoid that as much as possible for simplicity's sake, but I'm not sure I see a way to do so, even just when doing the bare minimum of formatting parsed macro inputs into a formatted TokenStream representation.
+Structs as proc macro lib output is something I've thought of too, and it would make them much more flexible, especially in scenarios like this one here. I am not sure how realistic getting something like that through is, though.
+
+---
+
+@chipnertkj · 2024-09-08T14:51:22.433Z:
+I agree with your stance on adapting rustfmt. Here's an excerpt from my response to the previously mentioned comment at rust-lang/rustfmt#8:
+(calebcartwright)
+I feel like positioning rustfmt as a general purpose formatting platform would run counter to that or at a minimum create a very conceivable surface for those tenants to be directly contradicted.
+(me)
+I sympathize with that concern. This is one of the thoughts that have been on my mind. Expanding it into a general-purpose formatting platform could indeed lead to complexities that might compromise consistency and stability.
+To clarify, rustfmt is mentioned here mainly because it’s been the focal point for much of the community's requests and discussions on the topics. I’m not entirely convinced that adapting rustfmt is necessarily the best or only approach, but there’s clearly significant interest in improving the toolchain's capabilities when working with macros.
+Different use cases and values exist across the community. I believe it would be beneficial to create a space where these discussions can take place. I am interested in exploring how we can address these needs without compromising on the goals of any part of the toolchain.
+
+---
+
+@afetisov · 2024-09-08T15:00:04.038Z:
+I wouldn't want to allow macros to run arbitrary code during formatting. It's already bad enough that macro expansion is entirely unsandboxed, can run for arbitrary time and access arbitrary resources. If rustfmt had hooks for macros, all of these issues would be created at the formatting layer. That's just insane. That's log4j levels of "let's insert arbitrary code in unexpected places because fuck security".
+Not to mention, how is that code even supposed to be compiled? Does rustfmt now silently run rustc on all macro crates in the project? How is it going to find them? How will it pass proper compilation options? Formatting is supposed to be simple, fast, reliable, and idempotent (some projects gate their CI on rustfmt emitting no changes). How can any of that be guaranteed when rustfmt compiles and executes arbitrary code?
+Imho inserting formatting hooks should be out of the question. A declarative approach to formatting is more viable, but that can't be part of existing macro source code, so would require introducing some new declarative grammar & layout configuration files. Also, is there a reason to believe that there is some common declarative formatting model which would be enough for existing use cases?
+Finally, there are always macros with parsing and semantics special enough that there is no hope of defining them via context-free grammars. Those cases can't be handled declaratively. How common are they in the ecosystem?
+
+---
+
+@chipnertkj · 2024-09-08T15:38:33.962Z:
+Thank you for the harsh criticism! Sometimes that's what's needed, too.
+I have also recently realized just how much trust I'm putting in the libraries I use by relying on macros and the build system, and wish those were sandboxed with at least some rudimentary permission system. To be fair, addressing that security concern is not my goal here, but I understand where you're coming from.
+Reliability, simplicity and performance are also concerns I have with this approach. Perhaps this is just an artifact of daydreaming in the realm of perfection, especially considering I am trying to tinker with an ecosystem that is already actively in production use. A declarative approach does sound like a more reasonable compromise, considering limitations as well as the fact it could still potentially cover all of the use cases above.
+Designing a system like that would be an effort, but the result would be significantly more satisfying than most likely whatever would come out of my previous train of thought.
+Finally, there are always macros with parsing and semantics special enough that there is no hope of defining them via context-free grammars. Those cases can't be handled declaratively. How common are they in the ecosystem?
+I am not sure I've seen any usage of context-dependent grammar macros in Rust, in general, but my perspective is limited.
+
+---
+
+@kpreid · 2024-09-08T15:55:02.487Z:
+An idea: rustfmt's approach to formatting macros is mostly to leave them unchanged. What if another tool did the opposite: custom formatting for macros while leaving the rest of the code unchanged? Then users could choose whether to involve macros and name resolution in their projects’ formatting process or not, by running both tools in sequence, or just rustfmt. This would also mean that there doesn't have to be a universal solution built into rustfmt.
+
+---
+
+@endsofthreads · 2024-09-08T16:01:14.256Z:
+I'll cite what Lukas said on this forum and rust-lang/rust-analyzer#15452: proc macros that don't consume inputs and avoiding erroring out would go a long way in making rust-analyzer behave nicely in the face of custom syntax.
+For function-like, JSX-style macros—which seem to be the majority of function-like macros where the lack of tooling support is most acutely felt?—I'm not confident in any general solution that I might propose.
+
+---
+
+@afetisov · 2024-09-08T16:19:40.425Z:
+I think it's more viable to support macro formatting at the level of IDE. I don't see a reasonable path towards formatting macros with rustfmt in any generality, but IDEs already expand macros. They know how to compile and run them. If proc macros could output some (contents-dependent) formatting info alongside the expansion, the IDE could use it to reformat the macro. This would also alleviate most of the context-dependent concerns: context is already handled by the macro code, it just needs to output some simple markup for the contents which includes possible line breaks, tab stops and spacing.
+Technically this means that cargo could do the same, but personally I wouldn't want to tightly couple cargo and rustfmt. Currently running cargo fmt doesn't depend on project structure, and I'd prefer it to stay this way. It could indeed be a separate tool cargo-macrofmt, which would build the code and reformat specifically the macro invocations. It would also preserve the stability promises of rustfmt itself.
+
+---
+
+@endsofthreads · 2024-09-08T17:11:14.044Z:
+afetisov:
+I think it's more viable to support macro formatting at the level of IDE. I don't see a reasonable path towards formatting macros with rustfmt in any generality, but IDEs already expand macros. They know how to compile and run them. If proc macros could output some (contents-dependent) formatting info alongside the expansion, the IDE could use it to reformat the macro. This would also alleviate most of the context-dependent concerns: context is already handled by the macro code, it just needs to output some simple markup for the contents which includes possible line breaks, tab stops and spacing.
+rust-analyzer doesn't handle formatting for non-macro code, so it'd need to be able to handle that first. However, in order to build formatter inside of rust-analyzer, we'd need to get rid of mutable syntax trees and then move over to a Roslyn-style trivia model. The former needs to happen for performance reasons anyways, but the latter might take more time and effort.
+
+---
+
+@afetisov · 2024-09-08T17:38:07.860Z:
+In that case it's good that RA isn't the only Rust IDE in existence.
+
+---
+
+@SkiFire13 · 2024-09-08T18:05:02.373Z:
+afetisov:
+I think it's more viable to support macro formatting at the level of IDE.
+I can see this being problematic for collaborative projects:
+how would CI check formatting for macros?
+what if some user doesn't use an IDE, or doesn't use one that supports macro formatting?
+And what if IDEs implement this functionality differently?
+
+---
+
+@endsofthreads · 2024-09-08T18:07:18.663Z:
+afetisov:
+In that case it's good that RA isn't the only Rust IDE in existence.
+I don't believe that I implied that rust-analyzer was the only Rust IDE in existence, but if I did, it certainly wasn't my intention! Regardless: I'm only writing down what needs to happen in rust-analyzer given that the original author had a rust-analyzer section. Those things will need to happen, but the work to migrate over to Roslyn-style trivia model hasn't been prioritized yet. It might well very well be!
+
+---
+
+@sxlijin · 2024-09-08T20:19:38.388Z:
+Peanut gallery chiming in here (like OP, I haven't contributed in the past, but I have tried to read all the threads on this topic):
+Would it be possible to add another rustfmt config setting that lists out the macros which a given user is willing to treat as having a normal AST? e.g.
+// not sure where the hardcoded list is
+// i didn't see it in macros.rs::rewrite_macro
+basic_macros = [
+"println",
+"eprintln",
+"json",
+"vec",
+]
+I would imagine that for some use cases, this would create a path forward for folks who want formatting.
+Drawbacks:
+rustfmt.toml is not expanded (and that allowing dynamic loading and building an import system in rustfmt configs is controversial/undesirable), so library authors can't ship macro formatting rules
+any macro that requires non-trivial syntax is unsupported in this approach
+
+---
+
+@afetisov · 2024-09-08T23:04:36.747Z:
+Rustfmt can already deal with stdlib macros. Supporting custom macros in this way looks relatively brittle, since rustfmt has no way of knowing which exact macro was imported with a given name. Not impossible (after all, macro name collisions are uncommon, and a project can vet which macros it uses), but still icky.
+Also, what is "trivial syntax"? json! surely isn't anywhere trivial. I'd restrict that moniker to simple function-like macros (i.e. taking a comma-separated list of expressions). I guess that's possible to support, but the pain points are stuff like rsx!, which is beyond any simple approaches.
+
+---
+
+@afetisov · 2024-09-08T23:10:17.826Z:
+SkiFire13:
+what if some user doesn't use an IDE, or doesn't use one that supports macro formatting?
+I don't see a reason why refusing to use certain tools is a valid reason to not add support for the features for everyone.
+SkiFire13:
+how would CI check formatting for macros?
+And what if IDEs implement this functionality differently?
+Not checking it in CI is always an option. No enforcement, no problem.
+In any case, once a protocol is accepted as a specification of formatting, it can be implemented in any number of tools. This includes IDEs, but it can just as well be implemented in a CLI tool, which you would use in CI (in fact, that's the most likely way that IDE support will be implemented, at least initially). Agreeing on a common formatting is purely a political problem, not a technical one.
+
+---
+
+@sxlijin · 2024-09-09T16:47:14.539Z:
+afetisov:
+I guess that's possible to support, but the pain points are stuff like rsx!, which is beyond any simple approaches.
+Yep, totally agree on this; I just wanted to highlight that if it is useful to be able to format macros for which every argument is a valid expression, independently of the ability to format macros which define their own syntax tree, then this is a viable path forward to support those cases.
+
+---
+
+@CAD97 · 2024-09-09T19:16:40.492Z:
+sxlijin:
+macros for which every argument is a valid expression [...] a viable path forward to support those cases.
+Actually, it's already the case that a macro invoked as macro!() will have its arguments formatted if they look like fully syntactically valid Rust code. (Though the exact rules as to what syntax is allowed can be a little opaque.) Invocations as macro!{} get left as-is. I don't see/use macro![] enough to determine what heuristics it uses for when to format its arguments.
+I've been bit by rustfmt deciding to remove a for<T> from a macro invocation for some reason before. It quietly just works most of the time and its only really noticable when things go wrong or suddenly change.
+Try running rustfmt on this example.
+input
+macro_rules! m {($($t:tt)*) => {}}
+m!(
+fn f ( ) -> i32 { 0 }
+);
+m!{
+fn f ( ) -> i32 { 0 }
+}
+m![
+fn f ( ) -> i32 { 0 }
+];
+output
+macro_rules! m {
+($($t:tt)*) => {};
+}
+m!(
+fn f() -> i32 {
+0
+}
+);
+m! {
+fn f ( ) -> i32 { 0 }
+}
+m![
+fn f() -> i32 {
+0
+}
+];
+
+---
+
+@ogoffart · 2024-09-09T20:00:26.537Z:
+For Slint, I have developed at LSP server. Some editors such as vscode support having several language servers for the same file. So rust-analyzer takes care of everything, while slint-lsp takes care of what is in the slint! macro.
+
+---
+
+@sxlijin · 2024-09-10T02:31:51.759Z:
+CAD97:
+Actually, it's already the case that a macro invoked as macro!() will have its arguments formatted if they look like fully syntactically valid Rust code. (Though the exact rules as to what syntax is allowed can be a little opaque.)
+Oh, interesting... thanks for clarifying that for me.
+I'd somehow convinced myself that it was the case that eprintln! wasn't formatted correctly, but others are, but now that I'm actually testing that hypothesis I see that I was wrong.
+... I guess I'll have to keep a closer eye on when rustfmt doesn't do anything. I didn't think we used brace-style macros in our code that much, but maybe we do more than I realize.
+
+---
+
+@dhardy · 2024-09-12T08:13:15.447Z:
+For a small (or even a complex, self-contained) DSL such as JSON or Slint, this approach of using a separate formatter makes a great deal of sense. For something like impl_scope! (essentially just Rust with a couple of tweaks), it doesn't.
+sxlijin:
+Would it be possible to add another rustfmt config setting that lists out the macros which a given user is willing to treat as having a normal AST?
+This approach would be simpler and likely be sufficient for impl_scope! (some macro input might be rejected by a strict Rust parser, but most would not be).
+
+---
+
+@sxlijin · 2024-11-09T00:37:04.548Z:
+OK, circling back: the use case where I ran into this was with cfg_if, which is supposed to look like real Rust code, but isn't actually. That's why I thought it was an issue with rustfmt, as opposed to "hard technical problem to get right".
+So in this case, the cfg_if crate would somehow need to communicate to rustfmt what inside a macro is considered a "normal" AST, which is... well, hard.
+cfg_if::cfg_if! {
+if #[cfg(target_arch = "wasm32")] {
+// stuff in here will be ignored by rustfmt
+// because it's inside a braced macro
+let loader = super::wasm::load_aws_config().foo().bar();
+loader
+} else {
+aws_config::defaults(BehaviorVersion::latest())
+}
+}
+
+---
+
+@mathstuf · 2024-11-09T11:57:08.301Z:
+Isn't if cfg!(target_arch = "wasm32") the way to handle this rather than a macro to allow if #[cfg(…)]? Maybe I'm missing the use case for cfg_if here…
+Looked at the docs…seems that it also supports having function/method definitions inside of the blocks, so it works at top-level, trait, and impl "scopes" rather than just inside of functions.
+
+---
+
+@GoldsteinE · 2024-11-09T12:29:57.849Z:
+if cfg!() requires all the branches to be compilable at the current target, cfg_if!() doesn’t.
+cfg_if!() could use less weird syntax though (like
+cfg_if! {
+if cfg(target_arch = "wasm32") { ... }
+}
+or even
+cfg_if! {
+if target_arch == "wasm32" { ... }
+}
+
+---
+
+@bjorn3 · 2024-11-09T13:37:20.391Z:
+sxlijin:
+OK, circling back: the use case where I ran into this was with cfg_if, which is supposed to look like real Rust code, but isn't actually. That's why I thought it was an issue with rustfmt, as opposed to "hard technical problem to get right".
+So in this case, the cfg_if crate would somehow need to communicate to rustfmt what inside a macro is considered a "normal" AST, which is... well, hard.
+The reason cfg_if doesn't get formatted is because rustfmt by design doesn't do macro expansion, name resolution or anything else that requires looking beyond a single file. If rustfmt was able to perform macro expansion, it should not be too hard for rustfmt to figure out how to format the code inside the if's (though not the if condition). There is no need to add actual grammar information support to proc macros for cfg_if and other macros that copy-paste the part that should be formatted verbatim to the output.
+
+---
+
+@GoldsteinE · 2024-11-09T13:51:37.006Z:
+There could be some sort of conventional syntactic indication that the code inside of a macro invocation is considered to be normal Rust code (like maybe macro! {{ }} (double braces)) or something. It would enable formatting at the cost of slight syntax weirdness while keeping rustfmt simple and separated from the compiler.
+
+---
+
+@R081n · 2024-11-09T19:34:05.819Z:
+Using () parentheses instead if {} does exactly that.
+
+---
+
+@GoldsteinE · 2024-11-09T19:54:41.229Z:
+TIL. The formatting for cfg_if!()-like usecase is a bit awkward though:
+cfg_if!(if cfg(target_arch = "wasm32-unknown-unknown") {
+do_something();
+} else {
+do_something_else();
+});
+
+---
+
+@asmello · 2024-11-16T01:06:13.654Z:
+Going to comment here rather than clutter up #8. Thanks for starting (continuing?) this discussion.
+serde_json::json!, tokio::select!, sqlx::query!, leptos::view! are all extremely common macros within their respective domains. I'd classify tokio::select! in particular as being quasi-syntactical, as in practice it's almost guaranteed that some version of it is going to end up used in any non-trivial async Rust codebase. The reason I bring this up again is because I suspect the impact of the pain of not having proper formatting support for these is greatly underestimated and we need more concrete data on the subject so we can motivate rustfmt devs to prioritise the issue.
+I also think there's a thread here to pull at around the precedent of dioxus-cli, leptosfmt etc. being standalone tools. In particular leptosfmt being a drop-in replacement for rustfmt is quite interesting. It seems to indicate a different path to take towards sustainably integrating custom macros into the formatting ecosystem. Instead of trying to modify core tools like rustfmt and rust-analyzer directly, they could introduce an extensions system that macro developers could use to provide third-party plugins, similar to what cargo has. Of course, that adds its own complexity, but it's bounded complexity, while the use cases it enables (even outside of formatting) are unbounded.
+Clippy suffers from a very similar lack of extensibility, which has also motivated drop-in alternatives like Dylint.
+Does anyone foresee any particularly difficult challenges with a plugin approach?
+
+---
+
+@CAD97 · 2024-11-16T21:11:03.257Z:
+asmello:
+Does anyone foresee any particularly difficult challenges with a plugin approach?
+The most challenging part will probably be agreeing on a stable API surface for handling the plugins. And the lack of name resolution can still cause surprises. But having plugins to handle nonstandard macro formatting is certainly more doable than teaching rustfmt about "common enough" macro names (like how vec! is handled).
+A secondary thing is that "silently" running new binaries during compilation has security implications. Say you've done cargo install cool-cli. It's fine, and you've even used cool for a month or so. Now you upgrade your Rust toolchain, and surprise, you also installed a second binary, rustfmt-vec, which now gets run during compilation without you ever having known about it, because cool-cli was compromised to also distribute that formerly silent payload.
+So some sort of opt in is probably desired in order to mitigate that, even if only for current editions. It may be annoying, but one option that would also mitigate surprises around textual activation is to list all active fmt addons in rustfmt.toml keyed by the macro name that they're activated for. So something like:
+[macros]
+json = "rust-json-fmt"
+select = "tokio fmt"
+query = "sqlx fmt"
+view = "leptos fmt"
+As for what the interface would actually be, think of how you can define an appropriate narrow waist. I think an appropriate one could be for rustfmt to slice to just the macro! { … } text, remove any block indentation contextually required, pass that through the addon via the same CLI that rustfmt use, and then readd the contextual block indentation before splicing it back into the formatted source.
+That feels like it could be reasonably straightforward to implement unstably (like most of rustfmt.toml cfg is) and experiment with in rustfmt, if someone wants to propose that to the team and do the work needed to actually implement it.
+
+---
+
+@kouhe3 · 2025-06-08T17:06:56.783Z:
+Do we have any new progress now?
+
+---
+
+@CAD97 · 2025-06-08T21:20:40.483Z:
+There's not been any new development here.
+Well, there's been some movement towards preparing cfg_match! for stabilization. rustfmt will do the mod discovery that it does for cfg_if! now, but there's no special formatting handling for those or any other macro.
+Also still relevant is that rustfmt doesn't do any kind of name resolution.
+
+---
+
+@kouhe3 · 2025-06-13T14:21:00.395Z:
+I wrote a program to format json! macros
+First parses the original input tokenstream into a syn tree,
+then dump the parsed syn tree to json string.
+Then write it to a specific location in the. rs file.
+Not fast, but use syn as parser.
+
+---
+
+@kouhe3 · 2025-08-17T04:42:43.084Z:
+I believe the key to letting rustfmt understand macro DSLs is to provide a dedicated syntax description file.
+Today, a macro_rules! macro is little more than a pattern-matching engine that expands by recursion. The DSL it defines freely interleaves Rust expressions with its own keywords. At minimum, we should be able to format the Rust fragments inside it.
+I once experimented with a “smart formatter” that parsed a macro’s match arms and emitted a PEST grammar, but writing it felt like building yet another interpreter.
+For procedural macros the situation is even worse: the grammar is hidden inside ad-hoc syn structures or private parsing functions.
+The simplest way forward is to let macro authors supply a grammar file—e.g., in tree-sitter or any other community-standard format. Rustfmt could then format only the parts it recognizes while leaving the rest untouched.
+The “Declarative (macro_rules!) macro improvements” initiative seems like the right place to surface this idea: if more functionality can be expressed with declarative macros, fewer crates will need to resort to proc-macros, making a shared grammar format even more valuable.
+
+---
+
+@josh · 2025-08-17T06:42:44.792Z:
+One issue with this is that rustfmt does not do name resolution as part of formatting, so in its current design, it cannot do macro-specific formatting.
+That said, as a very minimal starting point, I've wondered sometimes if we could have grammars or rules or patterns associated with macro names within an individual project's rustfmt confusion configuration. For instance, "format this like println".
+
+---
+
+@R081n · 2025-08-17T10:34:15.787Z:
+From my experience a lot of macros try to align their syntax to be rust-like or contain rust code inside. Currently macro invocations using () are formatted if they look like a function call.
+How far could we go if this is extended a bit? Like:
+every {} that only contains valid rust is formatted like rust
+Add an extra indent for every {}
+Align the lines beginnings to the indent (but don't add new line breaks)
+Etc
+There would then be a tradeoff of formatting quality and macro compatibility when deciding the amount of rules.
+This would of course mean that some parts of the calls are not formatted. But the biggest pain point seems to be having to write rust code without formatting.
+Macro authors could then design their macros to be somewhat compatible with this and opt in by telling their user to use () for the invocation. And users would (maybe?) be happy because there is a bit more commonality between the syntax of different macros.
+And if the formatting breaks something it is always possible to switch to {} braces for the call.
+
+---
+
+@kouhe3 · 2025-08-17T13:30:34.565Z:
+I’m afraid the “just look at the braces” approach can’t work in practice.
+Hard-coded bracket rules have already been tried and abandoned
+The last time we baked special knowledge about delimiters into rustfmt itself was lazy_static!{.
+Braces are ambiguous
+A pair of {} can be
+a block of Rust statements,
+a struct literal,
+a macro body that looks like a struct literal but isn’t (e.g. quote! { struct S {} }), or
+a DSL that merely borrows Rust’s punctuation (e.g. Dioxus rsx! { div { class: "foo" } }).
+Without name-resolution rustfmt has no reliable way to know which case it’s facing.
+Even “valid Rust” inside braces can be the wrong thing to touch
+In quote! { let #ident = #expr; } the tokens let, #ident, and #expr are not a normal let statement; re-indenting or re-breaking the line can change the span information that quote relies on. We’ve seen this break real crates.
+Parentheses don’t save us either
+vec![a, b, c] uses , sql!(...) uses (), and html!{...} uses {}. Telling macro authors “just standardise on ()” both ignores existing conventions and pushes the compatibility burden onto every crate in the ecosystem.
+
+---
+
+@Vorpal · 2025-08-17T19:47:49.991Z:
+R081n:
+This would of course mean that some parts of the calls are not formatted. But the biggest pain point seems to be having to write rust code without formatting.
+Also annoying is when rust analyser gives you much less info just because you have a macro on a function. For example commenting out a #[tracing:instrument] on a function will enable "extract function" refactor and sometimes show more type inlay hints.
+This points to a general issue: that macros are second class when it comes to the developer tooling. It would be good if more uses of macros can be replaced with things that the tooling (RA and rustfmt) understand. Variadics generics would go a long way towards removing a huge class of these uses for example.
+Or we could start doing things like being able to mark some macros as various useful points along the spectrum between:
+Format and type hint as if the macro wasn't there (tracing instrument)
+Format as rust but don't show type inlay hints etc
+Totally custom syntax (in the future: allow defining custom grammar for highlighting, custom formatting, etc)
+There is precedence for that last one: in webdev it is common to have mixed languages in one file: from php with mixed in html back in the day, to js and css inside html still.
+Allowing customised extension points for this sound like a useful feature, but just having a "treat it like normal rust" mode would still be useful.
+
+---
+
+@chrefr · 2025-08-17T19:57:54.128Z:
+r-a does understand macros (to the extent possible), some of the bad behaviors with it are inherent but most are just bugs (that you should report!) It does require special care when developing r-a to remember macro edge cases, though, and therefore they often get forgotten.
+rustfmt doesn't understand macros and probably never will.
+
+---
+
+@jhpratt · 2025-08-17T20:03:08.643Z:
+Is there any possible future where, at least on an opt-in basis, rustfmt could leverage parts of the compiler rather than being strictly text-based?
+
+---
+
+@chrefr · 2025-08-17T20:10:40.594Z:
+That would make it unbearably slow. cargo fmt is less of a problem, but when I format in my editor, it's a blocking operation and it needs to return fast.
+
+---
+
+@mathstuf · 2025-08-17T21:04:01.018Z:
+I would not like rustfmt to start getting different results on different platforms based on various options or settings that get selected. Formatting really should be a "text-only" operation at its core. And anything enforcing a "Rust-aware" formatting ruleset will "fight" with any contributors not doing so.
+
+---
+
+@josh · 2025-08-17T21:27:07.013Z:
+If, hypothetically, we had a version of rustfmt that did name resolution and macro-specific formatting, it would be predictable and behave the same for everyone. There are other reasons to potentially not want to do that, but that isn't one of them.
+
+---
+
+@josh · 2025-08-17T21:29:39.581Z:
+rustfmt does already leverage parts of the compiler. However, it would be a step above and beyond that to integrate name resolution for cross crate references.
+
+---
+
+@jhpratt · 2025-08-17T21:54:47.844Z:
+Yeah, that's what I meant of course; I know it reuses the AST and whatnot.
+
+---
+
+@endsofthreads · 2025-08-17T21:57:03.383Z:
+At the risk of starting an intra-project turf war and the caveat that I'm not speaking for the rust-analyzer team (only myself!), I think that if there were to be a formatter that did name resolution and was macro-aware, I think I'd prefer it to live in rust-analyzer so that in-editor latencies were acceptable—with rustfmt, I've found the tail latencies are less than ideal, albeit through no fault of rustfmt.
+In this world, CLI-invoked formatting would either be slower or not aware of macros.
+
+---
+
+@chrefr · 2025-08-17T22:07:01.673Z:
+Actually, as another member of the rust-analyzer team on behalf of myself only, I did consider and like the idea of having the formatter we are planning to eventually integrate (maybe) into r-a semantic-aware. However, I'm concerned that this will lead to issues with CI and such, or RustRover, etc..
+
+---
+
+@jhpratt · 2025-08-18T00:29:55.110Z:
+That's actually not a bad idea. rustfmt could explicitly do nothing, leaving the door open to anyone else (realistically r-a but also possibly other tools). I hadn't considered the speed of rustfmt on save, only CI/standalone formatting and checks.
+
+---
+
+@josh · 2025-08-18T01:25:54.676Z:
+That's only a viable option if there were also a way to trivially invoke rust-analyzer from the command line and format (or check formatting of) an entire project, in the style of cargo fmt; e.g. cargo afmt. That would be needed for both command-line usage and CI.
+(Also, it would need to work on every project without requiring any r-a configuration or setup, since cargo fmt does.)
+
+---
+
+@Vorpal · 2025-08-18T03:23:53.342Z:
+josh:
+That's only a viable option if there were also a way to trivially invoke rust-analyzer from the command line and format
+Absolutely.
+josh:
+(Also, it would need to work on every project without requiring any r-a configuration or setup, since cargo fmt does.)
+I don't get the logic of this part. If you can use RA you can use RA format? If your project is so weird that RA doesn't work, then RA format might not work either?
+
+---
+
+@josh · 2025-08-18T05:46:47.972Z:
+Vorpal:
+If you can use RA you can use RA format? If your project is so weird that RA doesn't work, then RA format might not work either?
+I'm talking about the case where RA works, but needs configuration in order to work. Configuration that rustfmt doesn't need.
+I'm enthusiastically in support of having a formatter that could be macro-aware. But only if everyone can trivially use it, whether they use RA or not.
+
+---
+
+@Vorpal · 2025-08-18T06:03:16.902Z:
+josh:
+I'm talking about the case where RA works, but needs configuration in order to work.
+I'm not sure exactly what you are referring to. Do you mean when people aren't using cargo, but some other build system? (E.g. RFL, meson, bazel.) I don't think it is an issue to require a project specific way to run the formatter as well then.
+
+---
+
+@endsofthreads · 2025-08-18T13:13:20.453Z:
+However, I'm concerned that this will lead to issues with CI and such, or RustRover, etc..
+I think we can get the formatting functionality to run on CI or RustRover pretty easily! After all, we can run rust-analyzer analysis-stats today; I don't think it'd be unreasonable to extend that to a currently hypothetical rust-analyzer fmt.
+
+---
+
+@endsofthreads · 2025-08-18T13:40:13.543Z:
+That's only a viable option if there were also a way to trivially invoke rust-analyzer from the command line and format (or check formatting of) an entire project, in the style of cargo fmt; e.g. cargo afmt. That would be needed for both command-line usage and CI.
+(Also, it would need to work on every project without requiring any r-a configuration or setup, since cargo fmt does.)
+I agree! I think we (the rust-analyzer team) can accomplish trivial, "it just works™" CLI-based formatting for command line or CI use if we (the Rust project as a whole) accept that rust-analyzer wouldn't format macros in a configuration-free setup. I think this is fine because there wouldn't be any user-facing regressions.
+However, if folks want macro-aware formatting in addition to the baseline rustfmt-style formatting, I think it is perfectly fair to require some additional setup in order to support name resolution and macro expansion. To be more concrete, the required setup I'm thinking of is rust-analyzer running cargo metadata or invoking Bazel/Buck/etc. in order to get a rust-project.json. Josh, while I'm sure you know this, other readers might not—I've spent a decent chunk of the last four years making the non-Cargo build system experience in rust-analyzer be nearly as polished as the Cargo-based experience, so I feel pretty confident in saying that more exotic setups wouldn't be that hard to support
+
+---
+
+@peter-lyons-kehl · 2025-12-07T17:09:18.000Z:
+Are there any custom LSP servers for selected function-like macros (whether procedural or macro_rules)? Especially for macros that take Rust-like input and modify it only slightly, so that (I hope) they could "forward" inlay hint queries to relevant parts of their macro input and (hoping that) rust-analyzer could  provide inlay hints for those "forwarded" parts.
+Would that be possible? If so, any examples, please?
+(slint! doesn't seem to be such a macro. I did look around crates.io: Rust Package Registry but I can't see anything obviously similar.)
+
+---
+
+@renderedideas-lab · 2026-04-01T06:24:38.219Z:
+Greetings from 2026. Happy April Fool's day.
+I wrote my wish for a compatible DSL inside the wrong forum space. Sorry for that.
+This time, I'm going to ask directly, prior to writing my wishes in detail.
+"""
+Is there any opportunity to extend Rust's own language server automatically, when defining an own DSL (based on / slightly altered from Rust) available through procedural macros at compile time?
+"""
+Currently, it doesn't seem so, and I feel forced to implement an own LSP-Server, in order to highlight code inside the IDE. Search engine results weren't satisfactory; the only crate I found was "syn_grammar"...
+Maybe there's a modern way around it, while I just don't know about it.
+May you give insight into the current state of things, please? Is there any solution to simplify the process (I'm really sure there must exist one).
+Thanks in advance.
+Have a nice day.
+
+---
+
+@chrefr · 2026-04-03T01:12:00.259Z:
+If you are implementing your own language server, you can reuse rust-analyzer's crates, but you cannot plug into them, no.
+
+=== ROW 40 | f009230 | https://internals.rust-lang.org/t/can-we-have-either-a-new-target-wasm32v1-unknown-unknown-or-a-set-of-new-targets-wasm32-v1-web-bindgen/22041 | 2024-12-18 | internals ===
+Can we have either a new target wasm32v1-unknown-unknown or a set of new targets wasm32(v1)?-web-bindgen?
+
+@stephanemagnenat · 2024-12-18T09:06:51.219Z:
+Rust 1.82 on wasm32-unknown-unknown has multivalue and reference-types extensions enabled by default. This created a myriad of issues with non-compliant browsers, mostly Safari, which based on my experience has broken implementation of these at least up to version 16.3 on iOS, which is only 1.5 years old.
+I saw that Rust 1.84 plans to land wasm32v1-none that disables such extensions, which is great. However, according it its documentation it is also a nostd target.
+However, my use case which I think is also the use case of many people using Rust and Wasm in production is to have a Webassembly MVP-only target so that two versions of the .wasm can be built and the compatibility one can be served to old Safaris.
+So, my ask is, can we have such a target? Something like wasm32v1-unknown-unknown.
+ping @alexcrichton
+
+---
+
+@newpavlov · 2024-12-18T09:26:25.485Z:
+IIUC you can disable the default extensions:
+blog.rust-lang.org
+WebAssembly targets: change in default target-features | Rust Blog
+Empowering everyone to build reliable and efficient software.
+
+---
+
+@stephanemagnenat · 2024-12-18T11:21:55.015Z:
+Yes, but it requires rebuilding std. I also do not know how well rebuilding std combines with wasm-pack and Webpack's WasmPackPlugin. The thing is, to use Rust on the web, most people want std. But also many people have to support Safari despite its bugs. So I think that it would be helpful for this common use case to be supported out of the box.
+
+---
+
+@newpavlov · 2024-12-18T11:45:10.269Z:
+Have you tried? If it does not work for some reason, then you should to ask wasm-pack people to add support for this case. Hacking a new target seems like a wrong tool for this.
+stephanemagnenat:
+The thing is, to use Rust on the web, most people want std.
+Small rant: I believe that having an "std" for wasm32-unknown-unknown was a big mistake. People should properly write crates to use alloc instead of relying on "std" which panics or returns errors on each non-trivial sneeze. Yes, there is an issue with HashMap, but it should've been resolved properly by exposing an overwritable "system" randomness source in a sysroot crate.
+
+---
+
+@stephanemagnenat · 2024-12-18T12:18:53.272Z:
+Have you tried?
+Indeed I didn't. It feels that rebuilding std in the CI is not a great idea, compared to using an old compiler for now. But maybe with some caching it is feasible.
+Small rant: I believe that having an "std" for wasm32-unknown-unknown was a big mistake.
+I can't argue on that as I do not have enough experience of Rust's internals. But I'll like to point out that as a user, when choosing a product, I'll like it to work out of the box with its basic features. And having a proper std (as Rust has now) feels like basic features nowadays. So for what it is worth I'm quite happy that I have std on the web. Maybe it should not have been in wasm32-unknown-unknown though, maybe in some wasm32-web or something like this.
+And that's what I'm arguing for, something that works straight out of the box for the common use cases on the web, so that Rust is a suitable solution for web development in a real industrial context.
+
+---
+
+@the8472 · 2024-12-18T14:36:08.903Z:
+stephanemagnenat:
+But I'll like to point out that as a user, when choosing a product, I'll like it to work out of the box with its basic features.
+Std provides OS abstractions. Bare wasm does not offer IO, threads, processes, randomness, allocations, time etc. etc. so it is correct to treat this as an embedded no-std target.
+To get std on wasm-in-a-browser you'd need standardized host bindings. I think wasi targets are that? (uncertain, haven't looked at wasi in depth) If yes then you need a -wasi target, not a -none.
+If you're missing some crate that should work without std but doesn't then this is not a rust issue but an issue with that crate. Embedded developers have to deal with that too. File a bug with the crate in question.
+
+---
+
+@stephanemagnenat · 2024-12-18T14:57:48.160Z:
+Std provides OS abstractions. Bare wasm does not offer IO, threads, processes, randomness, allocations, time etc. etc. so it is correct to treat this as an embedded no-std target.
+I see, on this I agree. I didn't realize the collection library was (almost) all in alloc. Thank you for the clarification. Indeed if HashMap would be in alloc, then the bare target would be good enough for me. So, hopefully that happens soon.
+
+---
+
+@cuviper · 2024-12-19T00:04:29.313Z:
+You can use hashbrown on no-std targets, which is the implementation under std anyway. You still have to decide what to do about hasher randomness yourself though.
+
+---
+
+@CAD97 · 2024-12-19T01:18:26.318Z:
+What could potentially work is a "wasm32v1-web-bindgen" which uses the wasm_binden protocol to bind to Math.random(), Date.now() (js), and Performance.now() (web). That covers randomness and time. IO and commands can just unconditionally return ErrorKind::Unsupported and be "in spec," but thread spawning just needs to panic[1].
+I think that with the single thread assumption that allows the sync types to just be the cell equivalents, that does cover all of the requirements of std. The downside being that it no longer "just works," requiring the user to provide the wasm_bindgen imports to the wasm module, likely even if they don't directly use the functionality. Of course this won't be an issue if you're already going through wasm-pack.
+It's probably better to just panic, but a different model would be to "spawn" the thread in an already panicked state, so thread::spawn "succeeds" but the JoinHandle is immediately attached to a "panicked thread" and no user code is ever run on that "different thread." ↩︎
+
+---
+
+@stephanemagnenat · 2024-12-19T07:50:10.747Z:
+What could potentially work is a "wasm32v1-web-bindgen" which uses the wasm_binden protocol to bind to Math.random(), Date.now() (js), and Performance.now() (web).
+Yes that would be awesome! I am using wasm_bindgen and I guess most Rust-in-the-browser users do so. Maybe also integrate web-time so that std::time works properly (including in web workers)?
+Over time, maybe more API could be supported, such as the File System API, once they stabilize and become widely available?
+If such a target would be added, I suggest to add a matching wasm32-web-bindgen that has similar instruction support requirements as wasm32-unknown-unknown but provides the same nice bindings as wasm32v1-web-bindgen. I believe such a target would significantly improve the ergonomic of Rust on the browser.
+Note: I have updated the thread title to match the outcome of the current discussion.
+
+---
+
+@stephanemagnenat · 2024-12-19T07:52:49.464Z:
+In case people wonder, I am asking these questions in relation to our Candli web-based educational game creation platform, which uses Rust alongside Typescript for performance-sensitive parts of the client.
+
+---
+
+@bjorn3 · 2024-12-19T12:37:16.350Z:
+CAD97:
+What could potentially work is a "wasm32v1-web-bindgen" which uses the wasm_binden protocol to bind to Math.random(), Date.now() (js), and Performance.now() (web).
+The reason why we haven't done this from the start for wasm32-unknown-unknown is that wasm-bindgen's protocol is unstable. The wasm-bindgen cli checks that the metadata was created by the exact same wasm-bindgen version (including patch version). This is also why we have been able to fix wasm-bindgen to not depend on wasm32-unknown-unknown's broken C ABI. Any usage of wasm-bindgen in the standard library would require -Zbuild-std + some way to update wasm-bindgen for the standard library to match the wasm-bindgen cli.
+
+---
+
+@stephanemagnenat · 2024-12-19T13:19:38.864Z:
+Thank you for the explanation!
+Do you see a way forward? Like continuing with the current approach and having a wasm32v1-unknown-unknown that ships with std, or something like stabilizing wasm-bindgen's protocol to get wasm32-web-bindgen/wasm32v1-web-bindgen targets?
+I'm agnostic to the technical solution, but I do care about Rust's story on the web, both because our startup already invested significantly into it (and Rust in general) and also because I believe that WebAssembly is a good way forward for the web (regarding efficiency, energy consumption, etc.). And hopefully things can become a bit better in term of platform support, as currently it is somewhat of a bumpy road, despite WebAssembly being on the homepage of the language.
+
+---
+
+@stephanemagnenat · 2024-12-19T15:20:23.026Z:
+Have you tried?
+I did a search, people have tried and failed, but the solution is probably to run wasm-pack with nightly. However, when used with a bundler such as webpack, wasm-pack is called by a plugin, such as wasm-pack-plugin. Configuring that plugin to use nightly is tedious. It might be doable with a rustup override or a rust-toolchain.toml, I didn't try myself.
+The point is, having to do all these steps correctly is hard, error-prone, fragile and clearly not the user-friendliness expected of a first-class feature.
+
+---
+
+@stephanemagnenat · 2024-12-19T16:48:11.830Z:
+the8472:
+If you're missing some crate that should work without std but doesn't then this is not a rust issue but an issue with that crate. Embedded developers have to deal with that too. File a bug with the crate in question.
+Doing some research on that question shows that it's not that trivial in practice. Take for example the image crate. Work on no_std has been going on for years. There is slow progress, and it seems that the current blocker is the lack of Read and Write traits in no_std (itself an issue opened for years). Of course there are (incomplete and not fully up to date) work arounds for that. Yet this shows that making a third-party crate no_std is not trivial, because Rust's std is not (at the moment) perfectly splitable between "things that depend on io" + "things that depend on dynamic memory allocation" + "rest".
+
+---
+
+@the8472 · 2024-12-19T18:39:39.811Z:
+I didn't say it would be trivial. But just because there are issues doesn't mean we should offer a non-functional std, otherwise we'd have to do that for all targets and then explain to users why the API surface is there but doesn't work.
+If we only take the easiest immediate solutions then we end up with a pile of hacks. Which means until someone puts in the work to add a proper solution the hacks and workarounds will have to live downstream.
+
+---
+
+@stephanemagnenat · 2024-12-19T19:12:02.991Z:
+From a technical standpoint I agree with you. But wasm32-unknown-unknown does exist, is generously advertised on the language homepage and does provide std, although partially non-functional.
+So while I do hear the arguments that it was a bad idea in the first place, because it exists and is widely advertised (which I assume was a strategic decision to widen the language adoption), people build things on top of it. So when suddenly the compiler updates and Rust builds stop working on a less than 2 years old Safari, it is really a problem for the users, who have invested in this technology on the assumption that it was seriously supported.
+Of course one can easily argue that's the browser's fault, but at the same time one could counter-argue that the Rust product is now broken, and that an easy-to-use fix for the users already invested in the language should be provided. Finding such an accessible fix was my core thinking for suggesting wasm32v1-unknown-unknown in the first place.
+
+---
+
+@the8472 · 2024-12-19T19:25:57.249Z:
+That's not a good argument to proliferate a mistake. Proliferating would make the problem worse in the long run because it takes away incentive to do things properly, so even more people would start relying on std instead of alloc/core where they should.
+To support old targets you can use an old rust version. This should buy you time to figure out how to migrate.
+At least adding a -v1-unknown-unknown target with std wouldn't be very forward-facing. Working on -bindgen targets would seem more productive.
+But I don't know if the wasm platform maintainers have already considered older browsers.
+And you didn't mention the fraction of the usershare, which is typically something that gets considered when talking about browser features.
+
+---
+
+@stephanemagnenat · 2024-12-19T19:53:19.932Z:
+That's not a good argument to proliferate a mistake. Proliferating would make the problem worse in the long run because it takes away incentive to do things properly, so even more people would start relying on std instead of alloc/core where they should.
+I hear and understand your point but it feels a bit user-unfriendly to me. For example, stating that the right thing to do is that people should rely on alloc/core obfuscates the reality that, as illustrated with my image crate example (that I found while trying to get rid of std in the smallest of my wasm, devoted to computer vision), the pieces necessary to do that smoothly are not yet all in place (e.g. the Read/Write traits not being in core).
+To support old targets you can use an old rust version. This should buy you time to figure out how to migrate.
+This is what we are doing at the moment.
+At least adding a -v1-unknown-unknown target with std wouldn't be very forward-facing. Working on -bindgen targets would seem more productive. But I don't know if the wasm platform maintainers have already considered older browsers.
+This I agree, having a proper std support on the web through a -bindgen target would be lovely.
+And you didn't mention the fraction of the usershare, which is typically something that gets considered when talking about browser features.
+According to stat counter, Safari has a 15-20 percent market share. And according to stats on a ruffle PR related to same issue, in November 2024 there were 17% of Safaris <= 16.3. So that is a 3% overall. In specific applications (e.g. tablets) it might be more.
+
+---
+
+@mjw · 2024-12-19T20:05:56.203Z:
+stephanemagnenat:
+I did a search, people have tried and failed, but the solution is probably to run wasm-pack with nightly.
+In any case, if you have to use nightly to do this you might as well stick to Rust 1.81 for an easy life: either way you're crossing the line to using an unsupported version of the compiler.
+
+---
+
+@adrian17 · 2024-12-19T23:25:25.439Z:
+Hey, just for the record, we had similar conversation regarding Ruffle in Add wasm32v1-none target (compiler-team/#791) by graydon · Pull Request #131487 · rust-lang/rust · GitHub .
+Very similar story: we want to keep support for Safari, which forces us to either switch to nightly to use build-std, or freeze at 1.81 until we decide to drop these browsers; we can live with any of these choices, we just consider it unfortunate to be required to do this kind of choice in the first place.
+And also similar regarding -unknown-unknown and no_std: even if we wanted to go no_std, we're both blocked by missing some core APIs like Read, and by a decent chunk of our dependencies not being marked no_std.
+(And... we kinda prefer not to - there are more things in std than Read that are not direct OS abstractions that we like to have. And some things that are "hacky", like std::sync::Mutex implemented as noops (and rest of std::sync), we honestly see as an advantage; without it the code reuse between web and desktop would be much harder. I understand the "relying on "std" which panics or returns errors on each non-trivial sneeze" issue - though as far as we know, it has never significantly bit out project, since the solution of "be careful not to write OS-abstraction-dependent code in the shared crate" we already happened to be following by design)
+
+---
+
+@sxlijin · 2024-12-23T23:22:08.340Z:
+Chiming in to second @stephanemagnenat : while I agree with the long-term goal of making wasm a nostd target until WASI/browser is ready, I feel rather uncomfortable with the attitude I'm seeing in this thread about not providing a clear migration/upgrade path for those of us whose codebases rely on std compiling with wasm32-unknown-unknown.
+
+---
+
+@the8472 · 2024-12-25T00:48:10.564Z:
+wasm32-unknown-unknown continues to compile, it hasn't been deprecated. It is only when you add the additional requirement of supporting older browsers that you need something different. IIRC the v1-none target was motivated by things like minimal wasm interpreters or sandboxes, in contrast to browsers which follow the evolving wasm target specification.
+Note that wasm targets are mostly tier-2 and maintained by interested parties and less managed by the general Rust teams. So to get progress someone either has to convince the target maintainers to add better support for browsers specifically or put in the work themselves, it's unlikely to happen on its own.
+CC @alexcrichton @graydon
+
+---
+
+@stephanemagnenat · 2024-12-25T08:32:00.234Z:
+Note that wasm targets are mostly tier-2 and maintained by interested parties and less managed by the general Rust teams.
+A comment about that: First of all, I fully understand and appreciate that a lot of Rust development is a volunteer-based effort and I'm deeply thankful to all the people who spent countless hours to make such a great product. Fortunately, there is now a foundation with significant money to support the core of the project, and hopefully, the parts that are necessary but less fun to do on a hobby basis.
+Wasm, in the form of wasm32-unknown-unknown + web-sys + wasm-bindgen, is prominently presented on the language front page, and as such it is very strange to me that it is only a tier-2 target. This feels like a mismatch of priorities between the marketing and the development teams. From a business point of view, isn't it inconsistent to promote a product that does not receive first-class support? Imagine how users feel when, after having invested into WebAssembly Rust based on the promises from the language page, they are told that they need to solve a very common platform issue by themselves?
+So my call is not a complain to the hard working contributors to do even more, but rather to the project leadership. Maybe it is possible to dedicate some of the foundation resources to better support core advertised targets?
+
+---
+
+@Noratrieb · 2024-12-25T10:13:34.131Z:
+We are generally really conservative when it comes to platform support. Our x86-64 targets still use v1, even if many very old CPUs have v2 already. We still support very old versions of glibc as well. Given this, it is surprising to me that we updated our WebAssembly target, which is commonly used with browsers, to break 3% of the web on old Safari. That's a lot and I agree with everyone who complained about this here that that's a mistake and is going to hurt users.
+We are going to need to untangle the Wasm target to better support the different use cases, but that will take a long time. Given that, as the blog post mentioned, multivalue doesn't make much of a difference to Rust, I we should seriously consider disabling this feature if possible.
+Safari 16.4 was released in March 2023. Baseline, which is an attempt to define what features should be used by Websites, defines "Widely Available" (which I think Rust should target at least) to take 30 months of support in all major browsers, which will happen only in September 2025.
+
+---
+
+@the8472 · 2024-12-25T10:42:16.833Z:
+The relentless drumbeat of progress for the wasm target is inherited from llvm which in turn is inherited from the webassembly project itself, which is a bit more aggressive than what the baseline page lists.
+Perhaps Rust's specific issue is that it makes it harder to relax the default features because one needs nightly to use build-std. That's being worked on.
+
+---
+
+@torokati44 · 2024-12-25T13:13:33.830Z:
+Just my two cents (as another contributor to the Ruffle project; like, and in agreement with, @adrian17 above): Making build-std stable soon could perhaps be the best outcome, so everyone could choose what kind of std (with stubbed bits or not), using which WASM extensions, to use. This goes both ways: Enabling beneficial ones for modern browsers (bulk-memory could help a lot in some use cases), and disabling the default ones for legacy browser support.
+
+---
+
+@mjw · 2024-12-26T10:18:23.899Z:
+Noratrieb:
+Given that, as the blog post mentioned, multivalue doesn't make much of a difference to Rust, I we should seriously consider disabling this feature if possible
+I think this should follow from the wish to have "fearless upgrades" for rustc.
+Every now and again there's a discussion of whether rustc should have LTS releases. The conclusion is always that it shouldn't, and that that's OK because nobody should find they have to run an older version.
+Dropping support for targetting browsers that Rust users want to have on their "supported browsers" list goes against that.
+
+---
+
+@danielhjacobs · 2024-12-26T14:44:26.939Z:
+I'd also note that arguably Safari support targets should be more conservative than those of other browsers, since unlike other browsers, the version of Safari an iOS or macOS user can use is limited by the OS itself.
+
+---
+
+@danielhjacobs · 2024-12-26T19:25:02.271Z:
+stephanemagnenat:
+November 2024 there were 17% of Safaris <= 16.3
+It is worth noting that apparently, at least for Ruffle, the upgrade to wasm-bindgen 0.2.97 fixed compilation of the WASM target on Safari 15 - 16.3 when using Rust 1.82+. Compilation for Safari 14.1, however, was still broken. However, in Reconsider usage of bigint in generated JS code · Issue #4246 · rustwasm/wasm-bindgen · GitHub, daxpedda did say "Safari's v15 implementation of the reference type proposal was faulty (don't remember the details), we should pretend that support was added in Safari v16." So your mileage may vary.
+
+---
+
+@bes · 2024-12-26T21:38:19.227Z:
+I can confirm that 1.82 broke our wasm code in Safari 15. There is a hacky workaround (for now, might stop working in a future version) — setting strip = true (maybe in combination with wasm-opt, unclear to me) somehow makes Safari 15 work again. After applying the hack, a massive amount of Safari 15+ crashes coming in through Sentry were fixed.
+See WebAssembly with Reference Types cannot be parsed · Issue #15566 · webpack/webpack · GitHub
+Edit: about 10% of our Safari users are below v16.4.
+
+---
+
+@alexcrichton · 2024-12-27T05:39:08.722Z:
+For me there's a lot going on in this thread but I think there's a lot of good points to call out too. The tl;dr; is that I don't think we're in a great position right now (sort of self-evident given the discussion) but there's no easy way out of this. There are a number of competing concerns and desires here, but I can try to offer my 2c on thoughts on ways forward on this.
+Guidelines for enabling wasm extensions
+As far as I know there's no currently written down policy of "here's when it's decided to turn a wasm feature on". The WebAssembly specification has been evolving for years and will continue to do so. Whether or not it makes sense to turn a feature on-by-default will continuously come up. Personally I don't think either extreme of "never turn anything on" or "turn everything on after 6 months" is feasible.
+Right now Rust's default set of extensions enabled is inherited from LLVM. For discussion of the various policies there the internals forum here isn't the best place since the wasm backend LLVM maintainers (mostly Googlers working with Emscripten) likely don't frequent here. Instead I'd recommend raising a discussion in the tool-conventions repository.
+I'll specifically call out here though that I at least personally think it's important to keep C/C++/Rust/etc in sync. While it's certainly possible to have different defaults in Rust than in LLVM I believe that will cause confusion in the long run. I understand it's more work to engage with external folks, but I think it'll result in a better result in the long run.
+I was not personally part of the discussion to turn these proposal on-by-default in LLVM, so I don't know if Safari was ignored, forgotten, explicitly chosen against, or something else. I did raise an issue on the tool-conventions repository which has some discussion which interested folks may wish to engage with as well.
+Adding more Rust targets
+While on the surface adding a wasm32v1-unknown-unknown target might seem like the most straightforward path here I agree with the arguments against this, and I think once the complete picture is seen it's clear that this is no longer an "obvious path forward". Both the benefits and downsides of std on wasm32-unknown-unknown are real and I don't think there's an obvious decision of "it's worth it" vs "it's not". We already have a lot of wasm targets and it'd be unfortunate to keep adding more for various combinations, it's a pretty heavy hammer for what should be a relatively localized solution.
+If someone is interested to champion this cause though I'd recommend following the MCP process for adding a new target to the compiler. It's pretty clear what this target would be if it were added, but there should also be dedicated discussion exclusively for that in Zulip. (although this thread is a bit of a precursor to that as well of course)
+Using -Zbuild-std
+Sort of like wasm32v1-unknown-unknown this is a possible candidate for "most obvious solution". That being said the pain of using nightly Rust and possibly resulting in breakage is also very real. Integrating -Zbuild-std into wrapper tools like wasm-pack is not always obvious and can be difficult to figure out. Ideally -Zbuild-std would be stable but that's a whole separate thorny set of questions.
+I'm not aware how best to push on this in terms of helping making it stable. My guess is that it would require a lot more context and implementation effort outside of the interests of this thread. I also suspect Cargo folks are well-aware of the use case of recompiling libstd with/without CPU features so I at least personally reach the (unfortunate for this thread) conclusion that there may not be much to help the -Zbuild-std stabilization effort at this time (I'd be happy to be wrong though!)
+Adding a *-bindgen Rust target
+I personally intentionally never advocated for this when I was maintaining wasm-bindgen, and I would have advocated against it had it been proposed at the time. I'm not currently maintaining wasm-bindgen though so things can always shift, though.
+The wasm-bindgen crate was never designed for stability of compiler artifacts in mind and it has quite a lot of hacks which if anyone were to try to replicate they'd (reasonably) run away screaming. For example did you know that wasm-bindgen has an interpreter for wasm which it executes to figure out types in your program? I always felt this was an appropriate hack for a crates.io-based crate but wildly inappropriate for something like the Rust standard library.
+In that sense, at least if foundational parts haven't changed in the meantime, my opinion is that *-bindgen targets in Rust is a dead end. It shouldn't happen and problems need to be solved via some other means. The "easiest" alternative solution here is to probably improve integration with Emscripten which is already tailor-made for running C/C++/wasm/LLVM on the web while assuming that JS exists. I put "easiest" in quotes here though because I realize this probably isn't easy, and I don't even know the depth of it myself as I'm not that knowledgable about Emscripten.
+Timelines of a solution
+One thing I'll also call attention to is the various timelines involved here. For example if it takes a year or so to figure out how to officially solve this then that technically means it's no longer a problem because at that point Safari support for wasm32-unknown-unknown is probably at a high-enough level it's ok to use then. This to me cuts both ways in terms of if folks need a solution right this red hot second then pushing on some solutions in this thread may not be the best path forward due to the timelines involved. On the other hand though now's the best time to figure out solutions for these so this doesn't keep coming up in the future.
+Sorry for the long read and I'm also sorry I can't really offer much in the way of a strong conclusion here either. I suspect solving this "for real" will require some dedicated work by someone which is more than "just copy that solution over there and tweak it a bit", since this thread is showing that all the "easy ideas" have serious drawbacks one way or another.
+
+---
+
+@bjorn3 · 2024-12-27T10:18:48.510Z:
+danielhjacobs:
+"Safari's v15 implementation of the reference type proposal was faulty (don't remember the details), we should pretend that support was added in Safari v16."
+Is the faulty part for overlong call_indirect encodings? Or with the rest of the reference types proposal? Only the former is used by rustc when reference types are enabled. The rest if I recall correctly was used by default in older wasm-bindgen versions when any object file indicates reference types usage, while newer wasm-bindgen versions keep it disabled by default even in that case.
+
+---
+
+@stephanemagnenat · 2024-12-27T11:54:56.965Z:
+On my side, the errors I'm seeing in Safari up to and including 16.3 are of type RuntimeError: Out of bounds table access (evaluating 't.crop_and_call(e,n,_)') when running Rust-based image cropping code in a web worker, with wasm-bindgen version 0.2.99. I feel that this is a different issue from the one affecting Safari 15, but I did not manage to create a minimal reproducible test case and thus I might be wrong.
+
+---
+
+@danielhjacobs · 2024-12-27T14:05:08.200Z:
+bjorn3:
+Is the faulty part for overlong call_indirect encodings? Or with the rest of the reference types proposal?
+The error reported by someone using Safari 15 prior to the wasm-bindgen bump said RuntimeError: Out of bounds table access (evaluating 'b._dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h281f2f93d3d6cf28(n,e,t)')
+
+---
+
+@steffahn · 2026-06-20T14:06:03.179Z:
+This topic was automatically closed 540 days after the last reply. New replies are no longer allowed.
+
+=== ROW 41 | f009308 | https://internals.rust-lang.org/t/complex-numbers-pre-acp/23769 | 2025-11-25 | internals ===
+Complex Numbers (Pre-ACP)
+
+@SciMind2460 · 2025-11-25T10:15:03.307Z:
+Continuing the discussion from Standard complex number in std library
+Proposal
+Problem statement
+Currently, there is no stable counterpart to the C _Complex types, and a myriad of implementations exist on crates.io. Popular crates like num-complex exist, but more often there are implementations defined by the crates themselves, which, while compatible with the other types in having the exact same implementation, require a myriad of conversion functions to convert with each other. Additionally, there is no syntax supported like 1+2i or 1+2j for complex numbers. (This ACP doesn't cover this, but it does lay ground for future work in this area)
+Motivating examples or use cases
+A scientific computing library's functions (can be written in C):
+// in comp
+extern double _Complex computes_function(x: double _Complex);
+can be represented in Rust without the need of complex structs and the like:
+extern "C" {
+fn computes_function(x: c64) -> c64;
+}
+fn main() {
+let returned_value = computes_function(c32::new(3, 4))
+}
+with the special repr that only the standard library can provide.
+(This would, however, require that the complex numbers become lang items.)
+Solution sketch
+Complex numbers will have a implementation similar to this:
+// c16, c32, c64, c128 to be defined this way using f16, f32, f64 and f128 respectively
+#[lang = "complex"] // defines a special C-compatible repr which matches the ABI
+struct c32 {
+re: f32,
+im: f32
+}
+impl c32 {
+fn conjugate() { ... }
+// more function impls as desired
+}
+// All the trait impls as per LLVM intrinsics
+impl Add for c32 {}
+impl Sub for c32 {}
+impl Mul for c32 {}
+impl Div for c32 {}
+// syntax can be changed to use j
+// in main.rs
+fn main() {
+println!("{}", Complex(1, 2);
+}
+The complex numbers will serve as structs and all operations will be defined as a struct operation.
+Alternatives
+Don't put it into the std (status quo)
+We could just not put complex numbers in the std and let the popular libraries work. This would be acceptable if not for improving FFI with C, as it already implements the _Complex types and adding them to Rust would significantly improve the FFI experience with libraries already in C. I do not recommend this yet.
+Links and related work
+Standard complex number in std library
+What happens now?
+This issue contains an API change proposal (or ACP) and is part of the libs-api team feature lifecycle. Once this issue is filed, the libs-api team will review open proposals as capability becomes available. Current response times do not have a clear estimate, but may be up to several months.
+Possible responses
+The libs team may respond in various different ways. First, the team will consider the problem (this doesn't require any concrete solution or alternatives to have been proposed):
+We think this problem seems worth solving, and the standard library might be the right place to solve it.
+We think that this probably doesn't belong in the standard library.
+Second, if there's a concrete solution:
+We think this specific solution looks roughly right, approved, you or someone else should implement this. (Further review will still happen on the subsequent implementation PR.)
+We're not sure this is the right solution, and the alternatives or other materials don't give us enough information to be sure about that. Here are some questions we have that aren't answered, or rough ideas about alternatives we'd want to see discussed.
+Edit: The ACP transitioned into an RFC which is uploaded on GitHub here
+Update: The RFC has been accepted! Tracking issue here!
+
+---
+
+@R081n · 2025-11-25T10:49:12.826Z:
+A problem i see for FFI is that in C a complex number is not always passed as a struct.
+On GNU _Complex is sometimes passed in SSE registers, but sometimes also passed as two separate parameters, sometimes also like a normal struct.
+But MSVC does not actually support _Complex Ms docs
+
+---
+
+@SciMind2460 · 2025-11-25T10:52:13.904Z:
+AFAIK it is a part of the C99 standard (Arithmetic types - cppreference.com) so I think that we can create a primitive that will have the implementation-specific FFI? MSVC does have _FComplex and the like so I think we can get away with doing FFI on that front.
+
+---
+
+@kpreid · 2025-11-25T16:47:11.379Z:
+R081n:
+A problem i see for FFI is that in C a complex number is not always passed as a struct.
+This is not a problem — Rust itself also sometimes passes structs of two elements as separate values that may be in registers (a “scalar pair”). If compatibility with C is desired, the Complex struct can be given a special #[repr] which promises to match the C _Complex ABI when the generic parameter is a primitive float. It may technically be a new compiler feature, but all the pieces are (probably) already there.
+
+---
+
+@zackw · 2025-11-25T17:38:17.167Z:
+SciMind2460:
+impl Mul for Complex<T> {
+fn mul(self, other: Self) {
+Complex {
+re: self.re * other.re - self.im * other.im,
+im: self.im * other.re + self.re * other.im,
+}
+}
+}
+This formula for complex multiplication doesn't handle "intermediate overflow" correctly; there are situations where the mathematically correct result (computed in infinite precision) would fit in T, but one or more of the intermediate products doesn't, so you don't get the right answer.  Similar problems exist for division and complex norm.  How do you plan to address this?
+
+---
+
+@toc · 2025-11-26T03:16:03.276Z:
+zackw:
+How do you plan to address this?
+Answering out of turn, but is it by using the llvm intrinsics instead?
+
+---
+
+@SciMind2460 · 2025-11-26T08:07:05.916Z:
+Yep, that was my idea. It's just that I was wondering if we wanted this as a primitive or a struct so I left it like that. Edited my post to use LLVM intrinsics instead.
+(BTW, since this adds a new primitive to rust, would this technically not come under the scope of an ACP?)
+
+---
+
+@pitaj · 2025-11-26T15:30:11.318Z:
+This doesn't add a new primitive, unless you're talking about the syntax. But that can always be added later.
+
+---
+
+@zackw · 2025-11-26T19:24:02.136Z:
+I'm not sure LLVM does implement numerically safe complex multiply, at least not in all cases.[1] Still, "this is the compiler's job" is a good answer to the question I asked, and "the compiler has intrinsics for complex arithmetic that (in principle) handle all the floating-point corner cases and are legible to optimization, but Rust doesn't expose them" is IMO a stronger argument for including complex numbers in the stdlib than just "there are a lot of crates already that define complex types and they're not interoperable".  (You do mention that LLVM has these intrinsics in your problem statement, but you don't, IMO, give that the importance it deserves.)
+for example, llvm-project/compiler-rt/lib/builtins/muldc3.c at 5017370a1ce5009aed2855b645194bc141f72a2d · llvm/llvm-project · GitHub handles the naive formula producing a NaN that ought to be Inf, but it doesn't look like it even tries to detect the situation where the difference of two infinite-precision intermediates would be in the finite representable range of IEEE double. ↩︎
+
+---
+
+@scottmcm · 2025-11-26T19:29:27.087Z:
+SciMind2460:
+LLVM has a intrinsic for this, but it is not used in Rust as yet.
+Can you link where that is in the langref?  None of the places it says "complex" (that I found) are about complex numbers.
+
+---
+
+@josh · 2025-11-26T20:35:35.623Z:
+For the purposes of making the simplest possible ACP, please leave out the bits involving new custom lang syntax, and assume that this will have a constructor like c32::new(2.0, 4.0).
+
+---
+
+@SciMind2460 · 2025-11-26T22:31:44.275Z:
+MLIR does
+
+---
+
+@SciMind2460 · 2025-11-26T22:34:01.781Z:
+I agree. I'll add it as a major factor in the ACP and will change it as soon as I can.
+
+---
+
+@scottmcm · 2025-11-27T00:47:46.381Z:
+Well rust doesn't use MLIR, so that's not particularly relevant?  (MLIR has all kinds of dialects, like sparse tensors for example.)
+Whereas if there was, say, a llvm.complex.mul.f32 intrinsic that handled complex multiplication properly for us, that would be a stronger reason to have it built-in in some way, as it would be something a crate wouldn't use.  (Like how https://doc.rust-lang.org/std/primitive.u128.html#method.carrying_mul_add is implemented on LLVM in a way not possible in a crate, which is one reason it's nice to have as a core method.)
+
+---
+
+@SciMind2460 · 2025-11-27T08:09:48.043Z:
+Hmm...
+It appears that [there were] (⚙ D119284 [IR] Add intrinsics to represent complex multiply and divide instructions.) some plans for complex numbers, but they are not entirely supported for now. It's odd because I thought there were some plans for doing so. I don't think this is a problem, as we can now use a platform dependent representation as a struct for the complex types. The advantage is still C FFI.
+
+---
+
+@user16251 · 2025-11-28T13:04:14.011Z:
+Is there a standard ABI for complex numbers in FORTRAN?
+
+---
+
+@SciMind2460 · 2025-11-28T13:38:30.244Z:
+I don't think so since Fortran itself does not have a well defined ABI.
+
+---
+
+@SciMind2460 · 2025-11-30T03:55:03.400Z:
+The ACP is very nearly complete. If there are no changes requested here, I'll submit it to the libs team. This is a final request for any additional feedback or changes I can incorporate.
+
+---
+
+@josh · 2025-11-30T08:13:00.355Z:
+It's not clear from what you've written if the type is generic. It seems like it should be a generic Complex<T>, with optional type aliases type c32 = Complex<f32> and type c64 = Complex<f64>.
+
+---
+
+@tczajka · 2025-12-01T18:20:44.111Z:
+josh:
+It seems like it should be a generic Complex<T> , with optional type aliases type c32 = Complex<f32> and type c64 = Complex<f64> .
+Integral T, such as Complex<i64>, are also sometimes useful. These are Gaussian integers, useful for all kinds of things in number theory, and can be used for geometry when you're dealing with integral coordinates.
+
+---
+
+@kornel · 2025-12-08T02:26:46.155Z:
+If the primary reason for putting this in std is the C ABI, could this start as a type in std::ffi::c_complex?
+
+---
+
+@josh · 2025-12-08T05:44:09.578Z:
+I don't think that's the primary reason; the other reason is common vocabulary for Rust API.
+
+---
+
+@ais523 · 2025-12-08T10:15:00.943Z:
+I've implemented complex numbers myself for a Rust program, and have a word of caution: rounding is a difficult problem when operating on complex numbers, both in terms of getting the correct result and in terms of even specifying what the desirable behavior is (there is more than one reasonable way to define it). Modulo and gcd are particularly difficult to specify sensibly (modulo is connected to the way that division rounds, which is two-dimensional; and gcd has four possible signs for the result, and often none of them are "positive" which is what you'd usually want). This is probably fixable, but needs to be thought about in advance in order to avoid causing problems later.
+
+---
+
+@SciMind2460 · 2025-12-08T11:05:20.301Z:
+Isn't that mostly for Gaussian integers?
+This RFC has been limited to floating points for now.
+
+---
+
+@ais523 · 2025-12-08T11:21:17.551Z:
+Modulo and GCD are both definable on floating-point numbers (but require reasoning about integers to define them), and modulo is supported by floating-point real numbers in Rust at the moment (so people would probably expect it to work on complex numbers too, although perhaps it could be left out of an initial implementation).
+Rounding is also very relevant for floating-point numbers in general, anyway (including complex floats) – they're quantized in the same way that integers are (and in some ranges support only integer values).
+
+---
+
+@Vorpal · 2025-12-08T12:18:25.709Z:
+Shouldn't there be two complex types also: cartesian and polar?
+(Also, is the concept of integers in the complex plane even well defined? That will work differently between cartesian and polar. )
+
+---
+
+@pitaj · 2025-12-08T15:43:38.797Z:
+Polar isn't really useful for calculations, so I'd just expect to see functions abs and theta for calculating the polar form.
+

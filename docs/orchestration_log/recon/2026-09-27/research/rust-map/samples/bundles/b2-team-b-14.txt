@@ -1,0 +1,2615 @@
+=== ROW 36 | f008522 | https://kerkour.com/signal-protocol-pqxdh-rust | 2025-07-23T00:00:00 | individual-blogs;twir-links ===
+The Signal Protocol Explained #1: Implementing the Post-Quantum Extended Diffie-Hellman (PQXDH) Protocol in Rust
+Invest in your career! 50% off Black Hat Rust 0d 16h 53m 43s
+Close
+Sylvain Kerkour
+HomeBlogBooksBlack Hat RustGitHubContactHire me
+Search Subscribe
+Open menu
+The Signal Protocol Explained #1: Implementing the Post-Quantum Extended Diffie-Hellman (PQXDH) Protocol in RustJuly 23, 2025
+In this series:
+The Signal Protocol Explained #1: Implementing the Post-Quantum Extended Diffie-Hellman (PQXDH) protocol in Rust (this article)
+The Signal Protocol Explained #2: Implementing the Double Ratchet Algorithm in Rust
+I'm always amazed by the fact that despite billion(s) of daily users (Signal, WhatsApp, iMessage) and trillion(s) of messages exchanged every year, end-to-end encrypted messaging is still an unsolved problem.
+Signal and WhatsApp work great for 1-to-1 conversations, but for reasons unbeknownst to perhaps most people, the cryptographic protocols used under the hood have severe scaling issues.
+That's why I'm starting this new series, The Signal Protocol Explained, first to show that applied end-to-end encryption is no dark magic and is actually pretty easy to understand despite the hard-to-decipher specifications and whitepapers. Second, in the hope that fresh brains could help us find new solutions to the encrypted group messaging problem.
+Ho, and also because a few corrupt businesses and politicians want to put at risk the entire European continent in order to make money selling surveillance technology, so spreading knowledge about end-to-end encryption is a way to fight back against these obscurantists. Yes, I'm talking about EU Chat Control and similar initiatives.
+The Signal Protocol (for 1-to-1 conversations)
+For 1-to-1 conversations (group conversations will be covered later in the series), the Signal protocol is composed of two main sub-protocols: an initial Key Agreement protocol, the Post-Quantum Extended Diffie-Hellman (or PQXDH) protocol, where the parties agree on a shared Secret Key that is then used to encrypt the messages, and the Double Ratchet algorithm where the parties continuously update the initial Secret Key to ensure the security of their messages over time.
+You will learn all the nifty details of the double ratchet algorithm and how to implement it in the next post of this series, so please make sure to subscribe (RSS / Newsletter).
+There are also a few other algorithms / sub-protocols that make Signal better than the alternatives, such as sealed senders and encrypted profiles, but they are more advanced features and are out of the scope of this article.
+The Signal protocol was a revolution in the applied cryptography world due to the cryptographic properties it offers.
+Forward Secrecy (FS) is the guarantee that if an adversary compromises an encryption key at time T, it can't decrypt the messages exchanged before T (T-1, T-2....).
+Here, the attacker can't decrypt Messages 1 and 2.
+PGP infamously doesn't provide Forward Secrecy. That's why security people universally reject PGP: if your private key is compromised at any moment, an attacker will be able to decrypt all your previous and future messages.
+Post-Compromise Security (PCS) is the guarantee that if an adversary compromises an encryption key at time T, it won't be able to decrypt messages exchanged in the future at T+1, T+2...
+Here, even if an attacker compromises the encryption key between Message 2 and Message 3, it won't be able to decrypt Message 3, Message 4 and so on.
+Both Forward Secrecy and Post-Compromise Security are achieved in Signal with the Double Ratchet algorithm that will be explained and implemented in the next post of this series, so please make sure to subscribe (RSS / Newsletter).
+Finally, one of the other major innovations that the Signal Protocol brought to the masses was Deniability. It's the guarantee that there are no cryptographic proofs binding a party to a message. In other words, if you said bad things about your "friend" Eve to your other friend Bob, even if he can take a screenshot, Bob won't have any cryptographic proof that YOU actually sent the messages, as the message won't contain any digital signature. It's achieved with the Extended Diffie-Hellman protocol that we are studying today, by ensuring that all parties are able to generate the keys to produce a conversation. Thus, from a cryptographic point of view, the nasty messages could have been made up by Bob.
+Do you feel that the time has come for a career upgrade? Learn how to write secure and production-ready Rust code, applied cryptography and security engineering with my book Black Hat Rust where, among other things, you will build a web server, an end-to-end encrypted Remote Access Tool and exploits in Rust.
+The Post-Quantum Extended Diffie-Hellman (PQXDH) Key Agreement Protocol
+Announced in September 2023, the purpose of the PQXDH protocol is to securely establish a shared Secret Key between two parties over an insecure channel. This secret key can then be used to encrypt the messages between the parties. The two parties should be able to verify that they are talking to the intended peer by verifying signatures.
+PQXDH, which specification is available on Signal's website is an evolution of the original Extended Triple Diffie-Hellman (X3DH) Key Agreement Protocol, updated to provide partial resistance against quantum computers.
+Because cryptographically-threatenning quantum computers are not yet a reality, PQXDH does not yet provide quantum resistance for its signatures, only the key exchange part of X3DH has been upgraded.
+It was urgent to upgrade the Signal Protocol to offer quantum resistance because passive adversaries (such as spooks listening on the wires) can perform harvest-now, decrypt-later (with a quantum computer) attacks against the Key Exchange protocol to get the Secret Key, putting at risk the secrecy of the messages.
+On the other hand, altering signatures requires active attacks, and thus signatures are not at risks until quantum computers exist. Thus, protocol designers have a little bit more time to wait for the post-quantum cryptography field to stabilize.
+To talk to Bob, Alice needs at least 4 keys:
+alice_identity_secret_key, an X25519 secret key
+bob_identity_public_key, an X25519 public key
+bob_curve_prekey_public, an X25519 public key signed by bob_identity_private_key
+bob_pq_prekey_public, Bob's Public PQ-KEM (Post Quantum Key Encapsulation Mechanism) Prekey, an ML-KEM-1024 encapsulation (public) key signed by bob_identity_private_key
+She can then start the PQXDH procotol:
+xed25519_verify(bob_identity_public_key, bob_curve_prekey_public_signature)
+xed25519_verify(bob_identity_public_key, bob_pq_prekey_public_signature)
+ephemeral_x25519_private_key = new_x25519_private_key()
+ephemeral_x25519_public_key = ephemeral_x25519_private_key.public_key()
+mlkem_ciphertext, mlkem_shared_secret = ml_kem_encapsulate(bob_pq_prekey_public)
+dh_1 = diffie_hellman(alice_identity_secret_key, bob_curve_prekey_public)
+dh_2 = diffie_hellman(ephemeral_x25519_private_key, bob_identity_public_key)
+dh_3 = diffie_hellman(ephemeral_x25519_private_key, bob_curve_prekey_public)
+secret_key = KDF(dh_1 || dh_2 || dh_3 || mlkem_shared_secret)
+Where KDF is a key derivation function defined here:
+fn KDF(input);
+return HKDF-SHA-512(
+key: (32 * 0xFF) || input,
+salt: (64 * 0x00),
+info:`MyProtocol_CURVE_HASH_POST-QUANTUM-KEM`
+)
+Alongside her first message, Alice sends to Bob the following cryptographic materials:
+alice_identity_public_key
+ephemeral_x25519_public_key
+mlkem_ciphertext
+Bob can then derive the exact same secret_key with the following keys:
+bob_identity_secret_key, an X25519 secret key
+bob_curve_prekey_private, an X25519 secret key
+bob_pq_prekey_private, an ML-KEM-1024 decapsulation (private) key
+alice_identity_public_key, an X25519 public key
+ephemeral_x25519_public_key generated by Alice
+mlkem_ciphertext generated by Alice
+mlkem_shared_secret = ml_kem_decapsulate(bob_pq_prekey_private, mlkem_ciphertext)
+dh_1 = diffie_hellman(bob_curve_prekey_private, alice_identity_public_key)
+dh_2 = diffie_hellman(bob_identity_private_key, ephemeral_x25519_public_key)
+dh_3 = diffie_hellman(bob_curve_prekey_private, ephemeral_x25519_public_key)
+secret_key = KDF(dh_1 || dh_2 || dh_3 || mlkem_shared_secret)
+And that's all, really!
+Alice and Bob can now use their shared Secret Key to send encrypted messages to each other.
+Attentive readers may have noticed that the PQXDH protocol uses the same identity_key for both signature and Diffie-Hellman operations. Signal's designers have built an "homemade" algorithm, XEdDSA, to convert X25519 keys into signing keys so that a single X25519 key can be used for both signatures and key exchange.
+This is not a very good practice and a modern protocol would certainly use a single Ed25519 signing key as an identity_key, and use it to sign X25519 keys. While I'm not sure why they have done this, I can speculate that it's because they already had an identity system based on X25519 keys deployed and they retrofited signatures on top of it afterward.
+The PQXDH specification also defines the use of alice_identity_public_key || bob_identity_public_key to be used as Aditionnal Data (the AD in AEAD) for encryption.
+The PQXDH spec recommends for users to upload batches of one-time prekeys with their signatures so that every new conversation uses a different prekey, but it's out of the scope of this article.
+There is also the question of: how do we make sure that Bob's identity public key is actually his, and has not been swapped by an attacker. To verify an identity key in Signal, you have to perform "Out-of-band authentication": verify the security code of your contact or scan a QR code which are basically a hash of the identity public key of your contact.
+A note on Post-Quantum algorithms
+Quantum computers are a threat to classical asymmetric cryptography, such as RSA and elliptic curves algorithms.
+In August 2024, the NIST published ML-KEM (FIPS 203) and ML-DSA (FIPS 204), the first standardized post-quantum algorithms.
+Most of the cryptography community and most of the European security agencies agree that the way of the future is to use hybrid algorithms: we perform both classical and post-quantum operations and we combine the outputs, like in PQXDH's KDF step, in case that post-quantum algorithms are found to be less secure than expected in the future.
+On the other hand, the NSA and UK's GCHQ are trying to push for a switch to pure post-quantum algorithms. Their explanation is that hybrid algorithms, due to their slightly higher complexity, may induce implementation-related vulnerabilities that can be exploited, and that on the long term, classical asymmetric algorithms will be made irrelevant by quantum computers anyway. I'm not convinced.
+Implementing PQXDH in Rust
+Enough for the theory, let's get our hand dirty and implement PQXDH in Rust.
+You can find the complete code at the end of this article.
+struct User {
+// public information
+pub identity_public_key: ed25519::VerifyingKey,
+pub x25519_prekey: SignedX25519Prekey,
+pub mlkem1024_prekey: SignedMlKem1024Prekey,
+// private information
+identity_private_key: ed25519::SigningKey,
+x25519_prekey_private_key: x25519::ReusableSecret,
+mlkem1024_prekey_decap_key: DecapsulationKey<MlKem1024Params>,
+}
+struct SignedX25519Prekey {
+public_key: x25519::PublicKey,
+/// Ed25519 signature
+signature: [u8; 64],
+}
+struct SignedMlKem1024Prekey {
+encap_key: EncapsulationKey<MlKem1024Params>,
+/// Ed25519 signature
+signature: [u8; 64],
+}
+Here we deviate a little bit from the original PQXDH protocol by using Ed25519 keys as identity keys. As explained by Filipo Valsorda, Ed25519 keys (twisted Edwards curve) are easier to convert to X25519 keys (Montgomery curve) than X25519 keys to Ed25519 keys because there is a direct 1-to-1 mapping between the coordinates. On the other hand, there are two possible Ed25519 keys for a given X25519 key. Signal handles that with their "homemade" XEdDSA algorithm that use X25519 for key exchange and signing, but it adds complexity. Instead, we will convert our Ed25519 keys to X25519 keys when we need to perform the Diffie-Hellman operations.
+This deviation from the protocol has no security impact.
+Converting Ed25519 keys to X25519 keys is as simple as:
+/// convert an Ed25519 secret key into an X25519 secret key
+fn ed25519_sk_to_x25519(ed25519_secret_key: &ed25519::SigningKey) -> x25519::StaticSecret {
+// SHA-512(ed25519_secret_key)
+return x25519::StaticSecret::from(ed25519_secret_key.to_scalar_bytes());
+}
+/// convert an Ed25519 public key to an X25519 public key
+fn ed25519_pk_to_x25519(ed25519_public_key: &ed25519::VerifyingKey) -> x25519::PublicKey {
+// u = (1 + y) / (1 - y) = (Z + Y) / (Z - Y)
+return x25519::PublicKey::from(ed25519_public_key.to_montgomery().to_bytes());
+}
+struct PQXDHInitOutput {
+secret_key: [u8; 32],
+message: PQXDHInitMessage,
+}
+// this is the cryptographic material to be sent alongside the first encrrypted message sent to a contact
+struct PQXDHInitMessage {
+peer_identity_public_key: ed25519::VerifyingKey,
+ephemeral_x25519_public_key: x25519::PublicKey,
+mlkem_ciphertext: Vec<u8>,
+}
+Then we generate all the keys that an User needs to participate.
+impl User {
+fn new() -> User {
+let mut rng = rand::thread_rng();
+let mut identity_private_key = ed25519::SigningKey::generate(&mut rng);
+let identity_public_key = identity_private_key.verifying_key();
+let x25519_private_key = x25519::ReusableSecret::random_from_rng(&mut rng);
+let x25519_public_prekey = x25519::PublicKey::from(&x25519_private_key);
+let x25519_public_prekey_signature = identity_private_key.sign(x25519_public_prekey.as_bytes());
+let x25519_prekey = SignedX25519Prekey {
+public_key: x25519_public_prekey,
+signature: x25519_public_prekey_signature,
+};
+let (mlkem1024_decap_key, mlkem1024_encap_key) = MlKem1024::generate(&mut rng);
+let mlkem1024_encap_key_signautre = identity_private_key.sign(&mlkem1024_encap_key.as_bytes());
+let mlkem1024_prekey = SignedMlKem1024Prekey {
+encap_key: mlkem1024_encap_key,
+signature: mlkem1024_encap_key_signautre,
+};
+return User {
+identity_private_key,
+identity_public_key,
+x25519_prekey_private_key: x25519_private_key,
+x25519_prekey,
+mlkem1024_prekey_decap_key: mlkem1024_decap_key,
+mlkem1024_prekey,
+};
+}
+}
+Note that the Signal protocol recommends to also generate one-time prekey bundles and use the "fixed" prekey as a last resort if no one-time bundle is available, but it's out of the scope of this article.
+Sending a message from Alice to Bob
+First Alice needs to verify Bob's prekey.
+fn init_pqxdh(alice: &User, bob: &User) -> Result<PQXDHInitOutput, Error> {
+let mut rng = rand::thread_rng();
+// firt we verify that the prekeys actually come from the intended recipient
+bob.identity_public_key
+.verify_strict(bob.x25519_prekey.public_key.as_bytes(), &bob.x25519_prekey.signature)
+.with_context(|| "failed to verify X25519 prekey")?;
+bob.identity_public_key
+.verify_strict(&bob.mlkem1024_prekey.encap_key.as_bytes(), &bob.mlkem1024_prekey.signature)
+.with_context(|| "failed to verify ML-KEM-1024 prekey")?;
+An attacker could have replaced Bob's identity public key that is stored on the server, so Alice needs to perform out-of-band authentication of Bob's public key by verifying his security code or scanning his QR code, for example.
+Then Alice generates the ephemeral X25519 key and perform the ML-KEM encapsulation.
+let ephemeral_x25519_private_key = x25519::ReusableSecret::random_from_rng(&mut rng);
+let (mlkem_ciphertext, mlkem_shared_secret) = bob
+.mlkem1024_prekey
+.encap_key
+.encapsulate(&mut rng)
+.map_err(|_| Error::msg("failed to encapsulate with ML-KEM-1024"))?;
+Then she performs the traidtional X3DH.
+// convert the Ed25519 keys to X25519 keys for the Diffie-Hellman key exchanges
+let alice_identity_secret_key_x25519 = ed25519_sk_to_x25519(&alice.identity_private_key);
+let bob_identity_public_key_x25519 = ed25519_pk_to_x25519(&bob.identity_public_key);
+// DH1 = DH(IKA, SPKB)
+let dh_1 = alice_identity_secret_key_x25519.diffie_hellman(&bob.x25519_prekey.public_key);
+// DH2 = DH(EKA, IKB)
+let dh_2 = ephemeral_x25519_private_key.diffie_hellman(&bob_identity_public_key_x25519);
+// DH3 = DH(EKA, SPKB)
+let dh_3 = ephemeral_x25519_private_key.diffie_hellman(&bob.x25519_prekey.public_key);
+// SK = KDF(DH1 || DH2 || DH3 || SS)
+let secret_key = kdf(dh_1.as_bytes(), dh_2.as_bytes(), dh_3.as_bytes(), &mlkem_shared_secret);
+let init_message = PQXDHInitMessage {
+peer_identity_public_key: alice.identity_public_key,
+ephemeral_x25519_public_key: x25519::PublicKey::from(&ephemeral_x25519_private_key),
+mlkem_ciphertext: mlkem_ciphertext.to_vec(),
+};
+return Ok(PQXDHInitOutput {
+secret_key,
+message: init_message,
+});
+}
+With our KDF function:
+fn kdf(dh1: &[u8], dh2: &[u8], dh3: &[u8], mlkem_shared_secret: &[u8]) -> [u8; 32] {
+static KDF_INFO: &[u8] = b"PQXDH_CURVE25519_SHAKE256_ML-KEM-1024";
+// where KDF key = F || KM, where KM is an input byte sequence containing secret key material,
+// and F is a byte sequence containing 32 0xFF bytes if curve is curve25519, and 57 0xFF bytes if curve is curve448.
+// and KDF info = MyProtocol_CURVE_HASH_PQ-KEM
+// Signal uses HKDF instead, but I prefer Keccak.
+// Here it's safe to simply feed the inputs to the hash function
+// because ths inputs are of fixed size.
+let mut secret_key = [0u8; 32];
+let mut kdf = Shake256::default();
+kdf.update(&[0xffu8; 32]);
+kdf.update(dh1);
+kdf.update(dh2);
+kdf.update(dh3);
+kdf.update(mlkem_shared_secret);
+kdf.update(KDF_INFO);
+kdf.finalize_xof_into(&mut secret_key);
+return secret_key;
+}
+Again, we take some liberties with the KDF function compared to the one defined in the spec by replacing HKDF-SHA-512 with SHAKE256 because I like Keccak more than SHA-2.
+Using SHAKE256 this way for KDF is safe as long as SHAKE256 is secure, because all the inputs have a fixed length.
+Bob receiving Alice's first message
+First Bob decapsulates the ML-KEM shared secret.
+fn complete_pqxdh(bob: &User, message: &PQXDHInitMessage) -> Result<[u8; 32], Error> {
+// don't unwrap in production here
+let mlkem_shared_secret = bob
+.mlkem1024_prekey_decap_key
+.decapsulate(message.mlkem_ciphertext.as_slice().try_into().unwrap())
+.map_err(|_| Error::msg("failed to decapsulate with ML-KEM-1024"))?;
+And then perform the traditionnal X3DH and KDF step to get the shared secret.
+// convert the Ed25519 keys to X25519 keys for the Diffie-Hellman key exchanges
+let alice_identity_public_key_x25519 = ed25519_pk_to_x25519(&message.peer_identity_public_key);
+let bob_identity_secret_key_x25519 = ed25519_sk_to_x25519(&bob.identity_private_key);
+// DH1 = DH(IKA, SPKB)
+let dh_1 = bob.x25519_prekey_private_key.diffie_hellman(&alice_identity_public_key_x25519);
+// DH2 = DH(EKA, IKB)
+let dh_2 = bob_identity_secret_key_x25519.diffie_hellman(&message.ephemeral_x25519_public_key);
+// DH3 = DH(EKA, SPKB)
+let dh_3 = bob
+.x25519_prekey_private_key
+.diffie_hellman(&message.ephemeral_x25519_public_key);
+// SK = KDF(DH1 || DH2 || DH3 || SS)
+let secret_key = kdf(dh_1.as_bytes(), dh_2.as_bytes(), dh_3.as_bytes(), &mlkem_shared_secret);
+And we are done!
+fn main() -> Result<(), Error> {
+let alice = User::new();
+let bob = User::new();
+let PQXDHInitOutput {
+secret_key: alice_secret_key,
+message: pqxdh_init_message,
+} = init_pqxdh(&alice, &bob)?;
+let bob_secret_key = complete_pqxdh(&bob, &pqxdh_init_message)?;
+assert_eq!(
+alice_secret_key,
+bob_secret_key,
+"secret keys don't match. Alice's secret key: {}, Bob's secret key: {}",
+hex::encode(&alice_secret_key),
+hex::encode(&bob_secret_key)
+);
+println!("Success!");
+println!("Secret Key: {}", hex::encode(&alice_secret_key));
+return Ok(());
+}
+Code
+License: MIT
+Cargo.toml
+[package]
+name = "pqxdh"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+anyhow = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"
+ml-kem = "0.2"
+rand = "0.8"
+sha3 = "0.10"
+x25519-dalek = { version = "2", features = ["reusable_secrets", "static_secrets"] }
+src/main.rs
+use anyhow::{Context, Error};
+use ed25519_dalek::{self as ed25519, ed25519::signature::SignerMut};
+use ml_kem::{
+EncodedSizeUser, KemCore, MlKem1024, MlKem1024Params,
+kem::{Decapsulate, DecapsulationKey, Encapsulate, EncapsulationKey},
+};
+use sha3::{
+Shake256,
+digest::{ExtendableOutput, Update},
+};
+use x25519_dalek as x25519;
+struct User {
+identity_private_key: ed25519::SigningKey,
+pub identity_public_key: ed25519::VerifyingKey,
+x25519_prekey_private_key: x25519::ReusableSecret,
+pub x25519_prekey: SignedX25519Prekey,
+mlkem1024_prekey_decap_key: DecapsulationKey<MlKem1024Params>,
+pub mlkem1024_prekey: SignedMlKem1024Prekey,
+}
+struct SignedX25519Prekey {
+public_key: x25519::PublicKey,
+/// Ed25519 signature
+signature: ed25519::Signature,
+}
+struct SignedMlKem1024Prekey {
+encap_key: EncapsulationKey<MlKem1024Params>,
+/// Ed25519 signature
+signature: ed25519::Signature,
+}
+struct PQXDHInitOutput {
+secret_key: [u8; 32],
+message: PQXDHInitMessage,
+}
+// this is the cryptographic material to be sent alongside the first encrrypted message sent to a contact
+struct PQXDHInitMessage {
+peer_identity_public_key: ed25519::VerifyingKey,
+ephemeral_x25519_public_key: x25519::PublicKey,
+mlkem_ciphertext: Vec<u8>,
+}
+impl User {
+fn new() -> User {
+let mut rng = rand::thread_rng();
+let mut identity_private_key = ed25519::SigningKey::generate(&mut rng);
+let identity_public_key = identity_private_key.verifying_key();
+let x25519_private_key = x25519::ReusableSecret::random_from_rng(&mut rng);
+let x25519_public_prekey = x25519::PublicKey::from(&x25519_private_key);
+let x25519_public_prekey_signature = identity_private_key.sign(x25519_public_prekey.as_bytes());
+let x25519_prekey = SignedX25519Prekey {
+public_key: x25519_public_prekey,
+signature: x25519_public_prekey_signature,
+};
+let (mlkem1024_decap_key, mlkem1024_encap_key) = MlKem1024::generate(&mut rng);
+let mlkem1024_encap_key_signautre = identity_private_key.sign(&mlkem1024_encap_key.as_bytes());
+let mlkem1024_prekey = SignedMlKem1024Prekey {
+encap_key: mlkem1024_encap_key,
+signature: mlkem1024_encap_key_signautre,
+};
+return User {
+identity_private_key,
+identity_public_key,
+x25519_prekey_private_key: x25519_private_key,
+x25519_prekey,
+mlkem1024_prekey_decap_key: mlkem1024_decap_key,
+mlkem1024_prekey,
+};
+}
+}
+fn init_pqxdh(alice: &User, bob: &User) -> Result<PQXDHInitOutput, Error> {
+let mut rng = rand::thread_rng();
+// firt we verify that the prekeys actually come from the intended recipient
+bob.identity_public_key
+.verify_strict(bob.x25519_prekey.public_key.as_bytes(), &bob.x25519_prekey.signature)
+.with_context(|| "failed to verify X25519 prekey")?;
+bob.identity_public_key
+.verify_strict(&bob.mlkem1024_prekey.encap_key.as_bytes(), &bob.mlkem1024_prekey.signature)
+.with_context(|| "failed to verify ML-KEM-1024 prekey")?;
+let ephemeral_x25519_private_key = x25519::ReusableSecret::random_from_rng(&mut rng);
+let (mlkem_ciphertext, mlkem_shared_secret) = bob
+.mlkem1024_prekey
+.encap_key
+.encapsulate(&mut rng)
+.map_err(|_| Error::msg("failed to encapsulate with ML-KEM-1024"))?;
+// convert the Ed25519 keys to X25519 keys for the Diffie-Hellman key exchanges
+let alice_identity_secret_key_x25519 = ed25519_sk_to_x25519(&alice.identity_private_key);
+let bob_identity_public_key_x25519 = ed25519_pk_to_x25519(&bob.identity_public_key);
+// DH1 = DH(IKA, SPKB)
+let dh_1 = alice_identity_secret_key_x25519.diffie_hellman(&bob.x25519_prekey.public_key);
+// DH2 = DH(EKA, IKB)
+let dh_2 = ephemeral_x25519_private_key.diffie_hellman(&bob_identity_public_key_x25519);
+// DH3 = DH(EKA, SPKB)
+let dh_3 = ephemeral_x25519_private_key.diffie_hellman(&bob.x25519_prekey.public_key);
+// SK = KDF(DH1 || DH2 || DH3 || SS)
+let secret_key = kdf(dh_1.as_bytes(), dh_2.as_bytes(), dh_3.as_bytes(), &mlkem_shared_secret);
+// if a one-time prekey was available, do this instead
+// DH4 = DH(EKA, OPKB)
+// SK = KDF(DH1 || DH2 || DH3 || DH4 || SS)
+let init_message = PQXDHInitMessage {
+peer_identity_public_key: alice.identity_public_key,
+ephemeral_x25519_public_key: x25519::PublicKey::from(&ephemeral_x25519_private_key),
+mlkem_ciphertext: mlkem_ciphertext.to_vec(),
+};
+return Ok(PQXDHInitOutput {
+secret_key,
+message: init_message,
+});
+}
+fn complete_pqxdh(bob: &User, message: &PQXDHInitMessage) -> Result<[u8; 32], Error> {
+// don't unwrap in production here
+let mlkem_shared_secret = bob
+.mlkem1024_prekey_decap_key
+.decapsulate(message.mlkem_ciphertext.as_slice().try_into().unwrap())
+.map_err(|_| Error::msg("failed to decapsulate with ML-KEM-1024"))?;
+// convert the Ed25519 keys to X25519 keys for the Diffie-Hellman key exchanges
+let alice_identity_public_key_x25519 = ed25519_pk_to_x25519(&message.peer_identity_public_key);
+let bob_identity_secret_key_x25519 = ed25519_sk_to_x25519(&bob.identity_private_key);
+// DH1 = DH(IKA, SPKB)
+let dh_1 = bob.x25519_prekey_private_key.diffie_hellman(&alice_identity_public_key_x25519);
+// DH2 = DH(EKA, IKB)
+let dh_2 = bob_identity_secret_key_x25519.diffie_hellman(&message.ephemeral_x25519_public_key);
+// DH3 = DH(EKA, SPKB)
+let dh_3 = bob
+.x25519_prekey_private_key
+.diffie_hellman(&message.ephemeral_x25519_public_key);
+// SK = KDF(DH1 || DH2 || DH3 || SS)
+let secret_key = kdf(dh_1.as_bytes(), dh_2.as_bytes(), dh_3.as_bytes(), &mlkem_shared_secret);
+// if a one-time prekey was available, do this instead
+// DH4 = DH(EKA, OPKB)
+// SK = KDF(DH1 || DH2 || DH3 || DH4 || SS)
+return Ok(secret_key);
+}
+fn kdf(dh1: &[u8], dh2: &[u8], dh3: &[u8], mlkem_shared_secret: &[u8]) -> [u8; 32] {
+static KDF_INFO: &[u8] = b"PQXDH_CURVE25519_SHAKE256_ML-KEM-1024";
+// where KDF key = F || KM, where KM is an input byte sequence containing secret key material,
+// and F is a byte sequence containing 32 0xFF bytes if curve is curve25519, and 57 0xFF bytes if curve is curve448.
+// and KDF info = MyProtocol_CURVE_HASH_PQ-KEM
+// Signal uses HKDF instead, but I prefer Keccak.
+// Here it's safe to simply feed the inputs to the hash function
+// because ths inputs are of fixed size.
+let mut secret_key = [0u8; 32];
+let mut kdf = Shake256::default();
+kdf.update(&[0xffu8; 32]);
+kdf.update(dh1);
+kdf.update(dh2);
+kdf.update(dh3);
+kdf.update(mlkem_shared_secret);
+kdf.update(KDF_INFO);
+kdf.finalize_xof_into(&mut secret_key);
+return secret_key;
+}
+/// convert an Ed25519 secret key (the 32-byte seed) into an X25519 secret key
+fn ed25519_sk_to_x25519(ed25519_secret_key: &ed25519::SigningKey) -> x25519::StaticSecret {
+// SHA-512(ed25519_secret_key)
+return x25519::StaticSecret::from(ed25519_secret_key.to_scalar_bytes());
+}
+/// convert an Ed25519 public key to an X25519 public key
+fn ed25519_pk_to_x25519(ed25519_public_key: &ed25519::VerifyingKey) -> x25519::PublicKey {
+// u = (1 + y) / (1 - y) = (Z + Y) / (Z - Y)
+return x25519::PublicKey::from(ed25519_public_key.to_montgomery().to_bytes());
+}
+fn main() -> Result<(), Error> {
+let alice = User::new();
+let bob = User::new();
+let PQXDHInitOutput {
+secret_key: alice_secret_key,
+message: pqxdh_init_message,
+} = init_pqxdh(&alice, &bob)?;
+let bob_secret_key = complete_pqxdh(&bob, &pqxdh_init_message)?;
+assert_eq!(
+alice_secret_key,
+bob_secret_key,
+"secret keys don't match. Alice's secret key: {}, Bob's secret key: {}",
+hex::encode(&alice_secret_key),
+hex::encode(&bob_secret_key)
+);
+println!("Success!");
+println!("Secret Key: {}", hex::encode(&alice_secret_key));
+return Ok(());
+}
+Tags: cryptographyend-to-end-encryptionprogrammingrustsecure-messagingsecuritysignal
+Join the newsletter to get the latest updates
+Subscribe
+No spam ever, unsubscribe anytime and we will never share your email. You can also grab the RSS feed
+Want to learn Rust, offensive security and applied cryptography?
+Take a look at my book Black Hat Rust where, from theory to practice, you will build an end-to-end encryption protocol, exploits, a Remote Access Tool, craft shellcodes and many other things to get your hands dirty.
+Special Promotion: 50 € 25 €
+Special Promotion: $50 $25
+0d 16h 53m 43s
+Powered by   Markdown Ninja
+
+=== ROW 37 | f008860 | https://dev.to/ayarotsky/adding-a-scripting-engine-to-a-rust-cli-with-rhai-56g1 | 2026-04-01T00:00:00 | individual-blogs;twir-links ===
+Adding a Scripting Engine to a Rust CLI with Rhai - DEV Community
+Skip to content
+Navigation menu
+Search
+Powered by Algolia
+Search
+Log in
+Create account
+DEV Community
+Close
+Add reaction
+Like
+Unicorn
+Exploding Head
+Raised Hands
+Fire
+Jump to Comments
+Save
+Boost
+Pick as gem
+More...
+Copy link
+Copy link
+Copied to Clipboard
+Share to X
+Share to LinkedIn
+Share to Facebook
+Share to Mastodon
+Report Abuse
+Alex Yarotsky
+Posted on Apr 1
+Adding a Scripting Engine to a Rust CLI with Rhai
+#rust
+#database
+#postgres
+#diesel
+diesel-guard is a linter for Postgres migrations. It catches operations that lock tables or cause downtime before they reach production. It ships with 28 built-in checks, but over time, users started asking for custom checks:
+"Our DBA requires all indexes to follow the naming convention idx_<table>_<column>. Can I enforce that?"
+"Our team convention is that every new table must have an updated_at column. Can diesel-guard catch tables that don't?"
+Each request is completely reasonable. But each one is unique enough that it did not make sense to add a built-in check for it. So telling users "open a PR" for a one-off team convention felt like the wrong answer.
+The solution was to let users write the rule themselves, as a script, loaded at runtime, without recompiling. This post covers how I did it with Rhai.
+Why Rhai
+Rhai is an embedded scripting language written in Rust. You drop it into your project as you would any other crate, and scripts run within your process at runtime.
+I came across this talk about it, found it interesting enough to give it a shot.
+It turned out to work well for this use case. Add it to your Cargo.toml with two features:
+rhai = { version = "1", features = ["serde", "sync"] }
+Enter fullscreen mode
+Exit fullscreen mode
+sync makes the Rhai engine Send + Sync, which is required to store it behind a trait object. serde lets you serialize any Rust struct into a value that scripts can navigate. Both matter here, and you will see why shortly.
+If you are evaluating Rhai for something performance-sensitive, the HN thread has a good discussion of the trade-offs.
+The Architecture: One Trait, One Registry
+Every check in diesel-guard, built-in or custom, implements the same trait:
+use rhai::{AST, Dynamic, Engine};
+use std::sync::Arc;
+pub trait Check: Send + Sync {
+fn name(&self) -> &'static str;
+fn check(&self, node: &NodeEnum, config: &Config, ctx: &MigrationContext) -> Vec<Violation>;
+}
+Enter fullscreen mode
+Exit fullscreen mode
+NodeEnum is a pg_query protobuf enum with one variant per SQL statement type (IndexStmt, AlterTableStmt, CreateStmt, and so on). The Registry holds a Vec<Box<dyn Check>> and calls every check against every parsed statement.
+Custom Rhai checks implement the same trait through CustomCheck:
+pub struct CustomCheck {
+name: &'static str,
+engine: Arc<Engine>,
+ast: AST,
+}
+Enter fullscreen mode
+Exit fullscreen mode
+At check time, the registry has no way to tell whether it is calling a built-in Rust check or a Rhai script. They look the same from the outside.
+To give you a sense of what this enables, here is the naming convention check from the intro. The whole thing is ten lines of Rhai:
+let stmt = node.IndexStmt;
+if stmt == () { return; }
+let name = stmt.idxname;
+if name == "" { return; }
+if name.starts_with("idx_") { return; }
+#{
+operation: "Index naming violation: " + name,
+problem: "Index '" + name + "' does not follow naming convention. Names must start with 'idx_'.",
+safe_alternative: "Rename: CREATE INDEX idx_" + name + " ON ...;"
+}
+Enter fullscreen mode
+Exit fullscreen mode
+Drop that file in a directory, point custom_checks_dir at it in diesel-guard.toml, and the check runs alongside every built-in check. How that works is what the rest of this post explains.
+Bridging Typed Rust and Dynamic Scripts
+This is the part that surprised me with how little code it actually needed.
+pg_query gives us deeply nested protobuf types: Rust enums with dozens of variants, each with its own struct fields. Rhai scripts cannot import Rust types. The bridge is rhai::serde::to_dynamic(). Enable Rhai's serde feature, and it serializes any Serialize type into a Dynamic value that scripts can navigate like a regular map.
+fn check(&self, node: &NodeEnum, config: &Config, ctx: &MigrationContext) -> Vec<Violation> {
+let dynamic_node = rhai::serde::to_dynamic(node)?;
+let dynamic_config = rhai::serde::to_dynamic(config)?;
+let dynamic_ctx = rhai::serde::to_dynamic(ctx).unwrap();
+let mut scope = rhai::Scope::new();
+scope.push("node", dynamic_node);
+scope.push("config", dynamic_config);
+scope.push("ctx", dynamic_ctx);
+self.engine.eval_ast_with_scope::<Dynamic>(&mut scope, &self.ast)
+}
+Enter fullscreen mode
+Exit fullscreen mode
+On the script side, protobuf enum variants become map keys and struct fields become nested map keys. A NodeEnum::IndexStmt(stmt) becomes:
+{ "IndexStmt": { "concurrent": false, "idxname": "idx_users_email", ... } }
+Enter fullscreen mode
+Exit fullscreen mode
+So the guard pattern in scripts looks like this:
+let stmt = node.IndexStmt;
+if stmt == () { return; }  // wrong node type, skip
+Enter fullscreen mode
+Exit fullscreen mode
+When the node is an IndexStmt, node.IndexStmt returns the inner map. When it is anything else, it returns (), and the script exits early.
+To see exactly what a statement produces, there is a built-in subcommand:
+diesel-guard dump-ast --sql "CREATE INDEX idx_users_email ON users(email);"
+Enter fullscreen mode
+Exit fullscreen mode
+[
+{
+"IndexStmt": {
+"concurrent": false,
+"idxname": "idx_users_email",
+"index_params": [
+{ "node": { "IndexElem": { "name": "email" } } }
+],
+"relation": { "relname": "users" },
+...
+}
+}
+]
+Enter fullscreen mode
+Exit fullscreen mode
+The output strips the RawStmt and Node wrappers. What you see is what the script receives as node.
+Sandboxing: Resource Limits Are Enough
+Scripts run inside a sandboxed engine with four limits:
+fn create_engine() -> Engine {
+let mut engine = Engine::new();
+engine.set_max_operations(100_000);  // halt infinite loops
+engine.set_max_string_size(10_000);  // prevent memory leaks
+engine.set_max_array_size(1_000);
+engine.set_max_map_size(1_000);
+engine.register_static_module("pg", create_pg_constants_module().into());
+engine
+}
+Enter fullscreen mode
+Exit fullscreen mode
+When max_operations is hit, Rhai returns an ErrorTerminated. We catch that and treat it as "no violation", so the linter continues normally:
+Err(e) => {
+let err_str = e.to_string();
+if !err_str.contains("ErrorTerminated") {
+eprintln!("Warning: custom check '{}': runtime error: {e}", self.name);
+}
+vec![]
+}
+Enter fullscreen mode
+Exit fullscreen mode
+For a CLI tool checking local files written by your own team, this is sufficient. You are not running untrusted scripts from the internet.
+Each invocation gets a fresh Scope, so no state leaks between migrations or between scripts.
+A Stable Script API with the pg:: Module
+pg_query protobuf enums are Rust types. Scripts cannot import them. If you want a script to check whether a statement is dropping an index versus dropping a table, it needs to compare stmt.remove_type against something, but that something is an integer that lives in a Rust enum.
+The fix is to expose the values scripts need as a static module, registered on the engine at startup:
+fn create_pg_constants_module() -> rhai::Module {
+use pg_query::protobuf::{AlterTableType, ConstrType, DropBehavior, ObjectType};
+let mut m = rhai::Module::new();
+m.set_var("OBJECT_INDEX", ObjectType::ObjectIndex as i64);
+m.set_var("OBJECT_TABLE", ObjectType::ObjectTable as i64);
+m.set_var("AT_ADD_COLUMN", AlterTableType::AtAddColumn as i64);
+m.set_var("AT_DROP_COLUMN", AlterTableType::AtDropColumn as i64);
+m.set_var("CONSTR_PRIMARY", ConstrType::ConstrPrimary as i64);
+// ...
+m
+}
+Enter fullscreen mode
+Exit fullscreen mode
+Scripts access them as pg::OBJECT_INDEX, pg::AT_DROP_COLUMN, and so on. If pg_query ever changes an enum value, there is one place to update it.
+Return Protocol: Three Valid Shapes
+Scripts return one of three things:
+() for no violation
+A map #{ operation: "...", problem: "...", safe_alternative: "..." } for one violation
+An array of those maps for multiple violations
+Validation is strict. A script with a typo in a key gets a helpful error violation rather than a silent failure:
+SCRIPT ERROR: my_check
+Custom check returned an invalid map: 'safe_alternative' is missing
+Fix the custom check script to return all three required string keys.
+Enter fullscreen mode
+Exit fullscreen mode
+Compilation errors at load time are non-fatal. The function signature makes this explicit:
+pub fn load_custom_checks(
+dir: &Utf8Path,
+config: &Config,
+) -> (Vec<Box<dyn Check>>, Vec<ScriptError>)
+Enter fullscreen mode
+Exit fullscreen mode
+Broken scripts produce warnings to stderr. Valid scripts still load and run.
+A Complete Script
+Here is require_concurrent_index.rhai, one of the examples included in the repo. It covers node access, context usage, conditional messages, and both the single and multi-violation return shapes:
+// Require CONCURRENTLY on CREATE INDEX.
+// Also flags CONCURRENTLY inside a transaction (PostgreSQL will error at runtime).
+// Inspect: diesel-guard dump-ast --sql "CREATE INDEX idx ON t(id);"
+let stmt = node.IndexStmt;
+if stmt == () { return; }
+if !stmt.concurrent {
+let idx_name = if stmt.idxname != "" { stmt.idxname } else { "(unnamed)" };
+return #{
+operation: "INDEX without CONCURRENTLY: " + idx_name,
+problem: "Creating index '" + idx_name + "' without CONCURRENTLY blocks writes on the table.",
+safe_alternative: "Use CREATE INDEX CONCURRENTLY:\n  CREATE INDEX CONCURRENTLY " + idx_name + " ON ...;"
+};
+}
+// CONCURRENTLY cannot run inside a transaction block
+if ctx.run_in_transaction {
+let idx_name = if stmt.idxname != "" { stmt.idxname } else { "(unnamed)" };
+let hint = if ctx.no_transaction_hint != "" {
+ctx.no_transaction_hint
+} else {
+"Run this migration outside a transaction block."
+};
+#{
+operation: "INDEX CONCURRENTLY inside a transaction: " + idx_name,
+problem: "CREATE INDEX CONCURRENTLY cannot run inside a transaction block. PostgreSQL will raise an error at runtime.",
+safe_alternative: hint
+}
+}
+Enter fullscreen mode
+Exit fullscreen mode
+A few things worth noticing. ctx.run_in_transaction is a bool passed from the migration runner, useful for catching CONCURRENTLY inside a transaction block, which Postgres rejects at runtime. ctx.no_transaction_hint carries framework-specific instructions for how to opt out of transactions in Diesel versus SQLx. Scripts can return early with an explicit return #{ ... } or let the last expression be the return value. Integers auto-coerce to strings in concatenation.
+If this was useful and you work with Postgres, a star on diesel-guard goes a long way. It helps other teams find the tool before a migration causes an outage.
+Top comments (0)
+Subscribe
+Personal
+Trusted User
+Create template
+Templates let you quickly answer FAQs or store snippets for re-use.
+Submit
+Preview
+Dismiss
+Code of Conduct
+•
+Report abuse
+Are you sure you want to hide this comment? It will become hidden in your post, but will still be visible via the comment's permalink.
+Hide child comments as well
+Confirm
+For further actions, you may consider blocking this person and/or reporting abuse
+Alex Yarotsky
+Follow
+Work
+CTO at Hubstaff
+Joined
+Aug 20, 2023
+More from Alex Yarotsky
+Your Diesel Migrations Might Be Ticking Time Bombs
+#rust
+#postgres
+#database
+#opensource
+DEV Community — A space to discuss and keep up software development and manage your software career
+Home
+DEV Challenges
+DEV++
+Videos
+DEV Education Tracks
+DEV Help
+Advertise on DEV
+Organization Accounts
+DEV Showcase
+About
+Contact
+Free Postgres Database
+DEV Shop
+MLH
+Code of Conduct
+Privacy Policy
+Terms of Use
+Built on Forem — the open source software that powers DEV and other inclusive communities.
+Made with love and Ruby on Rails. DEV Community © 2016 - 2026.
+We're a place where coders share, stay up-to-date and grow their careers.
+Log in
+Create account
+
+=== ROW 38 | f008902 | https://blog.sheerluck.dev/posts/learn-error-hanlding-in-rust | 2026-05-06T00:00:00 | individual-blogs;twir-links ===
+Learn Error Handling in Rust By Building a TOML Config Parser | Mrsheerluck BlogSkip to contentThis page is available in Markdown format. Markdown is recommended for AI consumption. See https://blog.sheerluck.dev/posts/rust/learn-error-hanlding-in-rust/index.md for this page, orhttps://blog.sheerluck.dev/llms.txt for the full documentation index.
+Mrsheerluck Blog
+ENEnglishPortuguês (BR)हिन्दीEspañolDeutschFrançais日本語EnglishPortuguês (BR)हिन्दीEspañolDeutschFrançais日本語SearchCtrlKSubscribeSponsorJobs
+axumArchived
+Learn Axum Basics and Routing by Building a URL ShortenerLearn Axum Error handling by Building a Pastebin APILearn Axum Persistence and Transactions with SQLx by Building a Bookmark Managerbook-notes
+epictetus-the-complete-works
+HandbookThe Basic Laws of Human Stupiditygpui
+Your First GPUI App - Building a Desktop UI in Rustmy-thoughts
+Reliability Over Ideologyprogramming-languages
+go
+Learn Go Basics By Building a Brainfuck Interpreterrust
+Build a Scientific Calculator in Rust - Understanding Variables and TypesRust Control Flow in Practice - Build a Number Guessing GamerustArchived
+Learn Rust Basics By Building a Brainfuck InterpreterLearn Rust Ownership and Borrowing By Building Mini GrepBuild a JSON Parser in Rust from ScratchLearn Error Handling in Rust By Building a TOML Config ParserLearn Rust Generics and Traits By Building a Mini Blackjack GameLearn Rust Lifetimes by Building a Generic LRU CacheLearn Rust HashMap and Iterators by Building a Git Object Store ReaderLearn Rust Closures By Building a Tiny Rule-Based LinterLearn Rust Smart Pointers and Interior Mutability by Building Git Commit Graph ViewerLearn Rust Concurrency By Building a Thread PoolLearn Rust Async/Await, Tokio, and TCP Networking by Building an HTTP/1.1 ServerLearn SQL and SQLx by Building a Book Library CLI in Rusttools
+No BS Guide to Vim Motions
+Mrsheerluck Blog
+/Posts
+/rust
+/Learn Error Handling in Rust By Building a TOML Config Parser
+Learn Error Handling in Rust By Building a TOML Config Parser
+In this post, we are going to build a toml config parser in Rust and learn error handling in Rust using Result
+May 6, 2026|17 min read|Copy page|View as Markdown
+OverviewWhy `panic!` and `unwrap` Are Not Enough`Option<T>` - Dealing with Absence Creating Options Pattern Matching on Option Useful Methods on Option`Result<T, E>` - Dealing with Failure Pattern Matching on Result Useful Methods on ResultThe `?` Operator `?` Also Converts Error TypesDefining Custom Error Types Creating the Error Enum Using `thiserror` to Automate the BoilerplateWhat is TOML?Project SetupStep 1: The Error TypesStep 2: The Token Type and Lexer SpannedToken The Lexer The tokenize Method Reading Strings Reading NumbersStep 3: The TomlValue TypeStep 4: The Parser The Main Parse Method Parse ValueStep 5: The SchemaStep 6: Schema ValidationStep 7: Displaying ErrorsStep 8: Main Function and Demo Running with a Valid Config Running with an Invalid ConfigConclusion
+In this post, we are going to learn about error handling in Rust. Once we cover all the concepts, we will build a TOML config parser with schema validation. Every error must be handled properly using Result. Let’s start.
+You can get the source code from here
+Why panic! and unwrap Are Not Enough
+In the previous articles, we used panic! and .expect() and .unwrap() all over the place. When something went wrong, we just crashed the program. Let me remind you:
+In the JSON parser, when the lexer hit an unexpected character, we did this:
+panic!("Unexpected character: {}", c as char);
+And when the parser encountered a token it didn’t expect:
+panic!("Expected ':' in object");
+This is fine for a learning exercise. But real software can’t just crash when something goes wrong. A web server can’t crash because one request had bad input, it needs to return an error to that client and keep serving others. A config parser can’t crash because one field has the wrong type, it needs to tell the user exactly what’s wrong and move on.
+Here’s the rule you should internalise:
+panic! is for programmer bugs: things that should never happen if your code is correct. Like indexing past the end of an array, or dividing by zero. These are “I messed up” situations.
+Result is for expected failures: things that can happen even when your code is perfect. Like bad user input, missing files, network timeouts. These are “something went wrong and I need to handle it” situations.
+In this article, we are going to replace every panic! and .unwrap() with proper Result based error handling. By the end, our program will never crash unexpectedly. It will always produce a clear, specific error message telling you exactly what went wrong and where.
+Option<T> - Dealing with Absence
+Before we get to Result, let’s talk about its simpler cousin: Option.
+How many times have you written code that returns null or -1 or some magic value to signal “nothing found”? In Rust, we don’t do that. Instead, we use Option<T>.
+Option<T> is an enum with two variants:
+enum Option<T> {
+Some(T),  // there is a value, and it's of type T
+None,     // there is no value
+}
+Instead of returning null or -1, a function returns Option<T>. If it has a value, it returns Some(value). If not, it returns None.
+Creating Options
+let some_number = Some(42);
+let some_string = Some("hello");
+let nothing: Option<i32> = None;
+When you create a Some value, Rust can infer the type T. But when you create a None, Rust needs to know what type T would be if it were Some, so you often need a type annotation.
+Pattern Matching on Option
+You can match on an Option just like any other enum:
+let maybe_number = Some(42);
+match maybe_number {
+Some(n) => println!("got {}", n),
+None => println!("got nothing"),
+}
+Or use if let when you only care about one variant:
+if let Some(n) = maybe_number {
+println!("got {}", n);
+}
+We actually used Option in previous articles. Remember the brainfuck interpreter? Lexer::current() returned Option<u8>. Some(byte) when there was a byte to read, None when we reached the end of input. The JSON parser’s Parser::current() also returned Option<&Token>. These are natural uses of Option, sometimes there’s a value, sometimes there isn’t, and the type system forces you to handle both cases.
+Useful Methods on Option
+.unwrap(): extract the value inside Some, or panic if None:
+let x = Some(5);
+println!("{}", x.unwrap()); // 5
+let y: Option<i32> = None;
+println!("{}", y.unwrap()); // PANICS!
+We’re trying to get away from unwrap, but you should still know what it does.
+.unwrap_or(default):  extract the value, or return a default if None:
+let x: Option<i32> = None;
+println!("{}", x.unwrap_or(0)); // 0
+let y = Some(42);
+println!("{}", y.unwrap_or(0)); // 42
+.is_some() and .is_none(): check which variant you have:
+let x = Some(5);
+println!("{}", x.is_some()); // true
+println!("{}", x.is_none()); // false
+Result<T, E> - Dealing with Failure
+Option<T> handles absence. Result<T, E> handles failure. They look similar, but serve different purposes:
+Option<T> - “there might be a value, or there might be nothing” (like searching for something in a collection)
+Result<T, E> - “this operation might succeed with a value of type T, or it might fail with an error of type E” (like parsing a file, reading from disk, making a network request)
+Result<T, E> is an enum with two variants:
+enum Result<T, E> {
+Ok(T),   // success, contains a value of type T
+Err(E),  // failure, contains an error of type E
+}
+We actually already used Result in the grep article. Regex::new(pattern) returns Result<Regex, Error>. If the pattern is valid regex, you get Ok(regex). If it’s malformed, you get Err(error). And we matched on it:
+let regex = match Regex::new(pattern) {
+Ok(r) => r,
+Err(e) => {
+eprintln!("Invalid pattern: {}", e);
+std::process::exit(1);
+}
+};
+Now we’re going to go much deeper.
+Pattern Matching on Result
+Just like Option, you can match on Result:
+match result {
+Ok(value) => println!("success: {}", value),
+Err(error) => println!("failure: {}", error),
+}
+Useful Methods on Result
+.unwrap() - extract the Ok value, or panic on Err. Same warning as above: we’re moving away from this.
+.expect("message") - like unwrap, but panics with your custom message:
+let bad: Result<i32, &str> = Err("error");
+bad.expect("the number should be valid"); // PANICS with "the number should be valid: error"
+.unwrap_or(default) - extract the Ok value, or return a default on Err:
+let bad: Result<i32, &str> = Err("oops");
+println!("{}", bad.unwrap_or(0)); // 0
+.is_ok() and .is_err() - check which variant you have:
+let result: Result<i32, &str> = Ok(42);
+println!("{}", result.is_ok());  // true
+println!("{}", result.is_err()); // false
+The ? Operator
+Here’s a common pattern in Rust. You call a function that returns a Result. If it’s Ok, you continue. If it’s Err, you return the error to the caller. Written out with match, it looks like this:
+fn do_something() -> Result<i32, MyError> {
+let a = match step_one() {
+Ok(value) => value,
+Err(e) => return Err(e),
+};
+let b = match step_two(a) {
+Ok(value) => value,
+Err(e) => return Err(e),
+};
+let c = match step_three(b) {
+Ok(value) => value,
+Err(e) => return Err(e),
+};
+Ok(c)
+}
+This is called the “pyramid of doom” and it’s exhausting to write and read. Rust has the ? operator to fix this:
+fn do_something() -> Result<i32, MyError> {
+let a = step_one()?;
+let b = step_two(a)?;
+let c = step_three(b)?;
+Ok(c)
+}
+The ? operator does exactly what the match version does:
+If the Result is Ok(value), it extracts the value and continues
+If the Result is Err(error), it returns the error from the current function immediately
+It also works on Option:
+If Some(value), it extracts the value and continues
+If None, it returns None from the current function
+There’s one catch: the function you’re using ? in must return a Result (or Option). You can’t use ? in main unless main returns a Result. We’ll handle this by keeping our main logic in a separate run function that returns Result.
+? Also Converts Error Types
+If your function returns Result<T, ErrorA> and a function you call returns Result<T, ErrorB>, you can’t just use ? directly because the error types don’t match. But if ErrorA implements From<ErrorB>, then ? will automatically convert ErrorB into ErrorA for you.
+We’ll use this in our project our custom ConfigError type will implement From<std::io::Error> (via thiserror) so that we can use ? on file-reading operations that return io::Error.
+Defining Custom Error Types
+Using String as your error type works, but it’s not great. You can’t programmatically inspect what went wrong. You can’t match on different kinds of errors. You can’t add structured data like line numbers and column numbers.
+The solution is to define your own error type as an enum. Let me show you how.
+Creating the Error Enum
+First, define the error enum with a variant for each kind of error:
+enum ConfigError {
+UnexpectedCharacter {
+line: usize,
+col: usize,
+expected: String,
+found: String,
+},
+UnterminatedString {
+line: usize,
+col: usize,
+},
+InvalidNumber {
+line: usize,
+col: usize,
+detail: String,
+},
+}
+Each variant carries specific data about what went wrong and where. UnexpectedCharacter tells you the line, column, what was expected, and what was found. UnterminatedString tells you where the string started. InvalidNumber gives you the position and what was wrong with the number.
+This is the structural approach. When you need to display an error message, you match on the variant and format it. When you need to handle specific errors differently, you match on the variant and take different actions.
+Using thiserror to Automate the Boilerplate
+Writing error messages by hand is repetitive. Every time you add a variant, you have to update the match. The thiserror crate automates this with derive macros:
+use thiserror::Error;
+#[derive(Debug, thiserror::Error)]
+enum ConfigError {
+#[error("unexpected character at line {line}, column {col}: expected {expected}, found '{found}'")]
+UnexpectedCharacter {
+line: usize,
+col: usize,
+expected: String,
+found: String,
+},
+#[error("unterminated string starting at line {line}, column {col}")]
+UnterminatedString { line: usize, col: usize },
+#[error("invalid number at line {line}, column {col}: {detail}")]
+InvalidNumber {
+line: usize,
+col: usize,
+detail: String,
+},
+}
+The #[error("...")] attribute on each variant replaces the manual message formatting. The {field} placeholders inside the string are replaced with the field values, just like println!. And the #[derive(thiserror::Error)] macro generates all the necessary trait implementations for us.
+Under the hood, thiserror implements two traits for our ConfigError:
+The Display trait - this controls how the error appears when you format it with {} (like format!("{}", err) or println!("{}", err)). The #[error("...")] attribute becomes the Display implementation.
+The Error trait - this marks our type as an official error in Rust’s error system. It’s required for interoperability. We’ll learn more about traits in a future article, but for now, just know that #[derive(thiserror::Error)] handles it for us.
+The Io(#[from] std::io::Error) variant is special. The #[from] attribute tells thiserror to automatically implement From<std::io::Error> for ConfigError. This means when we call a function that returns Result<_, std::io::Error> (like fs::read_to_string), we can use ? and the io::Error will be automatically converted into ConfigError::Io.
+Notice how every error variant carries a line and (often) a col. This is deliberate. When you tell a user “invalid character”, the first question they’ll ask is “where?”. By embedding position information in the error type itself, every error message can point to the exact location in the file.
+Compare this with the JSON parser from the last article, where errors just said panic!("Unexpected character") with no location information. The difference is night and day.
+Now, let’s start working on our project.
+What is TOML?
+TOML stands for Tom’s Obvious Minimal Language. It’s a configuration file format that’s designed to be easy for humans to read and write. If you’ve ever used Rust, you’ve already seen TOML, every Cargo.toml file is a TOML file.
+Here’s what a TOML file looks like:
+# This is a comment
+host = "localhost"
+port = 8080
+debug = true
+[server]
+host = "localhost"
+port = 8080
+debug = true
+The subset we’ll support:
+Key-value pairs: key = value
+Value types: strings ("hello"), integers (8080), floats (3.14), booleans (true/false)
+Tables: [section_name] groups key-value pairs into sections
+Comments: # lines
+Dotted keys in table headers: [server.host] creates a nested section
+We won’t support arrays, inline tables, or array-of-tables. This keeps the scope focused on error handling, which is the point of this article.
+Project Setup
+cargo new config_parser
+cd config_parser
+Open Cargo.toml and add thiserror:
+[package]
+name = "config_parser"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+thiserror = "2"
+Open src/main.rs and delete everything. We’ll write it from scratch.
+Step 1: The Error Types
+Type this into src/main.rs:
+use std::fs;
+#[derive(Debug, thiserror::Error)]
+enum ConfigError {
+#[error("unexpected character at line {line}, column {col}: expected {expected}, found '{found}'")]
+UnexpectedCharacter {
+line: usize,
+col: usize,
+expected: String,
+found: String,
+},
+#[error("unterminated string starting at line {line}, column {col}")]
+UnterminatedString { line: usize, col: usize },
+#[error("invalid number at line {line}, column {col}: {detail}")]
+InvalidNumber {
+line: usize,
+col: usize,
+detail: String,
+},
+#[error("expected {expected} at line {line}, column {col}, found {found}")]
+ExpectedToken {
+line: usize,
+col: usize,
+expected: String,
+found: String,
+},
+#[error("missing value for key '{key}' at line {line}, column {col}")]
+MissingValue {
+line: usize,
+col: usize,
+key: String,
+},
+#[error("schema violation at line {line}: key '{key}' expected type {expected}, found {found}")]
+SchemaViolation {
+line: usize,
+key: String,
+expected: String,
+found: String,
+},
+#[error("missing required key '{key}'")]
+MissingRequiredKey { key: String },
+#[error("key '{key}' has value {value} which is outside range {min} to {max}")]
+ValueOutOfRange {
+key: String,
+value: String,
+min: i64,
+max: i64,
+},
+#[error("unknown key '{key}' at line {line}")]
+UnknownKey { key: String, line: usize },
+#[error("io error: {0}")]
+Io(#[from] std::io::Error),
+}
+Let me explain the key parts:
+#[derive(Debug, thiserror::Error)] - this tells Rust to automatically implement the Debug trait (for {:?} formatting) and the Error trait. The thiserror::Error derive macro generates everything based on the #[error("...")] attributes.
+Each #[error("...")] attribute is the error message for that variant. The {field} placeholders are replaced with the field values, just like in println!.
+The Io(#[from] std::io::Error) variant is special. The #[from] attribute tells thiserror to automatically implement From<std::io::Error> for ConfigError. This means when we call a function that returns Result<_, std::io::Error> (like fs::read_to_string), we can use ? and the io::Error will be automatically converted into ConfigError::Io.
+Notice how every error variant carries a line and (often) a col. When you tell a user “invalid character”, the first question they’ll ask is “where?”. By embedding position information in the error type itself, every error message can point to the exact location in the file.
+Step 2: The Token Type and Lexer
+SpannedToken
+In the JSON parser, the Token enum only carried the token’s kind. In this project, we need each token to know where it came from. So we split the token into two parts: the kind and the location.
+#[derive(Debug, Clone, PartialEq)]
+enum TokenKind {
+Equal,
+StringLit(String),
+Integer(i64),
+Float(f64),
+Boolean(bool),
+Comment(String),
+Identifier(String),
+TableHeader(String),
+Newline,
+}
+#[derive(Debug, Clone)]
+struct SpannedToken {
+kind: TokenKind,
+line: usize,
+col: usize,
+}
+TokenKind is the “what kind of token is this” enum. Equal is =, StringLit("hello") is a quoted string, Integer(42) is a number, Boolean(true) is a boolean, TableHeader("server") is [server], Newline is a line break.
+SpannedToken bundles the kind with its position in the source file (line and col). When we encounter an error, we can pull the position from the token that caused it.
+Compare this with the JSON parser’s Token enum. The key difference: our SpannedToken knows where it came from. The JSON parser’s tokens had no position information, which is why its error messages were just “unexpected character” with no location.
+The Lexer
+struct Lexer {
+input: Vec<u8>,
+pos: usize,
+line: usize,
+col: usize,
+}
+This is very similar to the JSON parser’s lexer, but with one crucial addition: line and col tracking. Every time advance() is called, we check if the current byte is a newline. If it is, we increment line and reset col to 1. Otherwise, we just increment col. This gives us exact position information for every byte in the input.
+The tokenize Method
+fn tokenize(&mut self) -> Result<Vec<SpannedToken>, ConfigError> {
+Notice the return type: Result<Vec<SpannedToken>, ConfigError>. In the JSON parser, tokenize returned Vec<Token> and just paniced on errors. Here, it returns a Result. If tokenization succeeds, you get Ok(tokens). If it fails, you get Err(ConfigError) with a specific variant telling you exactly what went wrong and where.
+The body of tokenize is similar to the JSON parser, but every error case returns Err(ConfigError::...) instead of panic!(). Here’s the key difference: in the JSON parser, an unexpected character caused panic!("Unexpected character: {}", c as char). In our project, it returns Err(ConfigError::UnexpectedCharacter { line, col, expected, found }) with the exact position built in.
+Reading Strings
+fn read_string(&mut self) -> Result<(String, usize, usize), ConfigError> {
+let start_line = self.line;
+let start_col = self.col;
+self.advance();
+let mut result = String::new();
+loop {
+match self.current() {
+None => {
+return Err(ConfigError::UnterminatedString {
+line: start_line,
+col: start_col,
+});
+}
+Some(b'"') => {
+self.advance();
+return Ok((result, start_line, start_col));
+}
+Some(b'\\') => {
+self.advance();
+match self.current() {
+Some(b'"') => { result.push('"'); self.advance(); }
+Some(b'\\') => { result.push('\\'); self.advance(); }
+Some(b'n') => { result.push('\n'); self.advance(); }
+Some(b't') => { result.push('\t'); self.advance(); }
+Some(b'r') => { result.push('\r'); self.advance(); }
+_ => {
+let found = match self.current() {
+Some(b) => (b as char).to_string(),
+None => String::from("end of input"),
+};
+return Err(ConfigError::UnexpectedCharacter {
+line: self.line,
+col: self.col,
+expected: "valid escape sequence".to_string(),
+found,
+});
+}
+}
+}
+Some(c) => {
+result.push(c as char);
+self.advance();
+}
+}
+}
+}
+In the JSON parser, unterminated strings caused panic!("Unterminated string"). Now they return Err(ConfigError::UnterminatedString { line, col }) with the exact position where the string started. The error message will say “unterminated string starting at line 3, column 12” instead of just crashing.
+Reading Numbers
+fn read_number(&mut self) -> Result<(TokenKind, usize, usize), ConfigError> {
+let start_line = self.line;
+let start_col = self.col;
+let mut s = String::new();
+let mut has_dot = false;
+if let Some(b'-') = self.current() {
+s.push('-');
+self.advance();
+}
+loop {
+match self.current() {
+Some(c @ b'0'..=b'9') => {
+s.push(c as char);
+self.advance();
+}
+Some(b'.') => {
+if has_dot {
+return Err(ConfigError::InvalidNumber {
+line: start_line,
+col: start_col,
+detail: "multiple decimal points".to_string(),
+});
+}
+has_dot = true;
+s.push('.');
+self.advance();
+}
+_ => break,
+}
+}
+if has_dot {
+let value: f64 = match s.parse() {
+Ok(v) => v,
+Err(_) => {
+return Err(ConfigError::InvalidNumber {
+line: start_line,
+col: start_col,
+detail: format!("cannot parse '{}' as float", s),
+});
+}
+};
+Ok((TokenKind::Float(value), start_line, start_col))
+} else {
+let value: i64 = match s.parse() {
+Ok(v) => v,
+Err(_) => {
+return Err(ConfigError::InvalidNumber {
+line: start_line,
+col: start_col,
+detail: format!("cannot parse '{}' as integer", s),
+});
+}
+};
+Ok((TokenKind::Integer(value), start_line, start_col))
+}
+}
+Two important things here. First, multiple decimal points like 3.14.159 now return Err(ConfigError::InvalidNumber { ... detail: "multiple decimal points" }) instead of panicking.
+Second, the .parse() calls use match instead of .unwrap(). When you call "abc".parse::<i64>(), it returns Result<i64, ParseIntError>. We can’t use ? here because ParseIntError is not our ConfigError type. Instead, we match on the result and construct our own error with the position information. This is a common pattern: when a library returns an error type that doesn’t match yours, you match on their result and create your own error.
+Step 3: The TomlValue Type
+#[derive(Debug, Clone, PartialEq)]
+enum TomlValue {
+String(String),
+Integer(i64),
+Float(f64),
+Boolean(bool),
+Table(Vec<(String, TomlValue)>),
+}
+This is similar to the JsonValue enum from the JSON parser, but simpler because TOML doesn’t have arrays or null. The Table variant uses a Vec<(String, TomlValue)> just like the JSON parser’s Object, each key-value pair is a tuple.
+To display a TomlValue, we write a standalone function, just like we did for JsonValue in the previous article:
+fn display(value: &TomlValue) -> String {
+match value {
+TomlValue::String(s) => format!("\"{}\"", s),
+TomlValue::Integer(n) => format!("{}", n),
+TomlValue::Float(n) => format!("{}", n),
+TomlValue::Boolean(b) => format!("{}", b),
+TomlValue::Table(pairs) => {
+let mut result = String::from("{");
+let mut first = true;
+for (k, v) in pairs {
+if !first {
+result.push_str(", ");
+}
+result.push_str(&format!("{}: {}", k, display(v)));
+first = false;
+}
+result.push('}');
+result
+}
+}
+}
+This is exactly the same pattern we used for the JSON parser, a recursive function that pattern matches on each variant and builds a string.
+Step 4: The Parser
+The parser takes a Vec<SpannedToken> and turns it into a TomlValue. It uses the same cursor pattern as the lexer, a current position that advances as tokens are consumed.
+struct Parser {
+tokens: Vec<SpannedToken>,
+pos: usize,
+}
+The Main Parse Method
+The parser handles three kinds of top-level items:
+Comments and newlines - skip them
+Table headers like [server] - collect all following key-value pairs into a sub-table
+Key-value pairs - parse key, equal sign, value
+Every place the JSON parser had panic!(), we have Err(ConfigError::...). Even better, every error includes the line and column from the token. When a key is followed by something other than =, the error says “expected = at line 5, column 12, found Integer” instead of crashing with no context.
+The ? operator is used throughout: self.parse_value()? propagates errors automatically. If parse_value fails, the error bubbles up through parse and up to the caller effortlessly.
+Parse Value
+fn parse_value(&mut self) -> Result<TomlValue, ConfigError> {
+let token = self.current();
+match token {
+Some(t) => match &t.kind {
+TokenKind::StringLit(s) => {
+let val = TomlValue::String(s.clone());
+self.advance();
+Ok(val)
+}
+TokenKind::Integer(n) => {
+let val = TomlValue::Integer(*n);
+self.advance();
+Ok(val)
+}
+TokenKind::Float(n) => {
+let val = TomlValue::Float(*n);
+self.advance();
+Ok(val)
+}
+TokenKind::Boolean(b) => {
+let val = TomlValue::Boolean(*b);
+self.advance();
+Ok(val)
+}
+_ => Err(ConfigError::ExpectedToken {
+line: t.line,
+col: t.col,
+expected: "value (string, integer, float, or boolean)".to_string(),
+found: format!("{:?}", t.kind),
+}),
+},
+None => Err(ConfigError::ExpectedToken {
+line: 0,
+col: 0,
+expected: "value".to_string(),
+found: "end of input".to_string(),
+}),
+}
+}
+Clean and straightforward. If we have a token that’s a valid value type, we return it. If not, we return a specific error saying what we expected and what we found instead.
+Step 5: The Schema
+The schema defines what keys are expected in the config file, what types they should be, and whether they’re required. The schema is itself a TOML file, parsed by our own parser.
+enum FieldType {
+String,
+Integer,
+Float,
+Boolean,
+}
+struct FieldSchema {
+field_type: FieldType,
+required: bool,
+default: Option<TomlValue>,
+min: Option<i64>,
+max: Option<i64>,
+}
+impl FieldType {
+fn from_str(s: &str) -> Option<FieldType> {
+match s {
+"string" => Some(FieldType::String),
+"integer" => Some(FieldType::Integer),
+"float" => Some(FieldType::Float),
+"boolean" => Some(FieldType::Boolean),
+_ => None,
+}
+}
+fn name(&self) -> &'static str {
+match self {
+FieldType::String => "string",
+FieldType::Integer => "integer",
+FieldType::Float => "float",
+FieldType::Boolean => "boolean",
+}
+}
+}
+#[derive(Debug, Clone)]
+struct FieldSchema {
+field_type: FieldType,
+required: bool,
+default: Option<TomlValue>,
+min: Option<i64>,
+max: Option<i64>,
+}
+type Schema = Vec<(String, FieldSchema)>;
+FieldType - the expected type for a config key.
+FieldSchema - the full validation spec for a single key.
+required - if true, the key must be present (unless it has a default).
+default - a value to use if the key is missing.
+min and max - for integers, the valid range.
+Schema - a list of key names and their validation rules.
+FieldType::from_str converts a string like "integer" into a FieldType variant (or None if the string isn’t a valid type name). FieldType::name converts a variant back into a string for error messages.
+The schema TOML file looks like this:
+[server.host]
+type = "string"
+required = true
+[server.port]
+type = "integer"
+min = 1
+max = 65535
+required = true
+When our parser processes this, [server.host] becomes a TableHeader("server.host"), and the key-value pairs inside it become entries in a sub-table. The parse_schema function walks this sub-table and extracts the validation rules:
+fn parse_schema(value: &TomlValue) -> Result<Schema, ConfigError> {
+let mut schema = Vec::new();
+let table = match value {
+TomlValue::Table(pairs) => pairs,
+_ => {
+return Err(ConfigError::UnexpectedCharacter {
+line: 0,
+col: 0,
+expected: "table".to_string(),
+found: "non-table value".to_string(),
+});
+}
+};
+for (key, val) in table {
+let inner = match val {
+TomlValue::Table(pairs) => pairs,
+_ => continue,
+};
+let mut field_type = FieldType::String;
+let mut required = false;
+let mut default_val: Option<TomlValue> = None;
+let mut min_val: Option<i64> = None;
+let mut max_val: Option<i64> = None;
+for (field_name, field_val) in inner {
+match field_name.as_str() {
+"type" => {
+let type_str = match field_val {
+TomlValue::String(s) => s.clone(),
+_ => String::new(),
+};
+let ft = FieldType::from_str(&type_str);
+match ft {
+Some(t) => field_type = t,
+None => {
+return Err(ConfigError::SchemaViolation {
+line: 0,
+key: key.clone(),
+expected: "valid type (string, integer, float, boolean)".to_string(),
+found: type_str,
+});
+}
+}
+}
+"required" => {
+required = match field_val {
+TomlValue::Boolean(b) => *b,
+_ => false,
+};
+}
+"default" => {
+default_val = Some(field_val.clone());
+}
+"min" => {
+min_val = match field_val {
+TomlValue::Integer(n) => Some(*n),
+_ => None,
+};
+}
+"max" => {
+max_val = match field_val {
+TomlValue::Integer(n) => Some(*n),
+_ => None,
+};
+}
+_ => {}
+}
+}
+schema.push((
+key.clone(),
+FieldSchema {
+field_type,
+required,
+default: default_val,
+min: min_val,
+max: max_val,
+},
+));
+}
+Ok(schema)
+}
+This function takes the parsed schema TomlValue (which is a Table of sub-tables) and walks each entry. For each key like server.port, it reads the type, required, default, min, and max fields from the sub-table. If the type string isn’t one of our known types, it returns a SchemaViolation error.
+The flatten_table helper is also needed, it converts the nested TomlValue::Table into a flat list of dotted keys like server.host, server.port, etc.:
+fn flatten_table(table: &TomlValue, prefix: &str) -> Vec<(String, TomlValue)> {
+let pairs = match table {
+TomlValue::Table(pairs) => pairs,
+_ => return vec![],
+};
+let mut result = Vec::new();
+for (key, value) in pairs {
+let full_key = if prefix.is_empty() {
+key.clone()
+} else {
+format!("{}.{}", prefix, key)
+};
+match value {
+TomlValue::Table(_) => {
+let nested = flatten_table(value, &full_key);
+for item in nested {
+result.push(item);
+}
+}
+_ => {
+result.push((full_key, value.clone()));
+}
+}
+}
+result
+}
+And a small toml_type_name helper that maps a TomlValue variant to a human-readable type name, used in schema violation error messages:
+fn toml_type_name(value: &TomlValue) -> &'static str {
+match value {
+TomlValue::String(_) => "string",
+TomlValue::Integer(_) => "integer",
+TomlValue::Float(_) => "float",
+TomlValue::Boolean(_) => "boolean",
+TomlValue::Table(_) => "table",
+}
+}
+Step 6: Schema Validation
+The validate function takes a parsed config, a schema, and the original source text. It checks every key in the config against the schema and collects all errors.
+fn validate(config: &TomlValue, schema: &Schema, source: &str) -> Result<(), Vec<ConfigError>> {
+let mut errors = Vec::new();
+let flat_config = flatten_table(config, "");
+for (key, field) in schema {
+let mut found_value: Option<&TomlValue> = None;
+for (k, v) in &flat_config {
+if k == key {
+found_value = Some(v);
+break;
+}
+}
+match found_value {
+None => {
+if field.required {
+match &field.default {
+Some(_) => {}
+None => {
+errors.push(ConfigError::MissingRequiredKey { key: key.clone() });
+}
+}
+}
+}
+Some(value) => {
+let type_matches = match (&field.field_type, value) {
+(FieldType::String, TomlValue::String(_)) => true,
+(FieldType::Integer, TomlValue::Integer(_)) => true,
+(FieldType::Float, TomlValue::Float(_)) => true,
+(FieldType::Float, TomlValue::Integer(_)) => true,
+(FieldType::Boolean, TomlValue::Boolean(_)) => true,
+_ => false,
+};
+if !type_matches {
+let line = find_line_for_key(source, key);
+errors.push(ConfigError::SchemaViolation {
+line,
+key: key.clone(),
+expected: field.field_type.name().to_string(),
+found: toml_type_name(value).to_string(),
+});
+}
+if let (TomlValue::Integer(n), Some(min)) = (value, field.min) {
+if *n < min {
+errors.push(ConfigError::ValueOutOfRange {
+key: key.clone(),
+value: n.to_string(),
+min,
+max: field.max.unwrap_or(0),
+});
+}
+}
+if let (TomlValue::Integer(n), Some(max)) = (value, field.max) {
+if *n > max {
+errors.push(ConfigError::ValueOutOfRange {
+key: key.clone(),
+value: n.to_string(),
+min: field.min.unwrap_or(0),
+max,
+});
+}
+}
+}
+}
+}
+for (key, _) in &flat_config {
+let mut is_known = false;
+for (k, _) in schema {
+if k == key {
+is_known = true;
+break;
+}
+}
+if !is_known {
+let line = find_line_for_key(source, key);
+errors.push(ConfigError::UnknownKey {
+key: key.clone(),
+line,
+});
+}
+}
+if errors.is_empty() {
+Ok(())
+} else {
+Err(errors)
+}
+}
+validate returns Result<(), Vec<ConfigError>>, not Result<(), ConfigError>. It collects all errors, not just the first one. This is important for a config validator — you want to see everything that’s wrong, not fix one error, re-run, fix another, re-run, etc.
+The flatten_table helper converts the nested TomlValue::Table into a flat list of dotted keys like server.host, server.port, etc. This makes it easy to match against the schema keys.
+The find_line_for_key helper searches the original TOML source text for a key and returns its line number. It strips the section prefix from dotted keys (turning server.host into just host) and scans for lines matching key =:
+fn find_line_for_key(source: &str, target_key: &str) -> usize {
+let short_key = if target_key.contains('.') {
+let mut parts = target_key.rsplit('.');
+match parts.next() {
+Some(k) => k,
+None => target_key,
+}
+} else {
+target_key
+};
+for (i, line) in source.lines().enumerate() {
+let trimmed = line.trim();
+if trimmed.starts_with('#') || trimmed.starts_with('[') || trimmed.is_empty() {
+continue;
+}
+if let Some(eq_pos) = trimmed.find('=') {
+let key_part = trimmed[..eq_pos].trim();
+if key_part == short_key {
+return i + 1;
+}
+}
+}
+0
+}
+It skips comments, section headers, and empty lines, then looks for lines where the part before = matches the key. If it can’t find the key, it returns 0 (which format_error treats as “no line information available”).
+Step 7: Displaying Errors
+fn format_error(err: &ConfigError, source: &str) -> String {
+let line_num = match err {
+ConfigError::UnexpectedCharacter { line, .. } => *line,
+ConfigError::UnterminatedString { line, .. } => *line,
+ConfigError::InvalidNumber { line, .. } => *line,
+ConfigError::ExpectedToken { line, .. } => *line,
+ConfigError::MissingValue { line, .. } => *line,
+ConfigError::SchemaViolation { line, .. } => *line,
+ConfigError::UnknownKey { line, .. } => *line,
+_ => 0,
+};
+if line_num == 0 {
+return format!("Error: {}", err);
+}
+let lines: Vec<&str> = source.lines().collect();
+let line_content = match lines.get(line_num - 1) {
+Some(l) => *l,
+None => "",
+};
+format!(
+"Error: {}\n   |\n{:>2} | {}\n   |",
+err,
+line_num,
+line_content
+)
+}
+This function takes an error and the original source text, finds the offending line, and formats it like:
+Error: schema violation at line 3: key 'server.host' expected type string, found integer
+|
+3 | host = 1234
+|
+The match err { ... } extracts the line number from whichever error variant it is. All the variants that carry a line field get their line number extracted. Variants like MissingRequiredKey that don’t have a specific line get 0, in which case we just print the error message without a source line.
+Step 8: Main Function and Demo
+fn run(config_path: &str, schema_path: &str) -> Result<(), Vec<ConfigError>> {
+let config_source = match fs::read_to_string(config_path) {
+Ok(s) => s,
+Err(e) => return Err(vec![ConfigError::from(e)]),
+};
+let schema_source = match fs::read_to_string(schema_path) {
+Ok(s) => s,
+Err(e) => return Err(vec![ConfigError::from(e)]),
+};
+let mut config_lexer = Lexer::new(&config_source);
+let config_tokens = match config_lexer.tokenize() {
+Ok(tokens) => tokens,
+Err(e) => return Err(vec![e]),
+};
+let mut config_parser = Parser::new(config_tokens);
+let config_value = match config_parser.parse() {
+Ok(v) => v,
+Err(e) => return Err(vec![e]),
+};
+let mut schema_lexer = Lexer::new(&schema_source);
+let schema_tokens = match schema_lexer.tokenize() {
+Ok(tokens) => tokens,
+Err(e) => return Err(vec![e]),
+};
+let mut schema_parser = Parser::new(schema_tokens);
+let schema_value = match schema_parser.parse() {
+Ok(v) => v,
+Err(e) => return Err(vec![e]),
+};
+let schema = match parse_schema(&schema_value) {
+Ok(s) => s,
+Err(e) => return Err(vec![e]),
+};
+validate(&config_value, &schema, &config_source)?;
+println!("Config is valid!");
+println!();
+println!("Parsed config:");
+for (key, value) in flatten_table(&config_value, "") {
+println!("  {} = {}", key, display(&value));
+}
+Ok(())
+}
+This is the beauty of proper error handling. Look at run(): it’s a pipeline of operations, each of which can fail. Each match on a Result handles the error case explicitly. For cases where we want to convert a single error into a Vec of errors, we wrap it with vec![e].
+Notice we use match here instead of ?. That’s because run returns Result<(), Vec<ConfigError>>, but most of the inner calls return Result<_, ConfigError> (a single error, not a Vec). The ? operator only works when the error types match, so we explicitly match and wrap single errors into a Vec where needed.
+The ConfigError::from(e) on the fs::read_to_string error lines works because we defined Io(#[from] std::io::Error) in our error enum. The #[from] attribute generated a From<std::io::Error> for ConfigError implementation, so ConfigError::from(e) converts an io::Error into our ConfigError::Io variant.
+The main function reads the file paths from command-line arguments (or defaults to the example files), calls run, and handles any errors:
+fn main() {
+let args: Vec<String> = std::env::args().collect();
+let (config_path, schema_path) = if args.len() >= 3 {
+(args[1].clone(), args[2].clone())
+} else {
+(String::from("examples/valid_config.toml"), String::from("examples/schema.toml"))
+};
+match run(&config_path, &schema_path) {
+Ok(()) => {}
+Err(errors) => {
+let source = match fs::read_to_string(&config_path) {
+Ok(s) => s,
+Err(_) => String::new(),
+};
+for err in &errors {
+eprintln!("{}", format_error(err, &source));
+eprintln!();
+}
+std::process::exit(1);
+}
+}
+}
+If run returns Ok(()), we’re done. If it returns Err(errors), we load the source text (so we can point to specific lines), format each error with format_error, print them to stderr, and exit with code 1.
+Running with a Valid Config
+Create examples/valid_config.toml:
+# Server configuration
+[server]
+host = "localhost"
+port = 8080
+debug = true
+[database]
+url = "postgres://localhost/mydb"
+max_connections = 10
+Run it:
+cargo run -- examples/valid_config.toml examples/schema.toml
+Output:
+Config is valid!
+Parsed config:
+server.host = "localhost"
+server.port = 8080
+server.debug = true
+database.url = "postgres://localhost/mydb"
+database.max_connections = 10
+Running with an Invalid Config
+Create examples/invalid_config.toml:
+# Config with multiple errors
+[server]
+host = 1234
+port = 99999
+debug = "yes"
+[database]
+url = "postgres://localhost/mydb"
+max_connections = 200
+Run it:
+cargo run -- examples/invalid_config.toml examples/schema.toml
+Output:
+Error: schema violation at line 3: key 'server.host' expected type string, found integer
+|
+3 | host = 1234
+|
+Error: key 'server.port' has value 99999 which is outside range 1 to 65535
+Error: schema violation at line 5: key 'server.debug' expected type boolean, found string
+|
+5 | debug = "yes"
+|
+Error: key 'database.max_connections' has value 200 which is outside range 1 to 100
+All four errors are reported at once. No panicking, no crashing, no vague messages. Every error tells you exactly what’s wrong and where.
+Conclusion
+In this post, we replaced every panic! and unwrap with proper Result based error handling. We defined a custom ConfigError enum with rich error variants carrying line numbers and context. We used thiserror to avoid writing boilerplate code. We used the ? operator to propagate errors effortlessly. And we built a validator that collects all errors and displays them with source lines, not just the first one.
+In the next article, we’ll learn about generics, traits, and lifetimes and build a Generic LRU Cache. See you soon.
+On this page
+Why `panic!` and `unwrap` Are Not Enough
+`Option<T>` - Dealing with Absence
+Creating Options
+Pattern Matching on Option
+Useful Methods on Option
+`Result<T, E>` - Dealing with Failure
+Pattern Matching on Result
+Useful Methods on Result
+The `?` Operator
+`?` Also Converts Error Types
+Defining Custom Error Types
+Creating the Error Enum
+Using `thiserror` to Automate the Boilerplate
+What is TOML?
+Project Setup
+Step 1: The Error Types
+Step 2: The Token Type and Lexer
+SpannedToken
+The Lexer
+The tokenize Method
+Reading Strings
+Reading Numbers
+Step 3: The TomlValue Type
+Step 4: The Parser
+The Main Parse Method
+Parse Value
+Step 5: The Schema
+Step 6: Schema Validation
+Step 7: Displaying Errors
+Step 8: Main Function and Demo
+Running with a Valid Config
+Running with an Invalid Config
+Conclusion
+NavigationaxumArchived
+Learn Axum Basics and Routing by Building a URL ShortenerLearn Axum Error handling by Building a Pastebin APILearn Axum Persistence and Transactions with SQLx by Building a Bookmark Managerbook-notes
+epictetus-the-complete-works
+HandbookThe Basic Laws of Human Stupiditygpui
+Your First GPUI App - Building a Desktop UI in Rustmy-thoughts
+Reliability Over Ideologyprogramming-languages
+go
+Learn Go Basics By Building a Brainfuck Interpreterrust
+Build a Scientific Calculator in Rust - Understanding Variables and TypesRust Control Flow in Practice - Build a Number Guessing GamerustArchived
+Learn Rust Basics By Building a Brainfuck InterpreterLearn Rust Ownership and Borrowing By Building Mini GrepBuild a JSON Parser in Rust from ScratchLearn Error Handling in Rust By Building a TOML Config ParserLearn Rust Generics and Traits By Building a Mini Blackjack GameLearn Rust Lifetimes by Building a Generic LRU CacheLearn Rust HashMap and Iterators by Building a Git Object Store ReaderLearn Rust Closures By Building a Tiny Rule-Based LinterLearn Rust Smart Pointers and Interior Mutability by Building Git Commit Graph ViewerLearn Rust Concurrency By Building a Thread PoolLearn Rust Async/Await, Tokio, and TCP Networking by Building an HTTP/1.1 ServerLearn SQL and SQLx by Building a Book Library CLI in Rusttools
+No BS Guide to Vim Motions
+Esc
+Type to search…
+↑↓ navigate↵ selectEsc close
+
+=== ROW 39 | f009152 | https://internals.rust-lang.org/t/syntactic-sugar-for-str-to-string-conversion/20488 | 2024-03-17 | internals ===
+Syntactic sugar for &str to String conversion
+
+@rxdiscovery · 2024-03-17T07:38:41.234Z:
+Hello,
+I've noticed that we often write :
+"xxxx".to_string() /* or */ String::from("xxxx") /* or */  "xxxx".into()
+to convert from &str to String.
+I have a proposal to simplify life for developers, why not add a little syntactic sugar to shorten the whole thing? Like this :
+S"xxxx"
+// or
+@"xxxx"
+// or
+s#"xxxx"
+the compiler will automatically transform &str into : "xxxx".to_string() / String::from("xxxx").
+what do you think?
+
+---
+
+@jimy-byerley · 2024-03-17T09:20:29.549Z:
+I am not really bothered by writing String::from('xxxx") but why not
+
+---
+
+@SkiFire13 · 2024-03-17T10:38:19.178Z:
+This has already been asked in the past in various forms. There are two important issues with it:
+it wouldn't always work (e.g. in #[no_std] environments without alloc support);
+it introduces hidden allocations, going against Rust's principle of being explicit when possible.
+
+---
+
+@toc · 2024-03-17T10:50:04.955Z:
+Not to weigh in heavily one way or the other, but...
+Lots of things don't work with #[no_std], hopefully by that point one has learned which string to use though.
+The proposed syntax is explicit, just terse. Forcing verbosity in certain cases is helpful when it pushes users towards an alternative with less friction (like Cow!), but honestly I've worked with some string heavy codebases where having an S"hello" syntax would have helped me relax.
+
+---
+
+@kornel · 2024-03-17T13:57:22.112Z:
+BTW, long long time ago Rust had ~ for heap allocations, so ~"string" and ~[] would give you a boxed type (I don't remember whether that was String or Box<str> equivalent).
+
+---
+
+@rxdiscovery · 2024-03-17T17:07:12.896Z:
+SkiFire13:
+This has already been asked in the past in various forms. There are two important issues with it:
+it wouldn't always work (e.g. in #[no_std] environments without alloc support);
+it introduces hidden allocations, going against Rust's principle of being explicit when possible.
+I totally forgot about the possibility of not having STD  you're right if you look at it from that point of view
+toc:
+The proposed syntax is explicit, just terse. Forcing verbosity in certain cases is helpful when it pushes users towards an alternative with less friction (like Cow!), but honestly I've worked with some string heavy codebases where having an S"hello" syntax would have helped me relax.
+Isn't the comfort of our eyes worth breaking the rules?
+kornel:
+BTW, long long time ago Rust had ~ for heap allocations, so ~"string" and ~[] would give you a boxed type (I don't remember whether that was String or Box<str> equivalent).
+it looks more like Box<X>, Do you know why they removed it?
+Otherwise there are only two possibilities: either generate an error if you use this syntax with #[no-std], or create an S! macro that does this.
+
+---
+
+@Ratatouille · 2024-03-17T18:22:37.279Z:
+Well I would argue that it would generally be nice to have a dedicated symbol for .into(), for example @.
+Then, @ "I am a string" would be desugared to "I am a string".into(), and there are many other examples where it would be nicer to have it too.
+But I guess it is far from the first time something like that was suggested..
+
+---
+
+@rxdiscovery · 2024-03-17T18:25:18.041Z:
+very good idea, @ = into(), it will work for all conversions
+
+---
+
+@Jon-Davis · 2024-03-17T19:33:49.601Z:
+I know this has been somewhat brought up when the syntax was reserved in the 2021 edition.
+I like the idea of adding these kinds of things to rust, though I care more about the suggested f"" syntax/string interpolation. It's a really nice feature in Scala and I think it would work well in rust as well.
+
+---
+
+@rxdiscovery · 2024-03-17T19:46:54.328Z:
+Thank you for this link, here is the part that concerns this syntax :
+Some new prefixes you might potentially see in the future (though we haven't committed to any of them yet):
+k#keyword to allow writing keywords that don't exist yet in the current edition. For example, while async is not a keyword in edition 2015, this prefix would've allowed us to accept k#async in edition 2015 without having to wait for edition 2018 to reserve async as a keyword.
+f"" as a short-hand for a format string. For example, f"hello {name}" as a short-hand for the equivalent format!() invocation.
+s"" for String literals.
+c"" or z"" for null-terminated C strings.
+
+---
+
+@jdahlstrom · 2024-03-19T10:55:45.665Z:
+FWIW, c"foo" for CStr literals will be stable in 1.77, to be released next week. It's pure syntax sugar in the sense that there are no hidden allocations or anything, but still, it's precedence for a library type getting its own literal syntax.
+
+---
+
+@synek317 · 2024-03-21T06:31:24.790Z:
+rxdiscovery:
+or create an S! macro that does this.
+S!("foo") is a bit too hard to both, type and read. BUT if macros could accept " as their delimiters, then we could have S!"this is String", f!"format {s}", c!"null-terminated" without the separate string prefix feature.
+Additionally, #[nostd] case would be solved since f! or S! could be present in std but not in core.
+Additionally, users could define their own "prefixes".
+
+---
+
+@robinm · 2024-03-21T07:08:44.600Z:
+This looks like a nice idea, but with c"some c string" and u8'c' already in the langage I think that s"String" would be the more consistent idea.
+
+---
+
+@gdennie · 2024-03-21T11:44:38.597Z:
+Great idea since macros are already an extension point and strings are such a ubiquitous representation format. It may expand the compile time functionality seamlessly.
+s! " "
+s! """ """
+s! r#" "#
+regex! ".*"
+math! "(sqrt 2) * pi +$x"
+...come to think of it, the following micros might be cool.
+math! { sqrt(2) * PI + x }
+matlab! { ... }
+maple! { ... }
+haskell! { ... }
+c! { ... }
+cc! { ... }
+fsharp! { ... }
+
+---
+
+@jedbrown · 2024-03-22T06:16:12.741Z:
+Note that format!("Hello world") compiles to identical assembly as String::from("Hello world") so if f"Hello {name}" is implemented, you get String literals for free. No need to make a new s"Hello" syntax for string literals that cannot contain interpolation.
+I think it's quite niche for the light syntax to be important and where the literals need to contain interpolation syntax without being interpolated.
+
+---
+
+@pitaj · 2024-03-22T13:44:20.849Z:
+f"" strings will likely desugar to format_args!(""), not format!("")
+
+---
+
+@jedbrown · 2024-03-22T15:10:42.965Z:
+Ah, interesting. I see format_args! suggested in this thread, with the benefit of being usable in core. I suppose one could imagine F"Hello {name}" as having format! semantics (making a String instead of fmt::Arguments).
+When the syntax was reserved in edition 2021, these were suggested.
+Some new prefixes you might potentially see in the future (though we haven't committed to any of them yet):
+k#keyword to allow writing keywords that don't exist yet in the current edition. For example, while async is not a keyword in edition 2015, this prefix would've allowed us to accept k#async in edition 2015 without having to wait for edition 2018 to reserve async as a keyword.
+f"" as a short-hand for a format string. For example, f"hello {name}" as a short-hand for the equivalent format!() invocation.
+s"" for String literals.
+c"" or z"" for null-terminated C strings.
+
+---
+
+@Ardi · 2024-03-24T16:18:29.650Z:
+I want to raise a few points:
+Format args usefulness
+How useful really is it to have syntax for format_args!? anything that takes an Arguments tends to be a macro already.
+String literals, and formatted string literals are a much more common problem, and I think that it's worthwhile to have syntax for that, especially having an elegant solution that covers both.
+New syntax
+I'm usually opposed to new syntax as it complicates the language and makes it harder to learn but I think that in this case will simplify it and make it easier to learn.
+This will also solve the problem of "what way of creating Strings from a &str should I use?", since this syntax would clearly be the best and more concise one.
+Prefix
+Regarding the prefix, I personally think that s"str" is better than f"str" in order to both create owned Strings and formatted strings.
+Next steps
+If this were to be accepted I think that it's reasonable to expect p"path" for &Path / PathBuf, though this raises the question of which one should it desugar to. This would cover all string types in std.
+no_std
+There is no prior art of syntax that doesn't work on core, but I don't think that's really an issue.
+Macro syntax
+I don't see the point of having s!"str" outside of some feeling of correctness. I think it would overcomplicate the language. A beginner might ask "Why does b"byte literal" work but I have to do s!"String literal"?"
+
+---
+
+@CAD97 · 2024-03-24T16:54:23.125Z:
+Ardi:
+How useful really is it to have syntax for format_args!?
+fmt::Arguments is a Display type, so it's useful for that. The temporary lifetime limitation is restrictive, but it's still useful in a number of applications. Any time you'd use a temporary String buffer that's cheap to recreate you can usually use fmt::Arguments instead.
+Ardi:
+This will also solve the problem of "what way of creating Strings from a &str should I use?", since this syntax would clearly be the best and more concise one.
+It would for literals, but any time you actually have &str, I'd argue that S"{var}" is actively a poor way of spelling so compared to the existing options. Terse is not necessarily better.
+Ardi:
+p"path"
+I don't think this is a good idea if it includes formatting. Path manipulation is limited the way it is in order to encourage thinking about potential injection points.
+Ardi:
+This would cover all string types in std.
+Everyone loves to forget about OsStr/OsString.
+
+---
+
+@Ardi · 2024-03-24T17:26:02.986Z:
+fmt::Arguments is a Display type, so it's useful for that
+It's still rare to encounter a call to format_args! in the wild or to use Arguments outside a macro.
+It would for literals, but any time you actually have &str, I'd argue that S"{var}" is actively a poor way of spelling so compared to the existing options. Terse is not necessarily better.
+You're right. It's only better for literals.
+Everyone loves to forget about OsStr/OsString.
+My bad! os"os string" has a really cool prefix. Whether it returns an owned formatted version or a static literal is a different question.
+To me it would make a lot of sense to have the uppercase version for the owned part:
+p"path": &'static Path
+P"path": PathBuf - Formatting TBD
+c"cstr": &'static CStr - Stable as of 1.77
+C"cstr": CString
+os"str": &'static OsStr
+OS"str": OsString
+S"formatted {string}: String
+s"str": &'static str - This would make sense for symmetry but feels but I don't like it at all
+B"byte literal": Vec<u8> - ??
+
+---
+
+@Noratrieb · 2024-03-25T11:17:12.193Z:
+I don't think we need syntax for paths or osstrings. The primary reason that cstrs got syntax is because of the tricky null terminator. Other strings don't have this problem and can trivially use functions like Path::new.
+
+---
+
+@nacaclanga · 2024-03-26T17:21:39.371Z:
+Personally, I think the downside of this approach is that it would be the first time something that looks like a literal contains active code operations. And it would also be the first kind of literal that implicitly requires std, in particular after effords have been made to remove box, which actually was more them just semantic suger.
+I also don't think we would need a macro for this. Just adding a line
+use String::from as s;
+to the prelude would generate a fairly short syntax for string generation.
+A macro s! in line with vec! might still be the more desired option.
+
+---
+
+@jrose · 2024-03-26T22:04:49.607Z:
+While new literals are being added, I’ll point out that they don’t have to have just one type. We have integer literals today that work with any primitive integer type and default to i32; we can have f-string literals that work with either fmt::Arguments or String (though we’d have to pick a default).
+
+---
+
+@afetisov · 2024-03-26T22:19:34.755Z:
+That wouldn't be a problem of literals were programmable and extendable in library code, rather than built-in. In that case string literals in #[no_std] code would just error out due to undefined String.
+C++  has precedent for user-defined literals. Whether it's a good idea is debatable, but it's certainly an option.
+
+---
+
+@jdahlstrom · 2024-03-27T09:04:36.823Z:
+nacaclanga:
+use String::from as s;
+Note that this would require a language change as associated functions are not currently importable. (There is now an RFC to import trait functions, but I’m not sure if it accounts for importing specific trait fn impls.)
+
+---
+
+@Vorpal · 2024-03-27T22:08:43.819Z:
+jdahlstrom:
+nacaclanga:
+use String::from as s;
+Note that this would require a language change as associated functions are not currently importable. (There is now an RFC to import trait functions, but I’m not sure if it accounts for importing specific trait fn impls.
+fn s(v: impl Into<String>) -> String {
+v.into()
+}
+(or something like that, wrote it on my phone, untested)
+
+---
+
+@ekkis · 2024-04-11T21:43:26.749Z:
+I like that idea.  it reminds me of perl's regex operators where normally I might do s/dir1\/dir2/dir3/ but where for readability and ease I could just s#dir1/dir2#dir3#
+
+---
+
+@synek317 · 2024-04-12T06:54:16.495Z:
+Was another type of macro considered as a solution already?
+E.g.
+#[proc_macro_prefix]
+pub fn f(s: TokenStream) -> TokenStream {
+// check that s is string literal
+quote! { format!(#s) }
+}
+It looks pretty extendible, solves the issue with #[nostd], and is compatible with existing prefixes.
+
+---
+
+@chrefr · 2024-04-14T10:22:53.449Z:
+Why does it need to be a procedural macro?
+macro_rules! f {
+( $($t:tt)+ ) => { format!( $($t)+ ) };
+}
+But it's essentially only a shortcut for format!(), and only saves you 5 letters...
+
+---
+
+@synek317 · 2024-04-15T11:13:12.281Z:
+I'm not sure. Perhaps it could be some form of macro_rules! or prefix_rules! too. I just thought that proc macros give more flexibility, e.g. they could let the code iterate over the characters of the literal and also make a guarantee that it's invoked only on (string) literals.
+Regarding the last sentence you wrote, I'm strongly convinced that it is not about "just 5 letters" but the reduced cognitive load. E.g. see how
+format!("foo {}", foo);
+evolved into
+format!("foo {foo}");
+which reduces only 2 characters but is way easier to both, type and read. Then
+f"foo {foo}"
+takes it even further, thanks to removed parenthesis which always causes a "nested scope" effect in our brains. Additionally, the non-letter ! sign is also removed making the whole expression even simpler for humans. Although f!"foo {foo}" looks ok-ish too. But since it is a special case anyway, I think it could be removed for free too.
+In the end, you could claim that foo()? also reduced only 5 characters compared to try!(foo()). But I guess everyone agrees ? is way more readable.
+
+---
+
+@pacak · 2024-04-17T13:41:58.479Z:
+format!("foo {}", foo);
+evolved into
+format!("foo {foo}");
+which reduces only 2 characters but is way easier to both, type and read.
+It also turns positional arguments into named, doesn't matter here but before if you had a lot of them you either had to be very careful counting or write something like
+format!("foo {foo}", foo = foo);
+While this
+f"foo {foo}"
+replaces some extra characters and parens with a new concept - string literal type with built in interpolation.
+
+---
+
+@synek317 · 2024-04-18T12:36:29.043Z:
+built in interpolation.
+I think that if prefixes were (special kind of) macros, they wouldn't be builtin. We could have something similar to what @chrefr mentioned in the std lib:
+prefix_rules! f {
+($s:str_literal) => { format!($s) };
+}
+
+---
+
+@synek317 · 2024-04-18T23:02:41.469Z:
+Leaving here another invention, not sure how stupid it is:
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{parse_macro_input, LitStr};
+#[proc_macro_attribute]
+pub fn f(_: TokenStream, input: TokenStream) -> TokenStream {
+// Parse the input as a string literal
+let input = parse_macro_input!(input as LitStr);
+quote! { format!(#input) }.into()
+}
+#![feature(stmt_expr_attributes)]
+#![feature(proc_macro_hygiene)]
+use invention::f;
+fn main() {
+let x = 42;
+let s = #[f]"foo x = {x}";
+println!("{s}");
+}
+
+---
+
+@synek317 · 2024-04-20T19:51:06.207Z:
+I pushed this experiment a bit further and developed some prefixes. Asked for comments in the reddit thread here
+
+---
+
+@system · 2024-07-19T19:51:58.653Z:
+This topic was automatically closed 90 days after the last reply. New replies are no longer allowed.
+
+=== ROW 40 | f009166 | https://internals.rust-lang.org/t/relaxation-of-reference-rules-for-single-threaded-applications/20790 | 2024-05-09 | internals ===
+Relaxation of reference rules for single-threaded applications
+
+@ObeyMinute · 2024-05-09T18:06:26.332Z:
+I want to start by admitting that I am absolutely not an expert in the field of language design. I am not even an expert at Rust.
+I have a problem that I suspect could be solved by allowing the rust compiler to be configurable.
+The sample code for this problem can be found here: Rust Playground
+This example is contrived. I am familiar with how to solve this problem using traditional Rust idioms.
+However, if we consider the error:
+error[E0499]: cannot borrow `context` as mutable more than once at a time
+--> src/main.rs:21:18
+|
+20 |     for bar in &mut context.bars {
+|                -----------------
+|                |
+|                first mutable borrow occurs here
+|                first borrow later used here
+21 |         do_thing(&mut context, &bar);
+|                  ^^^^^^^^^^^^ second mutable borrow occurs here
+I wonder what problem is this error solving in this particular program? So, I run off to the Rust documentation (References and Borrowing - The Rust Programming Language):
+The restriction preventing multiple mutable references to the same data at the same time allows for mutation but in a very controlled fashion. It’s something that new Rustaceans struggle with because most languages let you mutate whenever you’d like. The benefit of having this restriction is that Rust can prevent data races at compile time. A data race is similar to a race condition and happens when these three behaviors occur:
+Two or more pointers access the same data at the same time.
+At least one of the pointers is being used to write to the data.
+There’s no mechanism being used to synchronize access to the data.
+Data races cause undefined behavior and can be difficult to diagnose and fix when you’re trying to track them down at runtime; Rust prevents this problem by refusing to compile code with data races!
+But, where is the data race? Where is the concurrent access? I don't see one, and if we aren't solving that problem which problem are we solving? Because the limitation/solution is applied assuming the problem is there. In my application, both this contrived example and what I am developing outside of this example, I am 100% single-threaded and have no concurrency mechanisms in use whatsoever.
+It occurs to me that this could be a configurable/setting on the compiler to promise that concurrency is not present, and so this use-case is fine.
+
+---
+
+@quinedot · 2024-05-09T18:23:36.743Z:
+It's not just data races, it's things like iterator invalidation, non-overlapping memcpy, and alias-based optimizations more generally.
+See also this recent topic for some conversation on how being single threaded isn't enough, even if there was an interest in creating a single-threaded Rust dialect (which there generally isn't).
+
+---
+
+@quaternic · 2024-05-09T18:27:21.421Z:
+Consider what would happen if your do_thing added new elements to context.bars, potentially reallocating it elsewhere, while the calling scope is iterating over those elements.
+It's not just about concurrent modification, but also that holding a &mut T means that actions not using that reference won't access that T.
+
+---
+
+@ObeyMinute · 2024-05-09T18:30:36.438Z:
+Yeah that's an interesting point. It makes me think I'd want a mechanism to grab an immutable reference to the collection/iterator, while being able to make mutable changes to the elements. Which seems fine, I think?
+
+---
+
+@ObeyMinute · 2024-05-09T18:32:10.219Z:
+I'm not familiar enough with the problem of non-overlapping memcpy and alias-based optimizations to comment on these. I think that thread you linked is interesting though. There's definitely a case to be made for global static mutable being made safe to use in single-threaded applications though. Right now its possible using unsafe.
+
+---
+
+@quaternic · 2024-05-09T18:45:31.416Z:
+Maybe you're looking for Cell, which allows mutation through shared references, by disallowing sharing across threads.
+
+---
+
+@ObeyMinute · 2024-05-09T18:49:03.703Z:
+Hmm. I don't think so? Having just now read some of the docs on Cell, it looks like it operates dominantly off of copying. The I'd definitely want mutable access to the value it holds and not copy values around, if possible. I've read some about RefCell, but if I'm understanding properly it moves the problem into runtime and panics there instead of having a compiler error. Maybe I am misunderstanding the usage of these though.
+
+---
+
+@ObeyMinute · 2024-05-09T19:32:45.540Z:
+It's really like I want a MutVec where I can pass a immutable reference to MutVec such that what the list contains isn't mutable, but the elements in the list are each individually mutable.
+
+---
+
+@mathstuf · 2024-05-09T20:14:55.894Z:
+.iter_mut() or .as_mut_slice()?
+
+---
+
+@ObeyMinute · 2024-05-09T20:24:49.575Z:
+Doesn't this require a mutable reference to the thing you're calling iter_mut() on?
+
+---
+
+@mathstuf · 2024-05-10T01:15:21.784Z:
+It gives you an immutable "container" with mutable access to the elements. .as_mut_slice() works too and can also give an iterator. Do you also want something else to hold write access to the container part? I'm not sure what one can do with such a view on a container though….shrink_to_fit()? .try_reserve()?
+I suspect some GhostToken-like permission split mechanism could work here, but without the power to reallocate, I'm not sure what the separate container access is supposed to achieve.
+
+---
+
+@SkiFire13 · 2024-05-10T04:52:16.919Z:
+The problem with this is that you would still be able to get shared references to the items from the original collection, then the mutable references yielded by the iterator would allow you to invalidate them.
+let foo: Vec<Vec<Something>>  = ...;
+let first: &Something = &foo[0][0];
+// Pretent this somehow yields &mut references
+for mut_ref in &foo {
+mut_ref.clear();
+}
+// first now points to invalid memory, so this is bad
+println!("{first}"});
+Also mandatory (IMO) read: The Problem With Single-threaded Shared Mutability - In Pursuit of Laziness
+
+---
+
+@ObeyMinute · 2024-05-10T18:31:59.040Z:
+Ok, that was an excellent article. It makes me think we should be able to attach qualifiers to the references we take. The ability so say something like:
+Reference-A cannot be equal to Reference-B.
+Take a reference to a Vec that allows mutability of the existing elements, but not the length of the list.
+So, some kind of semantics that establish qualifications on the references you take, as well as providing those qualifiers via an API for collections like Vec, so that Vec can write conditionally unsafe code.
+Edit: the purpose of such features would be to keep the checks at compile time instead of just deferring checks to runtime via RefCell and friends.
+
+---
+
+@SkiFire13 · 2024-05-10T21:10:07.908Z:
+I'm not so sure about what you're proposing. For example:
+ObeyMinute:
+Take a reference to a Vec that allows mutability of the existing elements, but not the length of the list.
+This is just a &mut [T], which you can already get from a Vec.
+How would those qualifications look in practice? What would they allow that's new? And how would the compiler check for them?
+
+---
+
+@ObeyMinute · 2024-05-10T22:33:44.194Z:
+I don't know that I have a ton to offer here, at least not much more than misunderstandings of the issue and ramblings on how I think it might be addressed. To the extent that I have any ideas I'll try for guess at what I might do if I was actually in the position of knowing what to do and being capable fo doing it in terms of applying changes to Rust.
+struct Foo {
+pub value_1: u32,
+pub value_2: u32,
+pub value_3: u32,
+}
+fn main() {
+let mut foo = Foo {
+value_1: 1,
+value_2: 2,
+value_3: 3,
+};
+let v1 = &mut foo.value_1;
+do_thing(&mut foo, v1);
+*v1 *= 5;
+}
+fn do_thing(f: &mut Foo, u: &mut u32) {
+f.value_2 = 10;
+f.value_3 = 10;
+*u *= 2;
+}
+The above code does not compile, even though there is actually nothing wrong with the program. The compiler is clear about why:
+error[E0499]: cannot borrow `foo` as mutable more than once at a time
+--> src/main.rs:21:14
+|
+19 |     let v1 = &mut foo.value_1;
+|              ---------------- first mutable borrow occurs here
+20 |
+21 |     do_thing(&mut foo, v1);
+|              ^^^^^^^^  -- first borrow later used here
+|              |
+|              second mutable borrow occurs here
+For more information about this error, try `rustc --explain E0499`.
+However, it seems odd because it seems like it could be detectable that we are mutating foo in a way that doesn't violate memory safety, right? It's not like in "do_thing" the alias for "f.value_1" and alias for "u" are actually in conflict. Is my understanding of this right? Am I missing something here?
+So, this type of thing seems detectable (again not an expert in this whole langauge design business). And in a similiar aesthetic and even technical mechanism for how lifetimes can be written and elided when their usage is obvious, we could have similar markup to denote the precise accesses a reference can have.
+So we could write something like:
+fn do_thing(f: &'a @[value_2, value_3] mut Foo, u: &'a mut u32) {
+f.value_2 = 10;
+f.value_3 = 10;
+*u *= 2;
+}
+Ignore the syntax ugliness. The idea is to convey that the first reference only intends to modify value_2 and value_3. The function should then only be able to modify value_2 and value_3 through that alias. And then it doesn't matter what is passed into the alias "u" because the compiler knows that whatever reference is aliased as "u" must not be in conflict with "f".
+I also realize I could have written this another way:
+struct Foo {
+pub value_1: u32,
+pub value_2: u32,
+pub value_3: u32,
+}
+fn main() {
+let mut foo = Foo {
+value_1: 1,
+value_2: 2,
+value_3: 3,
+};
+let v1 = &mut foo.value_1;
+let v2 = &mut foo.value_2;
+let v3 = &mut foo.value_3;
+do_thing(v1, v2, v3);
+*v1 *= 5;
+}
+fn do_thing(v1: &mut u32, v2: &mut u32, v3: &mut u32,) {
+*v2 = 10;
+*v3 = 10;
+*v1 *= 2;
+}
+However that gets tedious as the application gets larger. There's a desire I have heard repeated by a lot of new-to-Rust devs where it's desirable to pass around a context object of some kind instead of having to split the context up into itty-bitty-pieces and pass each of its fields in as an individual reference. This would help there. Although you could just get tired of the tedium of writting out @[value_2, value_3] as well. Which would be a far complaint. But we could bundle these into some kind of reference-aspect that a type provides.
+impl Foo {
+pub @some_name_here = [value_1, value_2]
+}
+...
+fn do_thing(f: &'a @some_name_here mut Foo, u: &'a mut u32) {
+f.value_2 = 10;
+f.value_3 = 10;
+*u *= 2;
+}
+I'm not sure I'm making sense, or maybe I am making sense but I might just lack a ton of knowledge that would make it obvious to me how wrong this suggestion is.
+
+---
+
+@SkiFire13 · 2024-05-11T07:38:33.196Z:
+This is generally called "partial borrows". There was a topic just a couple days ago on experimenting on them Idea: Experimental attribute based support for partial borrows
+
+---
+
+@kornel · 2024-05-11T12:28:44.341Z:
+You can have mutable aliasing on a single thread already if you use the &Cell type. See as_slice_of_cells
+doc.rust-lang.org
+Cell in std::cell - Rust
+A mutable memory location.
+
+---
+
+@ObeyMinute · 2024-05-11T17:33:47.640Z:
+Cell requires copying and for my case that's unfortunately a non-starter.
+
+---
+
+@ObeyMinute · 2024-05-11T17:37:34.054Z:
+Yeah, so something like this or adjacent to it is what I am looking for. I'm not trying to be particularly prescriptive with the syntax, just the desire for some kind of split/partial borrowing that has better compile time support and also a desire for more expressive syntax to help with disambiguating the things the compiler might struggle to sort out.
+
+---
+
+@kornel · 2024-05-12T01:04:10.237Z:
+No, this doesn't require copying. It's possible to cast &mut [u8] to &[Cell<u8>] at no cost, without copying. cell[x].set(val) is the same thing as slice[x] = val, except noalias guarantees.
+
+---
+
+@ObeyMinute · 2024-05-12T01:40:04.269Z:
+set(val) is copying val, right?
+
+---
+
+@kornel · 2024-05-12T02:17:29.608Z:
+So is assignment.
+
+---
+
+@ObeyMinute · 2024-05-12T02:21:59.918Z:
+Vec<X>, where X is a struct with many fields when I want to modify one of those fields, being turned into a &[Cell<X>] is not helpful in this case. I do not want to copy X. I want to modify one of many fields of X, or one of many sub-fields of X's fields, etc.
+
+---
+
+@SkiFire13 · 2024-05-12T09:25:00.110Z:
+ObeyMinute:
+I want to modify one of many fields of X, or one of many sub-fields of X's fields, etc.
+This could be done with cell projecting (i.e. getting a &Cell to a field given a &Cell to the whole struct). Unfortunately this is not yet supported in the stdlib/at the language level, but there are crates that implement this using macros, like cell-project.
+Another alternative could be using the GhostCell from the ghost-cell crate instead of Cell, as that allows you to actually get a reference to the contents of the GhostCells which you can use to mutate only the field you care about.
+
+---
+
+@ObeyMinute · 2024-05-12T15:43:28.342Z:
+I've taken a look at cell-project, ghost-shell (and subsequently some others), and here's what I have found:
+Relative to other popular and mature packages, very few people seem to be using these packages. In truth it may feel bad to use GitHub stars and crates-io downloads as an indicator of health/success of a package, but I simply do not have the time or expertise to evaluate all of the packages I use fully.
+These packages have varying levels of maturity, for example some of ghost-cell's most recent commit comments were about unsoundness issues, which is alarming to say the least.
+At this stage I don't think I am looking for an immediate download-from-crates-io solution. I'd like for this post to be one of maybe a small but growing number of signals from the community that an out-of-the-box language-solution to this problem would be awesome.
+I do think the paper that ghost-cell cites as its source of inspiration sounds strikingly similar to my suggestion of being able to label references. The devil is in those details somewhere and I don't actually understand them, but I'd bet the authors of the paper do. Link to that here: GhostCell: Separating Permissions from Data in Rust
+
+---
+
+@system · 2024-08-10T15:43:35.244Z:
+This topic was automatically closed 90 days after the last reply. New replies are no longer allowed.
+
+=== ROW 41 | f009223 | https://internals.rust-lang.org/t/bug-rounding-error-that-break-the-ensurance-of-f32-div-euclid/21917 | 2024-11-25 | internals ===
+[BUG] Rounding error that break the ensurance of f32::div_euclid
+
+@Neutron3529 · 2024-11-25T13:07:54.733Z:
+Considering the following code:
+let a = 1.10000001430511474609375_f32; // equivlent to let a = 1.1f32; but 1.1 is not the exact value.
+assert_eq!(a, 1.1);
+let b = 11f32;
+let c = b.div_euclid(a); // expect 9, since 1.10000001430511474609375 * 10 > 11
+println!("{c}"); // I'm sorry, but c is 10 here.
+Although div/rem with float types is strongly discouraged, the doc said that,
+This computes the integer n such that self = n * rhs + self.rem_euclid(rhs)
+Here,
+b.div_euclid(a) * a + b.rem_euclid(a) is 12.099999, not 11. (rem_euclid yields the correct result.)
+I wonder whether it should be fixed and is it worth creating an issue.
+And what the possible solution it could be? Modify the document? Using a very ugly implementation so that b.div_euclid(a) + b.rem_euclid(a) equals to b? Or just mark the div_euclid/rem_euclid for float types as unsafe since they will meet some corner cases very often?
+Related API:
+Rust, failed
+let a=11f64;
+let b=1.1f64;
+println!("{} {}", a/b, a%b)
+// 10 1.0999999999999992
+let a=11f64;
+let b=1.1f64;
+println!("{} {}", a.div_euclid(b), a.rem_euclid(b))
+// 10 1.0999999999999992
+python
+>>> divmod(11,1.1)
+(9.0, 1.0999999999999992)
+
+---
+
+@tczajka · 2024-11-25T15:22:23.365Z:
+Yep it's definitely a bug. The documentation of div_euclid states unambiguously:
+Precision
+The result of this operation is guaranteed to be the rounded infinite-precision result.
+So a.div_euclid(b) should be 9 not 10.
+Nitpick: the actual value of 1.1f32 is 1.10000002384185791015625 not 1.10000001430511474609375, but the answer is still supposed to be 9 not 10.
+The implementation rounds to the nearest representable value before truncating, so no wonder it's not equivalent to only truncating as claimed by the docs.
+
+---
+
+@tczajka · 2024-11-25T17:24:25.056Z:
+Neutron3529:
+And what the possible solution it could be?
+div_euclid can be done correctly by using an integer division on appropriately scaled mantissas (requires dividing u128 by u64 for f64), with a special case when the divisor doesn't fit in u128 that requires some care but it can be done in a constant number of operations.
+It could also be done in floating point by setting a non-default rounding mode. There is also a special case required for large answers (sometimes those have to be rounded up).
+I think rem_euclid is correctly implemented.
+
+---
+
+@Neutron3529 · 2024-11-26T03:30:51.082Z:
+tczajka:
+div_euclid can be done correctly
+Perhaps not.
+In some rare cases, with roundings, even self < self.div_euclid(small_number) * small_number sometimes holds. According to document, it should be self.div_euclid(small_number) * small_number < self.
+#![feature(f16, f128, float_next_up_down)]
+fn main() {
+assert_eq!(1f64, 1f64.next_down().div_euclid(1e-16) * 1e-16);
+// assert are passed, since `self.div_euclid(small)` uses incorrect roundings.
+}
+The roundings cannot be avoided, and thus the result might not be what we want.
+I strongly doubt that, whether those div/rem should be unsafe.
+
+---
+
+@tesuji · 2024-11-26T04:30:10.547Z:
+I think we could copy Python implemention: cpython/Objects/floatobject.c at 3.13 · python/cpython · GitHub.
+PR's up: breaking change: Copy Python implementation for `float::div_euclid` by tesuji · Pull Request #133485 · rust-lang/rust · GitHub
+May need an ACP though?
+
+---
+
+@tczajka · 2024-11-26T07:21:33.434Z:
+Neutron3529:
+In some rare cases, with roundings, even self < self.div_euclid(small_number) * small_number sometimes holds. According to document, it should be self.div_euclid(small_number) * small_number < self.
+My interpretation is that self >= n * rhs and self == n * rhs + self.rem_euclid(rhs) should hold in real numbers, i.e. in infinite precision. The * and + in these formulas stand for exact multiplication and addition, not rounded multiplication and addition.
+It's certainly possible (and not overly difficult) to implement it that way, as I described above.
+tesuji:
+I think we could copy Python implemention
+This also doesn't look correctly rounded, the code doesn't even claim that in the comments, it's just doing some rough approximation of div.
+
+---
+
+@Neutron3529 · 2024-11-26T10:08:58.627Z:
+tczajka:
+My interpretation is that self >= n * rhs and self == n * rhs + self.rem_euclid(rhs) should hold in real numbers
+This is worth discussed. Since we said "euclid", one may expect self >= n * rhs always holds no matter whether the rounding is performed.
+No matter what properties it should hold, we could conclude that, self == n * rhs + self.rem_euclid(rhs) might not always hold due to various conditions. Thus it might be better to introduce an unsafe here, to alert users, that function may not do what exactly the users want to do.
+tesuji:
+May need an ACP though?
+The ACP mainly for safetyness. I strongly suspect div_euclid and rem_euclid on floating types are unsafe.
+Plus, your conclusion, divmod(-11, -1.1) == 9 is incorrect, it should be 10. Unless you modify implementations for integers (signed only, unsigned unaffected), you cannot just modify divmod(-11, -1.1) == 9.
+
+---
+
+@CAD97 · 2024-11-26T11:33:58.684Z:
+Neutron3529:
+I strongly suspect div_euclid and rem_euclid on floating types are unsafe.
+They aren't. Safety in Rust only refers to whether the function has some usage requirement (usually preconditions) that must be followed to avoid the unsound possibility for UB. A logically incorrect numeric result is not unsafe.
+
+---
+
+@Neutron3529 · 2024-11-26T11:46:50.419Z:
+Maybe we should modify the defination?
+In this case we may provide a divrem(_euclid) function:
+fn divrem(self, rhs:Self) -> (Self, Self) {
+let rem = self % rhs;
+// for _euclid version, adding the following line:
+// if rem<0 {rem += rhs.abs()}
+(((self - rem) / rhs).round(), rem)
+}
+For this defination, we could ensure self.div_euclid(rhs) == (self - self.rem_euclid(rhs)) / rhs
+I have no idea whether a .round() should be called for (self - rem) / rhs, it seems unnecessary but I cannot confirm.
+For integers, self.div_euclid(rhs) == (self - self.rem_euclid(rhs)) / rhs is self.div_euclid(rhs) * rhs == self - self.rem_euclid(rhs), that is just what div_euclid is defined for integers.
+
+---
+
+@tesuji · 2024-11-26T17:34:33.234Z:
+Neutron3529:
+Plus, your conclusion, divmod(-11, -1.1) == 9 is incorrect, it should be 10. Unless you modify implementations for integers (signed only, unsigned unaffected), you cannot just modify divmod(-11, -1.1) == 9.
+According to Python, I think it is reasonable for the result of div_euclid(-11,-1.1) == 9:
+In [2]: divmod(-11.0,-1.1)
+Out[2]: (9.0, -1.0999999999999992)
+In [3]: 9*(-1.1) + -1.0999999999999992
+Out[3]: -11.0
+But, if you talked about Rust rem_euclid then you're right, it shall be 10.0.
+assert_eq!(f64::rem_euclid(-11.0, -1.1) + 10.0*(-1.1), -11.0);
+I'm not sure which behavior is more reasonable.
+Anyway I'm not an expert in this field. And I cannot prove that the Python implementation is correct for all floating-point numbers. I marked my PR above for discussion-only.
+
+---
+
+@Neutron3529 · 2024-11-27T05:23:39.412Z:
+tesuji:
+I'm not sure which behavior is more reasonable.
+Maybe we could have both, divrem(self, div: Self) -> (Self, Self), which uses python's style, and  divrem_euclid(self, div: Self) -> (Self, Self), which uses Rust's style.
+In this case, self.div_euclid(div) should be self.divrem(div).0, and in a rare case we want a faster path, self.divrem(div).0 could be called.
+As you can see, we might need additional ACP for those additional apis (divrem/divrem_euclid)
+What's more, you could try divmod(-109,-11) in python compares to (-109).div_euclid(-11) in Rust.
+Since it should be consist that (-109f32).div_euclid(-11f32) yields the same result as (-109i32).div_euclid(-11i32), you could figure that, the python way might not correct.
+What's more, rust's defination provide a way for rounding: if you want to calculate a / b and rounding the result up, where both a and b are positive, you could just calculate (-a).div_euclid(-b). For python, no such path exists.
+
+---
+
+@CAD97 · 2024-11-27T06:56:02.780Z:
+Neutron3529:
+What's more, rust's defination provide a way for rounding: if you want to calculate a / b and rounding the result up, where both a and b are positive, you could just calculate (-a).div_euclid(-b).
+Using div_euclid to implement div_ceil when div_euclid is (logically) implemented in terms of div_trunc seems especially silly and roundabout, especially because it only works for one quadrant.
+The python Euclid approach would be a.div_euclid(b) + if a.rem_euclid(b) > 0 { 1 } else { 0 }, if I'm not mistaken.
+
+---
+
+@Neutron3529 · 2024-11-27T09:17:37.441Z:
+It seems that we could rely on % operations:
+fn check(a:(i64,i32), b:(i64,i32)) {
+assert_eq!(((a.0 as f64 * 2f64.powi(a.1)) / 2f64.powi(a.1)) as i64, a.0);
+assert_eq!(((b.0 as f64 * 2f64.powi(b.1)) / 2f64.powi(b.1)) as i64, b.0);
+println! {"{a0} * 2^{a1mb1} % {b0} == {}", ((a.0 as f64 * 2f64.powi(a.1)) % (b.0 as f64 * 2f64.powi(b.1))) * 2f64.powi(-b.1), a0 = a.0, b0=b.0, a1mb1=a.1-b.1}
+}
+fn main() {
+let a = (581941187211157i64, 970);
+let b = (751376156658013i64, -1000);
+check(a,b); // got 581941187211157 * 2^1970 % 751376156658013 == 210428852289837
+}
+the result is verified in Pari/GP. Thus it might be only div_euclid that contains BUG.
+
+---
+
+@curoli · 2024-11-27T22:17:11.005Z:
+Floating point numbers are usually used to represent numbers where we neither know nor need to know what they are exactly. Insuring precise cut-offs with floating-points is hard or impossible. We may fix it in this case, but it will crop up elsewhere. We should just drop the guarantee in the docs. If sharply predictable cut-offs are needed, some other types of number should be used, e.g. integers, fixed-points, fractions.
+
+---
+
+@tczajka · 2024-11-28T09:05:29.653Z:
+curoli:
+We should just drop the guarantee in the docs.
+I disagree because the guarantee is very feasible to uphold and I'm working on making it happen.
+IEEE-754 actually recommends such a guarantee for all basic functions such as f32::sin, f32::ln, etc, but that would be a much more difficult thing to get and costly for performance.
+
+---
+
+@quaternic · 2024-11-28T11:10:18.249Z:
+Existing issue for this: f64::div_euclid and f64::rem_euclid yield inconsistent results · Issue #107904 · rust-lang/rust · GitHub
+I don't see f32 mentioned there, so it would be useful to add examples of that as well.
+
+---
+
+@Neutron3529 · 2024-11-29T04:52:10.254Z:
+Actually, all of f32, f64 and f128 failed to pass 11.0.div_euclid(1.1) * 1.1 + 11.0.rem_euclid(1.1) == 11.0 (approximately)
+f16 passes test with 1.1 but failed with 1.2.
+
+---
+
+@Boomshroom · 2024-12-01T10:04:10.338Z:
+Most platforms support rounding modes other than nearest even. The most obvious fix would be to simply perform the division in a round down rounding mode.
+The real problem is that Rust explicitly does not support non-default rounding modes, and applying the fix would trigger instant UB.
+
+---
+
+@tczajka · 2024-12-01T13:49:15.250Z:
+Boomshroom:
+Most platforms support rounding modes other than nearest even. The most obvious fix would be to simply perform the division in a round down rounding mode.
+This does not quite work: the resulting integer needs to be rounded to the nearest representable number (not down).
+
+---
+
+@curoli · 2024-12-01T15:26:27.311Z:
+Sure, if you want to do it and you are confident it is going to be fixed once and for all, that sounds great.
+
+---
+
+@Boomshroom · 2024-12-01T19:44:02.873Z:
+Rounding to the nearest representable number is the problem. Changing the rounding mode is specifically to prevent it from doing that.
+
+---
+
+@tczajka · 2024-12-01T22:36:48.757Z:
+There are two different "rounding" steps that you are confusing:
+a / b needs to be rounded down (in the case of b > 0) to the next smaller integer (not to the next smaller representable number).
+The resulting integer needs to be rounded (up or down as appropriate) to the closest representable number.
+Changing the rounding mode to "down" and dividing would in effect cause both steps to round down, which is not what is wanted.
+
+---
+
+@Neutron3529 · 2024-12-01T22:51:46.519Z:
+tczajka:
+This does not quite work: the resulting integer needs to be rounded to the nearest representable number (not down).
+Actually we could change the behavior of div_euclid from rounding to the nearest to just round down, which is more clear.
+
+---
+
+@tczajka · 2024-12-01T23:27:18.793Z:
+Neutron3529:
+Actually we could change the behavior of div_euclid from rounding to the nearest to just round down, which is more clear.
+It would be inconsistent with all the other basic floating point operations which calculate the exact value and round to the nearest. I don't see any reason to have such different behavior for div_euclid.
+
+---
+
+@quaternic · 2024-12-02T00:28:53.212Z:
+tczajka:
+Changing the rounding mode to "down" and dividing would in effect cause both steps to round down, which is not what is wanted.
+It would still be very convenient for handling the common case where the integer quotient is not huge. That should look something like:
+let q = self.div_round_down(rhs.abs());
+// Below this threshold, every integer is representable,
+// so the above rounding can't have skipped the correct integer
+if q.abs() < 16777216.0_f32 {
+return q.floor() * rhs.signum();
+}
+// Handle the cases that may need rounding  ...
+At least on targets like RISC-V with instruction encodings for fixed rounding modes, this should be very efficient.
+
+---
+
+@tczajka · 2024-12-10T21:41:20.556Z:
+I have a pull request that fixes this in all cases.
+I agree that using a non-default rounding mode for the easy cases might be more efficient, but I am afraid LLVM doesn't support this.
+
+---
+
+@steffahn · 2026-06-03T21:41:32.397Z:
+This topic was automatically closed 540 days after the last reply. New replies are no longer allowed.
+

@@ -1,0 +1,668 @@
+=== ROW 22 | f005490 | https://lobste.rs/s/v7lsrv | 2025-04-15 | hn-lobsters ===
+Two Years of Rust
+
+---
+
+@mqudsi · 2025-04-15T11:56:15.000-05:00:
+Interesting mix of beginner-friendly advice with nuggets for hardcore rust users dealing with scaling problems thrown in in this article. I thought it was going to touch on one of my outstanding issues with rust (namely, the statically typed nature of generic parameters or lifetimes making refactoring (or mocking) time-consuming), but it only grazed on the matter.
+
+But with regards to mocking, the truth is that mock-heavy unit tests are just not part of the rust ecosystem/culture both because of a divergence in principles and also implicitly because it's so much harder to do so. Your modules should be designed in a way where each module owns a specific functionality and offers an api that (thanks to strict typing) is resilient to being misused. To be perfectly blunt, a high-level mock test (with the exception of mock tests required to test different underlying scenarios - but these would be ones that provide different output and therefore you can use a different approach altogether) does not necessarily provide any real value: just because my mock database client successfully stored and retrieved a user record does not mean your postgres client will, perhaps because of the semantics of the ignored transaction or perhaps because of other issues (for example, in this (contrived but very much real-world) mock test OP is *completely* ignoring the `Transaction` because to properly implement transactions in a mock unit test, you'd have to write your own ACID-compliant rdbms).
+
+Basically, you shouldn't expect to write your codebase (or supporting infrastructure) for a rust project the same way you would in a python or javascript project. There's a culture mismatch, a language impedance mismatch, a contractual guarantees mismatch, and more.
+
+---
+
+@benji · 2025-04-15T13:21:29.000-05:00:
+As a non-Rust user, this testing angle really interests me—in particular the part about structuring the codebase/infrastructure differently such that mocking out external dependencies isn't necessary/valuable.  Would you expand on that bit for me?
+
+---
+
+@steveklabnik · 2025-04-15T15:45:59.000-05:00:
+Even in my Ruby days, "are mocks valuable or not" was a heavily controversial topic. I do agree with your parent that mocking can be difficult/weird in Rust, and so I tend to do it less than I used to back then.
+
+>  Would you expand on that bit for me?
+
+I've already copy/pasted these comments on reddit and hn, might as well put them here too, haha. My current thoughts/approach with this:
+
+Here's how I currently am doing it: I use the repository pattern. I use a trait:
+
+    pub trait LibraryRepository: Send + Sync + 'static {
+        async fn create_supplier(
+            &self,
+            request: supplier::CreateRequest,
+        ) -> Result<Supplier, supplier::CreateError>;
+
+I am splitting things "vertically" (aka by feature) rather than "horizontally" (aka by layer). So "library" is a feature of my app, and "suppliers" are a concept within that feature. This call ultimately takes the information in a CreateRequest and inserts it into a database.
+
+My implementation looks something like this:
+
+    impl LibraryRepository for Arc<Sqlite> {
+        async fn create_supplier(
+            &self,
+            request: supplier::CreateRequest,
+        ) -> Result<Supplier, supplier::CreateError> {
+            let mut tx = self
+                .pool
+                .begin()
+                .await
+                .map_err(|e| anyhow!(e).context("failed to start SQLite transaction"))?;
+    
+            let name = request.name().clone();
+    
+            let supplier = self.create_supplier(&mut tx, request).await.map_err(|e| {
+                anyhow!(e).context(format!("failed to save supplier with name {name:?}"))
+            })?;
+    
+            tx.commit()
+                .await
+                .map_err(|e| anyhow!(e).context("failed to commit SQLite transaction"))?;
+    
+            Ok(supplier)
+        }
+
+where Sqlite is
+
+    #[derive(Debug, Clone)]
+    pub struct Sqlite {
+        pool: sqlx::SqlitePool,
+    }
+
+You'll notice this basically:
+
+  1. starts a transaction
+  2. delegates to an inherent method with the same name
+  3. finishes the transaction
+
+The inherent method has this signature:
+
+    impl Sqlite {
+        async fn create_supplier(
+            self: &Arc<Self>,
+            tx: &mut Transaction<'_, sqlx::Sqlite>,
+            request: supplier::CreateRequest,
+        ) -> Result<Supplier, sqlx::Error> {
+
+So, I can choose how I want to test: with a real database, or without.
+
+If I want to write a test using a real database, I can do so, by testing the inherent method and passing it a transaction my test harness has prepared. sqlx makes this really nice.
+
+If I'm testing some other function, and I want to mock the database, I create a mock implementation of LibraryService, and inject it there. Won't ever interact with the database at all.
+
+In practice, my application is 95% end-to-end tests right now because a lot of it is CRUD with little logic, but the structure means that when I've wanted to do some more fine-grained tests, it's been trivial. The tradeoff is that there's a lot of boilerplate at the moment. I'm considering trying to reduce it, but I'm okay with it right now, as it's the kind that's pretty boring: the worst thing that's happened is me copy/pasting one of these implementations of a method and forgetting to change the message in that format!. I am also not 100% sure if I like using anyhow! here, as I think I'm erasing too much of the error context. But it's working well enough for now.
+
+I got this idea from https://www.howtocodeit.com/articles/master-hexagonal-architecture-rust, which I am very interested to see the final part of. (and also, I find the tone pretty annoying, but the ideas are good, and it's thorough.) I'm not 100% sure that I like every aspect of this specific implementation, but it's served me pretty well so far.
+
+I want to write about my experiences with what this article recommends someday, but some quick random thoughts about it:
+
+My repository files are huge. i need to break them up. More submodules can work, and defining the inherent methods in a different module than the trait implementation.
+
+I've found the directory structure this advocates, that is,
+
+    ├── src
+    │   ├── domain
+    │   ├── inbound
+    │   ├── outbound
+
+gets a bit weird when you're splitting things up by feature, because you end up re-doing the same directories inside of all three of the submodules. I want to see if moving to something more like
+
+    ├── src
+    │   ├── feature1
+    │   │   ├── domain
+    │   │   ├── inbound
+    │   │   ├── outbound
+    │   ├── feature2
+    │   │   ├── domain
+    │   │   ├── inbound
+    │   │   ├── outbound
+
+feels better. Which is of course its own kind of repetition, but I feel like if I'm splitting by feature, having each feature in its own directory with the repetition being the domain/inbound/outbound layer making more sense.
+I'm also curious about if coherence will allow me to move this to each feature being its own crate. compile times aren't terrible right now, but as things grow... we'll see.
+
+---
+
+@frontsideair · 2025-04-17T01:42:59.000-05:00:
+I really like this idea, outside Rust too, but one caveat that I discovered is that abstracting away the database behind a feature (if I understood it correctly), while making testing much easier, makes this abstraction layer really fat. 
+
+Let’s say you have an authentication layer and a backing data layer in front of the real database. But there are many different ways to fetch a user, by id, by email, and which fields are you returning, you don’t want to under or over fetch, there are performance and security concerns. 
+
+So instead of writing queries naturally in your auth layer, now you have a method for each slightly different way to fetch a user. And they sometimes change, so you have to do the mathematics of merging or splitting methods all the time. 
+
+This has been on my mind for a long time and it seemed like an appropriate place to vent, hope I didn’t misread the room.
+
+---
+
+@steveklabnik · 2025-04-17T08:59:03.000-05:00:
+Ugh I replied when lobsters was deploying and my comment got eaten :(
+
+You're all good, and I don't think you're wrong, exactly. Currently, I accept the proliferation of queries, and just make new ones when I have new requirements, even if they're similar. I'm at just under 100 queries so far though, so like, we'll see in a few years if I feel differently.
+
+>  that abstracting away the database behind a feature (if I understood it correctly),
+
+It's more that each feature has its own API into the database. That may be close enough that it ends up being the same thing.
+
+---
+
+@frontsideair · 2025-04-17T09:21:07.000-05:00:
+I think you worded it better, that was what I also meant, each feature having its own, swappable data layer. Expressiveness of writing SQL is at odds with testability of the modules so I can’t say it’s better or worse, but when the number of queries grow past that it’s bound to be painful. 
+
+(Feeling the pain of losing a comment, hang in there.)
+
+---
+
+@steveklabnik · 2025-04-17T11:24:50.000-05:00:
+Yep!
+
+I think it's also an interesting expressivity problem, that is, the more abstract the query "fetch me a user" the more likely you are to over/under fetch, and also means the "by id" vs "by email" versions go away... but also "fetch three columns of user by id" is too specific, which leads to proliferation.
+
+---
+
+@kornel · 2025-04-15T19:11:00.000-05:00:
+My slightly different take on this is that I can split a monolith into libraries, and then test each library individually using its public interface. 
+
+This way I don't need to figure out how to reach code embedded deeply in a large application. I can make it surface-level code of a smaller subproject.
+
+In hipster terms, it's like having microservices, but without the networking problems.
+
+This approach doesn't solve everything, since there's always the core left that glues it all together, but it allows testing a lot more without mocking, and you may get away with just integration tests for the rest.
+
+---
+
+@benji · 2025-04-16T06:41:40.000-05:00:
+I very much value this approach.  It does seem to conflict with the OPs observations on the ergonomics (or lack thereof) around many crates in a project, which as a non-Rust person would worry me going in.
+
+---
+
+@kornel · 2025-04-16T07:17:43.000-05:00:
+Don't take an overly negative impression from the article. Cargo has workspaces to make working on multi-package projects manageable. There's a bit more faff in managing multiple packages, but it's not big enough to worry about.
+
+The difference is similar to using C with all code in a single `.c` file vs multiple `.c` and `.h` files. A single file is always easier, because you don't think about headers and how you split the code, and there's no need to update the build script to add a new `.c` file, but that hassle doesn't make people avoid using more than a single `.c` file.
+
+---
+
+@ssokolow · 2025-04-18T06:33:41.000-05:00:
+>  but that hassle doesn’t make people avoid using more than a single `.c` file.
+
+I disagree.
+
+Not only is my only use of workspaces one time, with one project where I'm using WebAssembly for plugins, where I switched away from it (at least temporarily) because it seemed to interact badly with rebuild caching across different target triples, but I'm almost literally the person who writes it all in a single `.c` file.
+
+Specifically, for my DOS retro-hobby project, I'm doing `#include <thing.c>` without `.h` files until I finish my almost-successful efforts to cobble together a toolchain for autogenerating/regenerating the `.h` files from the `.c` files and autogenerating/regenerating WMake tasks to glue everything together. (I'm using Open Watcom C/C++ instead of Free Pascal because "10KiB-or-less real-mode binary containing a BASIC interpreter and an Unzip implementation" is one of the aspirations of the project so `#include`-ing the source files directly isn't as unviable as for some other use-cases.)
+
+I came to Rust so I could stop burning out trying to replicate a type system's guarantees in Python... I'm not in a hurry to re-complexify my interaction with the build process.
+
+I'm not sure there's ever been something that's resonated with me more than `The Bad > The Module System`.
+
+---
+
+@benji · 2025-04-16T07:55:38.000-05:00:
+Thanks for the added color!
+
+---
+
+@faassen · 2025-04-15T15:30:15.000-05:00:
+Hi! I also touched upon the mocking topic a few years ago in my blog post [Random Rust Impressions](https://blog.startifact.com/posts/random-rust-impressions/). I think Rust does make mocking rather verbose and difficult and I don't have a great answer about this yet.
+
+I've mostly avoided mocking since then. But then I didn't have to deal too much with external dependencies in my projects. 
+
+I have used a pattern in a few places where I implemented a core algorithm working against traits and writing tests again that, not so much because I wanted to isolate external dependencies but because I wanted to isolate the problem under test. It almost sounds like the same thing but there's a subtle difference - the need wasn't to do away with external dependencies but to focus in onto a problem without distractions.
+
+I think if I had to mock in Rust again I'd use explicit traits and generics, but the cost is higher than in a dynamically typed language for sure!
+
+This is an interesting approach I haven't fully digested yet or how it would go with Rust:
+
+https://www.jamesshore.com/v2/projects/nullables/testing-without-mocks
+
+---
+
+@benji · 2025-04-16T06:45:30.000-05:00:
+> I have used a pattern in a few places where I implemented a core algorithm working against traits and writing tests again that [...]
+
+Yeah, I don'd like to mock much, but other forms of test doubles have similar issues and I do think they provide a lot of value.
+
+> This is an interesting approach [...]
+
+Ooh, that is interesting!  I'll have to think over that idea.
+
+---
+
+@faassen · 2025-04-16T14:29:25.000-05:00:
+I think if your code needs to be pluggable anyway, Rust is fine and you can use test doubles. You might get into trouble because Rust gives you different options to make pluggable things that have little overhead but involve quite a bit of typing and whackamole, but that's not really a testing issue but an API design issue.
+
+But if your code doesn't need to be pluggable but you want to make it pluggable as you want to use an external resource and the ability to write tests, you suddenly start to pay all that cost too, and that where it gets annoying.
+
+---
+
+@veqq · 2025-04-15T16:50:32.000-05:00:
+Mocks are an antipattern in general, a flaw in architecture and logic. You see this in the Go, Clojure etc. communities. For example, you shouldn't need a mocked DB to test your logic - why would your logic be coupled to i/o? Functional core, imperative shell, not complected spaghetti!
+
+https://quii.gitbook.io/learn-go-with-tests/testing-fundamentals/working-without-mocks
+
+---
+
+@insanitybit · 2025-04-16T04:17:02.000-05:00:
+> you shouldn’t need a mocked DB to test your logic
+
+And yet this is how many in Rust writes tests, except instead of a "mocked DB" they have a "TestDb" that impls some trait "Db" that they have to seed into their entire codebase. It's just mocking-but-worse.
+
+---
+
+@ekuber · 2025-04-16T19:32:13.000-05:00:
+That's not mocking, it's dependency injection. I find it more useful because it not only allows swapping in a test configuration, it works for any kind of compile time or runtime configuration (depending on the specifics).
+
+---
+
+@insanitybit · 2025-04-16T19:57:42.000-05:00:
+Right, it's dependency injection *in lieu of* mocking.
+
+Instead of:
+```
+fn do_stuff(db: Db) -> String {
+    // does a db thing
+}
+
+fn test() {
+    let db = dup(Db);
+    db.mock_method(foo, |args| { "bar" });
+    assert_eq!(do_stuff(db), "bar=baz"); // test
+}
+```
+You write:
+```
+
+fn do_stuff<T: MyDb>(db: T) -> String {
+    // does a db thing
+}
+
+trait MyDb {
+    fn get_value(s: &str);
+}
+
+struct MyMockedDb {
+}
+
+impl MyDb for MyMockedDb {
+    fn get_value(s: &str) {
+        "bar"
+    }
+}
+
+fn test() {
+    let db = MyDb {};
+    assert_eq!(do_stuff(db), "bar=baz"); // test
+}
+```
+
+These do the same thing in terms of what we accomplish for testing. One is sort of obviously superior to the other.
+
+>  it not only allows swapping in a test configuration, it works for any kind of compile time or runtime configuration
+
+Which is needless if you don't need any other swapping. Rust is putting so much upfront, which is fine a lot of the time, but I just think it's the wrong call here. It leads to tons of boilerplate, bespoke patterns, overly generic interfaces, prematurely generic interfaces, code that isn't designed for how it's used but how it's tested, etc.
+
+---
+
+@quasi_qua_quasi · 2025-04-17T20:39:13.000-05:00:
+It's really not obvious to me that one is superior. I work in a codebase that uses mocks pretty often, and it's often absolute hell trying to figure out what's "real" and what isn't in our tests.
+
+In particular, the DI approach will cause a compilation failure if there's now a new method that the code under test uses (because you didn't implement the trait), whereas the mocked approach will just silently accept it.
+
+For one-offs mocking is definitely cleaner, but as the complexity grows I find it less usable than DI.
+
+---
+
+@insanitybit · 2025-04-17T20:56:51.000-05:00:
+> It’s really not obvious to me that one is superior.
+
+That is reasonable. I can't tell you what should be obvious. But one is definitely shorter. In isolation, one achieves a goal using ~1 line of code with 0 code changes to my actual program, and another achieves the same thing but with dozens of lines of code and a change to my actual program.
+
+> In particular, the DI approach will cause a compilation failure if there’s now a new method that the code under test uses (because you didn’t implement the trait), whereas the mocked approach will just silently accept it.
+
+Hm. I'm not sure what this means. So there's a new method added to the Db trait or something?
+
+I will agree that mocking is not a silver bullet, I prefer DI myself and think it actually makes mocking much better too (much cleaner to mock). What I'm saying is that Rust exclusively supports the DI approach (more or less) and that the Rust community largely refuses to acknowledge that mocking can be great and actually superior in some cases (perhaps many).
+
+---
+
+@quasi_qua_quasi · 2025-04-17T21:23:40.000-05:00:
+Yeah, like if you have a FileLike trait with a `write` method but now you need to rewrite one of your methods to seek in the file, you add a `seek` method to the trait. So your `impl FileLike for MockFile` trait will fail to compile. But if you dynamically created your mock file, then now you're calling the real seek method.
+
+> In isolation, one achieves a goal using ~1 line of code with 0 code changes to my actual program, and another achieves the same thing but with dozens of lines of code and a change to my actual program.
+
+Well, sure,  but in practice these things are never done in isolation. It's like how running code on importing a module can be much more convenient than having an initializer you have to call, but is also why all the utility scripts are my old employer would take 5 seconds to start up because their imports would perform a bunch of unnecessary initialization that there was no way to prevent.
+
+I don't have much experience with the Rust *community*, only developing Rust professionally, so I'll defer to you on what the community is like. (My current codebase is one where we always use real implementations of our dependencies so this doesn't come up, but sometimes I work in other codebases at work that aren't written in Rust and it varies depending on the team.)
+
+---
+
+@insanitybit · 2025-04-18T06:13:39.000-05:00:
+> But if you dynamically created your mock file, then now you’re calling the real seek method.
+
+Ah. A test would fail in this case typically. In Ruby you would have to say `allow(dup).to_call(:seek)` etc.
+
+> Well, sure, but in practice these things are never done in isolation.
+
+Of course. But in isolation we can say what I said re: lines, effort, etc. What context would we add in order to tip the scale in favor in some capacity towards the approach Rust developers take today? The context I have usually seen is:
+
+1. You're going to want those generic interfaces anyways, they're better. I think this is totally false, generic interfaces have real costs (complexity, compile times, etc).
+
+2. Over-reliance on mocking can lead to bad tests. This is true but tautological. Over-reliance on dependency injected "fake" impls can lead to bad tests.
+
+> My current codebase is one where we always use real implementations of our dependencies so this doesn’t come up
+
+This is what we did when writing Rust services. Our tests focused heavily on just running the actual, full code, with minimal dependencies getting swapped out. I think we were worse off for it and mocking would have led to better tested code, code that was refactored less frequently, *much* faster testing, etc.
+
+---
+
+@quasi_qua_quasi · 2025-04-18T11:58:47.000-05:00:
+Ah, I spoke badly; our codebase (the part I work on) is unusual in that it's just an HTTP server that implements an extremely complicated pure function  so there's no dependencies *to* mock and most of our tests run very quickly and in-process. We only spin up other services for integration tests, which you obviously can't mock without defeating the point.
+
+edit: actually, thinking about it, another approach would be to have the real and the fake implementation both be branches of an enum, or use something like `enum_dispatch` if you want both the trait and the enum. You don't have to pay the monomorphization tax or write generics everywhere at the cost of a slight performance penalty. Of course, you still have to write the wrapper object, but IME it's common for a codebase to wrap any external API client anyway.
+
+---
+
+@gpm · 2025-04-16T12:25:26.000-05:00:
+That "testDb" is probably in memory sqlite for the vast majority of cases. I.e. instead of hacking a "mock" DB that returns some hardcoded thing and completely ignores core responsibilities like transactions, it's a full proper well tested DB implementation.
+
+This seems like mocking but better.
+
+---
+
+@insanitybit · 2025-04-16T14:17:30.000-05:00:
+You could just have a mock do exactly the same thing but without generics. In Rust to get that "in memory" version it's a ton of work. In Ruby you "dup" the class and override the methods with an in-memory implementation - none of our code has to change and it's exactly what the Rust code has to do for its `impl Db for MemoryDb` without the traits/generics/refactor.
+
+---
+
+@rtpg · 2025-04-15T18:47:09.000-05:00:
+> To be perfectly blunt, a high-level mock test (with the exception of mock tests required to test different underlying scenarios - but these would be ones that provide different output and therefore you can use a different approach altogether) does not necessarily provide any real value: just because my mock database client successfully stored and retrieved a user record does not mean your postgres client will
+
+This feels like a misunderstanding of the value of stubbing things out. These high level mock tests can be very effective at establishing an interaction contract! If you stub out postgres callouts in your test, you both are establishing that your module will likely call out to PG in this way, and at some level expects PG to react in a specific way
+
+This lets you establish some interesting stuff when you have fairly stateful spaghetti (if only because the arrow of time causes code to have to have a lot of spaghetti...)
+
+I personally avoid mocking out this kind of stuff if I can, but sometimes you have a third party system that you really don't have a test environment for, but you still want to establish some notion of a spec.
+
+Though to be honest I think that the real thing is that as an industry we need to get better at incremental test capabilities. Chasing after tests to make them super fast is not _bad_, but if our tests can "just" run in an environment close to production, that's very helpful. In that case we really need incremental capabilities like those provided by Bazel & co to mitigate the costs when the test itself doesn't matter.
+
+I think many people write out mocks for things like postgres for performance reasons, rather than some higher level spec reason.
+
+---
+
+@orib · 2025-04-15T14:41:57.000-05:00:
+> The binding constraint is that OS threads are slow. Not accidentally but intrinsically, because of the kernel, and having to swap the CPU state and stack on each context switch. OS threads are never going to be fast
+
+They're faster than you think. The CPU state swap time is largely not something you get to avoid in userspace, and entering the kernel is about 50ns overhead compared to doing it in user space.
+
+When you compare to explicitly adding code that saves and restores state at every possible context switch, there's actually not a clear winner. Especially with multi threaded runtimes that don't let you drop atomic operations.
+
+The biggest problem with threads is tail latency when a lot of threads are runnable at the same time, and the OS picks a suboptimal order to wake them up.
+
+This isn't the early 2000s any more, we can handle a lot of threads.
+
+---
+
+@4ad · 2025-04-15T14:53:23.000-05:00:
+While I agree with you that threads are way faster than most people give them credit for, they also have a high kernel memory overhead. Last time I checked it was 24kB on Linux/amd64. Maybe it's better now.
+
+---
+
+@orib · 2025-04-15T16:07:58.000-05:00:
+Yeah, if your numbers are accurate (they seem in the right ballpark), then ten thousand threads will cost about 24 MiB. That's a decent amount of overhead, but I suspect it'll be dwarfed by the other memory that a program with ten thousand would allocate.
+
+---
+
+@altano · 2025-04-16T14:03:11.000-05:00:
+240* MiB
+
+---
+
+@lonjil · 2025-04-15T17:45:16.000-05:00:
+Yeah.
+
+The real reason to use async Rust over threads is that async Rust makes life easier. The performance difference isn't big enough to really matter for most applications.
+
+---
+
+@insanitybit · 2025-04-15T15:01:09.000-05:00:
+I know Rust devs just say "tests with mocks are bad" but... no. Rust is just kinda wrong here. Restructuring your code to be testable is at least as bad, and mocks are extremely powerful. I've been writing a lot of Ruby code and the "bad" tests that Rust devs would talk about have caught real bugs for me. Can mocking lead to useless tests? Okay, sure. Are all mocked tests bad? No, and it's really annoying that some people will pretend that they are.
+
+I hope the mocking story improves.
+
+---
+
+@mond · 2025-04-15T16:04:31.000-05:00:
+> Restructuring your code to be testable is at least as bad
+
+You know here I'd think writing and refactoring code to be more testable is usually a good thing!
+
+---
+
+@insanitybit · 2025-04-15T16:22:55.000-05:00:
+As with so many things, there is a balance. What you're suggesting might make sense if you're starting from scratch. What happens a year later when I want to add new tests because we had an outage? I can't always be perfect, I need to add tests ad-hoc sometimes. Mocking makes this possible, trivial actually.
+
+Also, making an interface needlessly generic is just not good. It's at best neutral, it's usually flat out bad. At minimum it creates slower to compile code, often harder to read code, boilerplate that takes up visual space, etc.
+
+---
+
+@enobayram · 2025-04-15T20:59:33.000-05:00:
+I can't help but point out that, based on multiple messages in this thread, your experience seems to be influenced heavily by your preference for dynamically types languages. Your experience seems to be skewed in two ways:
+
+> I’ve been writing a lot of Ruby code and the “bad” tests that Rust devs would talk about have caught real bugs for me. 
+
+1) Mocking tends to catch the simplest of bugs that are usually caught earlier by a static type system.
+
+> What happens a year later when I want to add new tests because we had an outage?
+
+2) It tends to be really hard to refactor dynamically typed code safely, and it's very hard to justify risking bugs in the name of refactoring for code quality and testability and it's also very hard to justify spending the time required to prove the safety of a refactor. So dynamically typed code tends to become append-only. This is not the case for a tightly typed code in a statically typed language. You can refactor 50% of a Haskell codebase (where most of my experience is) for fun before breakfast and deploy to production without running the tests, so it's trivial to refactor 10 year old code for testability.
+
+I honestly don't think your Ruby based experience is a good reference point for static-types focused languages since the economics are skewed in multiple ways.
+
+---
+
+@rikhuijzer · 2025-04-15T23:46:31.000-05:00:
+To add to that, I once had an object error in production. Unfortunately the object went through 5 duck typed functions before reaching the error location. To debug I first had to figure out at which of the 5 places the type was unexpected. Static languages don’t have that problem
+
+---
+
+@insanitybit · 2025-04-16T01:05:56.000-05:00:
+> your experience seems to be influenced heavily by your preference for dynamically types languages.
+
+My preference is extremely the opposite. I wrote Rust professionally for years. I also use Sorbet typing in Ruby. I am very much into not just type systems but advanced type system usage. 
+
+> Mocking tends to catch the simplest of bugs that are usually caught earlier by a static type system.
+
+That's not true. Mocking can be extremely powerful and catch all sorts of issues that you may not have the time or ability to express via types.
+
+> It tends to be really hard to refactor dynamically typed code safely,
+
+I am not talking about dynamically typed code, I write Rust. I only write Ruby for money, and even then I use Sorbet as much as possible.
+
+Here are examples of me, many years ago, advocating for leveraging type system features for enforcing various program constraints, like implementing session types.
+
+https://insanitybit.github.io/2016/05/30/beyond-memory-safety-with-types
+https://insanitybit.github.io/2016/06/28/implementing-an-imap-client-in-rust
+
+The reality is that not every constraint is trivial to express in a type, and that is not always the best or most expedient option. As I said, not all code is written from scratch with a full model of its domains upfront, sometimes you're just trying to fix a bug, or add new tests to ensure behaviors, etc, and rewriting all of your types just to do that is an incredibly bad way to solve that problem.
+
+I also think that advocating for "just refactor 50% of your codebase before breakfast" is a perfect example of exactly the sort of thing we could avoid doing by just having mocking, and the sort of thing we should absolutely *not* be doing. I do not want to review your "50% refactor" PR, I do not want to have to re-learn the codebase every time someone refactors it, and all for what? So that we can avoid supporting mocking? Why?
+
+---
+
+@Halkcyon · 2025-04-15T15:24:43.000-05:00:
+I kind of understand the anti-mock crew, but some systems are really difficult to run on localhost like ADFS/auth providers.
+
+---
+
+@singpolyma · 2025-04-15T17:27:47.000-05:00:
+The point isn't that you should do real IO to these services from tests but rather that your logic that you are testing shouldn't depend on the IO at all
+
+---
+
+@Halkcyon · 2025-04-15T21:05:25.000-05:00:
+So I've a question, how do you do ORMs without IO?
+
+---
+
+@singpolyma · 2025-04-15T21:11:07.000-05:00:
+ORM can be partf the solution. Logic code takes in an object, in prod that is an ORM model loaded from db, in test a model object with fake data instead
+
+---
+
+@insanitybit · 2025-04-15T17:58:28.000-05:00:
+Why not? If it's easier and more straightforward to write the code that way, why shouldn't you? Having needlessly generic interfaces and finding ways to isolate and abstract over IO is real work, there is time that has to go into that, 
+there are costs, and the benefit is not always realizable. The solution other languages take here is mocking. Mocking "just works". Obviously implementing it for Rust is a huge open question, but it would be nice to at least acknowledge that the Rust approach isn't perfect and that there are situations where mocking would be superior.
+
+---
+
+@dataangel · 2025-04-19T15:04:45.000-05:00:
+This is basically also my take re: getters. They're frequently useful but Rustaceans try to paint them as bad because the borrow checker doesn't understand that if you return a reference you don't need to lock the whole object.
+
+---
+
+@riking · 2025-04-16T13:26:55.000-05:00:
+I've found that most of the bugs that mock tests catch in Ruby are type errors in compiled languages.
+
+---
+
+@insanitybit · 2025-04-16T14:16:20.000-05:00:
+I have not found that to be the case.
+
+---
+
+@jak2k · 2025-04-15T15:51:53.000-05:00:
+You could replace a portion of the code with mocks but only if a "test" feature is enabled.
+
+---
+
+@insanitybit · 2025-04-16T01:11:22.000-05:00:
+Yeah, I wouldn't mind a compiler mode, enabled in test, that turns property accesses into dynamic lookups (when asked for, not by default), etc.
+
+---
+
+@jcmkk3 · 2025-04-15T10:39:52.000-05:00:
+I’ll be interested to see if the author’s real world experience with Rust will result in any changes to their own language, Austral.
+
+---
+
+@valpackett · 2025-04-15T16:04:48.000-05:00:
+> from the perspective of a user, async Rust is pretty good. It mostly “just works”
+
+Mostly. With just one caveat… cancel safety. It's a loaded footgun with —at least for now— no safety (heh). I hope static analysis for it would come sooner or later.
+
+Okay, there's a couple other possible footguns like "holding a mutex across an await point" but those are much more obvious IMO.
+
+---
+
+@kornel · 2025-04-15T18:31:53.000-05:00:
+Where do you run into this?
+
+I've never ran into the cancellation-safety problem. I genuinely don't understand what people need `select!` for, given that there are wrappers for timeouts, races, unordered collect, etc. that make the problem impossible to observe.
+
+---
+
+@lonjil · 2025-04-15T18:49:55.000-05:00:
+> wrappers for timeouts, races, unordered collect, etc. that make the problem impossible to observe.
+
+Eh? The whole point of (async) timeouts is to cancel a future if it doesn't complete before the timeout. Whether you're using `select!` or not is irrelevant.
+
+---
+
+@kornel · 2025-04-15T19:14:36.000-05:00:
+That's why I'm saying I don't get where the problem is :)
+
+---
+
+@zesterer · 2025-04-16T02:51:01.000-05:00:
+A concrete example:
+
+Async message-passing libraries (like my own `flume` or `async-channel`) have to avoid a whole heap of optimisations (such as slot-acquiring tricks) that apply to sync queues because they've got no way to guarantee when the next poll from a receiving task will come, or even if it'll come at all. To get around this, futures end up needing to perform a [strange dance of linked-list notifications](https://github.com/smol-rs/async-channel/blob/master/src/lib.rs#L219-L221), waking up other tasks in a serial manner, which potentially has O(n) behaviour over the number of waiting tasks (which is likely to be quite high for something like an async web server!) and relies heavily on the task-switching throughput of the runtime.
+
+At least in the case of futures it's pretty common to drop them in-place after you've finished polling them, but for async iterators (i.e: streams) [the problem is *even worse*](https://github.com/smol-rs/async-channel/blob/master/src/lib.rs#L223-L224) - since holding them for long periods of time is not just possible, but is part of their design. This necessitates that *every* send into the channel wakes up *all* listening streams just in case all but one of them is currently inactive (i.e: not being actively polled by the task hierarchy it sits in - which, again, is a very common thing since that's how future-racing is designed), resulting in a horrible thundering-herd problem.
+
+Even if you're okay with these extremely bad things (and you shouldn't be), you've still got the leaking issue: Because a future is just a value and can be arbitrarily dropped whenever, there's no way for a future to know if the next `Poll::Pending` it returns is its last chance to say goodbye to the world (note: throwing a future into a data structure never to be polled again might as well be a leak, for our purposes), so you've got to be extremely careful to ensure that a future vanishing off the face of the earth doesn't break your data structure, and that can get really difficult. Virtually all traditional concurrency primitives (like mutexes) rely on participating threads having the ability to perform tear-down logic on their way out, and yet this is just not possible in async Rust.
+
+It's all really quite ghastly, and it's entirely caused by the extremely loose guarantees provided by async Rust.
+
+---
+
+@lonjil · 2025-04-15T20:10:17.000-05:00:
+Ah, the issue is that some Futures have been written in such a way that if you drop them before they are finished, undesirable side effects may occur. Obviously, this should not include UB or memory unsafety (though, I've heard stories of poorly designed Futures which produced UB when dropped). Most commonly, dropped Futures may leak memory or lose data if not correctly written with cancellation in mind.
+
+For example, imagine you have a Future which is supposed to receive some data from a TCP socket, and the Task awaits both that Future and a timeout. If the Future copies the incoming data into a buffer owned by that Future, it will be lost if the Future is dropped, which could happen if the timeout just happens to happen at just the wrong moment.
+
+So really, IMO the cancellation safety problem isn't cancellation safety isn't part of the type system (it would be extremely hard to make it so, since actually safe stuff like leaking memory is considered "cancellation unsafety"), rather, the problem is that people often don't remember the fact that every await point is a place where your Future could be dropped.
+
+---
+
+@kornel · 2025-04-15T21:30:40.000-05:00:
+`Futures` are not supposed to leak on `Drop` any more than any other type, sync or async. 
+
+The `Futures` API is not compatible with underlying APIs that borrow memory and can't abort immediately, but the cancel-safety problem (at least as far as I know) refers to the uncertainty of how futures interpret being polled by tokio's `select!`. We may be talking about different things?
+
+Futures are owned exclusively, especially when used directly in `call().await`, so they don't get dropped unless their caller also gets dropped, and their caller, and so on. So using an incomplete buffer would be bad, but in practice when such `Future` gets dropped, the buffer owned by it is dropped too, and likely the whole TCP socket as well. They can only be dropped separately if you explicitly make it possible via `select!` or other timeout-like wrapper. But then with something like `timeout(tcp.read(&mut buf)).await`, you're *forced* to handle the timeout case explicitly, otherwise you can't even get the number of bytes read. 
+You could ignore the number of bytes read, and that happens, and it's a crappy design, but it has nothing to do with futures. It's the same design error as `io::Read::read`, which copied the not-suspicious-enough name and fragile design directly from POSIX.
+
+---
+
+@atmosx · 2025-04-15T14:22:24.000-05:00:
+> You can scale the hardware vertically, and end up like those people who spend five figures a month on AWS to get four requests per second. 
+
+Hm, I’ve never encountered a project in Python, JS/TS, or Ruby that was as slow as the author suggests. Most rewrites I’ve seen end up faster even when using the same language - mainly because they include optimizations the original authors didn’t implement, whether due to lack of domain knowledge, time, or resources.
+
+---
+
+@kornel · 2025-04-15T18:21:38.000-05:00:
+I assume 4 requests per second is a figure of speech. 
+But I have worked on projects in slow languages that got expensive to run. Developer time is expensive too, so slow code may be expensive to keep and expensive to replace. 
+
+Language speed also changes what you even try to do. You may say that slowness of a language doesn't matter, because the heavy lifting will be done by a database or some worker queue. But you may be instinctively off-loading work to external systems *because* the language is too slow or memory-hungry to do it directly.
+
+For example, in high-level languages an object with a couple of fields may cost 150 bytes of RAM where a low-level lang could pack the same in 4 or 8 bytes. This may change whether you can fit the whole dataset in RAM, or whether you'll need to treat it as larger-than-RAM and use a DB for it. 
+
+I see such problem with Mastodon instances. They can't do anything heavy in Ruby, so they make Postgres do even more, and have to use job queues, which add their own overheads. Fanout could be very fast, but now a thing that could have ran in RAM immediately while it's hot in cache has to be serialized, saved, indexed, queued, selected, dequeued, processed, and put back in the DB. It's spanning multiple processes and touching the disk, because the language isn't fast enough.
+
+---
+
+@atmosx · 2025-04-16T16:22:47.000-05:00:
+> You may say that slowness of a language doesn’t matter, because the heavy lifting will be done by a database or some worker queue. But you may be instinctively off-loading work to external systems because the language is too slow or memory-hungry to do it directly.
+
+Thanks for sharing. You’re absolutely right, that is something I would say! Your answer really gave me something to think about.
+
+---
+
+@Halkcyon · 2025-04-15T15:21:16.000-05:00:
+I think for Python, the _async_ features came late enough across a lot of the ecosystem that there is still a lot of production code relying on background threadpools which scale poorly with the GIL.  I know the codebase I'm working on is in such a state with regards to sqlalchemy and redis, but if I had time to refactor the engines to use the async extensions, it'd be a bunch of free performance, and that's the rub—if it even matters or if the PM gives it priority in planning.
+
+---
+
+@runxiyu · 2025-04-15T07:40:22.000-05:00:
+This is very likely just my personal problem, but I found Cargo (and especially the crates ecosystem) significantly harder to wrap my head around compared to things as basic as pkgconf...
+
+---
+
+@muvlon · 2025-04-15T10:21:36.000-05:00:
+Yeah, I think YMMV a lot on this. I did C++ for years before I got into Rust, bouncing around between plain GNU Make, pkgconf, CMake, autotools and scons. Now after using Cargo, I don't want to have to use any of them again. 
+
+It all felt like a jumbled mess of environment variables, random "well known" system paths and copious amounts of string concatenation.
+
+---
+
+@mqudsi · 2025-04-15T11:35:35.000-05:00:
+As someone that has worked with (and authored) build systems extensively, I'm *guessing* it's a complete clash between existing domain knowledge vs how rust/cargo do things. In the C/C++ world, we are used to dependencies being a property of (or "owned by") the target system and your build toolchain interacts with the OS (and its proxies) to discover and use the required dependencies (whether for dynamic or static linking). When a dependency isn't available, normally the user is required to install the dependency but it's also not uncustomary for the build system to obtain a vendored tarball of the dependency and (normally statically) link it into the target executable, cutting the OS out of the picture.
+
+But cargo upends this because it wants to own the dependency process itself. It works great if you have a 100% rust dependency graph and everything can be compiled from its crate (published to crates.io or otherwise) to a single static library (or even a dylib). But things go awry when you have non-rust dependencies and then the complexity explodes from there because they are often effectively not owned by the package manager née build system but rather by the scaffolding of a *crate* that provides the `-sys` bindings, abstracting away the (normally OS-level) dependency from *your* build script. Dependency discovery isn't centralized and each individual crate may do it their own way: some taking into account cross-os differences, most not; some using `pkgconf` others using hardcoded paths, some using environment variables to control whether to use system-provided dependencies rather than build their own copies, others using a cargo.toml feature **that must be bubbled up by each calling crate** up the dependency chain (something that basically never happens) for you to be able to control it from *your* binary. 
+
+If you just package your rust binary with your dependencies declared in cargo.toml you can skip having a build script altogether and this couldn't be easier.. but you are basically punting on the traditional responsibility of end-user applications to "own" the dependency discovery (and any failures falling out from that) and leaving it to your user to debug each (transitive) dependency's non-rust dependencies separately, and you are also not in control of how your app is ultimately linked.
+
+(Then to further complicate matters you have distros that require each (transitive) dependency of a rust binary in their repo tree be separately added to the distribution repos and then globalize dependencies ignoring semver requirements laid out in cargo.toml, but that's debian's fault.)
+
+---
+
+@rikhuijzer · 2025-04-15T15:31:05.000-05:00:
+> It’s easy to go insane with proc macros and trait magic and build an incomprehensible codebase where it’s impossible to follow the flow of control or debug anything. You have to rein it in.
+
+Oh man I recently ended up in a codebase with macros all over the place. I won’t name names but it wasn’t enjoyable. I used to find macros cool, but nowadays it’s just so painful to see one being used unnecessarily. You just give up IDE tools like goto definition for nothing. Also getting rid of macros after the fact can be very tricky. I wish any language with macros would also write extensive warnings to tell people that macros are a last resort.
+
+---
+
+@junon · 2025-04-16T19:36:23.000-05:00:
+Rust macros, if written correctly, have full support for gotodef due to the use of token spans.
+

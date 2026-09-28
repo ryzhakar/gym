@@ -126,6 +126,9 @@ The cell sidecars `batch-2-team-{a,b}-cells.csv` come from re-running the draw w
 | 3 | 621279008 | `replace-b2-r3.csv` (rows the prefetch logged unreachable after two tries) | a | f005313 → f005351; f005514 → f005692; f005855 → f005691; f007187 → f008141; f011134 → f011219; f011173 → f011369; f011336 → f011370; f013434 → none | en/core/hn-lobsters; en/wasm/hn-lobsters ×2; en/core/individual-blogs; en/embedded/talks ×2; en/ml/talks; de/*/books | 623; 5; 4; 1892; 31; 30; 6; 0 |
 | 3 | 621279008 | | b | f005514 → f005692; f005855 → f005676; f007507 → f008860; f011194 → f011372; f011336 → f011286; f011546 → f011863; f013434 → none; f015639 → f015635 | en/wasm/hn-lobsters ×2; en/desktop-cli-ui/individual-blogs; en/core/talks; en/ml/talks; en/core/twir-links; de/*/books; en/core/youtube | 3; 2; 68; 268; 4; 1553; 0; 4 |
 
+| 4 | 72851214 | `replace-b2-r4.csv` (golem.de consent wall: html, Wayback and browser all returned the wall; found while bundling) | a | f013430 → f013416 | de/* / blogs | 12 |
+| 4 | 72851214 | | b | f013431 → f013414 | de/* / blogs | 12 |
+
 After round 2, neither team holds a row on a listed host. Round 3 replaced the rows the prefetch could not reach, as the plan requires (`fable-plan.md` line 111). All 13 replacements were then fetched (`prefetch-b2-replacements.csv`).
 
 - The de/books class holds 3 frame rows, and each team had drawn all 3. The two paywalled ones and rust-lernen.de (no chapter text) have no replacement, so de is 17 rows per team, not 20.
@@ -139,6 +142,9 @@ Commands (from GYM), after the re-run that wrote the sidecars:
 uv run python scripts/map/sample.py --frame RECON/samples/frame-b2-input.csv --out RECON/samples --batch 2 --replace RECON/samples/replace-b2-r1.csv --seed 1511926367
 uv run python scripts/map/sample.py --frame RECON/samples/frame-b2-input.csv --out RECON/samples --batch 2 --replace RECON/samples/replace-b2-r2.csv --seed 1284475788
 uv run python scripts/map/sample.py --frame RECON/samples/frame-b2-input.csv --out RECON/samples --batch 2 --replace RECON/samples/replace-b2-r3.csv --seed 621279008
+uv run python scripts/map/sample.py --frame RECON/samples/frame-b2-input.csv --out RECON/samples --batch 2 --replace RECON/samples/replace-b2-r4.csv --seed 72851214
 ```
 
-Replacement files, sha256 after round 3: see `batch-2-prep.md` § 6.
+The 33 zh conference-talks rows per team are dropped at bundling by a Tier 1 frame fix and are not yet replaced (`frame/frame-zh-talks-fix.md`).
+
+Replacement files, sha256 after round 4: see `batch-2-prep.md` § 6.

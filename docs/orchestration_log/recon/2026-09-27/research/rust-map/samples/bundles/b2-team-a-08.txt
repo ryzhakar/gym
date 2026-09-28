@@ -1,0 +1,2510 @@
+=== ROW 27 | f005938 | https://rust-glancer.github.io/blog/why-lsp-is-hard | 2026-09-16T00:00:00 | hn-lobsters;individual-blogs;twir-links ===
+Why building a Rust LSP is hard · Rust Glancer
+Skip to content
+rust-glancer
+About
+Quick start
+Docs
+Blog
+Changelog
+Source
+Why building a Rust LSP is hard
+2026-09-16
+A long, long time ago, mighty matklad used to write great posts about how Rust tooling works. Those were great times, but alas, the last rust-analyzer blog post dates 2023
+I am no matklad, but I'm building Rust Glancer, an experimental Rust LSP, for quite a while now. It's probably the most interesting and ambitious project I've worked on, and I want to share some things I've learned while working on it.
+This will be a (hopefully coherent) story about how Rust LSPs work, from the perspective of both rust-analyzer and Rust Glancer: how things that seem easy turn out to be hard, things that seem hard turn out to be even harder, and things I didn't expect to exist at all somehow do.
+Obviously, a single blog post can't cover everything, this will be a very technical but still architectural overview rather than a deep dive into any particular topic brought up along the way. Those will come as separate posts, granted I won't be lazy.
+Otherwise, be ready for many anecdotal chapters that have one thing in common: building an LSP means having to produce useful answers from partial information.
+Disclaimer: I am no expert in building LSPs, and the purpose of this post is to make readers interested in internals and caveats of LSPs rather than give an unambiguous and formal design overview. I intentionally try not to use compiler jargon, and use approximate phrasing in many places to focus on the overall meaning rather than precision. There are plenty of links in the post to more detailed/precise sources, and I recommend checking them out!
+Also, I have read a lot of rust-analyzer code before and during preparation of this post, but I'm no rust-analyzer maintainer; if I got some things wrong -- sorry.
+Where does an LSP start?
+LSP server has two opposite ends: the server that implements the Language Server Protocol (as in, "there is this thing I can send requests to and receive well-formed responses") and the actual state that we want to serve (as in, "the sent queries actually do what they need to do and operate over some kind of indexed state"). The first seems to be a solved problem, right? Especially given that tower-lsp-server exists. Welp, not really. Let's start there, and then we will gradually get to indexing once we actually need it.
+The LSP begins with a client sending an initialize request which requires you to initialize the LSP (huh). Before you respond, client won't do anything. Once you do, it sends an initialized notification, and all is good, and LSP communication starts.
+The problem is: when do you respond to this request? Once the server starts, you have nothing. You don't know anything about the project, and only when you receive this request you will know what's the codebase we're talking about. And in order to actually answer any queries, we need to "index™" it. We don't know what indexing means yet, but it's certainly a lot of work.
+Do we block until we've indexed everything? Then users will enjoy 10-20-50-100 seconds of waiting with editor being nearly useless. Not an option. Do we start right away? But then what do we answer to the imminent first query about the currently open file? Won't that cause us to block there instead? How to avoid the scary "we need to index everything" problem?
+And this reveals the first huge difference between the compiler and LSP. Compiler has a rather binary definition of done: the binary (sorry) is either compiled or not. Technically, compiled shared libraries and other build artifacts are usable as well, but in practice you will be annoyed if compiler compiles 715 out of 716 crates in your workspace and then stops. LSP is different: we can provide useful results almost immediately. We don't need complete information at the first millisecond, we need to send something useful to users as soon as possible. We only need to decide what we count as "something useful".
+The answer to the original question is: we need to do the least amount of useful work that will make processing queries possible. Thus both rust-analyzer and Rust Glancer just validate the provided config and respond. rust-analyzer schedules workspace discovery to start after the response, while Rust Glancer will remain passive until the first query hits.
+Once the handshake is finished, the real deal starts: you get your first actual queries. In most cases, these likely will be textDocument/didOpen, textDocument/inlayHint, and textDocument/documentSymbol. If the user is eager and you're unlucky, there might even be textDocument/didChange in between these. And the complexity explodes.
+First, fun fact: LSP as a protocol doesn't want you to think about the filesystem. There is no filesystem, there are just documents and edits. Which makes sense: often times, the document is not saved, so you can't know its contents. Except it doesn't. In most languages, analysis of a single file (or a set of open files) in isolation stops being useful fairly quickly.
+Enter hell: LSP assumes that it's the source of truth, but you still need to access the filesystem yourself, and do it in a synchronized way. To make it more fun, edits can happen outside of the editor, and the client might not be very faithful in notifying you about such events. And that's why we need a virtual file system, and "source generations", e.g. identifiers of the state of source code at the time of currently executed request. If we will try to naively combine filesystem access and LSP notifications, it will turn the whole project into a never-ending race condition. Instead we load the project sources to memory, declare it a VFS, and try our best to apply any changes on top of this loaded state, and each time we change the state, we update the source generation, which lets us have consistent internal state (and cancel in-flight queries as they get invalidated).
+"What in-flight queries?", I hear you ask. And that's the second fun fact. Executing an LSP query might entail a suprising amount of work, and not all queries made equal. Looking for references for a symbol is a fairly non-trivial task, while hover is typically cheap. Therefore doing one query at a time is not an option, you need to execute read queries in parallel. And whenever something changes state, the currently running queries will be doing now useless work against now outdated state. Your job is to create a loop which separates mutating and non-mutating queries, lets read requests run in parallel, and cancel work once state changes. And also, if you're unlucky to use async, serialize incoming messages to make sure that your didOpen and didChange don't come in the reverse order which could be a hell of an issue to debug (I wonder why I needed to make this remark).
+Third and final fun fact is that LSP authors actually considered that you might not be ready, so they gave you useful instruments to deal with that, such as workspace/inlayHint/refresh server request. With such a powerful tool, you can say "oops, try again now pls" and send the actual response even if initially you sent nothing. The problem is that not everything can be refreshed. Document symbols can't; if you don't send them right away, they will be stale until client itself decides that it's time to ask again. Which means that for some queries you might need to get creative.
+But we've got distracted. Client waits for inlay hints and document symbols.
+And we still haven't indexed a single thing.
+What do we do?
+Server, at your service
+Lucky us: to answer document symbols, we truly have to index a single thing. The currently open file.
+And this is actually a perfect example of LSP being useful very fast. All you need to do to answer this request is parse the file. An AST (or rather CST, but we'll get to that) will already tell you which structures, traits, functions, methods, etc you have. You can even do that as a part of the request on demand.
+textDocument/hover over a Bar in fn foo(a: Bar) {} is a bit trickier: it requires semantic analysis, at least in some form. You need to know where does the thing under the cursor comes from. For that to exist, you need to understand which items (structs, methods, you get it) are available in the scope. To do that, you need definition maps: resolved "what can be seen from where" maps for each crate and module. And to get definition maps, you need an extra layer of lowering. You could still work on AST/CST level, but it won't be convenient. Likely you want to have an item tree, your own representation of items defined in each file. So you need to parse each file -> build an item tree from AST/CST -> resolve modules and build a definition map -> check what's visible under the cursor -> find it through defmaps -> extract documentation for the resolved item -> show it. If you are wondering what does "under the cursor" mean, treat yourself with something savoury for a great question, we'll get to back later. For now, it's quite a bit of extra work, but still fairly manageable.
+Inlay hints are significantly trickier (as well as hovering inside of a body, e.g. on a local variable). They appear inside of bodies. In fn foo() { let a = bar(); } we can say that fn foo is an item declaration, while { let a = bar(); } is a real scary part body. Note that in the semantic model described above we didn't care about bodies at all. Not only that, but for good inlay hints we need no less than type inference. And for now I will refuse to elaborate.
+But if you think that it ends here, behold the final boss of the LSP: textDocument/references. For inlay hints, you need to analyze bodies in one file. For references, you hit an innocent option+shift+F12 on a function definition in VS Code (or any other editor that for some reason has the same keybinding), and the poor server must find all uses of that function in all discoverable places across the workspace graph. Think Option. We're talking quickly going through thousands of bodies where we need to distinguish this exact Option from any other item named Option. And this creates a bigger problem: even if you have all the bodies analyzed handy, you probably don't want to go through all of them linearly to see if any happen to mention Option. That's where LSP-specific shenanigans come to play: you might build a reference search plan using text matching, find only a subset of files that might contain this identifier, and go through bodies only there. Which still could be a lot of work. If you wonder what a "reference search plan" is, rust-analyzer has a great post on it (all hail the mighty matlkad!).
+Sidenote: if you're thinking "Well, yeah, Option has a lot of textual matches, but it's a pathological case"... Building LSP is ALL about pathological cases that ruin the experience for users, which is also one of the reasons why LSPs are hard.
+Two important things here:
+Indexing itself has layers to it that form a sequence with pretty much established boundaries.
+Different queries require different amount of precision / knowledge about the codebase.
+And one of the freedoms available to the LSP is how to utilize this information.
+Both rust-analyzer and Rust Glancer technically have parsing / item tree / defmaps / semantic layer / body layer (and I'm using Rust Glancer terminology here, but I think people familiar with rust-analyzer immediately understand what is what), but they differ in how this data is calculated.
+rust-analyzer uses salsa: an incremental database. It means that you can define inputs and logic on how to transfer inputs to outputs, and then outputs are lazily computed and memoized. If some inputs change, only the relevant parts of outputs are invalidated and recalculated. rust-analyzer model is elegant: there is no indexing at all. There is this net of relationships between inputs and the state of codebase, so at any point in time you can ask for the state and salsa will make sure that it's comupted for you. It doesn't have to "index" anything else rather than what's directly asked. To be honest, salsa feels like magic, and if you're not familiar with it I highly recommend dedicating a couple of evenings to get familiar with it, you won't be the same (see also Durable Incrementality and salsa docs). But even with salsa, shenanigans are needed. If every query will only compute what's necessary, even with memoization, there will be a lot of the state that is not computed, and editor might feel laggy initially. Which is why rust-analyzer by default enables cache priming (there is no blog post about it, but this PR is the state of art!) that will basically do the indexing for the workspace up to the semantic layer globally, since this is the information you likely need handy all the time. Bodies can wait until they're truly needed.
+Rust Glancer is different. Its focus is low RAM and instant editor restarts, which go together. Rust Glancer wants to eagerly do as much work as possible and tries to index everything once and then offload the state to the filesystem so that you don't need to compute much after initial indexing. But here shenanigans are needed as well! Full indexing takes a lot of time, so, first of all, Rust Glancer starts answers queries as soon as the relevant part of semantic analysis is done (remember cache priming? similar logic here), and for bodies it will prioritize the currently open file. Compared to rust-analyzer, initial indexing will take more time and (currently) might consume more RAM since it's eager and does more work, but after that you're basically done. If something changes, you only update relevant bits. If editor restarts, state still exists in the filesystem, which makes indexing almost instant. You only need full reindexing in rare cases (e.g. when workspace graph changes).
+Coming back to queries: our LSP now actually has the state it wants to serve, and it can either be ready or not ready. Whenever engine is not ready, it might provide an imprecise answer that will be as useful as possible, and in many cases it will be able to ask the client to refresh results once the state is computed.
+And that's how LSP works! Thanks for reading! Except...
+One workspace, two workspace
+I bet you noticed the "(workspaces?)" in the first chapter and are surely wondering since why I am writing as if the opened folder is guaranteed to be a single rust workspace. Because it certainly isn't. The opened folder might contain 5 folders out of which 3 are rust workspaces and 2 are not. The opened folder can be a crate inside of a workspace. The opened folder might have a rust file without being a rust crate at all. The previous chapter actually jumped a bit too far and we need to get back to the drawing board.
+Let's start with a simple question: how does an LSP get activated, and once it does, how does it decide what the  project even is? It comes from the client, obviously. If you're controlling the client, you can describe that yourself. For example, you might say that the current folder must have a Cargo.toml file. Or you might say that any of the immediate children folder might contain Cargo.toml file -- this is what rust-analyzer does. Then if you open a folder with N workspaces, they all will be discovered and will start indexing. You potentially might go even further: do a recursive scan to see if there are workspaces inside of workspace folders (if, for example, they're under exclude in the parent workspace Cargo.toml). This is an extreme version and rust-analyzer does not do that.
+There is an opposite problem too: what if the folder does have rust files but no Cargo.toml. Client might still try activating your LSP once you open an *.rs file, so what do you do? One strategy would be to use cargo locate-project to find the root, if it exists, and still index the codebase even though the root lies outside the directory. But does user want this? Maybe they opened a particular folder specifically because they don't want a full blown analysis?
+Similarly, when you open a folder that contains multiple projects, does user want all of them to be discovered and analyzed? Sometimes yes: it could be annoying to open a new project and see that it's not indexed even though you opened an IDE an hour ago. Sometimes no: it could be annoying to open a folder with 8 heavyweight projects and see hear your CPU fans go brr because LSP started indexing everything in parallel.
+Unlike with compilation / running cargo check, which is an explicit user request, the user intent with LSP is not clear. They just opened a folder, they did not necessarily signal that they want one behavior or another. So, there are no right answer, there are the project authors decisions.
+rust-analyzer tries to be eager in workspace discovery, and, with cache priming enabled, it can be quite noticeable. Similarly, it tries to be helpful and will go outside of the project directory if that's required to provide good experience for the user.
+Rust Glancer takes an almost opposite stance here: it requires Cargo.toml to be in scope for analysis to run, and it will not start indexing workspace until you actually open it. This makes it more lazy and strict, in a way: it does not try to guess for a user, and tries not to go outside of the scope provided by the user. And still, a counter-argument can be made here: it will still check the cargo registry. It's not like the policy can be completely pure.
+But the problem doesn't end here. Imagine that the folder has two rust workspaces. What if one is well formed and one is not? The weird part is that LSP itself does not give you much tools to distinguish these. In rust-analyzer, if even one of workspaces can't be processed for whatever reason, the whole server will enter the error state and will be marked red in the VS Code status panel. Even though other crates will work! But then, rust-analyzer still uses a single process to manage all the workspaces (and it's another nice property of salsa, it makes such model pretty natural), so if a single crate manages to crash rust-analyzer, it crashes globally.
+Rust Glancer again takes a different approach: the LSP server itself is just a router, and each workspace is modeled as a separate process (engine). LSP server can spawn engines on demand, it has its own communication protocol for them, and crash in any of the editors does not mean global crash. Bonus property here is that it helps with low memory usage: data from different engines does not mix with each other, reducing the fragmentation (because a lot of allocations with different lifetimes is how you get memory fragmentation). It, however, has its own drawbacks: it's significantly more convoluted and generally fights against LSP design. It also requires quite some shenanigans in the state reporting.
+The useful lesson here is even given that LSP itself is a well defined protocol, it gives implementation plenty of space to decide how exactly they want to work and how they interpret user intent. Neither of approaches is inherently right or wrong. It's up to you to decide what you want to prioritize. And users do have different opinions on what is right.
+You want no LSP
+How many fun facts we have learned about LSP so far? Well, here's the next one.
+LSP defines a protocol, and protocols are known to be often weird optimized for communication within a specified domain. And the domain is, obviously, editor. It speaks not in terms of byte offsets or character indices, but in terms of lines and columns. Moreover, the protocol demands that your server knows how to speak UTF-16. Who doesn't love UTF-16?
+The problem with that is that, first, working with lines, columns, and UTF-16 is not really convenient. You probably want some kind of the protocol bridge allowing the server itself work with offsets and UTF-8, and only convert these values near the actual protocol communication boundary. But that's pretty normal, and is arguably a best practice, regardless of the protocol at hand. Domain model of your application doesn't have to be equal to the domain model of the protocol, it's sufficient for it them to be isomorphic.
+However the question arises: if you work with offsets normally, how do you convert these to lines and columns? Having to parse the full text of the file, split it into lines, and shift offsets would be, ugh, slightly inefficient. While the protocol domain is not necessary inside of your representation, you still need tools to make conversion efficient. For example, by creating line indexes for each file. Both rust-analyzer and Rust Glancer do it.
+The funny bit here is that even though you want to abstract LSP away, you can't really do it in full; it will still leak into your architecture.
+And the "attached metadata" doesn't stop there. Besides analysis and read queries, LSPs are also used for editing. They typically can handle imports for you, have some snippets, and support code actions like replacing qualified path with an import or implementing missing trait members. And what do such edits often contain? Newlines! But which ones? We can't just assume that on windows it's always \r\n and on unix it's always \n. If we don't guess, we will do an inconsistent edit. It means that besides line index, we need to detect and store the kind of line endings used in this particular file. BTW, another refactoring tool, rustfmt, also has to think about it, but since it rewrites whole files rather than do granular edits, you can configure its behavior to be either auto (detect), unix, windows, or native (OS default).
+And metadata doesn't stop there either. To properly parse the file, you also must know its edition. Otherwise, you won't know if gen is an identifier or a keyword. Which means that we can't really analyze a file in isolation: we need Cargo.toml (or other kind of project metadata) to even know how to properly parse it.
+As you can see, the demand for metadata comes from all the possible directions: LSP, file contents, rust itself. In a way it is funny that such a simple operation as parsing also has to be stateful.
+Indexing wen
+OK, OK, it's a long article and we still only briefly touched indexing, which is supposed to be the hardest part.
+The thing is, indexing is indeed the hardest part, and to be honest it deserves a series of similarly-sized articles on its own. But just so that we don't have gaps in our LSP journey, let's have a high level overview.
+First, an important bit: an LSP can have fundamentally different designs and might approach indexing differently. Once again, there is a good post on this in rust-analyzer blog. In short:
+First: have "full analysis" and "shallow analysis" phases, where full analysis checks a lot of stuff, and shallow analysis is fast and works per file. That's the approach Rust Glancer takes, among others.
+Second: utilize compiler to do work for you and snapshot its state. While it'd be a stretch somewhat, we could say that RLS - the first Rust LSP - worked this way. This approach works for some languages, especially headers-based, but for Rust it proven to be very inefficient.
+Third: make it incremental/query-based. Have the LSP compute just enough data to answer a query, without thinking much about anything else. That's how rust-analyzer works with the power of salsa.
+The approaches define how indexing is executed. However, the phases of indexing will likely be more or less the same. For rust it's:
+Parsing (I consider lexing to be a part of parsing): take input text and translate it to the CST representation.
+Item tree building: extract the information that serves as input for the later state of indexing. CST is useful but way too low level. You want to know what items you have, e.g. "this is a struct with these fields, this docstring, these attributes, and fields, and it has this visibility" as opposed as "struct node with N tagged children".
+Definition map building: which modules do exist, and what do they contain? What is exported from this module? What is reachable from this module (including: "this is imported as alias, so we must resolve this original import and make it visible inside of module as an alias")?
+Macro resolution: macros are interesting. They expand to more code that also must be analyzed. Moreover, they can bring more items and even modules do the scope. After expanding itself (which has a bunch of quirks of its own), we need to make sure that expansion changes the state of defmap, which makes it convenient to make macro resolution a subphase of defmap building process itself.
+Item index building: after item tree building we might have representation for each structure and each impl block, but how are they linked? Is impl Foo related to crate::a::Foo or crate::b::Foo? We need a phase to create "linked item state" -- what unique items we have, which impls correspond to what, which trait impls correspond to which trait and trait implementor. Building an index here is especially important: being able to enumerate items for a structure is essential, so while we could in theory work with an unlinked item tree, it would've been neither efficient or pleasant.
+Body resolution. All of the above doesn't care about bodies at all, and contains a fair bit of useful information, but it is the bodies that are the actually useful part of any program. And for bodies we need to parse all the statements/expressions/patterns, allocate all the bindings (e.g. assigned variables), declare scopes (what bindings are visible where), link all of the above, and then perform type inference and trait solving. The latter two are the scary part.
+At the end of indexing, regardless whether we analyzed the full workspace or just did enough work for a single query, we end up with indexed state: our representation of things that are declared in the project, so we can answer which type this variable has, which methods are available for it, which documentation should be shown for this structure, etc.
+The important part here is that indexing doesn't just have to go through everything, the end shape is declared by the queries we want to process, not by all the theoretical information we could infer from the codebase.
+Unfortunately, the indexing is not as linear as it's presented above. Take defmaps for example: if you have use bar::baz; use foo::bar;, on the first pass you will learn that bar is in the scope, but won't have this information to resolve bar immediately. Similarly, with use bar::generate_gen_mod; use gen_mod::Foo; generate_gen_mod!(); you first need to add generate_gen_mod to the scope, then expand it to add gen_mod, analyze gen_mod, and only then you will be able to resolve use gen_mod::Foo. So indexing uses quite a bunch of "fixed loops": we keep repeating analysis while we get more information, and stop working as soon as there is no more new information (or loop limit is exhausted).
+Similarly, body analysis is somewhat recursive: bodies themselves can contain items, macros, impls, which can have bodies tha contain items, macros, impls, which can... You get it. Each body also gets its own defmap with its own fixed loop, index of body-local items, and analysis of bodies inside of this body.
+And yeah. Type inference. Trait solving. Sorry, but this will remain a mystery until the next blog post. We're talking about LSP itself here, and for this purpose it's enough to know that these two contribute additional information to indexed state.
+Interlude ended, back to LSP quirks.
+When being a compiler is not enough
+The compiler itself does the above "indexing" and more. However, it has a luxury of being strict: if the code is not correct, it gets to yell at you and fail the compilation.
+LSP can't do that. The code in IDE if very often incorrect because you're just typing it (well, if you're doing it old fashioned way), and LSP is meant to help you finish it. LSP cannot say "I will not analyze this code, it's incorrect or not complete".
+Thus, the adventure starts from parsing: parsing must succeed no matter what user typed, and we must try interpreting the state given the information we have at hand. We also must assume that user breaks the rules: there might be two methods with the same name inside of impl block, there might be an impl for a trait that does not exist in the scope, or the code just might be incomplete.
+The parsing bit and the need for CST already have write-ups by you-guess-who (yes, again!): 1, 2, 3.
+But parsing is only part of the problem. Once we have successfully parsed a file, we need to actually process the incorrectness/ambiguity, and turn it into something useful.
+Consider a perfectly normal fn fo at the end of the file. What we need to do is to realize that since the previous token was fn likely the intention is to declare a function, and we already might suggest a snippet to generate the function declaration with placeholders for parameters and an empty body. If some item does not exist in the scope, we might still find possible candidates and suggest adding an import. You get the idea.
+So it is another norm of LSP: you have to consider that the state is incorrect at the moment and can be improved. How far you will go depends just on your imagination. Once again you're trying to guess the user's intent rather than work in a strict world of correct code.
+But it doesn't stop there! You don't only need to work with incorrect code. Users use more than just the compiler: they use cargo, they use rustdoc, they write documentation in markdown. As a tooling author, you need to know how to work with cargo JSON output to extract diagnostics, remember that rustdoc supports disambiguators, be able to extract and run the tests for user, and so on.
+It's less of depth expansion, and more of width expansion: you need to think about the tooling user uses, and do all the necessary to make the flow feel "fluent" and your LSP "just do the thing".
+Cursor: the god of LSP
+Now we have an LSP server, indexed state, a bunch of extra knowledge about tooling. It's time to finally touch the central part of the lsp: the cursor.
+Anything you do in the editor is based on the cursor: the position inside of the file that requires action from LSP. It could be a mouse cursor (e.g. for hover), or the typing position (e.g. for completions).
+The interesting bit is how do you go from "I need hover information/completions at this position" to "what exactly is located at this position"?
+As usual, matklad has a great post about how the symbol under cursor is found in rust-analyzer. In short, rust-analyzer looks for sources based on the syntax node matching to the semantic element, which works great with lazy analysis approach and reliance on parser infrastructure for refactoring (or at least it is my understanding).
+Funnily enough, Rust Glancer takes an almost opposite position here. The article states that span-based approach is a) too slow, since LSP tries to do the least amount of analysis possible, and b) it's less convenient for refactoring. The implied c) is that analysis might not be computed, but parsed tree for the current file is always available. In Rust Glancer, the opposite is true: it defaults to full analysis that is offloaded to the filesystem, and it eagerly evicts syntax trees to free up memory. Having a full semantic analysis at hand, span-based approach works pretty well combined with hierarchical structure: you can (for example) first filter out mismatching files, then bodies that do not touch the cursor position, then iterate through body contents looking for a source symbol with the most precise span. It does not give the refactoring benefit, so Rust Glancer implements refactorings as set of dedicated algorithms that do not rely on anything like rowan, which is significantly less elegant, but seems to be working rather well. Additionally, somehow the refactoring part, while being very important, takes not that much of the implementation logic. I'm still not sure if it should be put to the basis of the overall architecture (for the Rust Glancer purposes; every project obviously can decide for itself).
+But that's only half of the problem. Sometimes understanding where we are is not sufficient, and the most important example here is completions. Once we understand where we are, we need to come up with a list of suggestions that make sense in this particular context. And as it usually happens in positions where completions are needed, the code will likely be incomplete, making the guesses a bit harder.
+For completion purposes, we are interested less in what is exactly under the cursor, and more about what is around the cursor. For example:
+Is the cursor right after the dot? Then we need dot completions: understand the type of the symbol before the dot and find matching methods.
+Is the cursor right after ::? Then it could be an associated item, use path, or qualified path, so we need to check what comes before :: and sometimes suggest different options.
+Are we inside of the struct initializer, like User { na$ }? Fetch fields from this structure. Or if it's User { name: fo$ }, then fetch matching locals.
+Is it just f in an empty file? Then fn keyword (or fn snippet) may be applicable.
+In practice, this becomes a ton of special cases that you want to support. And you can get as creative as you want here: for example, you might take the edition of the crate into consideration to decide whether you want to suggest await keyword or not.
+Once again, it becomes a game of guessing the user intent, and the better you do it, the better experience the user will have.
+That's NOT it
+This is a long article, isn't it? And I could go on for much longer.
+I hope that it does not look as a set of inconsistent anecdotes, becuase the intent was to show that there are way too many angles from which you could look at LSP, and each angle can have multiple approaches to do the thing.
+It creates a pretty big contrast with the compiler or tools like cargo fmt / cargo deny: they are fairly deterministic in their goal, and the intended behavior is more or less clear and configurable. When user invokes these tools, they know exactly what they need, and the invocation is the act of showing the intent.
+LSP is more of a guess game, where at each step all you are presented with is the potentially incorrect state, and your goal is to guess what would make sense for the user.
+Which is hard. But also fun!
+P.S. Rust Glancer itself is already pretty capable, you might check it out! If you want to support the project, you might consider giving it a star (but only if you indeed like it / find it interesting!) and/or follow me on twitter (I'll be posting Rust Glancer announcements and new posts there; I also plan to occasionally post interesting stuff about Rust). Monetary support is not required for me, but is required for Rust language itself, so I strongly suggest sponsoring Rust Foundation instead.
+©
+@popzxc
+·
+Site source
+·
+Atom
+
+=== ROW 28 | f005943 | https://security.googleblog.com/2023/10/bare-metal-rust-in-android.html | 2023-10-11T00:00:00 | hn-lobsters;twir-links ===
+Google Online Security Blog: Bare-metal Rust in Android
+Security Blog
+The latest news and insights from Google on security and safety on the Internet
+Bare-metal Rust in Android
+October 9, 2023
+Google
+Labels:
+android
+,
+android security
+,
+rust
+No comments
+:
+Post a Comment
+
+
+
+Labels
+
+#sharethemicincyber
+#supplychain #security #opensource
+AI Security
+android
+android security
+android tr
+app security
+big data
+biometrics
+blackhat
+C++
+chrome
+chrome enterprise
+chrome security
+connected devices
+CTF
+diversity
+encryption
+federated learning
+fuzzing
+Gboard
+google play
+google play protect
+hacking
+interoperability
+iot security
+kubernetes
+linux kernel
+memory safety
+Open Source
+pha family highlights
+pixel
+privacy
+private compute core
+Rowhammer
+rust
+Security
+security rewards program
+sigstore
+spyware
+supply chain
+targeted spyware
+tensor
+Titan M2
+VDP
+vulnerabilities
+workshop
+
+Archive
+
+
+
+2026
+Apr
+Mar
+Feb
+Jan
+
+
+2025
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2024
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2023
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2022
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2021
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2020
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2019
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2018
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2017
+Dec
+Nov
+Oct
+Sep
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2016
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2015
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2014
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+Apr
+Mar
+Feb
+Jan
+
+
+2013
+Dec
+Nov
+Oct
+Aug
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2012
+Dec
+Sep
+Aug
+Jun
+May
+Apr
+Mar
+Feb
+Jan
+
+
+2011
+Dec
+Nov
+Oct
+Sep
+Aug
+Jul
+Jun
+May
+Apr
+Mar
+Feb
+
+
+2010
+Nov
+Oct
+Sep
+Aug
+Jul
+May
+Apr
+Mar
+
+
+2009
+Nov
+Oct
+Aug
+Jul
+Jun
+Mar
+
+
+2008
+Dec
+Nov
+Oct
+Aug
+Jul
+May
+Feb
+
+
+2007
+Nov
+Oct
+Sep
+Jul
+Jun
+May
+Feed
+Follow @google
+Follow
+Give us feedback in our Product Forums.
+Google
+Privacy
+Terms
+
+=== ROW 29 | f006820 | https://jyn.dev/the-rust-project-has-a-burnout-problem | 2024-01-16T00:00:00 | individual-blogs ===
+the rust project has a burnout problem
+the website of jyn
+menu
+about
+computers should be liberating
+talks
+the computer of the next 200 years
+the rust project has a burnout problem
+2024-01-16
+• audience—the rust community
+• rust
+• people
+the number of people who have left the rust project due to burnout is shockingly high. the number of people in the project who are close to burnout is also shockingly high.
+this post is about myself, but it's not just about myself. i'm not going to name names because either you know what i'm talking about, in which case you know at least five people matching this description, or you don't, in which case sorry but you're not the target audience. consider, though, that the project has been around for 15 years, and compare that to the average time a maintainer has been active ...
+what does this look like
+(i apologize in advance if this story does not match your experience; hopefully the suggestions on what to do about burnout will still be helpful to you.)
+the pattern usually goes something like this:
+you want to work on rust. you go to look at the issue tracker. you find something you care about, since the easy/mentored issues are taken. it's hard to find a mentor because all the experienced people are overworked and burned out, so you end up doing a lot of the work independently.
+guess what you've already learned at this point: work in this project doesn't happen unless you personally drive it forward. that issue you fixed was opened for years; the majority of issues you will work on as you start will have been open for months.
+you become a more active contributor. the existing maintainer is too burned out to do regular triage, so you end up going through the issue backlog (usually, you're the first person to have done so in years). this reinforces the belief work doesn't happen unless you do it personally.
+the existing maintainer recognizes your work and turns over a lot of the responsibilities to you, especially reviews. new contributors make PRs. they make silly simple mistakes due to lack of experience; you point them out and they get fixed. this can be fun, for a time. what it's teaching you is that you personally are responsible for catching mistakes.
+you get tired. you've been doing this for a while. people keep making the same mistakes, and you're afraid to trust other reviewers; perhaps you're the only reviewer, or other reviewers have let things slip before and you don't trust their judgement as much as you used to. perhaps you're assigned too many PRs and you can't keep up. you haven't worked on the things you want to work on in weeks, and no one else is working on them because you said you were going to ("they won't happen unless you do them personally", a voice says). you want a break, but you have a voice in the back of your head: "the project would be worse without you".
+i'm going to stop here; i think everyone gets the idea.
+what can i do about it
+"it won't get done if i don't do it" and "i need to review everything or stuff will slip through" is exactly the mindset of my own burnout from rust. it doesn't matter if it's true, it will cause you pain. if the project cannot survive without you personally putting in unpaid overtime, perhaps it does not deserve to survive.
+if you are paid to work on rust, you likely started as an unpaid contributor and got the job later. treat it like a job now. do not work overtime; do not volunteer at every turn; do not work on things far outside your job description.
+the best way to help the project is to keep contributing for it for years. to do that, you have to avoid burning out, which means you have to treat yourself well.
+what can team leads do about it
+have documentation for "what to do about burnout"; give it just as much priority as technical issues or moderation conflicts.
+rotate responsibilities. don't have the same person assigned to the majority of PRs. if they review other people's PRs unsolicited, talk to them 1-1 about why they feel the need to do so. if someone is assigned to the review queue and never reviews PRs, talk to them; take them off the queue; give them a vacation or different responsibilities as appropriate.
+ask people why they leave. i know at least one person whose burnout story does not match the one in this post. i am sure there are others. you cannot solve a problem if you don't understand what causes it.
+take these problems seriously. prioritize growing the team and creating a healthy environment over solving technical issues. the issues will still be there in a few months; your people may not be.
+what can the rust project do about it
+one thing bothering me as i wrote this post is how much of this still falls on individuals within the project. i don't think this is an individual problem; i think it is a cultural, organizational, and resource problem. i may write more about this once i have concrete ideas about what the project could do.
+be well. be kind to each other. i love you.
+remember:
+EMPATHY WITHOUT BOUNDARIES IS SELF DESTRUCTION pic.twitter.com/HbBwEj4hc3— 𖤐ARCH BUDZAR𖤐 (@ArchBudzar) October 6, 2020
+acknowledgements
+thank you @QuietMisdreavus for the burned out rust kid club art.
+thank you @Gankra, @QuietMisdreavus, @alercah, @ManishEarth, @estebank, @workingjubilee and @yaahc for discussion and feedback on early drafts of this post. any errors are my own.
+Discuss on
+Hacker News,
+Lobste.rs,
+Mastodon, or
+Bluesky
+the website of jyn
+[email protected]
+Resume
+Subscribe via RSS
+github logo
+jyn514
+LinkedIn logo
+image/svg+xml
+LinkedIn logo
+jynelson514
+i write about code, and things that bring me joy, and sometimes other things too
+
+=== ROW 30 | f007538 | https://blog.theembeddedrustacean.com/embedded-rust-bsps-with-uferris-xiao-ldr-support-with-adc | 2026-09-15T07:30:00 | individual-blogs ===
+Embedded Rust BSPs with uFerris & Xiao: LDR Support with ADC
+Skip to main content
+HashnodeThe Embedded Rustacean Blog
+Open search (press Control or Command and K)Toggle themeOpen menu
+HashnodeThe Embedded Rustacean Blog
+Embassy
+STM32 w/ Rust
+ESP32 w/ Rust
+More
+Open search (press Control or Command and K)
+Toggle themeWrite
+Command Palette
+Search for a command to run...
+Embedded Rust BSPs with uFerris & Xiao: LDR Support with ADC
+UpdatedSeptember 15, 2026•13 min read•View as Markdown
+O
+Omar Hiari
+I am an 📟 Embedded Engineer with years of experience in both industry 🏭 and academia 🏫.  Passionate Mentor 👨‍💼 and Instructor 👨‍🏫.
+Rustacean 🦀
+Part of seriesRust on Seeed Studio XIAO
+On this pageSeries Past PostsIntroduction📚 Knowledge Prerequisites💾 Software Setup🛠 Hardware Setup🔌 Connections👨‍🎨 Software DesignThe Board StructThe Board Initialization FunctionThe Board Control FunctionsTest Application Design👨‍💻 Code Implementation🏃‍♂️ Test Code & Run✅ Conclusion📱 Full Code
+This is the sixth post in the µFerris & Xiao BSP series, where we build a Board Support Package from scratch, one peripheral at a time. In the previous post, we added the buzzer using PWM. This post adds the LDR, which is the first component that hands data back.
+Series Past Posts
+Device Setup & Getting Started
+Getting started with µferris-bsp
+Intro to BSPs
+LED & Button Support with GPIO
+Buzzer Support with PWM
+Introduction
+In the last post, we added the buzzer using PWM. Every component we have added so far takes a command. led1_on drives a pin, buzz_on sets a duty, and returns nothing. sw5_pressed does return a value, but it is a boolean.
+This post adds the LDR, a light-dependent resistor sitting in a divider on GPIO2. Reading it means running an analog-to-digital conversion, which raises a question the earlier components did not: what should the function return? A raw count, a voltage, or a light level in lux. The choice determines how much the BSP has to know about the rest of the board.
+The ADC also adds a setup constraint we haven't seen yet. A single reading needs two separate objects, so this is the first component that doesn't map to a single thing to store.
+Let's get started.
+📚 Knowledge Prerequisites
+To understand the content of this post, you need the following:
+Basic knowledge of coding in Rust.
+Basic understanding of embedded systems development concepts.
+Familiarity with no_std development in Rust, preferably using esp-hal.
+Familiarity with ADC concepts, mainly resolution and reference voltage.
+Familiarity with the µFerris platform and flashing a XIAO module.
+💾 Software Setup
+All the code presented in this post is available in the µFerris & XIAO series repo. Every post in the series has its own self-contained Cargo project in a numbered folder. The code for this post lives in 06-ldr-adc/:
+git clone https://github.com/theembeddedrustacean/learn-bsp-rs
+cd learn-bsp-rs/06-ldr-adc
+cargo run --release
+The examples revolve around the ESP32-C3. If you want to follow along with a different device, please refer to the xiao-generate post for more detail.
+🛠 Hardware Setup
+The required hardware includes:
+µFerris Megalops Baseboard — the board this BSP is written for. Available from The Embedded Rustacean Store.
+Seeed Studio XIAO ESP32-C3 — the controller used throughout this phase of the series. Available from the SeeedStudio Store.
+USB-C cable for power, flashing, and serial output.
+🔌 Connections
+No connections are required. Every component the BSP will eventually drive is prewired; you only need to assemble the board. If you haven't assembled the board yet, this post walks through it.
+The component added in this post is connected on the µFerris as follows:
+Device
+XIAO Pin
+Notes
+LDR
+GPIO2
+Analog input on ADC1. Read as a 12-bit conversion.
+GPIO2 is one of the pins the ESP32-C3 routes to ADC1. Not every pin can be read as an analog input, and which unit a pin belongs to is fixed in silicon. We use ADC1 here because the board puts the LDR on GPIO2.
+👨‍🎨 Software Design
+This post builds on the BSP from the previous post, where we added the buzzer. This post assumes you understand that code. Recall the BSP code is composed of three parts; The Board struct, The Board Initialization Function, and The Board Control Functions. Each post adds to all three.
+The Board Struct
+Reading the LDR needs two objects. The ESP32-C3 ADC is a converter shared by several pins, so Adc is the converter itself, and AdcPin specifies which pin is enabled on it and carries that pin's attenuation setting. A conversion needs both: the driver to run it, and AdcPin to say which input to sample. Both types come from esp_hal::analog::adc.
+The board struct keeps one member per component, so we pair the two in a small struct of their own first:
+pub struct LdrAdc {
+adc: Adc<'static, ADC1<'static>, Blocking>,
+pin: AdcPin<GPIO2<'static>, ADC1<'static>>,
+}
+Blocking marks the driver as the blocking rather than async flavor. We also provide an implementation for reading a raw value.
+impl LdrAdc {
+// Run a conversion and return the raw count.
+pub fn read_raw(&mut self) -> u16 {
+nb::block!(self.adc.read_oneshot(&mut self.pin)).unwrap_or(0)
+}
+}
+The board struct then gains a single member. This is the form of the updated struct:
+pub struct UFerris {
+led1: Output<'static>,
+sw_btn5: Input<'static>,
+buzzer: Channel<'static, LowSpeed>,
+ldr_driver: LdrAdc,
+}
+Notice how the board struct holds one member per component, and nothing else. A peripheral that needs several objects to operate gets those objects wrapped in a type named after the component, and the board holds that type.
+The alternative is to let Adc and AdcPin sit on UFerris as two separate fields. That compiles and works, but the struct stops being a list of what is on the board and becomes a list of what the HAL handed back. ldr_driver tells you the board has an LDR. ldr_adc and ldr_pin tells you nothing about the board.
+The Board Initialization Function
+We will update uferris_init to configure the ADC. The ADC has an ordering constraint. Pins are enabled on an AdcConfig, and the Adc is then built from that config:
+Create an AdcPin configuration using AdcConfig.
+Instantiate the ADC1 peripheral.
+Pair the two into an LdrAdc type.
+The Board Control Functions
+We'll introduce one function that the BSP will support:
+Function
+Behaviour
+read_ldr()
+Runs a conversion when called and returns the raw 12-bit count.
+Note that the function returns a raw count, not lux or millivolts. This is the design decision of the post. Optionally, you can add a read_ldr_lux() function that returns the value in lux or a read_ldr_mvolts() that returns the reading in millivolts. This means you need to incorporate conversion formulas in the function. That is left for the reader as an exercise.
+Test Application Design
+The test application steps are as follows:
+Read the LDR.
+Print the raw value over the serial port.
+Turn LED 1 on when the reading is below the dark threshold; otherwise, turn it off.
+Sound the buzzer for 50 ms, only on the transition into darkness.
+Wait 500 ms (paces the sampling).
+Go back to step 1.
+The threshold is a constant in the application, not in the BSP, and the right value depends on your room. Run it, watch the printed numbers with the LDR uncovered and then covered, and pick a value between the two.
+👨‍💻 Code Implementation
+1️⃣ Bring in the ADC types. Everything from the previous post stays. We add the ADC types and the two peripheral types that appear in the struct:
+use esp_hal::{
+Blocking,
+analog::adc::{Adc, AdcConfig, AdcPin, Attenuation},
+peripherals::{ADC1, GPIO2, Peripherals},
+time::Rate,
+};
+2️⃣ Define the ADC component struct. The struct holds the two objects a conversion needs, plus the read that uses them. Below is the code:
+pub struct LdrAdc {
+adc: Adc<'static, ADC1<'static>, Blocking>,
+pin: AdcPin<GPIO2<'static>, ADC1<'static>>,
+}
+impl LdrAdc {
+/// Run a conversion and return the raw count.
+pub fn read_raw(&mut self) -> u16 {
+nb::block!(self.adc.read_oneshot(&mut self.pin)).unwrap_or(0)
+}
+}
+Note that both fields are private, so the only way to get a number out of an LdrAdc is read_raw. Nothing outside the BSP can take the AdcPin and start a conversion of its own.
+Note also that the read is non-blocking underneath. We use the nb::block! macro that retries until the value arrives. read_oneshot starts a conversion and returns an nb::Result. While the conversion is still in flight, it returnsWouldBlock, which is not an error; it means "not ready, ask again".
+3️⃣ Populate the board struct. Add the component and its type as a single member to the board struct.
+pub struct UFerris {
+led1: Output<'static>,
+sw_btn5: Input<'static>,
+buzzer: Channel<'static, LowSpeed>,
+ldr_driver: LdrAdc,
+}
+4️⃣ Populate the initialization function. In the init function, we now need to configure the ADC, after the LEDC setup from the previous post. Below is the code:
+// The LDR pin has to be enabled on the config before the ADC is built.
+let mut adc_config = AdcConfig::new();
+let ldr_pin = adc_config.enable_pin(peripherals.GPIO2, Attenuation::_11dB);
+let adc1 = Adc::new(peripherals.ADC1, adc_config);
+let ldr_driver = LdrAdc {
+adc: adc1,
+pin: ldr_pin,
+};
+UFerris {
+led1,
+sw_btn5,
+buzzer,
+ldr_driver,
+}
+Attenuation is specific to analog inputs. The ADC's own input range is small, and attenuation scales the incoming signal down to fit it. _11dB is the widest setting the ESP32-C3 offers and covers roughly the full supply span. A narrower setting gives better resolution over a smaller voltage window, and clips once the input voltage swings past it.
+Note that attenuation is a property of the pin, not of the converter. That is why it is passed to enable_pin and ends up baked into the AdcPin token.
+5️⃣ Add the control function. In an impl block on UFerris, we add a board method that delegates to LdrAdc::read_raw:
+// Read the LDR as a raw ADC count.
+pub fn read_ldr(&mut self) -> u16 {
+self.ldr_driver.read_raw()
+}
+🏃‍♂️ Test Code & Run
+#![no_std]
+#![no_main]
+use esp_backtrace as _;
+use esp_hal::{clock::CpuClock, main};
+use esp_println::println;
+use uferris::{UFerris, uferris_init};
+esp_bootloader_esp_idf::esp_app_desc!();
+// Reading below which the room counts as dark. Pick this from the values
+// the application prints on your own board. If covering the LDR raises the
+// reading instead of lowering it, flip the comparison in the loop.
+const DARK_THRESHOLD: u16 = 1500;
+#[main]
+fn main() -> ! {
+// Configure the device and hand the peripherals to the BSP
+let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+let peripherals = esp_hal::init(config);
+let mut uferris: UFerris = uferris_init(peripherals);
+// Instantiate a delay provider
+let delay = esp_hal::delay::Delay::new();
+// Variable to keep track of the last state.
+let mut was_dark = false;
+loop {
+let light = uferris.read_ldr();
+let is_dark = light < DARK_THRESHOLD;
+println!("LDR {light}");
+// LED 1 stays on while the LDR is covered
+if is_dark {
+uferris.led1_on();
+} else {
+uferris.led1_off();
+}
+// Chirp once on the way into darkness
+if is_dark && !was_dark {
+uferris.buzz_on(50);
+delay.delay_millis(50);
+uferris.buzz_off();
+}
+was_dark = is_dark;
+// Read twice a second
+delay.delay_millis(500);
+}
+}
+Flash it and open the monitor:
+cargo run --release
+The terminal prints a reading twice a second. Put a finger over the LDR and the number moves, LED 1 comes on, and the buzzer chirps once as it crosses the threshold:
+LDR 2840
+LDR 2793
+LDR 1102
+LDR 964
+If the number barely moves between covered and uncovered, the threshold has nothing useful to sit between. Check that the attenuation is _11dB, because a narrower setting can leave the divider's whole swing above the top of the range, where every reading clips to the same value.
+✅ Conclusion
+We added the LDR, and with it, the BSP now reads as well as writes. Getting there took a component struct to hold the two objects a conversion needs and a decision about what units to return.
+That completes the components wired directly to the chip. The next post moves on to I2C, where a single bus is shared by several devices and the board struct has to hand out access to it.
+📱 Full Code
+src/lib.rs
+#![no_std]
+use embedded_hal::pwm::SetDutyCycle;
+use esp_hal::{
+Blocking,
+analog::adc::{Adc, AdcConfig, AdcPin, Attenuation},
+gpio::{DriveMode, Input, InputConfig, Level, Output, OutputConfig},
+ledc::{
+LSGlobalClkSource, Ledc, LowSpeed,
+channel::{self, Channel, ChannelIFace},
+timer::{self, Timer, TimerIFace},
+},
+peripherals::{ADC1, GPIO2, Peripherals},
+time::Rate,
+};
+use static_cell::StaticCell;
+// The LEDC timer the buzzer channel reads its frequency from. The channel
+static BUZZER_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
+// Resonant frequency of the µFerris buzzer, in hertz.
+const BUZZER_FREQ_HZ: u32 = 2700;
+pub struct LdrAdc {
+adc: Adc<'static, ADC1<'static>, Blocking>,
+pin: AdcPin<GPIO2<'static>, ADC1<'static>>,
+}
+impl LdrAdc {
+/// Run a conversion and return the raw count.
+pub fn read_raw(&mut self) -> u16 {
+nb::block!(self.adc.read_oneshot(&mut self.pin)).unwrap_or(0)
+}
+}
+/// A handle to the µFerris board and everything on it.
+pub struct UFerris {
+led1: Output<'static>,
+sw_btn5: Input<'static>,
+buzzer: Channel<'static, LowSpeed>,
+ldr_driver: LdrAdc,
+}
+// Consume the raw chip peripherals and hand back a ready-to-use board.
+pub fn uferris_init(peripherals: Peripherals) -> UFerris {
+// Instantiate LED 1
+let led1 = Output::new(peripherals.GPIO3, Level::Low, OutputConfig::default());
+// Instantiate SW5
+let sw_btn5 = Input::new(peripherals.GPIO5, InputConfig::default());
+// Instantiate the LEDC peripheral
+let mut ledc = Ledc::new(peripherals.LEDC);
+ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+// Configure the timer attached to the LEDC
+let mut buzzer_timer = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+buzzer_timer
+.configure(timer::config::Config {
+duty: timer::config::Duty::Duty14Bit,
+clock_source: timer::LSClockSource::APBClk,
+frequency: Rate::from_hz(BUZZER_FREQ_HZ),
+})
+.expect("buzzer timer configuration failed");
+// Promote the timer to 'static
+let buzzer_timer = BUZZER_TIMER.init(buzzer_timer);
+// Configure the LEDC Channel and attach pin.
+let mut buzzer = ledc.channel(channel::Number::Channel0, peripherals.GPIO4);
+buzzer
+.configure(channel::config::Config {
+timer: buzzer_timer,
+duty_pct: 0,
+drive_mode: DriveMode::PushPull,
+})
+.expect("buzzer channel configuration failed");
+// The LDR pin has to be enabled on the config before the ADC is built.
+let mut adc_config = AdcConfig::new();
+let ldr_pin = adc_config.enable_pin(peripherals.GPIO2, Attenuation::_11dB);
+let adc1 = Adc::new(peripherals.ADC1, adc_config);
+let ldr_driver = LdrAdc {
+adc: adc1,
+pin: ldr_pin,
+};
+UFerris {
+led1,
+sw_btn5,
+buzzer,
+ldr_driver,
+}
+}
+impl UFerris {
+// Turn LED 1 on.
+pub fn led1_on(&mut self) {
+self.led1.set_high();
+}
+// Turn LED 1 off.
+pub fn led1_off(&mut self) {
+self.led1.set_low();
+}
+// Read switch 5.
+pub fn sw5_pressed(&mut self) -> bool {
+self.sw_btn5.is_low()
+}
+// Sound the buzzer at the given duty, as a percentage from 0 to 100.
+pub fn buzz_on(&mut self, duty_percent: u8) {
+let _ = self.buzzer.set_duty_cycle_percent(duty_percent);
+}
+// Silence the buzzer.
+pub fn buzz_off(&mut self) {
+let _ = self.buzzer.set_duty_cycle_fully_off();
+}
+// Read the LDR as a raw ADC count.
+// The value is a 12-bit conversion, so it ranges from 0 to 4095. It is
+// not converted to lux or millivolts; see the crate docs for why.
+pub fn read_ldr(&mut self) -> u16 {
+self.ldr_driver.read_raw()
+}
+}
+src/bin/main.rs
+#![no_std]
+#![no_main]
+use esp_backtrace as _;
+use esp_hal::{clock::CpuClock, main};
+use esp_println::println;
+use uferris::{UFerris, uferris_init};
+esp_bootloader_esp_idf::esp_app_desc!();
+const DARK_THRESHOLD: u16 = 1500;
+#[main]
+fn main() -> ! {
+// Configure the device and hand the peripherals to the BSP
+let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+let peripherals = esp_hal::init(config);
+let mut uferris: UFerris = uferris_init(peripherals);
+// Instantiate a delay provider to time the chirp and pace the sampling.
+let delay = esp_hal::delay::Delay::new();
+// Variable to keep track of the last state so we only chirp on a change.
+let mut was_dark = false;
+loop {
+let light = uferris.read_ldr();
+let is_dark = light < DARK_THRESHOLD;
+println!("LDR {light}");
+// LED 1 stays on for as long as the LDR is covered.
+if is_dark {
+uferris.led1_on();
+} else {
+uferris.led1_off();
+}
+// Chirp once on the way into darkness, not on every reading.
+if is_dark && !was_dark {
+uferris.buzz_on(50);
+delay.delay_millis(50);
+uferris.buzz_off();
+}
+was_dark = is_dark;
+// Sample twice a second. The LDR does not move fast enough to need more.
+delay.delay_millis(500);
+}
+}
+CommentsJoin the discussion
+No comments yet. Be the first to comment.
+Rust on Seeed Studio XIAO
+Part 7 of 8
+Up next
+Embedded Rust BSPs with uFerris & Xiao: I2C Support
+This is the seventh post in the µFerris & Xiao BSP series, where we build a Board Support Package from scratch, one peripheral at a time. In the previous post, we added the LDR using the ADC. This pos
+More from this blog
+Embedded Rust BSPs with uFerris & Xiao: I2C Support
+This is the seventh post in the µFerris & Xiao BSP series, where we build a Board Support Package from scratch, one peripheral at a time. In the previous post, we added the LDR using the ADC. This pos
+Sep 22, 2026·15 min read
+Embedded Rust BSPs with uFerris & Xiao: Buzzer Support with PWM
+This is the fifth post in the µFerris & Xiao BSP series, where we build a Board Support Package from scratch, one peripheral at a time.
+Series Past Posts
+Device Setup & Getting Started
+Getting star
+Sep 8, 2026·12 min read
+Embedded Rust BSPs with uFerris & Xiao: LED & Button Support with GPIO
+This is the fourth post in the µFerris & Xiao BSP series, where we build a Board Support Package from scratch, one peripheral at a time. In the previous post, we set up the template. This post is the
+Sep 1, 2026·10 min read
+Embedded Rust BSPs with µFerris & Xiao: Intro to BSPs
+This is the third post in the µFerris & Xiao BSP series, where we build a Board Support Package from scratch, one peripheral at a time. In the previous post we met the board, wired up the toolchain, a
+Aug 25, 2026·11 min read
+T
+The Embedded Rustacean Blog
+115 posts
+Streamlining the Embedded Rust Learning Curve 🦀
+For collaboration: https://www.passionfroot.me/theembeddedrustacean
+© 2026 The Embedded Rustacean Blog
+Archive
+Privacy
+Terms
+SitemapRSS
+
+=== ROW 31 | f007990 | https://dzfrias.dev/blog/rust-wasm-minimal-setup | 2024-07-03T00:00:00 | individual-blogs;twir-links ===
+The Minimal Rust-Wasm Setup for 2024 - dzfrias
+The Rust Part
+The HTML & JS Part
+Wrap-Up
+Blog
+GitHub
+The Minimal Rust-Wasm Setup for 2024
+2024-06-17
+If you're looking to get your Rust code on the browser, chances are you've
+stumbled across the various mdBooks
+written by the Rust+Wasm community.1 These books are great, but they
+require a lot of tooling/setup for what should be a pretty simple task:
+compile my Rust program to WebAssembly and interface with it using
+JavaScript!2
+So, this post is for anyone who was as overwhelmed as I once was with the
+tooling. By the end, you'll have a minimal Rust+Wasm setup, with as few
+dependencies as possible! I'll start from the very beginning and explain the
+role of each tool as we go.
+The Rust Part
+Before we even think about JavaScript or HTML, we're going to want a WebAssembly
+binary. In this section, we're going to build one. If you don't have a Rust
+project already, enter the following commands in your shell:
+$ cargo new --lib rustwasm
+$ cd rustwasm
+Additionally, we'll want to edit the Cargo.toml file to include
+wasm-bindgen. wasm-bindgen is a
+Rust crate that makes it much easier to communicate between Rust and
+JavaScript. It generates bindings so that your JavaScript code doesn't have
+to interact with low-level WebAssembly stuff, and your Rust code doesn't have to
+deal with FFI! Anyway, this is what your Cargo.toml should look like:
+[package]
+name = "rustwasm"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+wasm-bindgen = "0.2"
+[lib]
+crate-type = ["cdylib", "rlib"]
+Notice the crate-type declaration. This is required for compiling Rust
+libraries to WebAssembly.3 Now, we can get to actually writing our
+Rust code! Modify lib.rs to contain the following:
+use wasm_bindgen::prelude::*;
+#[wasm_bindgen]
+extern "C" {
+// Import `alert` from JS runtime
+fn alert(s: &str);
+}
+// Export `greet`
+#[wasm_bindgen]
+pub fn greet() {
+alert("Hello, world!");
+}
+Our Wasm module will export the function, greet, and import the
+JavaScript function,
+alert.4
+This is all we need from the Rust side of things! There's one catch though: you
+can't use cargo build to build the Wasm binary! You need a special tool to
+generate the bindings files. For that, we'll use
+wasm-pack. Go ahead and follow the
+installation instructions if you don't already have it.
+$ wasm-pack build --target web --out-dir web/dist
+This command should build the Rust project and put it in web/dist/ directory
+at the root of your project. If you visit the directory, you'll see a Wasm
+binary accompanied by some JavaScript files. Those JS files are the glue
+between your JavaScript code and your Rust code (they wrap the Wasm module, so
+you don't interface with it directly)!5
+We're (eventually) going to serve our index.html file from the web/
+directory, so it's important that our Wasm stuff is in there. Speaking of HTML
+and JS, it's time to move on!
+The HTML & JS Part
+All I'm going to do from the JavaScript side is make a script (index.js) that
+calls the greet function we defined earlier. Make sure you're operating in the
+web/ directory. Calling greet can be accomplished like so:
+import init, * as wasm from "./dist/rustwasm.js";
+await init();
+wasm.greet();
+The init() call will initialize our Wasm module. Make sure to always call
+this first! Also, this operation is asynchronous, so we're using a top-level
+await, which is an important detail.
+With our index.js file written, all we need is an index.html to serve our
+website! I'll give an example one below:
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Rust+Wasm Minimal Setup</title>
+</head>
+<body>
+<script type="module" src="./index.js"></script>
+</body>
+</html>
+Notice that we make our script of type module. This enables us to use a
+top-level await. We're now ready to serve it! I like using Python to serve my
+files on localhost, but you can use your favorite tool.
+$ python3 -m http.server
+Visit http://localhost:8000/ and you should see the greeting message!
+Wrap-Up
+In this post, we made a website that uses a minimal Rust and WebAssembly
+configuration. I tried to keep this post short and concise, but if you want to
+do further readings to really learn how things work, I've left plenty of
+footnotes!
+As always, if you have any feedback or questions,
+open an issue on this blog's
+GitHub repository!
+See the wasm-bindgen book, the
+wasm-bindgen in-depth tutorial,
+and the
+wasm-pack book. ↩︎
+In fact, I wrote a blog post about the
+struggle! ↩︎
+Read the Rust reference
+for more info on this.
+This StackOverflow post
+was helpful too. ↩︎
+wasm-bindgen can do a lot more than just that though! You can
+read the book
+if you're curious. ↩︎
+If you're wondering what --target web is, it just tells wasm-pack to not
+build for an external bundler or node. It's not the default, but I think it
+simplifies things a lot and reduces the number of external tools (no npm!) ↩︎
+
+=== ROW 32 | f008141 | https://blog.veeso.dev/blog/en/dyn-box-vs-generics-in-rust | 2024-10-30T00:00:00 | individual-blogs;twir-links ===
+Dyn Box Vs. Generics
+veeso_devChristian Visintin
+BlogAbout
+Dyn Box Vs. Generics
+What is the best approach for achieving conditional generics in Rust?
+October 28, 2024 — 6 min read
+Case scenario
+Have you ever done something similar?
+trait Greet {
+fn greet(&self) -> String;
+}
+struct Alice;
+impl Greet for Alice {
+fn greet(&self) -> String {
+"Hello".to_string()
+}
+}
+struct Carlo;
+impl Greet for Carlo {
+fn greet(&self) -> String {
+"Ciao".to_string()
+}
+}
+// ...
+struct User {
+greet: Greet
+}
+// ...
+let greet = Alice;
+let user = User { greet };
+This is something everyone has tried to do in Rust: dynamic types inside of data structures.
+There are two different ways to achieve this in Rust:
+Box dyn
+Generics
+But have you ever wondered what's the best option? In this article I'm going to try to make you understand both
+what's actually better, and how to deal with conditional typing.
+How is this done
+We've just seen this in the introduction example:
+struct User {
+greet: Greet // <-- Greet is a trait here
+}
+Well, of course we can't put Greet in our struct this way, indeed we'll have this error:
+error[E0782]: expected a type, found a trait
+--> src/main.rs:26:3
+|
+26 |   greet: Greet
+|   ^^^^^
+|
+help: you can add the `dyn` keyword if you want a trait object
+|
+26 |   greet: dyn Greet
+|   +++
+So we have two different approaches we can take here:
+Box Dyn
+We can just wrap our Greet into a Box like this
+struct User {
+greet: Box<dyn Greet>,
+}
+let greet = Alice;
+let user = User { greet: Box::new(greet) };
+Here someone could say that this might not be the best approach though and there is a better way to do the same thing.
+Did you mean Generics?
+Generics
+In place of using a Box dyn we could use Generics, which results in a smarter implementation:
+struct User<T>
+where T: Greet
+{
+greet: T,
+}
+let greet = Alice;
+let user = User { greet };
+It looks fine, but does this create some issues? What about conditional typing?
+Conditional types with generics
+But what if we had to instantiate User with a different Greet implementation on a certain condition? Let's take this code for example
+let user = match name {
+"carlo" => User { greet: Carlo },
+"alice" => User { greet: Alice },
+_ => panic!("Unknown user"),
+};
+This would result in an error, because the type of user can't be determined
+error[E0308]: `match` arms have incompatible types
+--> src/main.rs:36:20
+|
+34 |       let user = match name {
+|  ________________-
+35 | |         "carlo" => User { greet: Carlo },
+| |                    --------------------- this is found to be of type `User<Carlo>`
+36 | |         "alice" => User { greet: Alice },
+| |                    ^^^^^^^^^^^^^^^^^^^^^ expected `User<Carlo>`, found `User<Alice>`
+37 | |     };
+| |_____- `match` arms have incompatible types
+|
+= note: expected struct `User<Carlo>`
+found struct `User<Alice>`
+Indeed we can't have in the same variable User<Carlo> and User<Alice>.
+While if we used Box dyn this wouldn't be an issue:
+let user = match name {
+"carlo" => User { greet: Box::new(Carlo) },
+"alice" => User { greet: Box::new(Alice) },
+_ => panic!("Unknown user"),
+};
+So apparently, in this case the only way we can achieve this is by using Box dyn. But, wait, is it true?
+Wrap generics
+Actually there's a different way to get the same result, by using an enum that wraps our Greet types and implements Greet itself, like this:
+enum MyGreet {
+Alice(Alice),
+Carlo(Carlo),
+}
+impl MyGreet {
+/// Call the given closure with the appropriate [`Greet`] implementation
+fn on_greet<F, T>(&self, f: F) -> T
+where
+F: FnOnce(&dyn Greet) -> T,
+{
+match self {
+Self::Alice(v) => f(v),
+Self::Carlo(v) => f(v),
+}
+}
+}
+impl Greet for MyGreet {
+fn greet(&self) -> String {
+self.on_greet(|greet| greet.greet())
+}
+}
+let user = match name {
+"carlo" => User { greet: MyGreet::Carlo(Carlo) },
+"alice" => User { greet: MyGreet::Alice(Alice) },
+_ => panic!("Unknown user"),
+};
+And this builds. So two different ways to achieve the same thing? Yeah, more or less,
+but there are actually some important differences in these two approaches. Let's dive in!
+Box dyn Vs. Generics Wrapper - What's better?
+Before starting the analysis, I want you to imagine that this type containing the Dynamic type
+is exposed publicly in a library you're using. So, what would be better for you?
+Flexibility
+Generics and generics wrappers allow you to have more custom code, on the other hand
+generics wrappers may be complex to achieve in case where some bounds must be respected by the inner type, and in some cases we may
+have several generics to include inside of our Dynamic type data, or could even be undetermined. In all of these cases
+Box dyn should be preferred.
+Performance
+Talking about performance, both cases have pros and cons:
+Generics doesn't have an overhead for dispatching (but generic wrappers do have an overhead though!), on the other hand the compiler must generate specific-code for each type, so the binary size will be bigger.
+Box dyn has a dispatching overhead, but the binary size will be much smaller.
+But, eventually we could say that Box dyn is the winner if we talk about performance.
+Library APIs
+A topic we can't ignore is Library APIs and in particular Open Source libraries.
+When we implement a library and we have to expose a type like this
+struct Data {
+imp: MyTrait
+}
+what is better for the library users? In this case, Generics win for sure.
+Generics give library users better performance if they don't use wrappers and a few generic types (as usually happens), and it's
+surely more flexible for users.
+Actually talking about performance you may say this is in contrast with what I said before, and it's true,
+but when talking about library APIs we need to consider that most users will have simpler implementations compared to
+generic wrappers, so we could say that we may have a smaller binary size and less overhead.
+Conclusions
+While using Box dyn could look simpler, especially for Rust newbies, and in some cases is better for binary sizes, generics should be preferred instead. Actually it's interesting how the compiler usually gives you this hint
+error[E0782]: expected a type, found a trait
+--> src/main.rs:26:3
+|
+26 |   greet: Greet
+|   ^^^^^
+|
+help: you can add the `dyn` keyword if you want a trait object
+|
+26 |   greet: dyn Greet
+|   +++
+as we've seen before, but doesn't mention that Generics could be even more suitable for this purpose, giving newbies a non-optimal hint to deal with this case. Indeed, even I used Box dyn a lot in place of generics in my early days with Rust.
+Discover moreFollow me on Mastodon
+You might also like
+You don't (*always*) need async
+We are too much into async, but we can't go backYou know what? Async Rust is great, but I also was relatively a late adopter of it, mainly because I've worked a lot on CLI tools before
+Can you move a Copy in Rust?
+IntroductionThis article came from a question I saw on Reddit, and it is a good one to ask, even if it seems dumb at first.So we all know that Rust has a co
+Built with ❤️ with Blogatto.
+Privacy Policy
+Christian Visintin © 2026. All rights reserved.
+
+=== ROW 33 | f008275 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-37 | 2025-01-22T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #37
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #37
+The Embedded Rustacean Issue #37
+Jan 17, 2025
+In partnership with
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag @theembeddedrust on Twitter/X or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+Subscriber Count 🧮: {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+🪲 The probe-rs project needs your feedback
+🤖 Rust Coder introduces AI-assisted Rust learning
+💻 Tactility is a new ESP32 OS
+🔄 A new system to auto-convert C to Rust
+🦀 Rust 1.84.3 is out
+📁 The Rust Foundation annual report is out
+📦 Several popular embedded crate updates
+❓ The rise of AI seems to spark more Rust interest
+🛠 NXP Expands the FRDM Board lineup
+📚 Coursera offers new year discounts on Plus subscriptions
+💬
+Quote of the Issue
+❝
+If you lie to the compiler, it will get its revenge.
+Henry Spencer
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+probe-rs needs your feedback (5-min survey)
+What's new in Pictorus - Q1 2025
+Rust News 🗞🦀
+Announcing Rust 1.84.0
+Announcing Rust Global 2025: London
+Mainmatter announces several public Rust workshops ⭐
+This Month in Our Test Infra: December 2024
+The 2024 Rust Foundation Annual Report ⭐
+Interest in traditional programming languages is declining: Some developers are shunning Java, Python, and C++ in favor of Rust – and the rise of AI could be the cause ⭐
+General Embedded News/Trends 📈
+Tactility; The ESP32 Gets Another OS ⭐
+Honda and Renesas Sign Agreement to Develop High-Performance SoC for Software-Defined Vehicles ⭐
+Chipmaker NXP to buy Austria's TTTech Auto
+ESP-IDF Release v5.4
+New System Auto-Converts C To Memory-Safe Rust, But There's a Catch ⭐
+Cognizant and Siemens Collaborate on New Solution Accelerator for Software-Defined Vehicles
+Imagination exits the RISC-V CPU market
+Unveiling Android 14 on the Toradex Verdin AM62: A New Era for Embedded Systems
+QNX Doubles Down on Developer Support to Fuel Embedded Software Innovation Everywhere
+TI Unveils New Edge AI-Enabled Radar Sensor and Automotive Audio Processors
+NXP Unveils Its Lowest-Power MCX Microcontrollers Yet, the MCX L14x and MCX L25x
+SYSGO introduces TPM support in embedded systems
+FRDM to Innovate: Expanding the FRDM Ecosystem with i.MX Applications Processors
+Comparisons with other Languages 🔍
+Code Browser for C, C++, Rust & Dart by KDAB
+Rewrite it in Rust: A Computational Physics Case Study
+Great things about Rust that aren't just performance
+Why is C the safest language?
+Hardware 🛠
+Morse Micro Unveils Its Next-Generation Wi-Fi HaLow SoC
+Raspberry Pi 5 with 16GB RAM launched for $120
+PiSugar3 is a low-cost Raspberry Pi UPS module with RTC, hardware battery protection, and power management features
+Arduino Portenta Proto Kit ME aims to ease prototyping for professionals
+Introducing the IoT Node for LoRaWAN
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+Rusty Christmas Part 3: It’s About Time
+Creating an embedded device driver in Rust
+Practical Rust for transitioning engineers
+Running Rust on STM32 Microcontrollers: A Practical Guide for Embedded Enthusiasts
+Insights, Tools, & Case Studies 📑
+Coursera offers 50% discount on Plus subscriptions (Rest of World) ⭐
+Coursera offers 65% discount on Plus subscriptions (APAC & EMEA) ⭐
+Coursera offers 75% discount on Plus subscriptions (India) ⭐
+RustCoder: AI-assisted Rust learning ⭐
+Tactility...One Year Later ⭐
+Static search trees: 40x faster than binary search
+NuttX vs Rust Embedded HAL
+LLM Bot that reviews Pull Requests for Apache NuttX RTOS
+Understanding Interrupts and Callbacks in Embedded Systems
+Top Trends in Embedded Systems for 2025
+SSH port forwarding from within Rust code
+AI at the edge: It’s just getting started
+General Embedded 📟
+Small language models: 10 Breakthrough Technologies 2025
+Resources from my talk "Hacking the RP2350" at 38C3
+Export data from Arduino Cloud to AWS S3
+VPR: Arm and RISC-V Inter-Processor Communication
+Beyond BLE: Cracking Open the Black-Box of RF Microcontrollers
+Authenticate Embedded Systems in a Counterfeit-Prone Market
+AI-ANNE: (A) (N)eural (N)et for (E)xploration: Transferring Deep Learning Models onto Microcontrollers and Embedded Systems
+Framework Design for the Dynamic Reconfiguration of IoT-Enabled Embedded Systems and “On-the-Fly” Code Execution
+Contrasting Embedded Software Development for the Space Shuttle and the Orion MPCV
+WebAssembly as an ecosystem for programming languages
+Using Edge Machine Learning to save power and development time
+TinyML: A Game-Changer in Edge AI and Use Cases for On-device AI
+Yocto Project Minimal Build
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 KDAB 2025 Rust Scheduled Training Courses
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 Techpresso - Keep up with AI & Tech in 5 mins
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+defmt v0.3.10
+embassy-sync v0.6.2
+esp-idf-svc v0.51.0
+edge-net v0.10.0
+edge-nal-embassy v0.5.0
+esp-idf-hal v0.45.2
+esp-hal v0.23.1
+esp-wifi v0.12.0
+esp-alloc v0.6.0
+esp-hal-embassy v0.6.0
+atsamd-hal v0.21.0
+embassy-stm32 v0.2.0
+esp-idf-sys v0.36.1
+embassy-nrf v0.3.1
+py32-hal v0.2.1
+semihosting v0.1.18
+svdtools v0.4.0
+embassy-rp v0.3.0
+embassy-net v0.6.0
+embassy-embedded-hal v0.3.0
+Upcoming Events & Deadlines 🎭
+Rust Nation UK 2025 - February 19 & 20, 2025, London, UK
+Workshop: Rust-Python Interoperability - February 27 & 28, 2025, Online
+Rust in Paris  - March 14, 2025, Paris, France
+Rustikon - March 26, 2025, Warsaw, Poland
+RUSTAsia - Call For Proposals Open - Deadline December 31, 2024 - March 28, 2025, Hong Kong + Online
+Rust Konf Türkiye - Call For Proposals Open - Deadline January 1, 2025 - April 20, 2025, Istanbul, Turkey
+RustWeek by RustNL - Call For Proposals Open - Deadline January 19, 2025 - May 13-17, 2025, Utrect, The Netherlands
+Open Hardware Summit - Call For Proposals Open - Deadline December 22, 2024 - May 30 & 31st, 2025, Edinburgh, Scotland
+Rust Summit -- Call For Proposals Open - June 7, 2025, Belgrade, Serbia
+Rust Forge - Call For Sponsors Open - August 2025, Wellington, New Zealand
+RustConf - September 2-5, 2025, Location TBD
+Oxidize - September 16-18, 2025, Berlin, Germany
+EuroRust - October 9-10, 2025, Paris, France
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe Based Jobs 🌍
+🦀 (NEW) Senior Staff/Principal Embedded Software Engineer, Orb - World, Munich
+🦀 (NEW) Embedded Linux Developer - Distran, Zurich
+🦀 Rust Developer/Promoter - Collabora, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🦀 Embedded Linux Software Engineer - Canonical, Global, Hybrid
+🦀 Doctoral Thesis: Functional Software Generation - Infineon, Munich, Germany
+🦀 Embedded Linux Software Engineer - ZF, Plzeň, CZ
+North America Based Jobs 🌎
+🦀 (NEW) Senior Staff/Principal Embedded Software Engineer, Orb - World, San Francisco
+🦀 (NEW) Senior Embedded Software Engineer, Project Kuiper Terrestrial Applications - Amazon, Redmond, WA
+🦀 (NEW) Rust embedded Software Engineer - General Dynamics, Dedham, MA
+🦀 (NEW) Sr. Embedded Software Engineer, Energy Products - Tesla, Palo Alto, SF
+🦀 Flight Software in Rust - NASA, USA ⭐
+🦀 Sr Embedded Systems Engineer (Gateway Experience) - Lynq, Boulder, CO
+🦀 Satellite Flight Software Engineer (Rust), Senior - Lynk, Falls Church, VA
+🦀 Embedded Software Engineer, Rust - Anduril, Costa Mesa, CA
+🦀 Rust Software Engineer - K2 Space, Los Angeles, CA
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🦀 Embedded Linux Software Engineer - Canonical, Global, Hybrid
+🦀 Various Rust-Oriented Positions - MIT Lincoln Laboratory, Lexington, MA
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+There’s a reason 400,000 professionals read this daily.
+Join The AI Report, trusted by 400,000+ professionals at Google, Microsoft, and OpenAI. Get daily insights, tools, and strategies to master practical AI skills that drive results.
+Sign up now for free and work smarter, not harder.
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 34 | f008325 | https://onevariable.com/blog/ew25-guide | 2025-02-26T00:00:00 | individual-blogs;twir-links ===
+OneVariable : A Rustacean's Guide to Embedded World 2025
+Home
+Work with us
+Blog
+Get in Touch
+A Rustacean's Guide to Embedded World 2025
+2025-02-24
+Embedded World is a trade show for the development of Embedded Systems, located in Nuremberg Germany.
+This year, the show runs March 11th to March 13th.
+Rust has showcased at Embedded World for the past few years, and the list of companies offering services
+in Rust continues to grow.
+OneVariable GmbH will be presenting this year, and we put together a list of all the booths featuring
+services or support for Rust, to make sure we can visit them all while we're there.
+Come say hello to all of the companies listed here, and support all the folks showcasing Rust at
+Embedded World 2025! Don't forget to ask your favorite silicon and tool vendors what their plans
+are for supporting Rust!
+If your company is also showcasing Rust at Embedded World and we missed you in this post,
+drop us a message, and we'll add you.
+Rust on Embedded Booth (Hall 5, 5-280)
+The Rust On Embedded Booth is shared by three companies that provide advising, consulting, development,
+and training services in Rust:
+OneVariable GmbH (that's us!)
+Tweede golf
+Sarif
+If you're interested in chatting about Rust, or need assistance with starting or scaling up your
+next project, come talk to all three companies in one place!
+OneVariable will have a hardware demo for Poststation, a lightweight communication protocol for
+connecting embedded systems to applications. It features fifteen RP2040 and RP2350 devices connected
+to a single computer, with firmware built in Rust.
+Tweede golf will be giving two talks: "Rust Embedded Ecosystem: An Overview" (March 11th, 11:30am),
+and "Using Rust with Existing Systems" (March 11th, 2:15pm), and will be giving a class:
+"Advanced Embedded Rust" (March 12th, 2:00pm).
+Sarif will have a hardware demo of an electronic board game device, featuring an STM32 microcontroller
+and firmware built in Rust.
+Ferrous Systems (Hall 4, 4-402)
+Ferrous Systems provides advising, consulting, development, and training services in Rust.
+They will also be presenting Ferrocene for Rust, an open-source qualified Rust compiler toolchain
+for safety- and mission-critical. Ferrocene is qualified for automotive, industrial and medical
+development, under ISO26262 (ASIL D), IEC 61508 (SIL 4) and IEC 62304 available targeting Linux,
+QNX Neutrino or your choice of RTOS.
+Espressif Systems (Hall 4A, 4A-131)
+Espressif Systems are the developers of the ESP32 family of chips, which offer RISC-V and
+Xtensa architecture microcontollers, as well as support for Wi-Fi, BLE, and other wireless
+communication protocols.
+Espressif is one of the earliest silicon vendors to offer official support for development in Rust, and
+members of the esp-rs project (libraries and tooling for developing on ESP32 devices in Rust)
+will be attending Embedded World.
+KDAB (Hall 4, 4-302)
+KDAB provides consulting, development, and training services in Rust. From their booth page:
+The KDAB Group is a globally recognized provider for software consulting, development and
+training, specializing in embedded devices and complex cross-platform desktop applications.
+In addition to being leading experts in Qt, C++ and 3D technologies for over two decades,
+KDAB provides deep expertise across the stack, including Linux, Rust and modern UI frameworks.
+AdaCore (Hall 4, 4-148)
+AdaCore offers software development and verification tools for mission-critical, safety-critical,
+and security-critical systems. From their booth page:
+Customers have used AdaCore products to field and maintain various critical applications
+in domains such as commercial and government systems, railway, space, automotive,
+security systems, air traffic management/control, medical devices, and financial services.
+AdaCore products are open source and come with expert online support provided by the
+developers themselves.
+Adacore will also be presenting GNAT Pro for Rust, an early-access toolchain for Rust in critical
+industries. From their product website:
+We’re developing GNAT Pro for Rust with the intent to support safety-certification needs such
+as avionics (DO-178), rail (EN-50128), space (ECSS-E-ST-40C and ECSS-Q-ST-80C) and others.
+Our roadmap includes certification of language libraries (such as a subset of libcore),
+source-to-object traceability study and compiler qualification, similar to what is already
+available with GNAT Pro for Ada and GNAT Pro for C/C++.
+HighTec EDV (Hall 4, 4-432)
+HighTec EDV offers Rust compiler toolchains for critical embedded targets, including
+Infineon AURIX and ARM based Stellar from STMicroelectronics.
+HighTec EDV will also be presenting their Compiler Toolchain for Rust. From their product page:
+HighTec's pioneering step towards the Rust compiler qualification, that goes beyond language
+conformity, complements its successful C/C++ compiler for AURIX and ARM Stellar microcontrollers,
+which are also ASIL D qualified according to ISO 26262.
+Yalantis (Hall 5, 5-320b)
+Yalantis provides development services for IoT devices in Rust. From their booth page:
+With over 16 years of experience, we specialize in delivering IT solutions across various
+industries, including healthcare, logistics, automotive and smart manufacturing.
+Our expertise spans IoT product development, custom software development, cloud computing,
+AI-driven solutions, and IoT integration, enabling businesses to enhance efficiency,
+reduce costs, and unlock new revenue opportunities.
+Slint (Hall 4, 4-300)
+Slint offers an open source UI toolkit written in Rust for a variety of platforms, including
+bare metal systems, RTOS platforms, Android, and Linux. From their booth page:
+Slint is an open source UI toolkit designed for developing modern, high-performance,
+and resource-efficient user interfaces. Built with a declarative programming approach,
+Slint allows developers to create sleek, responsive UIs that run smoothly even on low-power
+and memory-constrained devices.
+JetBrains (Hall 5, 5-474)
+JetBrains are the develops of RustRover, an IDE for development in Rust. From their
+booth page:
+At JetBrains, we have a passion for making developers more productive by simplifying
+challenging tasks and automating routine ones. Among our many products, you will find
+various tools for embedded development like CLion, a cross-platform IDE for C and C++;
+RustRover, an IDE for Rust developers; and PyCharm, a Python IDE for professional
+developers.
+Igalia (Hall 4, 4-636)
+Igalia is an open source consultancy with expertise in Rust. From their booth page:
+Our engineers have expertise in a wide range of technological areas, including browsers
+and client-side web technologies, graphics pipeline, compilers and virtual machines.
+Leading the development of essential projects in the areas of web rendering and browsers,
+we have the most WebKit, Chromium/Blink, Servo and Firefox expertise found in the
+consulting business, including many reviewers and committers. Igalia designs, develops,
+customises and optimises GNU/Linux-based solutions for companies across the globe.
+Igalia is also a major contributor to the Servo Browser, an embeddable browser engine
+written in Rust.
+wolfSSL (Hall 4, 4-201a)
+wolfSSL offers Embedded TLS Library for Applications, Devices and the Cloud. From their booth page:
+Protect Your Embedded Systems with wolfSSLWith over 2 billion secured connections, wolfSSL
+provides FIPS 140-3 validated cryptography (Cert #4718) to safeguard embedded projects.
+Download our open-source solutions today: https://www.wolfssl.com/download/.
+Unmatched Efficiency for Resource-Constrained Devices
+They have been experimenting (and expanding!) the Rust proposition with rustls-wolfcrypt-provider
+and wolfssl-rs (from their friends at ExpressVPN).
+OneVariable — Imprint — Privacy
+
+=== ROW 35 | f008686 | https://pranitha.dev/posts/neural-networks-with-candle | 2025-11-05T00:00:00 | individual-blogs;twir-links ===
+Neural Networks with Candle
+Posts
+Work
+About
+|
+Neural Networks with Candle
+on  2025-11-02
+📚 Attribution: The examples and explanations here are based on Appendix A (the PyTorch introduction) from Build a Large Language Model (From Scratch) by Sebastian Raschka, with the Python/PyTorch code ported to Rust/Candle. The diagrams are also adapted from the book.
+This is a small guide for getting started with neural networks in Rust using Candle — a minimalist ML framework by Hugging Face. If you want to get hands-on with ML in Rust, this guide takes you from basic tensor operations to building and training a complete neural network.
+Why Candle?
+Candle is designed to be simple and easy to use. If you've used PyTorch before, many concepts will feel familiar:
+Tensors as the core data structure
+Similar operations for creating and manipulating tensors
+Automatic differentiation for gradients
+GPU support when you need it
+Pure Rust, no Python runtime needed
+Another advantage is that Candle's API is intentionally similar to PyTorch, which makes porting code pretty straightforward.
+Setting Up Candle
+To get started with Candle, add it to your Cargo.toml file:
+[dependencies]
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+rand = "0.9.2"
+candle-core: Contains tensors and basic operations
+candle-nn: Provides neural network layers, optimizers, and loss functions
+rand: Used for shuffling data in the DataLoader
+CPU vs GPU
+By default, Candle works on CPU. If you want GPU support, you can enable CUDA features:
+[dependencies]
+candle-core = { version = "0.9.1", features = ["cuda"] }
+candle-nn = { version = "0.9.1", features = ["cuda"] }
+You'll need CUDA installed on your system for GPU support. All examples in this post use CPU, so that you can follow along on any machine.
+Note: This guide uses Candle version 0.9.1. As Candle is actively developed, some APIs may change in future versions. Check the official documentation for the latest updates.
+Understanding Tensors
+Tensors represent a mathematical concept that generalizes vectors and matrices to potentially higher dimensions. In other words, tensors are mathematical objects that can be characterized by their order (or rank), which provides the number of dimensions.
+For example, a scalar (just a number) is a tensor of rank 0, a vector is a tensor of rank 1, and a matrix is a tensor of rank 2. A three-dimensional vector, which consists of three elements, is still a rank 1 tensor.
+Tensors as Data Containers
+From a computational perspective, tensors serve as data containers. They hold multidimensional data, where each dimension represents a different feature. Tensor libraries like Candle can create, manipulate, and compute with these arrays efficiently. In this context, a tensor library functions as an array library.
+Candle tensors are similar to PyTorch tensors but built for Rust. They have several features that are important for deep learning:
+An automatic differentiation engine for computing gradients
+GPU support to speed up deep neural network training
+Efficient operations optimized for machine learning
+Candle adopts a PyTorch-like API for its tensor operations, which makes it familiar if you've used PyTorch before.
+Creating Tensors
+As mentioned earlier, Candle tensors are data containers for array-like structures. A scalar is a zero-dimensional tensor (just a number), a vector is a one-dimensional tensor, and a matrix is a two-dimensional tensor. For higher dimensions, we refer to them as 3D tensors, 4D tensors, and so on.
+We can create Candle tensors using the Tensor::new function:
+use candle_core::{Tensor, Device};
+fn main() -> Result<(), candle_core::Error> {
+let device = Device::Cpu;
+// Creates a zero-dimensional tensor (scalar)
+let tensor0d = Tensor::new(&[1u8], &device)?;
+// Creates a one-dimensional tensor (vector)
+let tensor1d = Tensor::new(&[1., 2., 3.], &device)?;
+// Creates a two-dimensional tensor (matrix)
+let tensor2d = Tensor::new(&[[1., 2.], [3., 4.]], &device)?;
+// Creates a three-dimensional tensor
+let tensor3d = Tensor::new(&[[[1., 2.], [3., 4.]], [[5., 6.], [7., 8.]]], &device)?;
+Ok(())
+}
+In Candle, we need to specify a device (CPU or GPU) when creating tensors. The ? operator handles potential errors that might occur during tensor creation.
+Tensor Data Types
+When creating tensors in Candle, the data type depends on what values you provide. We can check a tensor's data type using the .dtype() method:
+let tensor1d = Tensor::new(&[1u8], &device)?;
+println!("{:?}", tensor1d.dtype());
+This prints:
+U8
+If we create tensors from floating-point numbers, Candle uses the type from Rust's default float literal, which is 64-bit:
+let floatvec = Tensor::new(&[1.0, 2.0, 3.0], &device)?;
+println!("{:?}", floatvec.dtype());
+The output is:
+F64
+However, for deep learning, 32-bit floating-point precision is usually preferred. It offers sufficient precision for most tasks while consuming less memory and computational resources than 64-bit. GPU architectures are also optimized for 32-bit computations, which speeds up model training and inference.
+Changing Data Types
+You can change the precision using a tensor's to_dtype method. The following code demonstrates changing a tensor to 32-bit or 8-bit:
+let tensor = Tensor::new(&[[[1., 2.], [3., 4.]]], &device)?;
+println!("{:?}", tensor.dtype()); // F64
+let tensor = tensor.to_dtype(DType::F32)?;
+println!("{:?}", tensor.dtype()); // F32
+let tensor = tensor.to_dtype(DType::U8)?;
+println!("{:?}", tensor.dtype()); // U8
+Candle supports various data types including F64, F32, U8, U32, and more. You can find them in the candle_core::DType enum.
+Common Tensor Operations
+Comprehensive coverage of all the different Candle tensor operations is not included in this post. However, we will cover the most relevant operations you'll need for building neural networks.
+We've already seen how to create tensors using Tensor::new:
+let tensor2d = Tensor::new(&[[1., 2., 3.], [4., 5., 6.]], &device)?;
+println!("{}", tensor2d);
+This prints:
+[[1., 2., 3.],
+[4., 5., 6.]]
+Tensor[[2, 3], f64]
+Checking Tensor Shape
+The .shape() method allows us to access the shape of a tensor:
+println!("{:?}", tensor2d.shape());
+The output is:
+[2, 3]
+This means the tensor has two rows and three columns.
+Reshaping Tensors
+To reshape the tensor into a 3 × 2 tensor, we can use the .reshape method:
+println!("{}", tensor2d.reshape((3, 2))?);
+This prints:
+[[1., 2.],
+[3., 4.],
+[5., 6.]]
+Tensor[[3, 2], f64]
+Note that Candle's reshape requires the new shape to have the same total number of elements as the original tensor.
+Transposing Tensors
+We can use .t() to transpose a tensor, which means flipping it across its diagonal:
+println!("{}", tensor2d.t()?);
+The output is:
+[[1., 4.],
+[2., 5.],
+[3., 6.]]
+Tensor[[3, 2], f64]
+Matrix Multiplication
+The common way to multiply two matrices in Candle is the .matmul method:
+println!("{}", tensor2d.matmul(&tensor2d.t()?)?);
+The output is:
+[[14., 32.],
+[32., 77.]]
+Tensor[[2, 2], f64]
+Note that in Candle, we need to use a reference (&) when passing tensors to methods like matmul to avoid moving the tensor.
+These are the basic operations you'll use most often. Additional operations will be introduced as needed throughout this post.
+Seeing Models as Computation Graphs
+Now let's look at Candle's automatic differentiation engine. Candle's autograd system provides functions to compute gradients in computational graphs automatically.
+A computational graph is a directed graph that allows us to express and visualize mathematical expressions. In the context of deep learning, a computation graph lays out the sequence of calculations needed to compute the output of a neural network—we need this to compute the required gradients for backpropagation, the main training algorithm for neural networks.
+A Concrete Example
+Let's look at a concrete example to illustrate the concept of a computation graph. The following code implements the forward pass (prediction step) of a simple logistic regression classifier, which can be seen as a single-layer neural network. It returns a score between 0 and 1, which is compared to the true class label (0 or 1) when computing the loss.
+use candle_core::{Tensor, Device};
+use candle_nn::ops::sigmoid;
+use candle_nn::loss::binary_cross_entropy_with_logit;
+fn main() -> Result<(), candle_core::Error> {
+let device = Device::Cpu;
+// True label
+let y = Tensor::new(&[1.], &device)?;
+// Input feature
+let x1 = Tensor::new(&[1.1], &device)?;
+// Weight parameter
+let w1 = Tensor::new(&[2.2], &device)?;
+// Bias unit
+let b = Tensor::new(&[0.], &device)?;
+// Net input
+let z = (x1 * w1 + b)?;
+// Activation and output (computed for illustration, matching the diagram)
+let a = sigmoid(&z)?;
+// Loss: uses z (logits) directly, as binary_cross_entropy_with_logit
+// applies sigmoid internally for numerical efficiency
+let loss = binary_cross_entropy_with_logit(&z, &y)?;
+println!("{}", loss);
+Ok(())
+}
+If not all components in the preceding code make sense to you, don't worry. The point of this example is not to implement a logistic regression classifier but rather to illustrate how we can think of a sequence of computations as a computation graph.
+The computation flows like this:
+Input feature x1 is multiplied by weight w1
+Bias b is added to get net input z
+Sigmoid activation function produces output a
+Loss is computed by comparing output a with target label y
+Candle builds such a computation graph in the background, and we can use this to calculate gradients of a loss function with respect to the model parameters (here w1 and b) to train the model.
+Note: In the code, we pass z (not a) to binary_cross_entropy_with_logit because this function combines the sigmoid activation and binary cross-entropy loss computation for numerical efficiency. The variable a is computed separately to illustrate the full computation graph as shown in the diagram.
+Automatic Differentiation Made Easy
+If we carry out computations in Candle, we can build a computational graph to compute gradients. Gradients are required when training neural networks via the popular backpropagation algorithm, which can be considered an implementation of the chain rule from calculus for neural networks.
+Partial Derivatives and Gradients
+Partial derivatives measure the rate at which a function changes with respect to one of its variables. A gradient is a vector containing all of the partial derivatives of a multivariate function—a function with more than one variable as input.
+If you're not familiar with partial derivatives, gradients, or the chain rule from calculus, don't worry. On a high level, all you need to know is that the chain rule is a way to compute gradients of a loss function given the model's parameters in a computation graph. This provides the information needed to update each parameter to minimize the loss function, which serves as a proxy for measuring the model's performance.
+Computing Gradients in Candle
+How is this related to automatic differentiation? Candle's autograd (automatic differentiation) engine constructs a computational graph by tracking operations performed on Var tensors (variables). Then, by calling .backward(), we can compute the gradients of the loss with respect to the model parameters.
+In Candle, we mark tensors that need gradient tracking using the Var type:
+use candle_core::{Device, Tensor, Var};
+use candle_nn::loss::binary_cross_entropy_with_logit;
+fn main() -> Result<(), candle_core::Error> {
+let device = Device::Cpu;
+let y = Tensor::new(&[1.], &device)?;
+let x1 = Tensor::new(&[1.1], &device)?;
+let w1 = Var::new(&[2.2], &device)?;
+let b = Var::new(&[0.], &device)?;
+let z = (&x1 * w1.as_tensor() + b.as_tensor())?;
+let loss = binary_cross_entropy_with_logit(&z, &y.flatten_all()?)?;
+// Backward pass - compute gradients
+let grads = loss.backward()?;
+// Get gradients for our parameters
+let grad_l_w1 = grads.get(&w1);
+let grad_l_b = grads.get(&b);
+println!("{}", grad_l_w1.unwrap());
+println!("{}", grad_l_b.unwrap());
+Ok(())
+}
+This prints:
+[-0.0898]
+Tensor[[1], f64]
+[-0.0817]
+Tensor[[1], f64]
+The key differences from regular tensors:
+We create Var instead of Tensor for parameters that need gradients
+We use w1.as_tensor() to get the underlying tensor for computations
+We call loss.backward() to compute all gradients
+We retrieve gradients using grads.get(&variable)
+While the calculus concepts may seem overwhelming, all you need to know is that Candle takes care of the calculus for us via the .backward() method—we won't need to compute any derivatives or gradients by hand. Candle automatically tracks operations and computes the necessary gradients for training neural networks.
+Implementing Multilayer Neural Networks
+Next, we focus on Candle as a library for implementing deep neural networks. To provide a concrete example, let's look at a multilayer perceptron—a fully connected neural network as illustrated below.
+Defining a Neural Network
+When implementing a neural network in Candle, we can define a struct to hold our layers and implement the Module trait to specify the forward pass. This approach provides structure and makes it easier to build and train models.
+Within our struct, we define the network layers in the new function and specify how the layers interact in the forward method. The forward method describes how the input data passes through the network and comes together as a computation graph. The following code implements a classic multilayer perceptron with two hidden layers:
+use candle_core::{Error, Tensor};
+use candle_nn::{Linear, Module, VarBuilder, linear};
+#[derive(Debug)]
+struct NeuralNetwork {
+layer_1: Linear,
+layer_2: Linear,
+output_layer: Linear,
+}
+impl NeuralNetwork {
+fn new(num_inputs: usize, num_outputs: usize, vb: VarBuilder) -> Result<Self, Error> {
+Ok(Self {
+// 1st hidden layer
+layer_1: linear(num_inputs, 30, vb.pp("l1"))?,
+// 2nd hidden layer
+layer_2: linear(30, 20, vb.pp("l2"))?,
+// output layer
+output_layer: linear(20, num_outputs, vb.pp("out"))?,
+})
+}
+}
+impl Module for NeuralNetwork {
+fn forward(&self, x: &Tensor) -> Result<Tensor, Error> {
+// Pass through 1st hidden layer with ReLU activation
+let x = self.layer_1.forward(x)?;
+let x = x.relu()?;
+// Pass through 2nd hidden layer with ReLU activation
+let x = self.layer_2.forward(&x)?;
+let x = x.relu()?;
+// Output layer (logits)
+self.output_layer.forward(&x)
+}
+}
+Coding the number of inputs and outputs as variables allows us to reuse the same code for datasets with different numbers of features and classes. The linear function creates a fully connected layer that takes the number of input and output nodes as arguments. Nonlinear activation functions (ReLU) are placed between the hidden layers.
+Creating a Model Instance
+We can instantiate a new neural network object as follows:
+use candle_core::{DType, Device};
+use candle_nn::{VarBuilder, VarMap};
+fn main() -> Result<(), candle_core::Error> {
+let device = Device::Cpu;
+let varmap = VarMap::new();
+let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+let model = NeuralNetwork::new(50, 3, vb)?;
+Ok(())
+}
+Before using this model, we can print it to see its structure:
+println!("{:#?}", model);
+This prints something like:
+NeuralNetwork {
+layer_1: Linear { ... },
+layer_2: Linear { ... },
+output_layer: Linear { ... }
+}
+Counting Trainable Parameters
+Next, let's check the total number of trainable parameters in this model:
+fn num_trainable_params(varmap: &VarMap) -> usize {
+let mut total_params = 0;
+for var in varmap.all_vars().iter() {
+let tensor = var.as_tensor();
+total_params += tensor.elem_count();
+}
+total_params
+}println!(
+"Total number of trainable model parameters: {}",
+num_trainable_params(&varmap)
+);
+This prints:
+Total number of trainable model parameters: 2213
+Each parameter in the VarMap is trainable and will be updated during training.
+Inspecting Layer Weights
+In our neural network model, the trainable parameters are contained in the Linear layers. A Linear layer multiplies the inputs with a weight matrix and adds a bias vector. This is sometimes referred to as a feedforward or fully connected layer.
+We can access the weight parameter matrix of the first layer:
+println!("{}", model.layer_1.weight());
+This prints:
+[[-0.2709,  0.1136, -0.2754, ...,  0.2414, -0.0017,  0.2840],
+[-0.0263,  0.0686,  0.5760, ...,  0.3354,  0.1075,  0.0547],
+[-0.2206,  0.0207, -0.2632, ..., -0.0896,  0.2400, -0.1271],
+...
+[-0.1658, -0.1832, -0.2016, ...,  0.0093, -0.0543,  0.3168],
+[-0.1934, -0.1501,  0.1322, ..., -0.2806, -0.2028, -0.0779],
+[ 0.3975,  0.0921, -0.0050, ...,  0.1652,  0.1653,  0.1574]]
+Tensor[[30, 50], f32]
+Let's check its dimensions:
+println!("{:?}", model.layer_1.weight().shape());
+The result is:
+[30, 50]
+The weight matrix is a 30 × 50 matrix. These weights are initialized with small random numbers, which differ each time we instantiate the network. In deep learning, initializing model weights with small random numbers is desired to break symmetry during training. Otherwise, the nodes would perform the same operations and updates during backpropagation, which would not allow the network to learn complex mappings.
+Using the Model for Forward Pass
+Now let's see how the network is used via the forward pass:
+let x = Tensor::rand(0f32, 1f32, (1, 50), &device)?;
+let output = model.forward(&x)?;
+println!("{}", output);
+The result is something like:
+[[0.4167, 1.0375, 0.6351]]
+Tensor[[1, 3], f32]
+We generated a single random training example as a toy input (note that our network expects 50-dimensional feature vectors) and fed it to the model, returning three scores.
+The forward pass refers to calculating output tensors from input tensors. This involves passing the input data through all the neural network layers, starting from the input layer, through hidden layers, and finally to the output layer.
+Converting Logits to Probabilities
+In Candle, it's common practice to code models such that they return the outputs of the last layer (logits) without passing them to a nonlinear activation function. That's because loss functions combine the softmax (or sigmoid for binary classification) operation with the loss computation in a single operation for numerical efficiency.
+If we want to compute class-membership probabilities for our predictions, we call the softmax function explicitly:
+use candle_nn::ops::softmax;
+let output = model.forward(&x)?;
+let probabilities = softmax(&output, 1)?;
+println!("{}", probabilities);
+This prints something like:
+Tensor[[0.3113, 0.3934, 0.2952]]
+The values can now be interpreted as class-membership probabilities that sum up to 1. The values are roughly equal for this random input, which is expected for a randomly initialized model without training.
+Setting Up Data Loaders
+Before we can train our model, we need to set up data loaders to iterate over our dataset during training. The overall idea is to create a Dataset that holds our data, then create a DataLoader that samples batches from it.
+Creating a Toy Dataset
+Let's start by creating a simple toy dataset of five training examples with two features each. We also create labels for these examples: three belong to class 0, and two belong to class 1. In addition, we make a test set consisting of two entries:
+use candle_core::{DType, Device, Error, Tensor};
+fn main() -> Result<(), Error> {
+let device = Device::Cpu;
+let x_train = Tensor::new(
+&[
+[-1.2, 3.1],
+[-0.9, 2.9],
+[-0.5, 2.6],
+[2.3, -1.1],
+[2.7, -1.5],
+],
+&device,
+)?
+.to_dtype(DType::F32)?;
+let y_train = Tensor::new(&[0., 0., 0., 1., 1.], &device)?.to_dtype(DType::U32)?;
+let x_test = Tensor::new(&[[-0.8, 2.8], [2.6, -1.6]], &device)?.to_dtype(DType::F32)?;
+let y_test = Tensor::new(&[0., 1.], &device)?.to_dtype(DType::U32)?;
+Ok(())
+}
+Note that class labels should start with 0, and the largest class label value should not exceed the number of output nodes minus 1. So if we have class labels 0, 1, 2, 3, and 4, the neural network output layer should consist of five nodes.
+Defining a Dataset Struct
+Next, we create a custom Dataset struct to hold our data:
+struct Dataset {
+features: Tensor,
+labels: Tensor,
+}
+impl Dataset {
+fn new(x: Tensor, y: Tensor) -> Self {
+Self {
+features: x,
+labels: y,
+}
+}
+fn get_item(&self, index: usize) -> Result<(Tensor, Tensor), Error> {
+let one_x = self.features.get(index)?;
+let one_y = self.labels.get(index)?;
+Ok((one_x, one_y))
+}
+fn len(&self) -> Result<usize, Error> {
+self.labels.dims1()
+}
+}
+Let's create training and testing datasets:
+// We clone the tensors because Dataset::new takes ownership.
+// This keeps the originals available if needed later.
+// For large datasets, consider using references to avoid cloning overhead.
+let train_ds = Dataset::new(x_train.clone(), y_train.clone());
+let test_ds = Dataset::new(x_test.clone(), y_test.clone());
+The main components of our Dataset are:
+new method that sets up the features and labels
+get_item method that returns exactly one data record and its label via an index
+len method that returns the total length of the dataset
+We can verify the length:
+println!("{}", train_ds.len()?); // Prints: 5
+Creating a DataLoader
+Now we create a DataLoader that samples batches from our dataset. In Rust, we implement this using the Iterator trait, which allows us to create batches on-demand rather than pre-computing all batches upfront.
+use rand::seq::SliceRandom;
+struct DataLoader {
+dataset: Dataset,
+batch_size: usize,
+indices: Vec<usize>,
+drop_last: bool,
+}
+impl DataLoader {
+fn new(
+dataset: Dataset,
+batch_size: usize,
+shuffle: bool,
+drop_last: bool,
+) -> Result<Self, Error> {
+let len = dataset.len()?;
+let mut indices: Vec<usize> = (0..len).collect();
+if shuffle {
+indices.shuffle(&mut rand::rng());
+}
+Ok(Self {
+dataset,
+batch_size,
+indices,
+drop_last,
+})
+}
+fn iter(&self) -> DataLoaderIter {
+DataLoaderIter {
+dataset: &self.dataset,
+indices: &self.indices,
+batch_size: self.batch_size,
+drop_last: self.drop_last,
+current: 0,
+}
+}
+fn total_batches(&self) -> usize {
+if self.drop_last {
+self.indices.len() / self.batch_size
+} else {
+(self.indices.len() + self.batch_size - 1) / self.batch_size
+}
+}
+}
+struct DataLoaderIter<'a> {
+dataset: &'a Dataset,
+indices: &'a [usize],
+batch_size: usize,
+drop_last: bool,
+current: usize,
+}
+impl<'a> Iterator for DataLoaderIter<'a> {
+type Item = Result<(Tensor, Tensor), Error>;
+fn next(&mut self) -> Option<Self::Item> {
+if self.current >= self.indices.len() {
+return None;
+}
+let end = (self.current + self.batch_size).min(self.indices.len());
+let batch_indices = &self.indices[self.current..end];
+// Drop last incomplete batch if specified
+if self.drop_last && batch_indices.len() < self.batch_size {
+return None;
+}
+self.current = end;
+let mut batch_features = Vec::new();
+let mut batch_labels = Vec::new();
+for &idx in batch_indices {
+match self.dataset.get_item(idx) {
+Ok((features, labels)) => {
+batch_features.push(features);
+batch_labels.push(labels);
+}
+Err(e) => return Some(Err(e)),
+}
+}
+match (
+Tensor::stack(&batch_features, 0),
+Tensor::stack(&batch_labels, 0),
+) {
+(Ok(batch_x), Ok(batch_y)) => Some(Ok((batch_x, batch_y))),
+(Err(e), _) | (_, Err(e)) => Some(Err(e)),
+}
+}
+}
+Let's create data loaders for training and testing:
+let train_loader = DataLoader::new(train_ds, 2, true, true)?;
+let test_loader = DataLoader::new(test_ds, 2, false, true)?;
+The parameters are:
+batch_size: How many examples per batch
+shuffle: Whether to shuffle the data (useful for training)
+drop_last: Whether to drop the last incomplete batch
+Iterating Over Batches
+We can iterate over the data loader:
+for (idx, batch_result) in train_loader.iter().enumerate() {
+let (x, y) = batch_result?;
+println!("Batch {}: {}  {}", idx + 1, x, y);
+}
+The result is:
+Batch 1: [[-0.9000,  2.9000],
+[-0.5000,  2.6000]]
+Tensor[[2, 2], f32]  [0, 0]
+Tensor[[2], u32]
+Batch 2: [[ 2.3000, -1.1000],
+[-1.2000,  3.1000]]
+Tensor[[2, 2], f32]  [1, 0]
+Tensor[[2], u32]
+The data loader iterates over the training dataset, visiting each training example exactly once. This is known as a training epoch. Since we set shuffle=true, the order of examples will be different each time we create a new data loader.
+Why Drop Last Batch?
+We specified a batch size of 2, but if we had set drop_last=false, the last batch might contain only one example (since 5 is not evenly divisible by 2). Having a substantially smaller batch as the last batch in a training epoch can disturb convergence during training. Setting drop_last=true prevents this by omitting the incomplete last batch.
+Building From Scratch
+Unlike PyTorch, which has built-in Dataset and DataLoader classes, we built these from scratch in Candle. This gives us more control and helps understand what's happening under the hood. The core concepts remain the same:
+A dataset holds data and provides individual items
+A data loader batches items together and handles shuffling
+We iterate through batches during training
+A Typical Training Loop
+Let's now train a neural network on our toy dataset. The following code shows the training loop:
+use candle_nn::{Optimizer, SGD};
+use candle_nn::loss::cross_entropy;
+let varmap = VarMap::new();
+let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+// The dataset has two features and two classes
+let model = NeuralNetwork::new(2, 2, vb)?;
+// Create optimizer with learning rate 0.5
+let mut optimizer = SGD::new(varmap.all_vars(), 0.5)?;
+let num_epochs = 3;
+for epoch in 0..num_epochs {
+for (batch_idx, batch_result) in train_loader.iter().enumerate() {
+let (features, labels) = batch_result?;
+// Forward pass
+let logits = model.forward(&features)?;
+let loss = cross_entropy(&logits, &labels)?;
+// Backward pass and parameter update
+optimizer.backward_step(&loss)?;
+// Logging
+let loss_val = loss.to_vec0::<f32>()?;
+println!(
+"Epoch: {:03}/{:03} | Batch {:03}/{:03} | Train Loss: {:.2}",
+epoch + 1,
+num_epochs,
+batch_idx + 1,
+train_loader.total_batches(),
+loss_val
+);
+}
+}
+Running this code yields output like:
+Epoch: 001/003 | Batch 001/002 | Train Loss: 3.64
+Epoch: 001/003 | Batch 002/002 | Train Loss: 0.00
+Epoch: 002/003 | Batch 001/002 | Train Loss: 3.33
+Epoch: 002/003 | Batch 002/002 | Train Loss: 0.00
+Epoch: 003/003 | Batch 001/002 | Train Loss: 0.00
+Epoch: 003/003 | Batch 002/002 | Train Loss: 0.00
+As we can see, the loss reaches near 0 after three epochs, a sign that the model converged on the training set.
+Understanding the Training Process
+Here, we initialize a model with two inputs and two outputs because our toy dataset has two input features and two class labels to predict. We use a stochastic gradient descent (SGD) optimizer with a learning rate of 0.5.
+The learning rate is a hyperparameter—a tunable setting we must experiment with based on observing the loss. Ideally, we want to choose a learning rate such that the loss converges after a certain number of epochs. The number of epochs is another hyperparameter to choose.
+As discussed earlier, we pass the logits directly into the cross_entropy loss function, which applies the softmax function internally for numerical efficiency. In Candle, optimizer.backward_step(&loss) does both the gradient computation and the parameter update in one call, which is convenient.
+Making Predictions
+After training the model, we can use it to make predictions:
+let outputs = model.forward(&x_train)?;
+println!("{}", outputs);
+The results might look like:
+[[  4.7010e1,  -3.7848e1],
+[  4.2802e1,  -3.4469e1],
+[  3.7059e1,  -2.9854e1],
+[ -6.4291e0, -3.9145e-1],
+[ -8.2538e0,  3.6420e-2]]
+Tensor[[5, 2], f32]
+Converting to Probabilities
+To obtain the class membership probabilities, we use the softmax function:
+use candle_nn::ops::softmax;
+let probas = softmax(&outputs, 1)?;
+println!("{}", probas);
+This outputs something like:
+[[  1.0000e0, 1.4011e-37],
+[  1.0000e0, 2.7653e-34],
+[  1.0000e0, 8.7143e-30],
+[ 2.3815e-3,  9.9762e-1],
+[ 2.5089e-4,  9.9975e-1]]
+Tensor[[5, 2], f32]
+Looking at the first row, the first value means the training example has a 99.91% probability of belonging to class 0 and a 0.09% probability of belonging to class 1.
+Getting Class Labels
+We can convert these values into class label predictions using the argmax function, which returns the index position of the highest value in each row:
+let predictions = probas.argmax(1)?;
+println!("predictions: {}", predictions);
+This prints:
+[0, 0, 0, 1, 1]
+Tensor[[5], u32]
+Note that it's unnecessary to compute softmax probabilities to obtain the class labels. We can apply argmax to the logits directly:
+let predictions = outputs.argmax(1)?;
+println!("predictions: {}", predictions);
+The output is the same:
+[0, 0, 0, 1, 1]
+Tensor[[5], u32]
+Computing Accuracy
+We can check if our predictions match the true labels:
+println!("{}", predictions.eq(&y_train)?.sum_all()?);
+This outputs:
+[5]
+Tensor[[], u8]
+Since the dataset consists of five training examples, we have five out of five predictions correct, which is 5/5 × 100% = 100% prediction accuracy.
+To generalize the computation of prediction accuracy, let's implement a function:
+fn compute_accuracy(model: &NeuralNetwork, dataloader: &DataLoader) -> Result<f32, Error> {
+let mut correct = 0;
+let mut total_examples = 0;
+for batch_result in dataloader.iter() {
+let (features, labels) = batch_result?;
+let logits = model.forward(&features)?;
+let predictions = logits.argmax(1)?;
+// Returns a tensor of True/False values
+let compare = predictions.eq(&labels)?;
+// Count number of correct predictions
+let correct_batch = compare.sum_all()?;
+// Convert Tensor to u8 value
+correct += correct_batch.to_vec0::<u8>()?;
+total_examples += compare.elem_count();
+}
+Ok(correct as f32 / total_examples as f32)
+}
+The code iterates over a data loader to compute the number and fraction of correct predictions. This method scales to datasets of arbitrary size since, in each iteration, the dataset chunk that the model receives is the same size as the batch size seen during training.
+We can apply the function to the training set:
+let accuracy = compute_accuracy(&model, &train_loader)?;
+println!("{}", accuracy);
+The result is:
+1
+Similarly, we can apply it to the test set:
+let accuracy = compute_accuracy(&model, &test_loader)?;
+println!("{}", accuracy);
+This prints:
+1
+Both show 100% accuracy, indicating our model learned the toy dataset perfectly!
+Saving and Loading Models
+Now that we've trained our model, let's see how to save it so we can reuse it later.
+Saving a Model
+Candle uses the SafeTensors format for saving models, which is a safe and efficient way to store tensor data:
+// Save model
+varmap.save("model.safetensors")?;
+The varmap is a collection that holds all the model's trainable parameters (weights and biases). "model.safetensors" is the filename for the model file saved to disk. The .safetensors extension is the standard convention for this format.
+Loading a Model
+Once we've saved the model, we can restore it from disk:
+fn main() -> Result<(), candle_core::Error> {
+let device = Device::Cpu;
+let mut varmap_loaded = VarMap::new();
+let vb = VarBuilder::from_varmap(&varmap_loaded, DType::F32, &device);
+// Create new model with same architecture
+let model_loaded = NeuralNetwork::new(2, 2, vb)?;
+// Load the saved parameters
+varmap_loaded.load("model.safetensors")?;
+Ok(())
+}
+The process works in three steps:
+Create a new VarMap: We create an empty VarMap to hold the loaded parameters
+Reconstruct the model architecture: We create a new NeuralNetwork instance with the same architecture (2 inputs, 2 outputs) as the saved model
+Load the parameters: We call varmap_loaded.load() to read the file and populate the VarMap with the saved weights and biases
+The model architecture (here NeuralNetwork::new(2, 2)) needs to match the original saved model exactly. If the architecture doesn't match, the loading will fail because the parameter shapes won't align.
+Also note that variable names must match exactly—the layer prefixes like "l1", "l2", and "out" used during model creation must be identical when loading.
+Verifying the Loaded Model
+We can verify that the loaded model works correctly by computing accuracy:
+let accuracy = compute_accuracy(&model_loaded, &train_loader)?;
+println!("{}", accuracy);
+This should give the same accuracy as before saving, confirming that the model's learned parameters were successfully restored.
+Why SafeTensors?
+SafeTensors is a modern format designed specifically for safely storing and loading tensor data. It's:
+Fast: Efficient serialization and deserialization
+Safe: Prevents arbitrary code execution during loading
+Portable: Works across different frameworks and languages
+This makes it ideal for sharing models and deploying them in production environments.
+Conclusion
+We've covered the basics of working with Candle—tensor operations, building neural networks, automatic differentiation, and training models. By porting PyTorch examples to Candle, we've seen that the core concepts of deep learning remain the same across frameworks.
+While we used a simple toy dataset here, these concepts scale to real-world applications.
+The full code is available on GitHub!
+Happy coding! 😊
+[email protected]:~
+$ whoami
+I build high-performance systems, distributed architectures, and
+low-latency applications in Rust.
+$ cat availability.txt
+Need help auditing, optimizing, or building Rust infrastructure?
+I'm available for remote contract, consulting, or full-time roles.
+$ mail -s "let's talk about your systems"
+[email protected]
+2026 © pranitha
+
+=== ROW 36 | f008879 | https://mercurialsolo.github.io/posts/claudectl-tui-dashboard | 2026-04-15T00:00:00 | individual-blogs;twir-links ===
+claudectl: stop tab-hunting your AI agents | Barada's log
+Barada's log
+Posts
+Projects
+Conferences & Talks
+Archive
+Search
+Home » Posts
+claudectl: stop tab-hunting your AI agents
+How to build a TUI dashboard in Rust that monitors AI coding agents. Covers session discovery, incremental JSONL parsing, multi-signal status inference via CPU + transcript heuristics, terminal integration across 9 emulators, and why you don't need an async runtime.
+April 15, 2026 · 12 min · mercurialsolo
+Table of Contents
+Session Discovery: Reading Claude’s Filesystem Layout
+Incremental JSONL Parsing: Never Reread the File
+Multi-Signal Status Inference: The Hard Problem
+Why No Async Runtime
+Keeping the Binary Under 1 MB
+Terminal Integration: The Capabilities Matrix
+Rule-Based Auto-Actions
+Task Orchestration
+What I’d Do Differently
+Ship It
+Running 3-5 Claude Code sessions across different repos is a common pattern for anyone who’s moved past “try the AI thing” into “this is how I work now.” The problem surfaces fast: you’re alt-tabbing between terminal windows, missing permission prompts that block work, losing track of which session just burned $8 on a context-stuffed Opus call, and guessing whether that quiet terminal is thinking or stuck.
+There’s no unified view. Claude Code sessions are independent processes, each with its own JSONL transcript, its own PID, its own terminal tab. The information exists; it’s just scattered across your filesystem and process table.
+claudectl is a single-binary TUI that collects all of it into one place: live status, cost, token usage, model, context window percentage, and elapsed time per session. Built with ratatui + crossterm, 6 runtime dependencies, release binary under 1 MB, startup under 50ms. No async runtime. cargo install claudectl and you’re running.
+This post walks through the Rust internals: how session discovery works, why incremental JSONL parsing matters, the multi-signal status inference problem, and the design decisions that kept the binary small and the architecture synchronous.
+Session Discovery: Reading Claude’s Filesystem Layout#
+Claude Code writes a JSON file per active session to ~/.claude/sessions/. Each file is small:
+{
+"pid": 42381,
+"sessionId": "a1b2c3d4-e5f6-...",
+"cwd": "/Users/me/projects/api-server",
+"startedAt": 1713168000
+}
+Discovery is a directory scan with fs::read_dir, filtering for .json extensions and deserializing each file into a RawSession:
+#[derive(Debug, Deserialize)]
+pub struct RawSession {
+pub pid: u32,
+#[serde(rename = "sessionId")]
+pub session_id: String,
+pub cwd: String,
+#[serde(rename = "startedAt")]
+pub started_at: u64,
+}
+The interesting part is JSONL path resolution. Claude stores conversation transcripts under ~/.claude/projects/{slug}/{sessionId}.jsonl, but the mapping isn’t always 1:1. A session started with --resume writes to the resumed session’s JSONL, not its own. So claudectl resolves paths with a three-priority fallback:
+pub fn resolve_jsonl_paths(sessions: &mut [ClaudeSession]) {
+for session in sessions.iter_mut() {
+let slug = cwd_to_slug(&session.cwd);
+let project_dir = projects_dir().join(&slug);
+// Priority 1: session's own ID
+let own_path = project_dir.join(format!("{}.jsonl", session.session_id));
+if own_path.exists() {
+session.jsonl_path = Some(own_path);
+continue;
+}
+// Priority 2: --resume UUID from command args
+if let Some(resume_id) = extract_resume_uuid(&session.command_args) {
+let resume_path = project_dir.join(format!("{resume_id}.jsonl"));
+if resume_path.exists() {
+session.jsonl_path = Some(resume_path);
+continue;
+}
+}
+// Priority 3: most recently modified .jsonl in the project dir
+session.jsonl_path = find_latest_jsonl(&project_dir);
+}
+}
+Gotcha #1
+You need the process’s command-line args before resolving JSONL paths, because the --resume UUID lives in the args. claudectl calls ps -o pid=,tty=,%cpu=,rss=,command= first, parses out the args, then resolves transcripts. Order matters.
+Gotcha #2
+The cwd_to_slug function has to match Claude Code’s own slug algorithm exactly. Get it wrong and you’re looking at the wrong project directory entirely. Claude uses a path-hashing scheme that replaces / with -; reverse-engineering that mapping took more time than the rest of discovery combined.
+Incremental JSONL Parsing: Never Reread the File#
+A multi-hour Claude session can produce megabytes of JSONL. Parsing all of it every 2 seconds is the kind of waste that compounds silently until your TUI stutters and you blame ratatui. claudectl tracks a jsonl_offset per session (the byte position of the last read) and seeks directly to it:
+pub fn update_tokens(session: &mut ClaudeSession) {
+// ... open file, get file_len ...
+if session.jsonl_offset > file_len {
+// File was truncated (new session reusing the path); reset
+session.jsonl_offset = 0;
+session.own_input_tokens = 0;
+session.own_output_tokens = 0;
+// ...
+}
+if session.jsonl_offset < file_len {
+file.seek(SeekFrom::Start(session.jsonl_offset))?;
+let reader = BufReader::new(&file);
+for line in reader.lines() {
+// parse only new lines...
+}
+session.jsonl_offset = file_len;
+}
+}
+The seek-to-offset pattern is simple but has a subtle edge case: file truncation. If a user starts a new session that reuses the same JSONL path, the file shrinks. offset > file_len catches this and resets all token accumulators. Without this check, the seek would land past EOF and silently return zero lines, leaving stale token counts frozen on screen.
+Each JSONL line is a transcript event. The parser extracts:
+Message role (assistant vs. user) and stop_reason (end_turn, tool_use)
+Token usage: input, output, cache_read, cache_creation (all tracked separately because pricing differs per tier)
+Tool use blocks: tool name and input, used for rule-based auto-actions
+Model identifier: extracted and shortened (e.g., claude-opus-4-6-20260401 -> opus-4.6)
+Design Decision
+claudectl doesn’t parse the full semantic content of messages. It only needs the structural metadata. This keeps the parser fast and avoids coupling to Claude’s message format beyond the envelope fields.
+Gotcha #3
+Claude Code sometimes writes assistant messages with stop_reason: null when a tool_use block is awaiting user approval. The permission prompt hasn’t been answered yet, so the API call returned without a clean stop-reason. claudectl infers it from the content blocks:
+let has_tool_use = message.content.iter()
+.any(|b| matches!(b, TranscriptBlock::ToolUse { .. }));
+if has_tool_use {
+last_stop_reason = "tool_use".to_string();
+} else {
+last_stop_reason.clear();
+}
+This kind of defensive inference is where most of the debugging time went. The JSONL format is an internal implementation detail of Claude Code, not a stable API. Every edge case you handle today might change tomorrow.
+Multi-Signal Status Inference: The Hard Problem#
+Status is the column users look at first, and the one that’s hardest to get right. There’s no single “status” field anywhere in Claude Code’s output; you have to triangulate it from signals that each tell a partial truth.
+The infer_status function combines five signals in a strict precedence order:
+pub fn infer_status(
+session: &mut ClaudeSession,
+last_msg_type: &str,
+last_stop_reason: &str,
+is_waiting_for_task: bool,
+) {
+// Signal 1: CPU is the strongest real-time indicator.
+// If the process is burning CPU, it's processing
+// regardless of what the JSONL says (JSONL can lag).
+if session.cpu_percent > 5.0 {
+session.status = SessionStatus::Processing;
+return;
+}
+// Signal 2: Explicit waiting_for_task event from transcript
+if is_waiting_for_task {
+session.status = SessionStatus::NeedsInput;
+return;
+}
+// Signal 3: assistant + end_turn = done, waiting for user
+if last_msg_type == "assistant" && last_stop_reason == "end_turn" {
+let age_mins = /* time since last message */ ;
+if age_mins > 10 {
+session.status = SessionStatus::Idle;
+} else {
+session.status = SessionStatus::WaitingInput;
+}
+return;
+}
+// Signal 4: assistant + tool_use + low CPU + stale = permission prompt
+if last_msg_type == "assistant" && last_stop_reason == "tool_use" {
+if session.cpu_percent < 2.0 && age_secs > 5 {
+session.status = SessionStatus::NeedsInput;
+} else {
+session.status = SessionStatus::Processing;
+}
+return;
+}
+// Signal 5: user message sent, Claude hasn't responded
+if last_msg_type == "user" {
+session.status = SessionStatus::Processing;
+return;
+}
+session.status = SessionStatus::Idle;
+}
+Why CPU as the highest-priority signal? Because JSONL writes are not real-time. Claude Code buffers transcript entries; there’s a lag between the model generating tokens and the JSONL line appearing on disk. CPU doesn’t lag. If ps reports >5% CPU, the process is working, period.
+Gotcha #4
+Permission prompts are invisible in the transcript. When Claude wants to run rm -rf and the user hasn’t approved it, the last JSONL entry is an assistant message with stop_reason: tool_use. Nothing else gets written until the user acts. The only way to detect this: low CPU (<2%) combined with a tool_use stop reason that’s more than 5 seconds old. This heuristic has false positives (slow API responses look similar) but in practice it’s reliable enough.
+CPU smoothing: Raw ps CPU readings are noisy. A single sample can show 0% between context switches even when the process is active. claudectl keeps a 3-sample rolling average:
+session.cpu_history.push(cpu);
+if session.cpu_history.len() > 3 {
+session.cpu_history.remove(0);
+}
+session.cpu_percent =
+session.cpu_history.iter().sum::<f32>() / session.cpu_history.len() as f32;
+A VecDeque would be more idiomatic here, but Vec with remove(0) on 3 elements is fast enough that the allocation overhead of switching doesn’t matter. Boring code wins.
+Why No Async Runtime#
+The reflexive Rust instinct is to reach for tokio. Resist it. claudectl polls every 2 seconds. The polling loop does: ps for process info, seek + read for JSONL deltas, and ratatui rendering. Total work per tick: under 10ms for a dozen sessions.
+Pulling in tokio or async-std would add 2-3 MB to the binary, increase compile time, and complicate the control flow for zero practical benefit. The event loop is crossterm::event::poll with a timeout, followed by synchronous data refresh. Hooks fire via Command::spawn() (non-blocking on the OS level) without needing an async executor:
+let _ = Command::new("sh")
+.args(["-c", &cmd])
+.stdin(Stdio::null())
+.stdout(Stdio::null())
+.stderr(Stdio::null())
+.spawn();
+Spawn and forget. The TUI never waits for hook completion.
+Design Principle
+Async is justified when you’re waiting on I/O that would block the thread (network calls, database queries). When your I/O is local filesystem reads under 1ms, synchronous code is simpler and faster.
+Keeping the Binary Under 1 MB#
+Every dependency is a tax on binary size, compile time, and supply chain surface. Six runtime dependencies, and each one earns its place: ratatui, crossterm, serde, serde_json, clap, libc + ctrlc. The release profile:
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+Key choices that kept the dependency tree small:
+ps instead of sysinfo: The sysinfo crate is excellent but pulls in platform-specific FFI bindings and adds ~500KB. A single ps call with parsed stdout gives CPU, memory, TTY, and command args. Trade-off: one process spawn per tick instead of in-process syscalls. For a 2-second polling interval, this is noise.
+libc for process signals: Sending SIGTERM to a session (kill in the rules engine) uses libc::kill() directly. No need for a process management crate.
+No dirs crate: Home directory resolution is std::env::var_os("HOME") with a /tmp fallback. The dirs crate handles Windows, XDG, and edge cases; claudectl only needs $HOME.
+clap with derive: This is the largest dependency by transitive count, but clap earns its weight. The CLI surface (17 flags, subcommands for --doctor, --run, --history) would be painful to hand-roll.
+lto = "thin" over lto = "fat": thin LTO gets ~90% of fat LTO’s size reduction at a fraction of the link time. For a project this size, the difference in binary size is <50KB. The compile time difference is noticeable.
+panic = "abort" removes the unwinding machinery. This saves ~100-200KB and makes the binary behavior more predictable: a panic kills the process immediately, which is the right behavior for a monitoring tool. You don’t want a half-crashed TUI hanging around with a corrupted terminal state.
+Terminal Integration: The Capabilities Matrix#
+Terminal emulators are the least standardized part of the Unix ecosystem, and it shows. claudectl auto-detects 9 of them and exposes up to 4 actions per terminal: Launch, Switch, Input, and Approve. Each supports a different subset:
+TerminalLaunchSwitchInputApprove
+Kittyyesyesyesyes
+Ghosttyyesyesyesyes
+iTerm2yesyesyesno
+WezTermyesyesyesno
+tmuxyesyesyesyes
+Warpyesnonono
+Terminal.appyesnonono
+Windows Termyesnonono
+GNOME Termyesyesnono
+Detection uses environment variable inspection: TERM_PROGRAM, KITTY_WINDOW_ID, TMUX, WEZTERM_EXECUTABLE, GNOME_TERMINAL_SERVICE. The --doctor subcommand tests each action for the detected terminal and suggests fixes.
+Gotcha #5
+Platform-specific modules use #[cfg(target_os = "macos")] gating, not runtime detection. Ghostty, iTerm2, Warp, and Terminal.app only compile on macOS. This means cross-compilation from Linux to macOS requires the right target, but keeps the Linux binary free of dead AppleScript integration code.
+Gotcha #6
+Sending keystrokes to a session (the Input and Approve actions) is terminal-specific and fragile. Kitty uses kitten @send-text, tmux uses send-keys, iTerm2 uses AppleScript. Each has different escaping rules for special characters. If you’re building terminal integration for your own TUI, start with tmux and Kitty; they have the most predictable programmatic interfaces.
+Rule-Based Auto-Actions#
+Monitoring is table stakes; the real value is acting on what you see. The rules engine lets you define declarative policies in .claudectl.toml:
+[[rules]]
+name = "auto-approve-tests"
+match_status = ["NeedsInput"]
+match_tool = ["Bash"]
+match_command = ["cargo test", "npm test"]
+match_project = ["api-server"]
+action = "approve"
+[[rules]]
+name = "kill-expensive"
+match_cost_above = 10.0
+action = "terminate"
+All conditions within a rule are AND’d; empty conditions are wildcards. The evaluation has one hard constraint: deny rules always win, regardless of order. Among non-deny rules, first match in config order takes precedence.
+pub fn evaluate(rules: &[AutoRule], session: &ClaudeSession) -> Option<RuleMatch> {
+let mut first_non_deny: Option<RuleMatch> = None;
+for rule in rules {
+if !matches_rule(rule, session) { continue; }
+if rule.action == RuleAction::Deny {
+return Some(RuleMatch { /* deny immediately */ });
+}
+if first_non_deny.is_none() {
+first_non_deny = Some(RuleMatch { /* capture first match */ });
+}
+}
+first_non_deny
+}
+This is a deliberate security decision. If you have a rule that auto-approves Bash commands in your test project, and another rule that denies rm -rf globally, the deny wins even if it appears later in the config. Fail-safe defaults for a system that can send keystrokes to your terminal.
+Task Orchestration#
+Why start 5 sessions by hand when you can declare the dependency graph? The orchestrator runs multi-session workflows from a JSON task file with dependency ordering:
+{
+"tasks": [
+{ "name": "migrate", "cwd": "./api", "prompt": "Run the database migration" },
+{ "name": "test-api", "cwd": "./api", "prompt": "Run the test suite", "depends_on": ["migrate"] },
+{ "name": "test-web", "cwd": "./web", "prompt": "Run frontend tests" }
+]
+}
+test-web runs in parallel with migrate (no dependency). test-api waits for migrate to complete. Output from completed tasks can be templated into downstream prompts via {{migrate.stdout}}. The orchestrator polls every 2 seconds using Arc<AtomicBool> for graceful Ctrl+C handling.
+At this point claudectl crosses from monitoring into workflow automation. Instead of manually starting 5 sessions and watching which one finishes first, you declare the dependency graph and let it run.
+What I’d Do Differently#
+Building against undocumented internals teaches you humility fast.
+Process discovery via ps is brittle. If Claude Code changes its process name or argument format, the parsing breaks. A better approach would be for Claude Code to expose a local socket or status file with structured data. Until then, ps parsing with defensive fallbacks is the pragmatic choice.
+The JSONL format is undocumented. Every field claudectl reads could change without notice. The TelemetryStatus enum exists specifically to handle graceful degradation: if the transcript format changes, sessions degrade to “Unknown” status instead of crashing. Build your parsers to survive schema changes.
+Testing status inference requires mocking time. The age_mins > 10 and age_secs > 5 checks in infer_status make tests time-dependent. The test suite works around this by constructing sessions with specific last_message_ts values, but injecting a clock trait would be cleaner.
+Ship It#
+MIT licensed. macOS and Linux. Windows Terminal/WSL support in progress.
+cargo install claudectl
+Source: github.com/mercurialsolo/claudectl
+The dependency tree is intentionally minimal, the binary is intentionally small, and the architecture is intentionally synchronous. Not every Rust project needs an async runtime, a plugin system, or a proc-macro framework. Sometimes ps, seek, and a 2-second polling loop is the right answer.
+Rust
+Tui
+Claude
+Ai-Agents
+Ratatui
+Monitoring« Prev
+Agent Source
+Next »
+Not your Weights, Not your Brain© 2026 Barada's log ·
+Powered by
+Hugo &
+PaperMod
+

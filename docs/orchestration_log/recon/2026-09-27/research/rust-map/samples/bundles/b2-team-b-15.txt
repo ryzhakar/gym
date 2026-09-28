@@ -1,0 +1,1878 @@
+=== ROW 42 | f009230 | https://internals.rust-lang.org/t/can-we-have-either-a-new-target-wasm32v1-unknown-unknown-or-a-set-of-new-targets-wasm32-v1-web-bindgen/22041 | 2024-12-18 | internals ===
+Can we have either a new target wasm32v1-unknown-unknown or a set of new targets wasm32(v1)?-web-bindgen?
+
+@stephanemagnenat · 2024-12-18T09:06:51.219Z:
+Rust 1.82 on wasm32-unknown-unknown has multivalue and reference-types extensions enabled by default. This created a myriad of issues with non-compliant browsers, mostly Safari, which based on my experience has broken implementation of these at least up to version 16.3 on iOS, which is only 1.5 years old.
+I saw that Rust 1.84 plans to land wasm32v1-none that disables such extensions, which is great. However, according it its documentation it is also a nostd target.
+However, my use case which I think is also the use case of many people using Rust and Wasm in production is to have a Webassembly MVP-only target so that two versions of the .wasm can be built and the compatibility one can be served to old Safaris.
+So, my ask is, can we have such a target? Something like wasm32v1-unknown-unknown.
+ping @alexcrichton
+
+---
+
+@newpavlov · 2024-12-18T09:26:25.485Z:
+IIUC you can disable the default extensions:
+blog.rust-lang.org
+WebAssembly targets: change in default target-features | Rust Blog
+Empowering everyone to build reliable and efficient software.
+
+---
+
+@stephanemagnenat · 2024-12-18T11:21:55.015Z:
+Yes, but it requires rebuilding std. I also do not know how well rebuilding std combines with wasm-pack and Webpack's WasmPackPlugin. The thing is, to use Rust on the web, most people want std. But also many people have to support Safari despite its bugs. So I think that it would be helpful for this common use case to be supported out of the box.
+
+---
+
+@newpavlov · 2024-12-18T11:45:10.269Z:
+Have you tried? If it does not work for some reason, then you should to ask wasm-pack people to add support for this case. Hacking a new target seems like a wrong tool for this.
+stephanemagnenat:
+The thing is, to use Rust on the web, most people want std.
+Small rant: I believe that having an "std" for wasm32-unknown-unknown was a big mistake. People should properly write crates to use alloc instead of relying on "std" which panics or returns errors on each non-trivial sneeze. Yes, there is an issue with HashMap, but it should've been resolved properly by exposing an overwritable "system" randomness source in a sysroot crate.
+
+---
+
+@stephanemagnenat · 2024-12-18T12:18:53.272Z:
+Have you tried?
+Indeed I didn't. It feels that rebuilding std in the CI is not a great idea, compared to using an old compiler for now. But maybe with some caching it is feasible.
+Small rant: I believe that having an "std" for wasm32-unknown-unknown was a big mistake.
+I can't argue on that as I do not have enough experience of Rust's internals. But I'll like to point out that as a user, when choosing a product, I'll like it to work out of the box with its basic features. And having a proper std (as Rust has now) feels like basic features nowadays. So for what it is worth I'm quite happy that I have std on the web. Maybe it should not have been in wasm32-unknown-unknown though, maybe in some wasm32-web or something like this.
+And that's what I'm arguing for, something that works straight out of the box for the common use cases on the web, so that Rust is a suitable solution for web development in a real industrial context.
+
+---
+
+@the8472 · 2024-12-18T14:36:08.903Z:
+stephanemagnenat:
+But I'll like to point out that as a user, when choosing a product, I'll like it to work out of the box with its basic features.
+Std provides OS abstractions. Bare wasm does not offer IO, threads, processes, randomness, allocations, time etc. etc. so it is correct to treat this as an embedded no-std target.
+To get std on wasm-in-a-browser you'd need standardized host bindings. I think wasi targets are that? (uncertain, haven't looked at wasi in depth) If yes then you need a -wasi target, not a -none.
+If you're missing some crate that should work without std but doesn't then this is not a rust issue but an issue with that crate. Embedded developers have to deal with that too. File a bug with the crate in question.
+
+---
+
+@stephanemagnenat · 2024-12-18T14:57:48.160Z:
+Std provides OS abstractions. Bare wasm does not offer IO, threads, processes, randomness, allocations, time etc. etc. so it is correct to treat this as an embedded no-std target.
+I see, on this I agree. I didn't realize the collection library was (almost) all in alloc. Thank you for the clarification. Indeed if HashMap would be in alloc, then the bare target would be good enough for me. So, hopefully that happens soon.
+
+---
+
+@cuviper · 2024-12-19T00:04:29.313Z:
+You can use hashbrown on no-std targets, which is the implementation under std anyway. You still have to decide what to do about hasher randomness yourself though.
+
+---
+
+@CAD97 · 2024-12-19T01:18:26.318Z:
+What could potentially work is a "wasm32v1-web-bindgen" which uses the wasm_binden protocol to bind to Math.random(), Date.now() (js), and Performance.now() (web). That covers randomness and time. IO and commands can just unconditionally return ErrorKind::Unsupported and be "in spec," but thread spawning just needs to panic[1].
+I think that with the single thread assumption that allows the sync types to just be the cell equivalents, that does cover all of the requirements of std. The downside being that it no longer "just works," requiring the user to provide the wasm_bindgen imports to the wasm module, likely even if they don't directly use the functionality. Of course this won't be an issue if you're already going through wasm-pack.
+It's probably better to just panic, but a different model would be to "spawn" the thread in an already panicked state, so thread::spawn "succeeds" but the JoinHandle is immediately attached to a "panicked thread" and no user code is ever run on that "different thread." ↩︎
+
+---
+
+@stephanemagnenat · 2024-12-19T07:50:10.747Z:
+What could potentially work is a "wasm32v1-web-bindgen" which uses the wasm_binden protocol to bind to Math.random(), Date.now() (js), and Performance.now() (web).
+Yes that would be awesome! I am using wasm_bindgen and I guess most Rust-in-the-browser users do so. Maybe also integrate web-time so that std::time works properly (including in web workers)?
+Over time, maybe more API could be supported, such as the File System API, once they stabilize and become widely available?
+If such a target would be added, I suggest to add a matching wasm32-web-bindgen that has similar instruction support requirements as wasm32-unknown-unknown but provides the same nice bindings as wasm32v1-web-bindgen. I believe such a target would significantly improve the ergonomic of Rust on the browser.
+Note: I have updated the thread title to match the outcome of the current discussion.
+
+---
+
+@stephanemagnenat · 2024-12-19T07:52:49.464Z:
+In case people wonder, I am asking these questions in relation to our Candli web-based educational game creation platform, which uses Rust alongside Typescript for performance-sensitive parts of the client.
+
+---
+
+@bjorn3 · 2024-12-19T12:37:16.350Z:
+CAD97:
+What could potentially work is a "wasm32v1-web-bindgen" which uses the wasm_binden protocol to bind to Math.random(), Date.now() (js), and Performance.now() (web).
+The reason why we haven't done this from the start for wasm32-unknown-unknown is that wasm-bindgen's protocol is unstable. The wasm-bindgen cli checks that the metadata was created by the exact same wasm-bindgen version (including patch version). This is also why we have been able to fix wasm-bindgen to not depend on wasm32-unknown-unknown's broken C ABI. Any usage of wasm-bindgen in the standard library would require -Zbuild-std + some way to update wasm-bindgen for the standard library to match the wasm-bindgen cli.
+
+---
+
+@stephanemagnenat · 2024-12-19T13:19:38.864Z:
+Thank you for the explanation!
+Do you see a way forward? Like continuing with the current approach and having a wasm32v1-unknown-unknown that ships with std, or something like stabilizing wasm-bindgen's protocol to get wasm32-web-bindgen/wasm32v1-web-bindgen targets?
+I'm agnostic to the technical solution, but I do care about Rust's story on the web, both because our startup already invested significantly into it (and Rust in general) and also because I believe that WebAssembly is a good way forward for the web (regarding efficiency, energy consumption, etc.). And hopefully things can become a bit better in term of platform support, as currently it is somewhat of a bumpy road, despite WebAssembly being on the homepage of the language.
+
+---
+
+@stephanemagnenat · 2024-12-19T15:20:23.026Z:
+Have you tried?
+I did a search, people have tried and failed, but the solution is probably to run wasm-pack with nightly. However, when used with a bundler such as webpack, wasm-pack is called by a plugin, such as wasm-pack-plugin. Configuring that plugin to use nightly is tedious. It might be doable with a rustup override or a rust-toolchain.toml, I didn't try myself.
+The point is, having to do all these steps correctly is hard, error-prone, fragile and clearly not the user-friendliness expected of a first-class feature.
+
+---
+
+@stephanemagnenat · 2024-12-19T16:48:11.830Z:
+the8472:
+If you're missing some crate that should work without std but doesn't then this is not a rust issue but an issue with that crate. Embedded developers have to deal with that too. File a bug with the crate in question.
+Doing some research on that question shows that it's not that trivial in practice. Take for example the image crate. Work on no_std has been going on for years. There is slow progress, and it seems that the current blocker is the lack of Read and Write traits in no_std (itself an issue opened for years). Of course there are (incomplete and not fully up to date) work arounds for that. Yet this shows that making a third-party crate no_std is not trivial, because Rust's std is not (at the moment) perfectly splitable between "things that depend on io" + "things that depend on dynamic memory allocation" + "rest".
+
+---
+
+@the8472 · 2024-12-19T18:39:39.811Z:
+I didn't say it would be trivial. But just because there are issues doesn't mean we should offer a non-functional std, otherwise we'd have to do that for all targets and then explain to users why the API surface is there but doesn't work.
+If we only take the easiest immediate solutions then we end up with a pile of hacks. Which means until someone puts in the work to add a proper solution the hacks and workarounds will have to live downstream.
+
+---
+
+@stephanemagnenat · 2024-12-19T19:12:02.991Z:
+From a technical standpoint I agree with you. But wasm32-unknown-unknown does exist, is generously advertised on the language homepage and does provide std, although partially non-functional.
+So while I do hear the arguments that it was a bad idea in the first place, because it exists and is widely advertised (which I assume was a strategic decision to widen the language adoption), people build things on top of it. So when suddenly the compiler updates and Rust builds stop working on a less than 2 years old Safari, it is really a problem for the users, who have invested in this technology on the assumption that it was seriously supported.
+Of course one can easily argue that's the browser's fault, but at the same time one could counter-argue that the Rust product is now broken, and that an easy-to-use fix for the users already invested in the language should be provided. Finding such an accessible fix was my core thinking for suggesting wasm32v1-unknown-unknown in the first place.
+
+---
+
+@the8472 · 2024-12-19T19:25:57.249Z:
+That's not a good argument to proliferate a mistake. Proliferating would make the problem worse in the long run because it takes away incentive to do things properly, so even more people would start relying on std instead of alloc/core where they should.
+To support old targets you can use an old rust version. This should buy you time to figure out how to migrate.
+At least adding a -v1-unknown-unknown target with std wouldn't be very forward-facing. Working on -bindgen targets would seem more productive.
+But I don't know if the wasm platform maintainers have already considered older browsers.
+And you didn't mention the fraction of the usershare, which is typically something that gets considered when talking about browser features.
+
+---
+
+@stephanemagnenat · 2024-12-19T19:53:19.932Z:
+That's not a good argument to proliferate a mistake. Proliferating would make the problem worse in the long run because it takes away incentive to do things properly, so even more people would start relying on std instead of alloc/core where they should.
+I hear and understand your point but it feels a bit user-unfriendly to me. For example, stating that the right thing to do is that people should rely on alloc/core obfuscates the reality that, as illustrated with my image crate example (that I found while trying to get rid of std in the smallest of my wasm, devoted to computer vision), the pieces necessary to do that smoothly are not yet all in place (e.g. the Read/Write traits not being in core).
+To support old targets you can use an old rust version. This should buy you time to figure out how to migrate.
+This is what we are doing at the moment.
+At least adding a -v1-unknown-unknown target with std wouldn't be very forward-facing. Working on -bindgen targets would seem more productive. But I don't know if the wasm platform maintainers have already considered older browsers.
+This I agree, having a proper std support on the web through a -bindgen target would be lovely.
+And you didn't mention the fraction of the usershare, which is typically something that gets considered when talking about browser features.
+According to stat counter, Safari has a 15-20 percent market share. And according to stats on a ruffle PR related to same issue, in November 2024 there were 17% of Safaris <= 16.3. So that is a 3% overall. In specific applications (e.g. tablets) it might be more.
+
+---
+
+@mjw · 2024-12-19T20:05:56.203Z:
+stephanemagnenat:
+I did a search, people have tried and failed, but the solution is probably to run wasm-pack with nightly.
+In any case, if you have to use nightly to do this you might as well stick to Rust 1.81 for an easy life: either way you're crossing the line to using an unsupported version of the compiler.
+
+---
+
+@adrian17 · 2024-12-19T23:25:25.439Z:
+Hey, just for the record, we had similar conversation regarding Ruffle in Add wasm32v1-none target (compiler-team/#791) by graydon · Pull Request #131487 · rust-lang/rust · GitHub .
+Very similar story: we want to keep support for Safari, which forces us to either switch to nightly to use build-std, or freeze at 1.81 until we decide to drop these browsers; we can live with any of these choices, we just consider it unfortunate to be required to do this kind of choice in the first place.
+And also similar regarding -unknown-unknown and no_std: even if we wanted to go no_std, we're both blocked by missing some core APIs like Read, and by a decent chunk of our dependencies not being marked no_std.
+(And... we kinda prefer not to - there are more things in std than Read that are not direct OS abstractions that we like to have. And some things that are "hacky", like std::sync::Mutex implemented as noops (and rest of std::sync), we honestly see as an advantage; without it the code reuse between web and desktop would be much harder. I understand the "relying on "std" which panics or returns errors on each non-trivial sneeze" issue - though as far as we know, it has never significantly bit out project, since the solution of "be careful not to write OS-abstraction-dependent code in the shared crate" we already happened to be following by design)
+
+---
+
+@sxlijin · 2024-12-23T23:22:08.340Z:
+Chiming in to second @stephanemagnenat : while I agree with the long-term goal of making wasm a nostd target until WASI/browser is ready, I feel rather uncomfortable with the attitude I'm seeing in this thread about not providing a clear migration/upgrade path for those of us whose codebases rely on std compiling with wasm32-unknown-unknown.
+
+---
+
+@the8472 · 2024-12-25T00:48:10.564Z:
+wasm32-unknown-unknown continues to compile, it hasn't been deprecated. It is only when you add the additional requirement of supporting older browsers that you need something different. IIRC the v1-none target was motivated by things like minimal wasm interpreters or sandboxes, in contrast to browsers which follow the evolving wasm target specification.
+Note that wasm targets are mostly tier-2 and maintained by interested parties and less managed by the general Rust teams. So to get progress someone either has to convince the target maintainers to add better support for browsers specifically or put in the work themselves, it's unlikely to happen on its own.
+CC @alexcrichton @graydon
+
+---
+
+@stephanemagnenat · 2024-12-25T08:32:00.234Z:
+Note that wasm targets are mostly tier-2 and maintained by interested parties and less managed by the general Rust teams.
+A comment about that: First of all, I fully understand and appreciate that a lot of Rust development is a volunteer-based effort and I'm deeply thankful to all the people who spent countless hours to make such a great product. Fortunately, there is now a foundation with significant money to support the core of the project, and hopefully, the parts that are necessary but less fun to do on a hobby basis.
+Wasm, in the form of wasm32-unknown-unknown + web-sys + wasm-bindgen, is prominently presented on the language front page, and as such it is very strange to me that it is only a tier-2 target. This feels like a mismatch of priorities between the marketing and the development teams. From a business point of view, isn't it inconsistent to promote a product that does not receive first-class support? Imagine how users feel when, after having invested into WebAssembly Rust based on the promises from the language page, they are told that they need to solve a very common platform issue by themselves?
+So my call is not a complain to the hard working contributors to do even more, but rather to the project leadership. Maybe it is possible to dedicate some of the foundation resources to better support core advertised targets?
+
+---
+
+@Noratrieb · 2024-12-25T10:13:34.131Z:
+We are generally really conservative when it comes to platform support. Our x86-64 targets still use v1, even if many very old CPUs have v2 already. We still support very old versions of glibc as well. Given this, it is surprising to me that we updated our WebAssembly target, which is commonly used with browsers, to break 3% of the web on old Safari. That's a lot and I agree with everyone who complained about this here that that's a mistake and is going to hurt users.
+We are going to need to untangle the Wasm target to better support the different use cases, but that will take a long time. Given that, as the blog post mentioned, multivalue doesn't make much of a difference to Rust, I we should seriously consider disabling this feature if possible.
+Safari 16.4 was released in March 2023. Baseline, which is an attempt to define what features should be used by Websites, defines "Widely Available" (which I think Rust should target at least) to take 30 months of support in all major browsers, which will happen only in September 2025.
+
+---
+
+@the8472 · 2024-12-25T10:42:16.833Z:
+The relentless drumbeat of progress for the wasm target is inherited from llvm which in turn is inherited from the webassembly project itself, which is a bit more aggressive than what the baseline page lists.
+Perhaps Rust's specific issue is that it makes it harder to relax the default features because one needs nightly to use build-std. That's being worked on.
+
+---
+
+@torokati44 · 2024-12-25T13:13:33.830Z:
+Just my two cents (as another contributor to the Ruffle project; like, and in agreement with, @adrian17 above): Making build-std stable soon could perhaps be the best outcome, so everyone could choose what kind of std (with stubbed bits or not), using which WASM extensions, to use. This goes both ways: Enabling beneficial ones for modern browsers (bulk-memory could help a lot in some use cases), and disabling the default ones for legacy browser support.
+
+---
+
+@mjw · 2024-12-26T10:18:23.899Z:
+Noratrieb:
+Given that, as the blog post mentioned, multivalue doesn't make much of a difference to Rust, I we should seriously consider disabling this feature if possible
+I think this should follow from the wish to have "fearless upgrades" for rustc.
+Every now and again there's a discussion of whether rustc should have LTS releases. The conclusion is always that it shouldn't, and that that's OK because nobody should find they have to run an older version.
+Dropping support for targetting browsers that Rust users want to have on their "supported browsers" list goes against that.
+
+---
+
+@danielhjacobs · 2024-12-26T14:44:26.939Z:
+I'd also note that arguably Safari support targets should be more conservative than those of other browsers, since unlike other browsers, the version of Safari an iOS or macOS user can use is limited by the OS itself.
+
+---
+
+@danielhjacobs · 2024-12-26T19:25:02.271Z:
+stephanemagnenat:
+November 2024 there were 17% of Safaris <= 16.3
+It is worth noting that apparently, at least for Ruffle, the upgrade to wasm-bindgen 0.2.97 fixed compilation of the WASM target on Safari 15 - 16.3 when using Rust 1.82+. Compilation for Safari 14.1, however, was still broken. However, in Reconsider usage of bigint in generated JS code · Issue #4246 · rustwasm/wasm-bindgen · GitHub, daxpedda did say "Safari's v15 implementation of the reference type proposal was faulty (don't remember the details), we should pretend that support was added in Safari v16." So your mileage may vary.
+
+---
+
+@bes · 2024-12-26T21:38:19.227Z:
+I can confirm that 1.82 broke our wasm code in Safari 15. There is a hacky workaround (for now, might stop working in a future version) — setting strip = true (maybe in combination with wasm-opt, unclear to me) somehow makes Safari 15 work again. After applying the hack, a massive amount of Safari 15+ crashes coming in through Sentry were fixed.
+See WebAssembly with Reference Types cannot be parsed · Issue #15566 · webpack/webpack · GitHub
+Edit: about 10% of our Safari users are below v16.4.
+
+---
+
+@alexcrichton · 2024-12-27T05:39:08.722Z:
+For me there's a lot going on in this thread but I think there's a lot of good points to call out too. The tl;dr; is that I don't think we're in a great position right now (sort of self-evident given the discussion) but there's no easy way out of this. There are a number of competing concerns and desires here, but I can try to offer my 2c on thoughts on ways forward on this.
+Guidelines for enabling wasm extensions
+As far as I know there's no currently written down policy of "here's when it's decided to turn a wasm feature on". The WebAssembly specification has been evolving for years and will continue to do so. Whether or not it makes sense to turn a feature on-by-default will continuously come up. Personally I don't think either extreme of "never turn anything on" or "turn everything on after 6 months" is feasible.
+Right now Rust's default set of extensions enabled is inherited from LLVM. For discussion of the various policies there the internals forum here isn't the best place since the wasm backend LLVM maintainers (mostly Googlers working with Emscripten) likely don't frequent here. Instead I'd recommend raising a discussion in the tool-conventions repository.
+I'll specifically call out here though that I at least personally think it's important to keep C/C++/Rust/etc in sync. While it's certainly possible to have different defaults in Rust than in LLVM I believe that will cause confusion in the long run. I understand it's more work to engage with external folks, but I think it'll result in a better result in the long run.
+I was not personally part of the discussion to turn these proposal on-by-default in LLVM, so I don't know if Safari was ignored, forgotten, explicitly chosen against, or something else. I did raise an issue on the tool-conventions repository which has some discussion which interested folks may wish to engage with as well.
+Adding more Rust targets
+While on the surface adding a wasm32v1-unknown-unknown target might seem like the most straightforward path here I agree with the arguments against this, and I think once the complete picture is seen it's clear that this is no longer an "obvious path forward". Both the benefits and downsides of std on wasm32-unknown-unknown are real and I don't think there's an obvious decision of "it's worth it" vs "it's not". We already have a lot of wasm targets and it'd be unfortunate to keep adding more for various combinations, it's a pretty heavy hammer for what should be a relatively localized solution.
+If someone is interested to champion this cause though I'd recommend following the MCP process for adding a new target to the compiler. It's pretty clear what this target would be if it were added, but there should also be dedicated discussion exclusively for that in Zulip. (although this thread is a bit of a precursor to that as well of course)
+Using -Zbuild-std
+Sort of like wasm32v1-unknown-unknown this is a possible candidate for "most obvious solution". That being said the pain of using nightly Rust and possibly resulting in breakage is also very real. Integrating -Zbuild-std into wrapper tools like wasm-pack is not always obvious and can be difficult to figure out. Ideally -Zbuild-std would be stable but that's a whole separate thorny set of questions.
+I'm not aware how best to push on this in terms of helping making it stable. My guess is that it would require a lot more context and implementation effort outside of the interests of this thread. I also suspect Cargo folks are well-aware of the use case of recompiling libstd with/without CPU features so I at least personally reach the (unfortunate for this thread) conclusion that there may not be much to help the -Zbuild-std stabilization effort at this time (I'd be happy to be wrong though!)
+Adding a *-bindgen Rust target
+I personally intentionally never advocated for this when I was maintaining wasm-bindgen, and I would have advocated against it had it been proposed at the time. I'm not currently maintaining wasm-bindgen though so things can always shift, though.
+The wasm-bindgen crate was never designed for stability of compiler artifacts in mind and it has quite a lot of hacks which if anyone were to try to replicate they'd (reasonably) run away screaming. For example did you know that wasm-bindgen has an interpreter for wasm which it executes to figure out types in your program? I always felt this was an appropriate hack for a crates.io-based crate but wildly inappropriate for something like the Rust standard library.
+In that sense, at least if foundational parts haven't changed in the meantime, my opinion is that *-bindgen targets in Rust is a dead end. It shouldn't happen and problems need to be solved via some other means. The "easiest" alternative solution here is to probably improve integration with Emscripten which is already tailor-made for running C/C++/wasm/LLVM on the web while assuming that JS exists. I put "easiest" in quotes here though because I realize this probably isn't easy, and I don't even know the depth of it myself as I'm not that knowledgable about Emscripten.
+Timelines of a solution
+One thing I'll also call attention to is the various timelines involved here. For example if it takes a year or so to figure out how to officially solve this then that technically means it's no longer a problem because at that point Safari support for wasm32-unknown-unknown is probably at a high-enough level it's ok to use then. This to me cuts both ways in terms of if folks need a solution right this red hot second then pushing on some solutions in this thread may not be the best path forward due to the timelines involved. On the other hand though now's the best time to figure out solutions for these so this doesn't keep coming up in the future.
+Sorry for the long read and I'm also sorry I can't really offer much in the way of a strong conclusion here either. I suspect solving this "for real" will require some dedicated work by someone which is more than "just copy that solution over there and tweak it a bit", since this thread is showing that all the "easy ideas" have serious drawbacks one way or another.
+
+---
+
+@bjorn3 · 2024-12-27T10:18:48.510Z:
+danielhjacobs:
+"Safari's v15 implementation of the reference type proposal was faulty (don't remember the details), we should pretend that support was added in Safari v16."
+Is the faulty part for overlong call_indirect encodings? Or with the rest of the reference types proposal? Only the former is used by rustc when reference types are enabled. The rest if I recall correctly was used by default in older wasm-bindgen versions when any object file indicates reference types usage, while newer wasm-bindgen versions keep it disabled by default even in that case.
+
+---
+
+@stephanemagnenat · 2024-12-27T11:54:56.965Z:
+On my side, the errors I'm seeing in Safari up to and including 16.3 are of type RuntimeError: Out of bounds table access (evaluating 't.crop_and_call(e,n,_)') when running Rust-based image cropping code in a web worker, with wasm-bindgen version 0.2.99. I feel that this is a different issue from the one affecting Safari 15, but I did not manage to create a minimal reproducible test case and thus I might be wrong.
+
+---
+
+@danielhjacobs · 2024-12-27T14:05:08.200Z:
+bjorn3:
+Is the faulty part for overlong call_indirect encodings? Or with the rest of the reference types proposal?
+The error reported by someone using Safari 15 prior to the wasm-bindgen bump said RuntimeError: Out of bounds table access (evaluating 'b._dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h281f2f93d3d6cf28(n,e,t)')
+
+---
+
+@steffahn · 2026-06-20T14:06:03.179Z:
+This topic was automatically closed 540 days after the last reply. New replies are no longer allowed.
+
+=== ROW 43 | f009263 | https://internals.rust-lang.org/t/giving-generics-traits-via-unsafe-code/22753 | 2025-04-15 | internals ===
+Giving generics traits via unsafe code
+
+@DasLixou · 2025-04-15T11:18:52.368Z:
+Hello!
+This is a really odd request/question.
+I need to go from a given generic T to a generic T: MyTrait, so I want to convert it to a type impl MyTrait basically. Making the generic T have a requirement to be MyTrait also isn't really possible...
+So I wonder.. from compiler perspective, how hard/impossible would something like this be:
+pub unsafe fn typed_downcast<T, trait X>(val: T) -> impl X;
+So that I can do this:
+impl Trait for Special {
+fn magic<T>(self, val: T) {
+// I know that T always implements MyTrait
+let m(: impl MyTrait) = unsafe { typed_downcast(val) };
+m.run_function();
+}
+}
+I think this could work because the compiler should (from my understanding, which is not much) be able to just handle it as written down for pre-monomorphization and then error when a type doesn't implement that post monomorphization. Right?
+
+---
+
+@RalfJung · 2025-04-15T13:52:13.918Z:
+Given the post-monomorphization error you talk about, this sounds like basically a form of specialization. So this is quite similar to `const if` to supress instantiation/codegen of unreachable branches · Issue #3582 · rust-lang/rfcs · GitHub except that you are branching on "does the type implement the trait" rather than "does this constant evaluate to true".
+
+---
+
+@SkiFire13 · 2025-04-15T14:53:41.404Z:
+I believe OP doesn't want to branch on whether the type implements the trait or not, they expect to get UB if it doesn't implement it.
+
+---
+
+@DasLixou · 2025-04-15T15:14:56.128Z:
+Yes, correct. I want it to behave more like a hint. (And I especially don’t want it connected with specialization )
+
+---
+
+@RalfJung · 2025-04-15T15:41:41.729Z:
+The OP said to "error when a type doesn't implement that post monomorphization". "error" does not sound like "UB" to me. But if UB is desired, that's easy to do by just putting hint::unreachable_unchecked() in the "else" branch of a "does the type implement the trait" check.
+DasLixou:
+And I especially don’t want it connected with specialization
+By wanting to specialize on whether a type implements a trait or not during monomorphization, you are asking for a form of specialization, whether you like it or not.
+
+---
+
+@DasLixou · 2025-04-15T16:50:09.767Z:
+Yeah thus I like calling it „hinting“ more :> I’ve been thinking about if I could do this in stable and have one idea which would be completely unsafe but could work, need to try it tho
+
+---
+
+@DasLixou · 2025-04-15T16:59:54.386Z:
+Ughh seems impossible.. everything ends in me wanting to transmute something generic
+
+---
+
+@Ddystopia · 2025-04-15T17:57:39.049Z:
+Along those lines, sometimes because of rust bugs with higher ranked bounds it just fails to see that the type implements the trait, would be good to force it sometimes.
+
+---
+
+@DasLixou · 2025-04-16T12:37:39.141Z:
+I thought about the API a bit and I think something like this makes the most sense considering current language "limitations" (e.g. no generic traits):
+impl Trait for Special {
+fn magic<T>(self, val: T) {
+unsafe {
+bind_type!(type MagicT = T + MyTrait); // Declares a new type which "extends" from T and implements MyTrait
+// That step is unsafe as one could bypass generic bounds on a function (like TypeId::of's T has a bound of 'static
+}
+let m(: impl MyTrait) = unsafe { ::core::mem::transmute::<_, MagicT>(val) };
+m.run_function();
+}
+}
+The MagicT would otherwise have all other characteristics from T, like it's lifetime and all generics.
+
+---
+
+@CAD97 · 2025-04-16T21:49:00.910Z:
+transmute_unchecked isn't intended to ever be exposed directly — it causes ICEs and/or codegen errors if the size isn't equal, not just UB — but maybe a similar function is worth providing, for the purpose of doing by-value type system crimes.
+I know that I've used a helper like this multiple times:
+/// Like `transmute`, but for generic code.
+///
+/// If `Src` is smaller than `Dst`, errors when monomorphized.
+/// If `Src` is larger than `Dst`, the byte prefix of `src` is transmuted.
+///
+/// # Safety
+///
+/// The first `size_of::<Dst>()` bytes of `src` must be a valid `Dst`.
+pub unsafe fn transmute_prefix<Src, Dst>(src: Src) -> Dst {
+const { assert!(size_of::<Dst>() <= size_of::<Src>()) };
+unsafe { transmute_copy(&ManuallyDrop::new(src)) }
+}
+
+---
+
+@DasLixou · 2025-04-17T07:11:36.676Z:
+Whut? I’m proposing normal transmute here, which the user should use themselves, as the compiler should infer that both types have the same size (being the same underlying type, just with another trait bound)
+
+---
+
+@RalfJung · 2025-04-17T09:18:45.792Z:
+DasLixou:
+everything ends in me wanting to transmute something generic
+There's always transmute_copy
+
+---
+
+@DasLixou · 2025-04-17T09:20:21.412Z:
+huh? No the problem is that I need to name the Dst type  That's what I am proposing here all along, somehow making rust aware of a type which is basically another already given type but just hinting it having another trait bound
+
+---
+
+@DasLixou · 2025-04-18T15:49:12.095Z:
+Sooo.. should I just make an RFC and see where it goes then? O.o
+
+---
+
+@Jules-Bertholet · 2025-04-19T13:34:16.319Z:
+I don’t think a new type is what you want here? You want it to be usable in all the places the existing type is.
+I think one solution would be the ability to specify bounds that are assumed to hold when type-checking the inside of a function, but aren't checked when calling the function.
+
+---
+
+@DasLixou · 2025-04-19T13:59:36.443Z:
+You mean like an „assume this type has that bound“-area?
+
+---
+
+@DasLixou · 2025-04-19T14:01:44.339Z:
+Yeah I get that, but I feel like that's hard to integrate in current rust. Like best I could imagine is making a macro which wraps around such an "area"
+
+---
+
+@Jules-Bertholet · 2025-04-19T14:40:24.266Z:
+Alternatively, the magic macro could wrap the where clause.
+
+---
+
+@DasLixou · 2025-04-19T14:48:06.451Z:
+You mean like
+assume!({
+// ....
+} where
+T: MyTrait
+);
+?
+
+---
+
+@Jules-Bertholet · 2025-04-19T14:57:50.427Z:
+No, on the outside of a function:
+unsafe fn do_thing<T>(param: T)
+where
+unsafe_assume!(T: Trait),
+{
+...
+}
+
+---
+
+@DasLixou · 2025-04-19T15:00:54.773Z:
+Well would it be unsafe if it checks post monomorph? It would just be ugly error messages i guess
+
+---
+
+@Jules-Bertholet · 2025-04-19T15:03:49.132Z:
+I don’t think the compiler is set up to be able to check lifetimes post-mono? (Not an expert on that though)
+
+---
+
+@DasLixou · 2025-04-19T15:06:38.062Z:
+Oh right.. completely forgot types also associate with lifetimes...
+
+---
+
+@DasLixou · 2025-04-21T15:06:36.506Z:
+Made it an rfc RFC: Assume bounds for generic functions by DasLixou · Pull Request #3802 · rust-lang/rfcs · GitHub yay
+also I changed it from being a macro to an attribute, as that looks better in place and already got support for real unsafe
+
+=== ROW 44 | f009282 | https://internals.rust-lang.org/t/distributed-builds/23303 | 2025-08-01 | internals ===
+Distributed builds
+
+@bridiver · 2025-08-01T18:02:43.441Z:
+This issue doesn’t fall cleanly into cargo or rust, but this issue explains the problem OUT_DIR prevents remote/distributed builds · Issue #15786 · rust-lang/cargo · GitHub
+
+---
+
+@Vorpal · 2025-08-01T18:21:46.619Z:
+Can't this be solved on the distribution tool side by using file system namespaces to ensure the same layout? Same building block that docker etc uses.
+
+---
+
+@kornel · 2025-08-01T18:48:29.981Z:
+The problem isn’t limited to OUT_DIR specifically. Build scripts can set other variables that include paths:
+fn main() {
+println!("cargo:rustc-env=FILE_PATH={}", PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("data.txt").display());
+}
+fn main() {
+println!("Hello, world! {}", env!("FILE_PATH"));
+}
+
+---
+
+@illicitonion · 2025-08-01T18:53:44.667Z:
+Hi! For a piece of prior art, I maintain Bazel’s rust integration, and we have harnesses that make crates from crates.io cleanly build. Interestingly, $OUT_DIR isn’t one of the places we’ve run into many issues.
+The way our integration works is: We assume there is a root directory we can consider all paths relative to (in Bazel it’s the execution root, in Cargo the equivalent would probably be the workspace’s root). In Bazel, all actions that run are expected to run in this root. In Bazel’s metadata handling, all paths are relative to this root. This root can be considered a virtual filesystem, subsets of which are materialised for different remote executions, but actions within a build are assumed to have compatible views over that root (just subsetted depending on which dependencies are present).
+For each crate, we define a unique out_dir relative to that root. We have a host binary that runs build script binaries, and at runtime absolutises this relative root_dir - this happens at runtime, so the build system doesn’t have to be aware of these absolute paths, but they’re absolute at runtime.
+So far, so uninteresting.
+The slightly sketchy thing we need to do is relativise the absolute paths when they’re transferred outside of the action. Cargo (and so our host binary) reads a handful of directives output by the build script to stdout (things like cargo::rustc-link-search=/absolute/path/to/root/and/inside/that/out_dir/file or cargo::SOME_ENV=/absolute/path/to/root/and/inside/that/out_dir/file) which it may pass on to other actions. These absolute paths may not be correct across actions. So the sketchy thing we do is we look for the absolute path to the root (in this example, /absolute/path/to/root) and we substitute it out with a placeholder (which happens to be ${pwd}). Then whenever we’re passing one of these propagated directives to another action, at runtime we replace that ${pwd} with the absolute path to the root (whatever that absolute path happens to be on the executing machine).
+Effectively what we do is have something dumbly doing the root-relataivisation/absolutisation described in the issue. We see this works pretty well in practice.
+While theoretically there are a bunch of things that could go wrong (e.g. embedding absolute paths in binaries being built), in practice we see these issues are pretty rare.
+
+---
+
+@bridiver · 2025-08-01T19:34:48.538Z:
+The problem only occurs when the file that calls include!isn’t in the root directory. Essentially to keep relative paths, the path needs to be different at each subdirectory level. I think the best explanation is here OUT_DIR prevents remote/distributed builds · Issue #15786 · rust-lang/cargo · GitHub
+
+---
+
+@bridiver · 2025-08-01T19:36:33.420Z:
+I did come up with a workaround that rewrites the source files to replace env!("OUT_DIR") with the correct relative path for the given directory level, but it’s pretty hacky
+
+---
+
+@bridiver · 2025-08-01T19:39:40.326Z:
+Vorpal:
+Can't this be solved on the distribution tool side by using file system namespaces to ensure the same layout?
+This is not really a practical solution, we might be running several builds in parallel on the same machine and also would require all devs to have the same directory structure as the CI and build machines.
+
+---
+
+@bridiver · 2025-08-01T19:40:55.328Z:
+Right, it could be any env var which is why this needs some kind of generic solution like the ones discussed in the issue
+
+---
+
+@illicitonion · 2025-08-01T20:13:27.859Z:
+Yeah, you definitely can’t just use paths relative to the calling source file and hope they’ll work.
+In Bazel, we absolutise everything.
+An alternative could be to have something like a $CARGO_MANIFEST_DIR-relative OUT_DIR (though this has similar questions if you’re not using Cargo, as to what exactly the $CARGO_MANIFEST_DIR should point to - in Bazel we point it to the directory containing the BUILD.bazel file, even though there may not be a Cargo.toml file in it).
+But on some level - if you want a relative path, there needs to be some root it’s relative to. And that needs to be some consistent root for any actions that may consume any strings containing paths that were produced by the build script.
+
+---
+
+@bridiver · 2025-08-01T20:18:01.465Z:
+The chromium build doesn’t use cargo, but it supplies relevant env like CARGO_MANIFEST_DIR. I think that’s pretty much unavoidable at this point because crates expect that you’re using cargo. There is an option I’m looking into of having the wrapper script (the same one I hacked to rewrite the source file) convert the OUT_DIR to an absolute path before it passes it to rustc. That way everything still looks relative to the build system and it shouldn’t impact reproducibility. I haven’t test it yet.
+
+---
+
+@mathstuf · 2025-08-02T03:25:02.058Z:
+Vorpal:
+Can't this be solved on the distribution tool side by using file system namespaces to ensure the same layout? Same building block that docker etc uses.
+If you assume Linux[^1] is your execution host…sure, that’s a possibility. Not sure what you tell macOS or Windows users in this case[^2].
+[^1]: or BSD/Solaris I suppose
+[^2]: Windows has Docker containers…not sure I’d classify them as anywhere near as reliable (or quick to customize) as Linux
+kornel:
+Build scripts can set other variables that include paths:
+The thing this begs for is a way for build scripts to say “include this in the build context too”.
+
+---
+
+@Vorpal · 2025-08-03T04:49:29.792Z:
+bridiver:
+This is not really a practical solution, we might be running several builds in parallel on the same machine and also would require all devs to have the same directory structure as the CI and build machines.
+I don't see how that follows? You spin up a container on the build server with a layout matching whatever the dev building has. And each container is isolated, so several in parallel is not a problem. You do need to add support for this to your distribution tool of course, but that is what I was arguing for.
+However, the concern expressed by @mathstuf that Windows and Mac OS support would be problematic does seem like a real problem. I did not realise those OSes were that far behind in capabilities, I assumed they would have copied containers by now...
+
+---
+
+@bridiver · 2025-08-03T12:15:44.689Z:
+It follows because it’s not practical to force that environment on everyone. It’s not just build servers, it’s every dev building locally using reclient or similar. “use a container” makes a lot of assumptions that may not hold for every project that wants to take advantage of distributed builds Even if macOS and windows had containers for the host os, they don’t have the equivalent of X11 to display a native GUI app so devs couldn’t run the app they just built in their local container without vnc or similar. It would be very disruptive and make development very painful as we are building for every major platform on desktop and mobile.
+
+---
+
+@bridiver · 2025-08-03T20:22:45.573Z:
+Even if there were no issues with using containers or having the same path on every machine, I believe it rejects anything that has dependencies with absolute paths and will just build it locally instead
+
+---
+
+@Vorpal · 2025-08-03T20:29:40.655Z:
+bridiver:
+it’s every dev building locally using reclient or similar. “use a container” makes a lot of assumptions that may not hold for every project that wants to take advantage of distributed builds
+So you are completely misunderstanding me. I have used a tool like this (a proprietary tool) in the past. The basic idea is that you would build locally like normal. No container. Just a wrapper command around your normal build system (make, ninja, etc). I belive it would use LD_PRELOAD or perhaps redirecting PATH to intercept any build commands.
+The tool would then replicate the relevant bits of the build environment on remote server, and on the server spin up a file system namespace and run the compiler in it. It would copy across any needed binaries (the compiler, shared libraries, headers etc) that weren't cached on the remote host. In the namespace it would look like a partial copy of your local system, and it would use a custom FUSE filsystem to intercept attempts to read files that weren't cached and transfer them on demand.
+This is of course quite Linux specific, and that is a valid concern. But it does not force devs to build in containers locally. It just uses the same underlying mechanism + FUSE to transparently proxy.
+Now, this tool had lots of other issues, in particular it would try to use spare CPU cycles from other developers machines, not just build servers. Which lead to everyones laptop running at 100% fans all the time. And it did not play well with remote workers over VPN. And the central scheduler wasn't very reliable. But the core concept described above worked wonderfully.
+
+---
+
+@bridiver · 2025-08-03T20:47:32.286Z:
+I am not misunderstanding you at all, I’m pointing out that you are making assumptions about the build environment and the tools that are being used that cannot be applied universally. Writing a new distributed build system or making extensive changes to what we are using to somehow facilitate handling absolute path is not the solution, the solution is to add some mechanism that allows cargo/rust to work with existing distributed build systems and that is what I would like to discuss here.
+
+---
+
+@mathstuf · 2025-08-04T00:11:38.109Z:
+bridiver:
+Even if macOS and windows had containers for the host os, they don’t have the equivalent of X11 to display a native GUI app so devs couldn’t run the app they just built in their local container without vnc or similar
+They already have it. Better than X11 even. Windows displays WSL windows as native and I believe there are macOS programs that make VM-hosted UI windows appear native as well (podman may be one, but I think VMWare or that ilk had similar support).
+Vorpal:
+This is of course quite Linux specific
+FUSE exists on the other operating systems. tup uses it to implement its isolation features (in fact, it requires isolation for its design) and it supports the main 3 kernels around (plus other *nixen with FUSE APIs).
+
+---
+
+@bridiver · 2025-08-04T00:27:29.501Z:
+They already have it. Better than X11 even. Windows displays WSL windows as native and I believe there are macOS programs that make VM-hosted UI windows appear native
+I’m talking about building native Windows and MacOS apps. Can we please drop the discussion about using containers here? It’s not useful for the topic I want to discuss which is real support for distributed build systems without using some workaround that brings all kinds of new issues and complications. The scope of this topic is changes to rust/cargo to remove the need for absolute paths in these types of situations
+
+---
+
+@bridiver · 2025-08-04T00:56:28.118Z:
+Also again, even if containers or similar worked perfectly to standardize the paths, it’s irrelevant because the absolute path dependency will still be rejected by the build system and fall back to local compilation
+
+---
+
+@kornel · 2025-08-04T11:56:57.240Z:
+Running the Linux kernel in a virtual machine is not the same as non-Linux OSes having equivalent of Linux containers.
+Linux isn't the only operating system in the world, and people build Rust on other host OSes than Linux.
+macOS and Windows don't have containers for macOS and Windows software. They have ability to run the Linux kernel and Linux software, but that's not the same thing.
+
+---
+
+@mathstuf · 2025-08-04T11:59:07.112Z:
+bridiver:
+I’m talking about building native Windows and MacOS apps.
+As am I.
+bridiver:
+Can we please drop the discussion about using containers here?
+Sure; I was just trying to correct a statement about them that I think is inaccurate (even if it is not 100% relevant to the desired solution).
+kornel:
+Running the Linux kernel in a virtual machine is not the same as non-Linux OSes having equivalent of Linux containers.
+I'm well aware of that. AFAIK, there are still some VM technologies that will bridge UI windows "seamlessly". I'm the one who pointed out that "containers" wouldn't work on macOS and (practically) Windows here…
+
+---
+
+@bridiver · 2025-08-04T12:27:59.372Z:
+Sure; I was just trying to correct a statement about them that I think is inaccurate
+This is why I was specific about “containers for the host os” vs just containers in general for Linux that run on macOS or windows.
+
+---
+
+@bridiver · 2025-08-04T12:32:59.349Z:
+So from the original ticket there are several options like rebase_path or similar that seem the most promising? The main problem is see is trying to prevent future crate updates from using the old pattern. Or maybe there are other ideas? I suggested a per file command line env mapping which would make the existing pattern backwards compatible, but it would be better I think in the long run to have something that doesn’t require extra options to work correctly.
+
+---
+
+@Vorpal · 2025-08-04T13:51:48.125Z:
+Since build scripts can do whatever they want (in particular for sys crates binding C libraries) i suspect you will to some extent have to fix each crate separately still. And it also depends on the build system of the C library in question (pray to higher powers if it is autoconf).
+But for chromium in particular, why doesn't the path taken by Google's own bazel work? In fact, why aren't you just using that straight up? I thought bazel (or blaze?) was the mandated standard at Google?
+
+---
+
+@bridiver · 2025-08-04T14:35:50.540Z:
+But for chromium in particular, why doesn't the path taken by Google's own bazel work? In fact, why aren't you just using that straight up? I thought bazel (or blaze?) was the mandated standard at Google?
+Chromium doesn’t use bazel, it uses gn/siso, but if you read the comments in the cargo issue you’ll see why this is problematic to solve internally. I think we might have a workaround to convert the relative path to absolute within the rustc_wrapper script so the absolute path isn’t a dependency of the target itself, but there’s still a fundamental issue here for anyone who wants to do a distributed build using cargo crates with build scripts which is why I’m proposing a generalized solution. The workaround I’m looking at could not be applied to projects using cargo directly. It’s also not ideal  because in theory it could potentially impact reproducible builds in some edge case.
+
+---
+
+@bridiver · 2025-08-04T14:38:14.531Z:
+Vorpal:
+Since build scripts can do whatever they want (in particular for sys crates binding C libraries) i suspect you will to some extent have to fix each crate separately still. And it also depends on the build system of the C library in question (pray to higher powers if it is autoconf).
+This is why I mentioned that there should ideally be some mechanism to discourage crates from relying on absolute paths. Not sure what that mechanism would look like though. Maybe it could complain if include! is called without using rebase_path or whatever the method ends up being. Also maybe include! could be deprecated entirely in favor of some other method that had built-in support for this. There are probably still ways for crate authors to cause problems, but it would certainly be far less common.
+
+---
+
+@the8472 · 2025-08-05T09:23:44.143Z:
+mathstuf:
+Not sure what you tell macOS or Windows users in this case[^2].
+At least windows has containers, including filesystem namespacing.
+Freebsd has jails. Various other unixes at least have chroot.
+
+---
+
+@bridiver · 2025-08-05T11:31:11.429Z:
+Once again, containers are not a solution for this. Even if you align all the paths, any input with an absolute path is rejected and falls back to local compilation. Also we’re talking about building native apps on other platforms. Can we please stay focused on the actual topic of this discussion which is not containers or any other mechanism to align the paths across all machines. Does anyone have any ideas or input on this that is not about containers?
+
+---
+
+@Vorpal · 2025-08-05T13:17:03.181Z:
+bridiver:
+Once again, containers are not a solution for this. Even if you align all the paths, any input with an absolute path is rejected and falls back to local compilation.
+That is a limitation of your build system. What I (and I think others) were trying to tell you, is that while it would be nice to fix this on the Rust side, changing your build/distribution system might be a faster way forward. This is especially true since build scripts have so much freedom.
+
+---
+
+@bridiver · 2025-08-05T13:37:22.191Z:
+That is a limitation of your build system. What I (and I think others) were trying to tell you
+The limitation is intentional and is not going to change, but what I keep trying to say is that I’m looking for a generalized fix for rust, not for our specific issue. I already said we probably have a workaround, but that doesn’t change the fact that these build scripts are incompatible with distributed build systems in general because allowing absolute paths is problematic.
+And yes, crate authors can do whatever they want in build scripts, but they currently don’t even have an available tool that would enable them to do something different that would work here.
+
+---
+
+@the8472 · 2025-08-05T14:00:27.643Z:
+bridiver:
+but that doesn’t change the fact that these build scripts are incompatible with distributed build systems in general because allowing absolute paths is problematic.
+"problematic"... well yes, the suggestion is that namespaces solve the problem, at which point it is no longer problematic.
+The limitation is intentional and is not going to change
+That sounds like you're trying to offload your internal constraints onto others instead of finding an alternative solution to uphold whatever thing motivated those constraints in the first place... which I think you have not explained so far.
+Also we’re talking about building native apps on other platforms.
+I don't understand what you mean by "building native app" that would make it inherently impossible to use namespaced filesystems.
+Let's say you want to build Unreal Engine on windows (I think this qualifies as "native app"). You should be able to do this in a windows process namespace too.
+
+---
+
+@bridiver · 2025-08-05T14:21:51.576Z:
+That sounds like you're trying to offload your internal constraints onto others instead of finding an alternative solution to uphold whatever thing motivated those constraints in the first place... which I think you have not explained so far.
+This is a property of every distributed build system I have ever used, it’s pretty fundamental to the entire concept of distributing the build and forcing every node including the developer’s machine to have the same path is a pretty severe limitation for distributed/remote build. It also makes it impossible to have simultaneous builds on the same machine without something similar to containers. Allowing absolute paths would make the build extremely fragile and potentially wreak havoc with reproducible builds. I can’t imagine any reasonable distributed build system allowing them.
+I don't understand what you mean by "building native app" that would make it inherently impossible to use namespaced filesystems.
+I don’t even know what you’re talking about in terms of namespace filesystems. That’s not something I ever mentioned as related to this at all. The problem is simple: absolute paths vs relative paths. In terms of native apps, the point is that Linux containers, regardless of the host platform they run on, are not a solution here.
+I don’t understand why you’re even arguing these points. I’m not trying to fix a problem in our build, I’m trying to add something to rust to be compatible with the majority of distributed build systems so devs have a tool at their disposal to write code in a way that doesn’t force the use of absolute paths. Can we please just talk about that?
+
+---
+
+@dtolnay · 2025-08-05T14:56:49.450Z:
+bridiver:
+This is a property of every distributed build system I have ever used, it’s pretty fundamental to the entire concept of distributing the build and forcing every node including the developer’s machine to have the same path is a pretty severe limitation for distributed/remote build. It also makes it impossible to have simultaneous builds on the same machine without something similar to containers. Allowing absolute paths would make the build extremely fragile and potentially wreak havoc with reproducible builds. I can’t imagine any reasonable distributed build system allowing them.
+At least for Buck, none of this is the case. Buck has supported distributed + reproducible compilation of Rust, including executing Cargo build scripts on a different remote machine and working directory than library compilation, and including simultaneous builds on the same machine without containers, for 6 years.
+The relevant code is build.bzl and rustc_action.py and buildscript_run.py. In practice it has been reliable and our codebase successfully builds over 3,800 third-party Cargo packages with over 200 Cargo build scripts.
+I am open to a principled alternative that involves changes to Cargo and/or Rust, but this thread has some hyperbole and misdirection that has not been helpful.
+
+---
+
+@the8472 · 2025-08-05T16:40:40.491Z:
+bridiver:
+In terms of native apps, the point is that Linux containers, regardless of the host platform they run on, are not a solution here.
+From my previous comment, other OSes have similar features:
+the8472:
+At least windows has containers, including filesystem namespacing.
+Freebsd has jails. Various other unixes at least have chroot.
+To emphasize: Windows containers here refers to native windows functionality to namespace the environment for native windows executables, not to running a linux VM on windows.
+
+---
+
+@bridiver · 2025-08-05T17:47:53.621Z:
+I have asked several times to please stick to the actual topic I created this thread for which is creating some mechanism to allow specifying a relative path for loading generated files from build scripts. There is no need for anyone to clarify any details about containers or namespaces or anything along those lines. They are not relevant to this discussion so can we pretty please stop talking about it?
+As more (and especially larger) projects start using rust, more of these types of issues are going to come up. If the goal of crates is code reuse then shouldn’t we try to make it easier to re-use them in different environments that have different constraints? afaik there is no way for a crate author to use include!(concat!(env!("OUT_DIR") (or any similar mechanism) in a way that works consistently in all files in any subdirectory whether OUT_DIR is absolute or relative (if there is some way to make that work I’d love to hear about it). Since cargo passes an absolute path, all crates assume that. Many of them still work with a relative directory because they only generate files in a single directory and only read them in a single directory so the relative OUT_DIR can be matched to those expectations. In other cases it’s not possible to pass a single relative OUT_DIR that will resolve correctly for all of them.
+If you view this as a problem specific to the build system we’re using then I think you are missing the bigger picture here. That’s fine, we can continue to work around this. It’s not the first issue related to cargo/rust that we’ve had to work around and probably won’t be the last, but I can tell you that it doesn’t make us want to use more rust code unless there are very clear benefits that outweigh the trouble it causes.
+btw I think some people assume I work at Google, I don’t. There are many other chromium based browsers out there and many more projects that embed the chromium content module in other applications (electron, etc…).
+
+=== ROW 45 | f009343 | https://internals.rust-lang.org/t/code-compiles-on-playground-but-fails-when-passed-via-stdin-to-rustc/24393 | 2026-06-11 | internals ===
+Code compiles on playground but fails when passed via stdin to rustc
+
+@MusicalNinjaDad · 2026-06-11T17:21:59.576Z:
+I've run into the following very strange behaviour and am unsure whether it's some kind of weird bug that I should report or a subtle mistake on my part.
+The following code compiles and runs fine on playground (as does an equivalent test locally)
+#![allow(stable_features)]
+#![allow(unused)]
+#![feature(iterator_try_collect)]
+fn main() {
+let foo: Option<Vec<_>> = [Some(1)].into_iter().try_collect();
+assert_eq!(foo.unwrap().len(), 1);
+}
+but when passed via stdin to rustc --crate-name flurb --crate-type=lib --out-dir target/flurb --emit=llvm-ir - it fails with
+error[E0277]: the trait bound `&Option<{integer}>: Try` is not satisfied
+--> <anon>:5:53
+|
+5 |     let foo: Option<Vec<_>> = [Some(1)].into_iter().try_collect();
+|                                                     ^^^^^^^^^^^ the nightly-only, unstable trait `Try` is not implemented for `&Option<{integer}>`
+|
+help: the trait `Try` is implemented for `Option<T>`
+--> /opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:2767:1
+|
+2767 | impl<T> const ops::Try for Option<T> {
+| ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+error: aborting due to 1 previous error
+For more information about this error, try `rustc --explain E0277`.
+Is there a reason for the difference in output from a direct rustc invocation vs a cargo/playground based compilation?
+
+---
+
+@toc · 2026-06-11T17:28:19.287Z:
+--edition 2024
+At a minimum. Probably there are other differences in the exact command, but this at least compiles it.
+
+---
+
+@jer · 2026-06-11T17:28:36.870Z:
+The playground defaults to edition 2024.
+Fails if you select edition 2015: Rust Playground (or 2018 for what it's worth).
+works locally if you pick at least edition 2021:
+rustc +nightly --crate-name flurb --crate-type=lib --out-dir target/flurb --emit=llvm-ir t.rs --edition 2021
+
+---
+
+@MusicalNinjaDad · 2026-06-11T17:30:07.987Z:
+Thanks both - so that looks like a subtle edition bug for try_collect() and an extra param for me to pass to autocfg
+
+---
+
+@cuviper · 2026-06-11T17:56:47.822Z:
+The relevant edition change for that error is 2021's IntoIterator for arrays.
+Calls to IntoIterator::into_iter are hidden in Rust 2015 and Rust 2018 when using method call syntax (i.e., array.into_iter()). So, array.into_iter() still resolves to (&array).into_iter() as it has before.
+
+---
+
+@MusicalNinjaDad · 2026-06-11T18:00:57.493Z:
+Thanks. I was 2 minutes to fast opening an issue - now closed.
+
+---
+
+@kpreid · 2026-06-11T18:43:32.982Z:
+I think that, given the number and significance of edition differences that now exist, rustc ought to warn whenever it is invoked without an --edition, because almost nobody writing a rustc invocation today should be using the 2015 edition.
+At one point I tried implementing such a warning; the complication I found was that very many of the “UI” tests (tests that compile code and look at the compiler output) were written without any edition set, and each one would gain a new warning unless modified to set the edition.
+
+---
+
+@dlight · 2026-06-11T21:29:26.813Z:
+I think that if there is no edition and there's a compiler error (not just warning), compiling again with newer editions just for better diagnostics would be so damn cool.
+Something like Note: this compiles on edition 2024 (or even on editions: 2021, 2024)
+This makes code with no edition fail to compile slower, but people shouldn't be developing with no edition set (and code already developed usually doesn't fail to compile and isn't affected)
+
+---
+
+@scottmcm · 2026-06-12T03:03:46.816Z:
+kpreid:
+and each one would gain a new warning unless modified to set the edition.
+The various suites can set default flags, so you could add a -Z flag to not do that warning that's passed by default.  (Or if it's a lint just the existing allow-a-lint flag.)
+
+---
+
+@MusicalNinjaDad · 2026-06-12T11:01:16.245Z:
+It was a similar situation that led to my confusion. In this case it wasn't trybuild etc but rather autocfg which doesn't automatically set the edition.
+I'd see the biggest "block" to those tools updating would be the lack of an immediately obvious basic cargo.toml parser in that part of the ecosystem that is fast and complete. As I'd assume the preffered approach would be to set the edition as per the crate's spec.
+cargo_metadata has a runtime cost, which is annoying in tests & unsuitable in build scripts. cargo_toml uses serde, which adds extra build time. The workspace challenge makes simpler options less viable.
+
+---
+
+@ekuber · 2026-06-18T20:34:44.973Z:
+github.com/rust-lang/rust
+When compiling without a specified `--edition`, emit a note (#158102)
+main ← estebank:note-default-edition
+opened 08:28PM - 18 Jun 26 UTC
+estebank
++178
+-43
+Would someone have the energy to write the MCP for merging this change? I believe that we might have to coordinate with cargo (to ensure the edition is being passed in always).
+
+---
+
+@epage · 2026-06-19T16:09:19.113Z:
+ekuber:
+I believe that we might have to coordinate with cargo (to ensure the edition is being passed in always).
+I believe Cargo unconditionally passes in the edition already.
+
+---
+
+@kpreid · 2026-06-19T17:50:20.748Z:
+It does. It used to be conditional, but that was 5 years ago.
+github.com/rust-lang/cargo
+src/cargo/core/compiler/mod.rs
+master
+if unit.show_warnings(bcx.gctx) {
+warn(msg)
+} else {
+Ok(())
+}
+};
+cmd.arg("--crate-name").arg(&unit.target.crate_name());
+let edition = unit.target.edition();
+edition.cmd_edition_arg(cmd);
+add_path_args(bcx.ws, unit, cmd);
+add_error_format_and_color(build_runner, cmd);
+add_allow_features(build_runner, cmd);
+let mut contains_dy_lib = false;
+if !test {
+for crate_type in &unit.target.rustc_crate_types() {
+cmd.arg("--crate-type").arg(crate_type.as_str());
+contains_dy_lib |= crate_type == &CrateType::Dylib;
+
+---
+
+@MusicalNinjaDad · 2026-06-20T13:37:09.112Z:
+ekuber:
+Would someone have the energy to write the MCP for merging this change?
+I'll try to give it a go tomorrow. It'll be my first MCP. Thanks for picking this up! But ... Before I do ...
+ekuber:
+I believe that we might have to coordinate with cargo (to ensure the edition is being passed in always).
+My worry would be autocfg. If anyone has probes with a leading #[deny(warnings)] then that could break with rather nasty consequences. (?) It'd be great if @cuviper could quickly weigh in as to whether that's a valid concern or not?
+
+---
+
+@programmerjake · 2026-06-20T15:11:51.750Z:
+MusicalNinjaDad:
+If anyone has probes with a leading #[deny(warnings)] then that could break with rather nasty consequences.
+IMO Rust never guaranteed it wouldn't add more warnings for code that was warning-free, so if you use deny(warnings), you're opting-in to breakage.
+
+---
+
+@steffahn · 2026-06-20T15:15:05.660Z:
+ekuber:
+Would someone have the energy to write the MCP for merging this change?
+There exists some prior discussion with similar ideas by the way:
+Idea: rustc & cargo should warn on unspecified edition tools and infrastructure
+A moderately common source of beginner confusion is that they encounter unexpected behavior due to not specifying a language edition, and getting the default 2015 edition. This can be either due to calling rustc instead of cargo and not specifying any options, or writing a Cargo.toml from scratch (that is, not using cargo new) without remembering to include the edition field.
+Users in this position encounter various surprising behaviors, such as needing extern crate to use dependencies, and not…
+kpreid:
+It does. It used to be conditional, but that was 5 years ago.
+cargo/src/cargo/core/compiler/mod.rs at master · rust-lang/cargo · GitHub
+Judging by the PR linked from the abovementioned discussion
+github.com/rust-lang/cargo
+fix(rustc): Always pass --edition to rustc (#13499)
+master ← epage:always-edition
+opened 09:38PM - 28 Feb 24 UTC
+epage
++299
+-288
+On [Internals](https://internals.rust-lang.org/t/idea-rustc-cargo-should-warn-on…-unspecified-edition/20309), the idea came up for warning on unset Edition.
+I am working on the cargo warning but if rustc ever wants to do so, they'd be blocked on cargo ensuring `--edition` is always set. Hence this change.
+it sounds the relevant change is more like ~2 years ago? (And explicitly for the purpose of enabling what this thread now suggests.)
+In other words, the coordination with cargo already happened
+
+---
+
+@MusicalNinjaDad · 2026-06-21T13:01:41.214Z:
+programmerjake:
+IMO Rust never guaranteed it wouldn't add more warnings for code that was warning-free, so if you use deny(warnings), you're opting-in to breakage.
+Yes, and probes really should aim to use a specific #[forbid(...)] etc. to change the specific case they are testing.
+And yet ... In this case we are looking at potentially breaking build scripts silently with hard-to-spot and hard-to-debug consequences, not only for the crate in question but for anyone downstream and without any action needed on anyone's part (other than updating rustc) for the breakage to occur.
+So, while I agree that "you really shouldn't have done that, so you have no-one else to blame" is the technically right call, I also don't feel comfortable putting an MCP in for this without a thumbs-up form someone more senior.
+
+---
+
+@epage · 2026-06-21T14:00:20.337Z:
+MusicalNinjaDad:
+My worry would be autocfg. If anyone has probes with a leading #[deny(warnings)] then that could break with rather nasty consequences
+Unsure about T-compiler but T-cargo has decided to not support build probes, see Provide a way for build scripts to invoke rustc the way cargo would · Issue #11244 · rust-lang/cargo · GitHub
+Without Cargo support, build probes have some gotchas.
+Also, for fully general build probes, like autocfg, the edïtion should be set. The caller has to do this currently. We've approved telling build scripts the edition but it is unclear if that might get superseded by a compiler feature.
+
+---
+
+@Nemo157 · 2026-06-21T16:30:36.831Z:
+I almost think it would be a good thing to break autocfg occasionally and try to influence people away from using it. I run into crates that have issues working on nightly over, and over, and over because of bad auto-detection. I would really like a way to just say "I'm on at least the latest stable when you were published, use all those features" and bypass any attempt at detecting for MSRV's I don't care about or unstable features I do not want used.
+
+---
+
+@cuviper · 2026-06-21T17:56:38.713Z:
+I agree that blanket deny(warnings) is a bad idea for feature probes, and even in general that makes compiler upgrades more likely to break your code.
+epage:
+Also, for fully general build probes, like autocfg, the edïtion should be set. The caller has to do this currently. We've approved telling build scripts the edition but it is unclear if that might get superseded by a compiler feature.
+If that's going to be another of these environment variables, perhaps something like CARGO_PKG_EDITION, then that sounds great, and I would probably change autocfg to use that by default. I don't know how a compiler feature could supersede that though, because I would want the edition of the package with the build script, not of autocfg itself.
+
+---
+
+@ekuber · 2026-06-21T22:53:55.156Z:
+Do note that I implemented this as an undismisable note, which could also be a warning (that wouldn't be affected by forbid warnings, if iirc, as that only looks at lints, but might be getting things wrong there). The only people affected would be those explicitly comparing textual compiler output in scripts.
+
+---
+
+@epage · 2026-06-23T14:47:41.909Z:
+cuviper:
+If that's going to be another of these environment variables, perhaps something like CARGO_PKG_EDITION, then that sounds great, and I would probably change autocfg to use that by default. I don't know how a compiler feature could supersede that though, because I would want the edition of the package with the build script, not of autocfg itself.
+Around the time we approved an environment variable, there started talk among T-lang to add an edition cfg which would then be exposed to build scripts as CARGO_CFG_EDITION. That went through several proposals, delaying it. The latest has been untouched for enough time that it might  not be worth waiting on anymore and to instead use CARGO_PKG_EDITION.
+
+---
+
+@MusicalNinjaDad · 2026-06-24T14:45:27.476Z:
+I'm also struggling to see how this would work. To my understanding the cargo env variables are set once for a cargo invocation[1]. Build scripts and edition selection are unique to a specific crate, wherever it sits in the dependency tree; not driven by the one(s) at the top of the chain which triggered the build. Edit: got it now [2] weird how I can spend 2 days trying to figure something out and then get it almost straight away after asking publicly!
+building all crates in parallel and the global-nature of env vars suggests this cannot be done any other way(?) ↩︎
+prefix the call with the env cars directly ↩︎
+
+---
+
+@bjorn3 · 2026-06-24T16:37:16.383Z:
+Cargo sets a bunch of env vars for each build script invocation with different values depending on the package they are part of.
+
+---
+
+@RalfJung · 2026-06-27T11:51:51.824Z:
+Nemo157:
+I almost think it would be a good thing to break autocfg occasionally and try to influence people away from using it. I run into crates that have issues working on nightly over, and over, and over because of bad auto-detection. I would really like a way to just say "I'm on at least the latest stable when you were published, use all those features" and bypass any attempt at detecting for MSRV's I don't care about or unstable features I do not want used.
+I wish we had proper cargo support for build probes (or something else that alleviates the need for build probes) so people wouldn't have to write their own hacks to substitute for lack of official support. But, well, everyone only has finite capacity so here we are.
+There is an env var you can set which makes rustc -vV claim that this is "stable" even if you are on nightly; this will disable most of this kind of auto-detection (and it's very clearly a bug in the ones that do not get disabled): RUSTC_OVERRIDE_VERSION_STRING.
+
+---
+
+@MusicalNinjaDad · 2026-06-29T15:04:10.084Z:
+I'm genuinely confused by what appears to be the prevailing negative view of build probes in principle. (I'm quite able to understand a negative view of poorly-created build probes in practice)
+Here's my thinking. What am I missing? Is it another implicit social contract?
+No other crate can force you onto nightly or any other version of stable.
+Nemo157:
+I would really like a way to just say "I'm on at least the latest stable when you were published,   use all those features" and bypass any attempt at detecting for MSRV's I don't care about or unstable features I do not want used.
+The toolchain version is decided by whoever is compiling the final binary. It should be up to them and only them what is used.
+If that's you in this case - how are you being forced to use an experimental nightly feature?
+If you're a lib in the middle - why should you be able to restrict your downstream user's choice of toolchain?
+As a lib developer I may want to provide additional functionality which requires experimental nightly features
+if this is in the form of extensions to the API, via a feature - the direct consumer needs actively use the additional API, so it makes sense that they set a feature in their dependency (on me)
+if this is via a consistent API, via a build probe - it doesn't make sense to require a direct consumer lib to make a choice for their downstream users. Should they opt in and only support others on nightly? Or opt out and their users lose the benefit?
+The fewer people use nightly experimental features, the longer it takes to get meaningful feedback on them and the slower the language develops.
+The very real impact of this are year-long timelines for amazing ergonomic changes - that's not due to lack of effort etc. from the various teams, that's simply due to the reality of usage levels and the time needed to get good data.
+To my mind, taking the time as a lib developer to try to incorporate nightly features in a way which allows stable-by-default to "just work" and gives value add for those who wish to use nightly is the least I can do to support the people who devote huge time and effort into improving the language.
+RalfJung:
+I wish we had proper cargo support for build probes (or something else that alleviates the need for build probes) so people wouldn't have to write their own hacks to substitute for lack of official support.
+I'm not sure that anything short of well-written probes and thoughtful API design would solve the issue. I've recently tried to lib-ify the probes that I use - and it's not even possible to have a general probe for "do you need this #![feature(...)]" that works in every case.
+Perhaps providing a section in the unstable book on these topics would help with reducing the number of "hacks" and increasing the number of well-written probes & APIs?
+
+---
+
+@Nemo157 · 2026-06-29T15:30:35.384Z:
+MusicalNinjaDad:
+The toolchain version is decided by whoever is compiling the final binary.
+Which is me, I only care about build probes when they execute on my system (maybe because I'm developing an application, maybe when I'm compiling the tests for my library).
+MusicalNinjaDad:
+If that's you in this case - how are you being forced to use an experimental nightly feature?
+Because I use a nightly compiler to take advantage of unstable toolchain features that don't impact the code, just improve the developer experience e.g. Cargo's workspace-feature-unification. But dependencies see that I am using a nightly compiler and attempt to use other unstable library or compiler features that I don't want them to.
+MusicalNinjaDad:
+As a lib developer I may want to provide additional functionality which requires experimental nightly features
+And you still can, you should just provide a way to allow users to opt-in to this (e.g. via --cfg flags or environment variables). If users do not, don't just assume you can use them (since build probes are commonly wrong and cause compilation failures, e.g. latest instance of this I've found).
+MusicalNinjaDad:
+The fewer people use nightly experimental features, the longer it takes to get meaningful feedback on them and the slower the language develops.
+If I do not know that a dependency of mine has enabled an unstable feature, I am not going to give feedback on it anyway. By surfacing the feature as something the final developer actually enables that gives you a chance to link to the tracking issue and suggest they go leave feedback if they use it.
+
+---
+
+@kpreid · 2026-06-29T15:39:25.162Z:
+As the person choosing the toolchain to build with, I may be using nightly for any number of reasons; in particular, I may be using it to get access to flags useful for debugging that aren't stable, or to use a newer compiler version that might have fixed a bug.
+When I switch to nightly for one of those reasons, I don't want my project's dependencies to also implicitly change to making use of unstable features. I don't want them to be compiling different code. I don't want them to be exercising parts of the compiler that are marked unstable. I want everything  about those dependencies to be exactly the same except what I chose to change (the compiler version) so that the results of my experiment are as controlled as possible.
+That said, I would also enjoy having a sort of global feature flag (perhaps just a conventional environment variable, or cfg to stick in RUSTFLAGS?) to tell every dependency "yes, do use all the unstable features you would like to", for the testing of nightly features. But I don't want that to be implied by any usage of nightly at all, which is what happens when libraries use build probes for unstable features.
+
+---
+
+@epage · 2026-06-29T17:46:02.300Z:
+MusicalNinjaDad:
+Here's my thinking. What am I missing? Is it another implicit social contract?
+Beyond the anecdotes given, there is a general principle within the Rust Project that unstable features only impact those who have opted in. We should not be gating functionality based on the channel. This makes it much safer for people to run nightly. The rare exception is when we are needing extra testing on something right before stabilization. Libraries auto-enabling features are running counter to that principle.
+
+---
+
+@MusicalNinjaDad · 2026-06-29T17:48:03.889Z:
+kpreid:
+I may be using it to get access to flags useful for debugging that aren't stable, or to use a newer compiler version that might have fixed a bug.
+When I switch to nightly for one of those reasons, I don't want my project's dependencies to also implicitly change to making use of unstable features.
+That makes perfect sense.
+kpreid:
+That said, I would also enjoy having a sort of global feature flag (perhaps just a conventional environment variable, or cfg to stick in RUSTFLAGS?) to tell every dependency "yes, do use all the unstable features you would like to", for the testing of nightly features.
+With a small twist I'd agree that that is a great idea ...
+Why not the other way around? Instead of requiring an opt-in to a full nightly experience on nightly, provide an opt-in-to-only which then disables everything else. That way those who need or want very granular control have it with no extra effort and those who want "full nightly" also have that with no extra effort.
+It's the idea of either requiring an opt-in if you don't want granular control, or, worse, if you don't want an arbitrary set of pre-defined features that irks me.
+Nemo157:
+By surfacing the feature as something the final developer actually enables
+and there's the rub ... the final developer cannot enable a feature if they are consuming via a transitive dependency.
+Yes - you could require them to set a cfg flag or env variable manually ... and some choose that route. Personally, I prefer a crate that documents clearly if they auto-detect & use nightly features to one that makes me go through that hassle, and choose accordingly (just as others will choose the opposite)
+
+---
+
+@epage · 2026-06-29T17:48:45.747Z:
+kpreid:
+That said, I would also enjoy having a sort of global feature flag (perhaps just a conventional environment variable, or cfg to stick in RUSTFLAGS?) to tell every dependency "yes, do use all the unstable features you would like to", for the testing of nightly features. But I don't want that to be implied by any usage of nightly at all, which is what happens when libraries use build probes for unstable features.
+I have wondered about replacing nightly cargo features with Pre-RFC: Mutually-excusive, global features .  More recently, I found out about -Zallow-features and wonder if there is something there we could build up to better support these use cases, including forwarding that to build scripts and proc-macros for the code they generate.
+doc.rust-lang.org
+allow-features - Unstable Features - The Cargo Book
+Experimental Cargo features are only available on the nightly channel. You are encouraged to experiment with these features to see if they meet your needs, and if there are any issues or problems. Check the linked tracking issues listed below for...
+
+---
+
+@MusicalNinjaDad · 2026-06-29T17:56:33.601Z:
+epage:
+More recently, I found out about -Zallow-features and wonder if there is something there we could build up to better support these use cases, including forwarding that to build scripts and proc-macros for the code they generate.
+MusicalNinjaDad:
+Why not the other way around? Instead of requiring an opt-in to a full nightly experience on nightly, provide an opt-in-to-only which then disables everything else.
+Sounds like that actually already exists. (Thanks - another thing I learned today!)
+So, what's the concern about a build probe which correctly reacts to RUSTFLAGS="-Zallow-features=" by not enabling any nightly features?
+If you want to limit what is enabled on nightly for reasons like those above, set the env variable, ...
+(I just checked and all my probes react correctly to it - so it's not rocket science, just so under-documented that getting probes right is much harder than it needs to be)
+
+---
+
+@Nemo157 · 2026-06-29T18:07:58.110Z:
+Did you try when set via CARGO_UNSTABLE_ALLOW_FEATURES too? That’s probably the more common interface to the functionality now that it exists, and that’s what I’ve been running into a lot of buggy probe handling for recently.
+(And it’s kind of an eternal fact that every time the interface for this sort of thing improves, build scripts will fail to handle it because they’re kind of fail open, instead of fail closed; I remember long ago when none handled RUSTFLAGS correctly either).
+
+---
+
+@MusicalNinjaDad · 2026-06-29T18:15:31.803Z:
+Nemo157:
+Did you try when set via CARGO_UNSTABLE_ALLOW_FEATURES too?
+Yep - and no that won't work - for the same reason as the original post in this thread.
+I'd consider that a different issue though and question whether CARGO_UNSTABLE_ALLOW_FEATURES should remain the more common approach given -Zallow-features now exists, offers the same and doesn't suffer from the problem of "only relevant when rustc is invoked via cargo" (or whether cargo could set -Zallow-features based on  this setting)
+Nemo157:
+And it’s kind of an eternal fact that every time the interface for this sort of thing improves, build scripts will fail to handle it because they’re kind of fail open, instead of fail closed; I remember long ago when none handled RUSTFLAGS correctly either
+If I understand you correctly - that's bad build script design. (I'd expect a build script to see "is rustc[1] actually going to be able to compile this code in the current environment")
+rustc, not cargo. Although I'd see nothing in principle against cargo developing an equivalent  set up support functionality. In practice it's a lot of work for something very controversial ↩︎
+
+---
+
+@Nemo157 · 2026-06-29T20:58:03.643Z:
+MusicalNinjaDad:
+and question whether CARGO_UNSTABLE_ALLOW_FEATURES should remain the more common approach given -Zallow-features now exists
+It's the other way around, rustc -Zallow-features has existed for years longer than cargo -Zallow-features (but I'm pretty sure that is also years old at this point). The latter is a superset of the former, it controls both cargo and rustc unstable features, and has a much better UX for shared workspace definitions in its TOML form.
+
+---
+
+@RalfJung · 2026-06-30T12:20:20.661Z:
+MusicalNinjaDad:
+So, what's the concern about a build probe which correctly reacts to RUSTFLAGS="-Zallow-features=" by not enabling any nightly features?
+Basically every build probe is broken in subtle ways. It's not currently possible to construct a correct build probe, cargo does not provide enough information.
+autocfg is about as good as it gets, but a lot of crates roll their own build probes and many of them are ways worse. By asking about "a correct build probe" you are asking about a hypothetical alternative universe. In practice, a large fraction of build probes are broken.
+And even perfect build probes still have the wrong polarity: nightly features should be opt-in, not opt-out. That's how the entire Rust nightly feature system is designed. I shouldn't have to set an env var that says "please actually give me a reliable developer experience where I can update my compiler without breaking the build". Defaulting to "unreliable developer experience" is a terrible default. It is frustrating to see that principle constantly violated by a small set of crates, to the detriment of nightly users and  compiler maintainers that want to do normal nightly feature development (i.e., change/break how nightly feature work) or that need to debug regressions.
+I understand that there's an actual need here from the side of crate developers. But instead of running ahead with a broken non-solution, I would have hoped there would be some attempt at doing something standardized that actually works for everyone involved. Sadly, to my knowledge, that was never even attempted. Now my best hope is that we do get global features in cargo and we can standardize on a global feature to control whether crates should  use nightly features that they don't strictly need.
+
+---
+
+@MusicalNinjaDad · 2026-06-30T13:32:54.763Z:
+I realise that my previous comments can easily appear argumentative (and have thought a lot about this since my last post here). I'm sorry for that, it was not my intention.
+I think I've understood the complex web of intertwined concerns, needs & historical frustration - here's my attempt to summarise it
+Groups using nightly
+There are two, relevant, groups of rust users who have very different expectations and needs when they use nightly:
+Group A - safety is a requirement
+These are people using rust because the safety guarantees provide safety(!). Obvious members are regulated industries where failure can cost human lives; rust for linux, ... I get the feeling that this is either where you are @Nemo157, or at least closely related to your mindset.
+Every use of nightly requires a clear risk assessment.
+Developers may need to use nightly to allow debugging support etc. - they should be able to guarantee that their local work is otherwise identical to the final built product.
+A small, reviewed, whitelisted subset of experimental features may be required to make the product work - each of these is well considered, documented & risk-assessed.
+Build scripts are needed to support product-specific technical requirements.
+This group really needs the ability to work on a nightly toolchain and have everything act just like stable except where specifically whitelisted (whether developer or product related)
+Group B - safety is an ergonomic benefit
+These are people using rust because the safety guarantees make coding nicer/easier/more ergonomic. These are the evangelistic colleagues who grab you at the coffee machine and say "let me show you rust". I'd consider myself in this category.
+Channel selection is a mainly binary decision: nightly or stable?
+sticking to stable can be frustrating - so many ergonomic improvements are available on nightly for a very long time before they stabilise.
+using nightly is viable for binaries but colours libs.
+the lib eco-system generally avoids nightly features, even where these could provide a more ergonomic API.
+build scripts provide a way to remove the colouring and support stable & nightly.
+Technical blockers
+cargo does not provide details of unstable.allow-features to build scripts (+ other settings?) & has previously been against extending build-script-specific support
+there is effectively no documentation of "how to write a good build script"
+there is no documentation on how to probe for the availability of a nightly feature
+no specific probes are available from trusted sources
+Facits
+epage:
+there is a general principle within the Rust Project that unstable features only impact those who have opted in
+For "Group A" this is at the granularity of "I opted in to only these specific features". For "Group B" it is "I opted in by using nightly".
+RalfJung:
+Basically every build probe is broken in subtle ways. It's not currently possible to construct a correct build probe, cargo does not provide enough information.
+That means someone is always going to be upset. As long as there are different groups with different needs (& usually only a few members who consider the other groups may even exist - I'd consider all the participants here to be the "considerate" category BTW) then each build script author needs to decide how to handle these edge cases and given that many come from "Group B" that means usually
+Nemo157:
+build scripts will fail to handle it because they’re kind of fail open, instead of fail closed
+Thoughts, ideas & opinions
+Build probes are here to stay - as much as they cause problems. (no value judgement, just raw practical observation, which has been stated by others who are active in this thread too)
+Perhaps providing (edit) CARGO_UNSTABLE_FLAGS (probably outputting it (edit: from the GlobalContext) here - based on a first reading of the code) would be better than not?
+Documenting best practices & providing well-thought-out probes would reduce the average bugginess. The cost is "implicit approval", the cost of status-quo is "constantly broken probes".
+Thank you for reminding me of the needs of "Group A". I will add a "--cfg namespace=stable" to all my nightly-testing build scripts (via my personal lib for consistency). At least that way people can fully opt out of the probes. I target mainly "Group B" types so a "must opt in" is not suitable for the main target audience. I know this is not what most on this thread would consider "ideal" or "correct" - but would it at least be "enough" @Nemo157?
+
+---
+
+@Nemo157 · 2026-06-30T13:54:15.306Z:
+My case is about stability rather than safety. We use nightly for a few features we believe are worth the cost of lower stability, we have looked at the tradeoff of not using them vs. the chance of them causing issues and how we would remove our usage. We want to be able to very freely update our compiler without having to worry if dependencies will break.
+
+---
+
+@MusicalNinjaDad · 2026-07-01T19:44:45.297Z:
+Nemo157:
+My case is about stability rather than safety.
+Got it, I see the subtle difference. thanks for the clarification.
+
+---
+
+@MusicalNinjaDad · 2026-07-01T20:03:48.851Z:
+RalfJung:
+Basically every build probe is broken in subtle ways. It's not currently possible to construct a correct build probe, cargo does not provide enough information.
+autocfg is about as good as it gets, but a lot of crates roll their own build probes and many of them are ways worse. By asking about "a correct build probe" you are asking about a hypothetical alternative universe. In practice, a large fraction of build probes are broken.
+OK ... so I had one of those bad brain days after the dog woke me up at 4:30 this morning. And I finally gave up after lunch and just let ADHD-brain choose what to focus on for the afternoon.
+So - challenge accepted (it just felt interesting and impossible is always motivator)
+I think I have a solution with:
+a set of truly safe build probes (for a few select features)
+which follows the opt-in approach of optional whitelisting that rustc & cargo both use (opt-in 1 to unstable, then opt-in 2 to granular opt-ins, then opt-in 3 to individual features)
+respecting cargo unstable.allow-features & RUSTFLAGS="-Zallow-features"
+in a way which promotes good practices and makes short-cuts very hard
+I would be genuinely interested (as much from an intellectual point of view than anything else) as to whether this is clearly still broken or flaky? I expect to spot one or two typos & errors in the "easy stuff" tomorrow, but I think the hard stuff is good...
+github.com/MusicalNinjaDad/rust
+ninja-build_rs/src/nightly.rs
+main
+//! Extensions to the amazing [autocfg] designed to help with ergonomically and safely handling
+//! experimental features in nightly.
+use std::{
+path::Path,
+process::{Command, Output},
+};
+use autocfg::AutoCfg;
+use crate::{BuildError, Result, get_var};
+use probes::{has, make_probe};
+/// Known features with `unstable_...` & `has_...`
+#[allow(non_camel_case_types, reason = "shadowing feature naming")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnstableFeature {
+/// Also offers `assert_matches_location=root/module` to identify whether to
+/// `use std::assert_matches`(root) or `use std::assert_matches::assert_matches` (module)
+assert_matches,
+This file has been truncated. show original
+
+---
+
+@Nemo157 · 2026-07-01T21:18:47.789Z:
+My first thought would be "what directory is that cargo config executing under?", I would kind of expect build-script-run to use the manifest-dir of the defining crate, while the config you care about is the top-level build.
+EDIT: which leads into the second question: "if this is cached and reused for a different build with a different config, how does it invalidate the cache?" (since there's no rerun-if-changed for cargo config).
+
+---
+
+@MusicalNinjaDad · 2026-07-02T17:21:33.550Z:
+Nemo157:
+My first thought would be "what directory is that cargo config executing under?", I would kind of expect build-script-run to use the manifest-dir of the defining crate, while the config you care about is the top-level build.
+My assumption was the current working directory where cargo build/test/run was invoked. You were right, and I found it in the cargo docs after manually debugging via one of my other crates.
+Thanks for the tip.
+The best solution I could come up with is[1]:
+This will obtain config.toml files based upon OUT_DIR. If this is not under the project root, you can override by providing an alternative path via the environment variable NINJA_CARGO_CONFIG_DIR. See cargo’s documentation on config file hierarchical structure for more details.
+To my view that now respects the standard expectations of the cumulative opt-in approach taken by rustc & cargo:
+opt-in to unstable features via toolchain (all features available)
+opt-in to granular opt-in by specifying allow-features (empty whitelist - no features available)
+opt-in to specific features (only whitelisted features available)
+Nemo157:
+EDIT: which leads into the second question: "if this is cached and reused for a different build with a different config, how does it invalidate the cache?" (since there's no rerun-if-changed for cargo config).
+If you have a suitable trigger for this I'd be happy to add it. How do you trigger a rebuild of your own crate when you update any of the relevant config.tomls`? - the config change is potentially equally relevant there...
+both documented in the crate docs under "Note to downstream crates" and designed to be obvious in the code ↩︎
+
+=== ROW 46 | f009612 | https://blog.rust-lang.org/2024/04/09/updates-to-rusts-wasi-targets | 2024-04-09 | project-blog ===
+Changes to Rust's WASI targets | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Changes to Rust's WASI targets
+Apr. 9, 2024 · Yosh Wuyts
+WASI 0.2 was recently
+stabilized, and Rust has begun
+implementing first-class support for it in the form of a dedicated new target.
+Rust 1.78 will introduce new wasm32-wasip1 (tier 2) and wasm32-wasip2 (tier
+3) targets. wasm32-wasip1 is an effective rename of the existing wasm32-wasi
+target, freeing the target name up for an eventual WASI 1.0 release. Starting
+Rust 1.78 (May 2nd, 2024), users of WASI 0.1 are encouraged to begin migrating
+to the new wasm32-wasip1 target before the existing wasm32-wasi target is
+removed in Rust 1.84 (January 5th, 2025).
+In this post we'll discuss the introduction of the new targets, the motivation
+behind it, what that means for the existing WASI targets, and a detailed
+schedule for these changes. This post is about the WASI targets only; the
+existing wasm32-unknown-unknown and wasm32-unknown-emscripten targets are
+unaffected by any changes in this post.
+Introducing wasm32-wasip2
+After nearly five years of work the WASI 0.2 specification
+was recently stabilized. This work builds on WebAssembly
+Components (think: strongly-typed
+ABI for Wasm), providing standard interfaces for things like asynchronous IO,
+networking, and HTTP. This will finally make it possible to write asynchronous
+networked services on top of WASI, something which wasn't possible using WASI
+0.1.
+People interested in compiling Rust code to WASI 0.2 today are able to do so
+using the cargo-component
+tool. This tool is able to take WASI 0.1 binaries, and transform them to WASI 0.2
+Components using a shim. It also provides native support for common cargo
+commands such as cargo build, cargo test, and cargo run. While it
+introduces some inefficiencies because of the additional translation layer, in
+practice this already works really well and people should be able to get
+started with WASI 0.2 development.
+We're however keen to begin making that translation layer obsolete. And for
+that reason we're happy to share that Rust has made its first steps towards
+that with the introduction of the tier
+3 wasm32-wasip2
+target landing in Rust 1.78. This will initially miss a lot of expected
+features such as stdlib support, and we don't recommend people use this target
+quite yet. But as we fill in those missing features over the coming months, we
+aim to eventually meet the criteria to become a tier 2 target, at which
+point the wasm32-wasip2 target would be considered ready for general use. This
+work will happen through 2024, and we expect for this to land before the end of
+the calendar year.
+Renaming wasm32-wasi to wasm32-wasip1
+The original name for what we now call WASI 0.1 was "WebAssembly System
+Interface, snapshot 1". Rust shipped support for this in 2019, and we did so
+knowing the target would likely undergo significant changes in the future. With
+the knowledge we have today though, we would not have chosen to introduce the
+"WASI, snapshot 1" target as wasm32-wasi. We should have instead chosen to add
+some suffix to the initial target triple so that the eventual stable WASI 1.0
+target can just be called wasm32-wasi.
+In anticipation of both an eventual WASI 1.0 target, and to preserve consistency
+between target names, we'll begin rolling out a name change to the existing WASI
+0.1 target. Starting in Rust 1.78 (May 2nd, 2024) a new wasm32-wasip1 target
+will become available. Starting Rust 1.81 (September 5th, 2024) we will begin
+warning existing users of wasm32-wasi to migrate to wasm32-wasip1. And
+finally in Rust 1.84 (January 9th, 2025) the wasm32-wasi target will no longer
+be shipped on the stable release channel. This will provide an 8 month
+transition period for projects to switch to the new target name when they update
+their Rust toolchains.
+The name wasip1 can be read as either "WASI (zero) point one" or "WASI preview
+one". The official specification uses the "preview" moniker, however in most
+communication the form "WASI 0.1" is now preferred. This target triple was
+chosen because it not only maps to both terms, but also more closely resembles
+the target terminology used in other programming
+languages. This is something the WASI Preview 2
+specification also makes note
+of.
+Timeline
+This table provides the dates and cut-offs for the target rename from
+wasm32-wasi to wasm32-wasip1. The dates in this table do not apply to the
+newly-introduced wasm32-wasi-preview1-threads target; this will be renamed to
+wasm32-wasip1-threads in Rust 1.78 without going through a transition period.
+The tier 3 wasm32-wasip2 target will also be made available in Rust 1.78.
+dateRust StableRust BetaRust NightlyNotes
+2024-02-081.761.771.78wasm32-wasip1 available on nightly
+2024-03-211.771.781.79wasm32-wasip1 available on beta
+2024-05-021.781.791.80wasm32-wasip1 available on stable
+2024-06-131.791.801.81warn if wasm32-wasi is used on nightly
+2024-07-251.801.811.82warn if wasm32-wasi is used on beta
+2024-09-051.811.821.83warn if wasm32-wasi is used on stable
+2024-10-171.821.831.84wasm32-wasi unavailable on nightly
+2024-11-281.831.841.85wasm32-wasi unavailable on beta
+2025-01-091.841.851.86wasm32-wasi unavailable on stable
+Conclusion
+In this post we've discussed the upcoming updates to Rust's WASI targets. Come
+Rust 1.78 the wasm32-wasip1 (tier 2) and wasm32-wasip2 (tier 3) targets will
+be added. In Rust 1.81 we will begin warning if wasm32-wasi is being used. And
+in Rust 1.84, the existing wasm32-wasi target will be removed. This will free
+up wasm32-wasi to eventually be used for a WASI 1.0 target. Users will have 8
+months to switch to the new target name when they update their Rust toolchains.
+The wasm32-wasip2 target marks the start of native support for WASI 0.2. In
+order to target it today from Rust, people are encouraged to use
+cargo-component tool
+instead. The plan is to eventually graduate wasm32-wasip2 to a tier-2 target,
+at which point cargo-component will be upgraded to support it natively instead.
+With WASI 0.2 finally stable, it's an exciting time for WebAssembly development.
+We're happy for Rust to begin implementing native support for WASI 0.2, and
+we're excited about what this will enable people to build.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 47 | f009635 | https://blog.rust-lang.org/2024/11/26/wasip2-tier-2 | 2024-11-26 | project-blog ===
+The wasm32-wasip2 Target Has Reached Tier 2 Support | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+The wasm32-wasip2 Target Has Reached Tier 2 Support
+Nov. 26, 2024 · Yosh Wuyts
+Introduction
+In April of this year we posted an update about Rust's WASI
+targets
+to the main Rust blog. In it we covered the rename of the wasm32-wasi target
+to wasm32-wasip1, and the introduction of the new wasm32-wasip2 target as a
+"tier 3" target. This meant that while the target was available as part of
+rust-lang/rustc, it was not guaranteed to build. We're pleased to announce
+that this has changed in Rust 1.82.
+For those unfamiliar with WebAssembly (Wasm) components and WASI 0.2, here is a quick, simplified primer:
+Wasm is a (virtual) instruction format for programs to be compiled into (think: x86).
+Wasm Components are a container format and type system that wrap Core Wasm instructions into typed, hermetic binaries and libraries (think: ELF).
+WASI is a reserved namespace for a collection of standardized Wasm component interfaces (think: POSIX header files).
+For a more detailed explanation see the WASI 0.2 announcement post on the Bytecode Alliance blog.
+What's new?
+Starting Rust 1.82 (2024-10-17) the wasm32-wasip2 (WASI 0.2) target has
+reached tier-2 platform support in the Rust compiler. Among other things this
+now means it is guaranteed to build, and is now available to install via Rustup
+using the following command:
+rustup target add wasm32-wasip2
+Up until now Rust users writing Wasm
+Components would always have to rely on tools (such as
+cargo-component) which target the WASI 0.1 target (wasm32-wasip1) and
+package it into a WASI 0.2 Component via a post-processing step invoked. Now
+that wasm32-wasip2 is available to everyone via Rustup, tooling can
+begin to directly target WASI 0.2 without the need for additional post-processing.
+What this also means is that ecosystem crates can begin targeting WASI 0.2
+directly for platform-specific code. WASI 0.1 did not have support for sockets.
+Now that we have a stable tier 2 platform available, crate authors should be
+able to finally start writing WASI-compatible network code. To target WASI 0.2
+from Rust, authors can use the following cfg attribute:
+#[cfg(all(target_os = "wasi", target_env = "p2"))]
+mod wasip2 {
+// items go here
+}
+To target the older WASI 0.1 target, Rust also accepts target_env = "p1".
+Standard Library Support
+The WASI 0.2 Rust target reaching tier 2 platform support is in a way just the
+beginning. means it's supported and stable. While the platform itself is now
+stable, support in the stdlib for WASI 0.2 APIs is still limited. While the WASI
+0.2 specification specifies APIs for example for timers, files, and sockets - if
+you try and use the stdlib APIs for these today, you'll find they don't yet
+work.
+We expect to gradually extend the Rust stdlib with support for WASI 0.2 APIs
+throughout the remainder of this year into the next. That work has already
+started, with
+rust-lang/rust#129638 adding
+native support for std::net in Rust 1.83. We expect more of these PRs to land
+through the remainder of the year.
+Though this doesn't need to stop users from using WASI 0.2 today. The stdlib is
+great because it provides portable abstractions, usually built on top of an
+operating system's libc or equivalent. If you want to use WASI 0.2 APIs
+directly today, you can either use the
+wasi crate directly. Or generate your own
+WASI bindings from the WASI
+specification's interface
+types using wit-bindgen.
+Conclusion
+The wasm32-wasip2 target is now installable via Rustup. This makes it possible
+for the Rust compiler to directly compile to the Wasm Components format
+targeting the WASI 0.2 interfaces. There is now also a way for crates to compile
+add WASI 0.2 platform support by writing:
+#[cfg(all(target_os = "wasi", target_env = "p2"))]
+mod wasip2 {}
+We're excited for Wasm Components and WASI 0.2 to have reached this milestone
+within the Rust project, and are excited to see what folks in the community will
+be building with it!
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 48 | f009652 | https://blog.rust-lang.org/2025/04/04/c-abi-changes-for-wasm32-unknown-unknown | 2025-04-04 | project-blog ===
+C ABI Changes for `wasm32-unknown-unknown` | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+C ABI Changes for `wasm32-unknown-unknown`
+Apr. 4, 2025 · Alex Crichton
+The extern "C" ABI for the wasm32-unknown-unknown target has been using a
+non-standard definition since the inception of the target in that it does not
+implement the official C ABI of WebAssembly and it
+additionally leaks internal compiler implementation details of
+both the Rust compiler and LLVM. This will change in a future version of the
+Rust compiler and the official C ABI will be used instead.
+This post details some history behind this change and the rationale for why it's
+being announced here, but you can skip straight to "Am I
+affected?" as well.
+History of wasm32-unknown-unknown's C ABI
+When the wasm32-unknown-unknown target was originally added in
+2017, not much care was given to the exact definition of the extern "C" ABI at
+the time. In 2018 an ABI definition was added just for wasm and the
+target is still using this definition to this day. This
+definitions has become more and more problematic over time and while some issues
+have been fixed, the root cause still remains.
+Notably this ABI definition does not match the tool-conventions definition of
+the C API, which is the current standard for how WebAssembly toolchains should
+talk to one another. Originally this non-standard definition was used for all
+WebAssembly based targets except Emscripten, but this changed in 2021
+where the WASI targets for Rust use a corrected ABI definition. Still, however,
+the non-standard definition remained in use for wasm32-unknown-unknown.
+The time has now come to correct this historical mistake and the Rust compiler
+will soon be using a correct ABI definition for the wasm32-unknown-unknown
+target. This means, however, that generated WebAssembly binaries will be
+different than before.
+What is a WebAssembly C ABI?
+The definition of an ABI answers questions along the lines of:
+What registers are arguments passed in?
+What registers are results passed in?
+How is a 128-bit integers passed as an argument?
+How is a union passed as a return value?
+When are parameters passed through memory instead of registers?
+What is the size and alignment of a type in memory?
+For WebAssembly these answers are a little different than native platforms.
+For example, WebAssembly does not have physical registers and functions must all
+be annotated with a type. What WebAssembly does have is types such as i32,
+i64, f32, and f64. This means that for WebAssembly an ABI needs to define
+how to represent values in these types.
+This is where the tool-conventions document comes in. That document provides a
+definition for how to represent primitives in C in the WebAssembly format, and
+additionally how function signatures in C are mapped to function signatures in
+WebAssembly. For example a Rust u32 is represented by a WebAssembly i32 and
+is passed directly as a parameter as a function argument. If the Rust structure
+#[repr(C)] struct Pair(f32, f64) is returned from a function then a return
+pointer is used which must have alignment 8 and size of 16 bytes.
+In essence, the WebAssembly C ABI is acting as a bridge between C's type system
+and the WebAssembly type system. This includes details such as in-memory layouts
+and translations of a C function signature to a WebAssembly function signature.
+How is wasm32-unknown-unknown non-standard?
+Despite the ABI definition today being non-standard, many aspects of it are
+still the same as what tool-conventions specifies. For example, size/alignment
+of types is the same as it is in C. The main difference is how function
+signatures are calculated. An example (where you can follow along on godbolt)
+is:
+#[repr(C)]
+pub struct Pair {
+x: u32,
+y: u32,
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn pair_add(pair: Pair) -> u32 {
+pair.x + pair.y
+}
+This will generate the following WebAssembly function:
+(func $pair_add (param i32 i32) (result i32)
+local.get 1
+local.get 0
+i32.add
+)
+Notably you can see here that the struct Pair was "splatted" into its two
+components so the actual $pair_add function takes two arguments, the x and
+y fields. The tool-conventions, however specifically says that "other
+struct[s] or union[s]" are passed indirectly, notably through memory. We can see
+this by compiling this C code:
+struct Pair {
+unsigned x;
+unsigned y;
+};
+unsigned pair_add(struct Pair pair) {
+return pair.x + pair.y;
+}
+which yields the generated function:
+(func (param i32) (result i32)
+local.get 0
+i32.load offset=4
+local.get 0
+i32.load
+i32.add
+)
+Here we can see, sure enough, that pair is passed in linear memory and this
+function only has a single argument, not two. This argument is a pointer into
+linear memory which stores the x and y fields.
+The Diplomat project has compiled a much more comprehensive overview
+than this and it's recommended to check that out if you're curious for an even
+deeper dive.
+Why hasn't this been fixed long ago already?
+For wasm32-unknown-unknown it was well-known at the time in 2021 when WASI's
+ABI was updated that the ABI was non-standard. Why then has the ABI not been
+fixed like with WASI?
+The main reason originally for this was the wasm-bindgen
+project.
+In wasm-bindgen the goal is to make it easy to integrate Rust into a web
+browser with WebAssembly. JavaScript is used to interact with host APIs and the
+Rust module itself. Naturally, this communication touches on a lot of ABI
+details! The problem was that wasm-bindgen relied on the above example,
+specifically having Pair "splatted" across arguments instead of passed
+indirectly. The generated JS wouldn't work correctly if the argument was passed
+in-memory.
+At the time this was discovered it was found to be significantly difficult to
+fix wasm-bindgen to not rely on this splatting behavior. At the time it also
+wasn't thought to be a widespread issue nor was it costly for the compiler to
+have a non-standard ABI. Over the years though the pressure has mounted. The
+Rust compiler is carrying an ever-growing list of hacks to work
+around the non-standard C ABI on wasm32-unknown-unknown. Additionally more
+projects have started to rely on this "splatting" behavior and the risk has
+gotten greater that there are more unknown projects relying on the non-standard
+behavior.
+In late 2023 the wasm-bindgen project fixed bindings generation to be
+unaffected by the transition to the standard definition of extern "C". In the following months
+a future-incompat lint was added to rustc to specifically migrate users
+of old wasm-bindgen versions to a "fixed" version. This was in anticipation of
+changing the ABI of wasm32-unknown-unknown once enough time had passed. Since
+early 2025 users of old wasm-bindgen versions will now receive a hard
+error asking them to upgrade.
+Despite all this heroic effort done by contributors, however, it has now come to
+light that there are more projects than wasm-bindgen relying on this
+non-standard ABI definition. Consequently this blog post is intended to serve as
+a notice to other users on wasm32-unknown-unknown that the ABI break is
+upcoming and projects may need to be changed.
+Am I affected?
+If you don't use the wasm32-unknown-unknown target, you are not affected by
+this change. If you don't use extern "C" on the wasm32-unknown-unknown
+target, you are also not affected. If you fall into this bucket, however, you
+may be affected!
+To determine the impact to your project there are a few tools at your disposal:
+A new future-incompat warning has been added to the Rust compiler
+which will issue a warning if it detects a signature that will change when the
+ABI is changed.
+In 2023 a -Zwasm-c-abi=(legacy|spec) flag was added to the Rust
+compiler. This defaults to -Zwasm-c-abi=legacy, the non-standard definition.
+Code can use -Zwasm-c-abi=spec to use the standard definition of the C ABI
+for a crate to test out if changes work.
+The best way to test your crate is to compile with nightly-2025-03-27
+or later, ensure there are no warnings, and then test your project still works
+with -Zwasm-c-abi=spec. If all that passes then you're good to go and the
+upcoming change to the C ABI will not affect your project.
+I'm affected, now what?
+So you're using wasm32-unknown-unknown, you're using extern "C", and the
+nightly compiler is giving you warnings. Additionally your project is broken
+when compiled with -Zwasm-c-abi=spec. What now?
+At this time this will unfortunately be a somewhat rough transition period for
+you. There are a few options at your disposal but they all have their downsides:
+Pin your Rust compiler version to the current stable, don't update until the
+ABI has changed. This means that you won't get any compiler warnings (as old
+compilers don't warn) and additionally you won't get broken when the ABI
+changes (as you're not changing compilers). Eventually when you update to a
+stable compiler with -Zwasm-c-abi=spec as the default you'll have to port
+your JS or bindings to work with the new ABI.
+Update to Rust nightly as your compiler and pass -Zwasm-c-abi=spec. This is
+front-loading the work required in (1) for your target. You can get your
+project compatible with -Zwasm-c-abi=spec today. The downside of this
+approach is that your project will only work with a nightly compiler and
+-Zwasm-c-abi=spec and you won't be able to use stable until the default is
+switched.
+Update your project to not rely on the non-standard behavior of
+-Zwasm-c-abi=legacy. This involves, for example, not passing
+structs-by-value in parameters. You can pass &Pair above, for example,
+instead of Pair. This is similar to (2) above where the work is done
+immediately to update a project but has the benefit of continuing to work on
+stable Rust. The downside of this, however, is that you may not be able to
+easily change or update your C ABI in some situations.
+Update to Rust nightly as your compiler and pass -Zwasm-c-abi=legacy. This
+will silence compiler warnings for now but be aware that the ABI will still
+change in the future and the -Zwasm-c-abi=legacy option will be removed
+entirely. When the -Zwasm-c-abi=legacy option is removed the only option
+will be the standard C ABI, what -Zwasm-c-abi=spec today enables.
+If you have uncertainties, questions, or difficulties, feel free to reach out on
+the tracking issue for the future-incompat warning or on Zulip.
+Timeline of ABI changes
+At this time there is not an exact timeline of how the default ABI is going to
+change. It's expected to take on the order of 3-6 months, however, and will look
+something roughly like this:
+2025 March: (soon) - a future-incompat warning will be added to the
+compiler to warn projects if they're affected by this ABI change.
+2025-05-15: this future-incompat warning will reach the stable Rust channel as
+1.87.0.
+2025 Summer: (ish) - the -Zwasm-c-abi flag will be removed from the compiler
+and the legacy option will be entirely removed.
+Exactly when -Zwasm-c-abi is removed will depend on feedback from the
+community and whether the future-incompat warning triggers much. It's hoped that
+soon after the Rust 1.87.0 is stable, though, that the old legacy ABI behavior
+can be removed.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 49 | f009659 | https://blog.rust-lang.org/2025/12/05/crates.io-malicious-crates-finch-rust-and-sha-rust | 2025-12-05 | project-blog ===
+crates.io: Malicious crates finch-rust and sha-rust | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+crates.io: Malicious crates finch-rust and sha-rust
+Dec. 5, 2025 · Carol Nichols and Adam Harvey
+on behalf of the crates.io team
+Summary
+On December 5th, the crates.io team was notified by Kush Pandya from the Socket Threat Research Team of two malicious crates which were trying to cause confusion with the existing finch crate but adding a dependency on a malicious crate doing data exfiltration.
+These crates were:
+finch-rust - 1 version published November 25, 2025, downloaded 28 times, used sha-rust as a dependency
+sha-rust - 8 versions published between November 20 and November 25, 2025, downloaded 153 times
+Actions taken
+The user in question, face-lessssss, was immediately disabled, and the crates in question were deleted from crates.io shortly after. We have retained the malicious crate files for further analysis.
+The deletions were performed at 15:52 UTC on December 5th.
+We reported the associated repositories to GitHub and the account has been removed there as well.
+Analysis
+Socket has published their analysis in a blog post.
+These crates had no dependent downstream crates on crates.io, and there is no evidence of either of these crates being downloaded outside of automated mirroring and scanning services.
+Thanks
+Our thanks to Kush Pandya from the Socket Threat Research Team for reporting the crates. We also want to thank Carol Nichols from the crates.io team and Adam Harvey from the Rust Foundation for aiding in the response.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 50 | f009733 | https://blog.rust-lang.org/2026/03/13/call-for-testing-build-dir-layout-v2 | 2026-03-13 | project-blog;twir-links ===
+Call for Testing: Build Dir Layout v2 | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Call for Testing: Build Dir Layout v2
+Mar. 13, 2026 · Ed Page
+We would welcome people to try and report issues with the nightly-only
+cargo -Zbuild-dir-new-layout.
+While the layout of the build dir
+is internal-only,
+many projects need to rely on the unspecified details due to missing features within Cargo.
+While we've performed a crater run,
+that won't cover everything and we need help identifying tools and process that rely on the details,
+reporting issues to these projects so they can update to the new layout or support them both.
+How to test this?
+With at least nightly 2026-03-10,
+run your tests, release processes, and anything else that may touch build-dir/target-dir
+with the -Zbuild-dir-new-layout flag.
+For example:
+$ cargo test -Zbuild-dir-new-layout
+Note: if you see failures, the problem may not be isolated to just -Zbuild-dir-new-layout.
+With Cargo 1.91,
+users can separate where to store intermediate build artifacts (build-dir) and final artifacts (still in target-dir).
+You can verify this by running with only CARGO_BUILD_BUILD_DIR=build set.
+We are evaluating changing the default for build-dir in #16147.
+Outcomes may include:
+Fixing local problems
+Reporting problems in upstream tools with a note on the the tracking issue for others
+Providing feedback on the the tracking issue
+Known failure modes:
+Inferring a [[bin]]s path from a [[test]]s path:
+Use std::env::var_os("CARGO_BIN_EXE_*") for Cargo 1.94+, maybe keeping the inference as a fallback for older Cargo versions
+Use env!("CARGO_BIN_EXE_*")
+Build scripts looking up target-dir from their binary or OUT_DIR: see Issue #13663
+Update current workarounds to support the new layout
+Looking up user-requested artifacts from rustc, see Issue #13672
+Update current workarounds to support the new layout
+Library support status as of publish time:
+assert_cmd: fixed
+cli_test_dir: Issue #65
+compiletest_rs: Issue #309
+executable-path: fixed
+snapbox: fixed
+term-transcript: Issue #269
+test_bin: Issue #13
+trycmd: fixed
+What is not changing?
+The layout of final artifacts within target dir.
+Nesting of build artifacts under the profile and the target tuple, if specified.
+What is changing?
+We are switching from organizing by content type to scoping the content by the package name and a hash of the build unit and its inputs.
+Here is an example of the current layout, assuming you have a package named lib and a package named bin, and both have a build script:
+build-dir/
+├── CACHEDIR.TAG
+└── debug/
+├── .cargo-lock                       # file lock protecting access to this location
+├── .fingerprint/                     # build cache tracking
+│   ├── bin-[BUILD_SCRIPT_RUN_HASH]/*
+│   ├── bin-[BUILD_SCRIPT_BIN_HASH]/*
+│   ├── bin-[HASH]/*
+│   ├── lib-[BUILD_SCRIPT_RUN_HASH]/*
+│   ├── lib-[BUILD_SCRIPT_BIN_HASH]/*
+│   └── lib-[HASH]/*
+├── build/
+│    ├── bin-[BIN_HASH]/*             # build script binary
+│    ├── bin-[RUN_HASH]/out/          # build script run OUT_DIR
+│    ├── bin-[RUN_HASH]/*             # build script run cache
+│    ├── lib-[BIN_HASH]/*             # build script binary
+│    ├── lib-[RUN_HASH]/out/          # build script run OUT_DIR
+│    └── lib-[RUN_HASH]/*             # build script run cache
+├── deps/
+│   ├── bin-[HASH]*                   # binary and debug information
+│   ├── lib-[HASH]*                   # library and debug information
+│   └── liblib-[HASH]*                # library and debug information
+├── examples/                         # unused in this case
+└── incremental/...                   # managed by rustc
+The proposed layout:
+build-dir/
+├── CACHEDIR.TAG
+└── debug/
+├── .cargo-lock                       # file lock protecting access to this location
+├── build/
+│   ├── bin/                          # package name
+│   │   ├── [BUILD_SCRIPT_BIN_HASH]/
+│   │   │   ├── fingerprint/*         # build cache tracking
+│   │   │   └── out/*                 # build script binary
+│   │   ├── [BUILD_SCRIPT_RUN_HASH]/
+│   │   │   ├── fingerprint/*         # build cache tracking
+│   │   │   ├── out/*                 # build script run OUT_DIR
+│   │   │   └── run/*                 # build script run cache
+│   │   └── [HASH]/
+│   │       ├── fingerprint/*         # build cache tracking
+│   │       └── out/*                 # binary and debug information
+│   └── lib/                          # package name
+│       ├── [BUILD_SCRIPT_BIN_HASH]/
+│       │   ├── fingerprint/*         # build cache tracking
+│       │   └── out/*                 # build script binary
+│       ├── [BUILD_SCRIPT_RUN_HASH]/
+│       │   ├── fingerprint/*         # build cache tracking
+│       │   ├── out/*                 # build script run OUT_DIR
+│       │   └── run/*                 # build script run cache
+│       └── [HASH]/
+│           ├── fingerprint/*         # build cache tracking
+│           └── out/*                 # library and debug information
+└── incremental/...                   # managed by rustc
+For more information on these Cargo internals, see the mod layout documentation.
+Why is this being done?
+ranger-ross has worked tirelessly on this as a stepping stone to cross-workspace caching
+which will be easier when we can track each cacheable unit in a self-contained directory.
+This also unblocks work on:
+Automatic cleanup of stale build units to keep disks space use constant over time
+More granular locking so cargo test and rust-analyzer don't block on each other
+Along the way, we found this helps with:
+Build performance as the intermediate artifacts accumulate in deps/
+Content of deps/ polluting PATH during builds on Windows
+Avoiding file collisions among intermediate artifacts
+While the Cargo team does not officially endorse sharing a build-dir across workspaces,
+that last item should reduce the chance of encountering problems for those who choose to.
+Future work
+We will use the experience of this layout change to help guide how and when to perform any future layout changes, including:
+Efforts to reduce path lengths to reduce risks for errors for developers on Windows
+Experimenting with moving artifacts out of the --profile and --target directories, allowing sharing of more artifacts where possible
+In addition to narrowing scope,
+we did not do all of the layout changes now because some are blocked on the lock change which is blocked on this layout change.
+We would also like to work to decouple projects from the unspecified details of build-dir.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 51 | f009735 | https://blog.rust-lang.org/2026/03/21/cve-2026-33056 | 2026-03-21 | project-blog;twir-links ===
+Security advisory for Cargo | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Security advisory for Cargo
+Mar. 21, 2026 · The Rust Security Response Team
+The Rust Security Response Team was notified of a vulnerability in the
+third-party crate tar, used by Cargo to extract packages during a build. The
+vulnerability, tracked as CVE-2026-33056, allows a malicious crate to change
+the permissions on arbitrary directories on the filesystem when Cargo extracts
+it during a build.
+For users of the public crates.io registry, we deployed a change on March 13th
+to prevent uploading crates exploiting this vulnerability, and we audited all
+crates ever published. We can confirm that no crates on crates.io are exploiting
+this.
+For users of alternate registries, please contact the vendor of your registry to
+verify whether you are affected by this. The Rust team will release Rust 1.94.1
+on March 26th, 2026, updating to a patched version of the tar crate (along
+with other non-security fixes for the Rust toolchain), but that won't protect
+users of older versions of Cargo using alternate registries.
+We'd like to thank Sergei Zimmerman for discovering the underlying tar crate
+vulnerability and notifying the Rust project ahead of time, and William Woodruff
+for directly assisting the crates.io team with the mitigations. We'd also like
+to thank the Rust project members involved in this advisory: Eric Huss for
+patching Cargo; Tobias Bieniek, Adam Harvey and Walter Pearce for patching
+crates.io and analyzing existing crates; Emily Albini and Josh Stone for
+coordinating the response; and Emily Albini for writing this advisory.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+

@@ -1,0 +1,2296 @@
+=== ROW 56 | f010992 | https://github.com/rust-lang/rfcs/pull/2801 | 2024-06-21 | rfc;twir-links ===
+RFC: make Cargo embed dependency versions in the compiled binary
+
+---
+
+@Shnatsel · 2019-11-03T17:23:09Z:
+[Rendered](https://github.com/Shnatsel/rfcs/blob/cargo-embed-dependency-versions/text/0000-cargo-embed-dependency-versions.md)
+
+This is the first step towards a proper security update story for Rust. You might also want to check out the [comments](https://www.reddit.com/r/rust/comments/awlqfi/rustaudit_making_production_rust_binaries/) on a prototype implementation that informed this RFC.
+
+---- 
+
+**2023 update:** this has been implemented out-of-tree as [`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable), which has garnered significant adoption. This RFC has been updated and expanded based on the lessons learned from it.
+
+---
+
+@igor-petruk · 2019-11-03T17:45:26Z:
+One idea is to wrap Cargo.lock into another trivial format: yaml, json, custom text with two keys: ContentType and Body and you can version your format if Cargo.lock becomes cumbersome (for some yet unknown reasons) and will have to be replaced with something else.
+
+---
+
+@Alex-Addy · 2019-11-03T19:48:26Z:
+I would request that this is not enabled by default. As noted [by RustDragon](https://old.reddit.com/r/rust/comments/dr3ncb/rfc_for_making_production_rust_binaries_auditable/f6edu2m/) on reddit, this could leak potentially sensitive information through the embedded paths.
+
+---
+
+@Shnatsel · 2019-11-03T19:58:10Z:
+As described in the RFC, not having this enabled by default pretty much defeats the point.
+
+Would disclosing that the dependency originated from a local copy, but not disclosing the directory path be an acceptable solution? This would protect information such as usernames and paths.
+
+---
+
+@Alex-Addy · 2019-11-03T20:07:42Z:
+I'm not sure that not having it enabled by default would defeat the point. Having this information available to be enabled would still be immensely valuable to production users. My main concern is users accidentally having their information leaked just by handing out a binary.
+
+---
+
+@Alex-Addy · 2019-11-03T21:12:17Z:
+> Would disclosing that the dependency originated from a local copy, but not disclosing the directory path be an acceptable solution? This would protect information such as usernames and paths.
+
+Having thought about this a bit more I think that this would be fine. It might be desirable to be able to turn path embedding back on (for full auditing), with it being disabled by default (for safety).
+
+---
+
+@Lokathor · 2019-11-03T21:14:46Z:
+Yeah this should definitely be off by default, even if the info is scrubbed of paths and stuff.
+
+---
+
+@Shnatsel · 2019-11-03T21:16:56Z:
+@Lokathor could you provide a rationale? I think the RFC makes a pretty strong case for the on-by-default approach. Prior art from Go and (as I've just learned) Ruby supports this as well.
+
+---
+
+@Shnatsel · 2019-11-03T21:22:10Z:
+It has also been pointed out that this may interact with reproducible builds in interesting ways - I'm not sure if Cargo.lock is guaranteed to have a stable sorting order.
+
+---
+
+@Diggsey · 2019-11-03T21:30:46Z:
+I don't necessarily think this should be off by default if the size increase is indeed as minimal as claimed: even in release mode some debug information is included already. I do think it should be removed when the binary is stripped though.
+
+The RFC claims a sub 1% increase in size: I would like to see some more evidence to back that up; the "hello world" example is not enough. The number of dependencies increases the lock file size linearly, but it does not increase the size of the binary linearly due to unused code being removed at link time, so the relative size could go up. Furthermore, platform-specific dependencies are tracked in the lock file but are not compiled into the binary at all on other platforms.
+
+Regarding reproducible builds: as long as the information in the Cargo.lock is encoded in a deterministic way, it shouldn't be a problem. If cargo picks a dependency version non-deterministically then your deterministic build is broken regardless of whether you incorporate the lock file directly.
+
+One thing not covered by this RFC is what crate types will embed this information. Should the "cdylib" type embed the information? On Windows, DLLs are just executables with a different extension so you could reasonably argue that the same version information should be included.
+
+
+
+
+
+---
+
+@Shnatsel · 2019-11-03T21:39:27Z:
+> The RFC claims a sub 1% increase in size: I would like to see some more evidence to back that up; the "hello world" example is not enough. 
+
+Good point, will do.
+
+> Regarding reproducible builds: as long as the information in the Cargo.lock is encoded in a deterministic way, it shouldn't be a problem.
+
+I don't think `Cargo.lock` has any guarantees regarding stable sorting order for dependencies, for example.
+
+> One thing not covered by this RFC is what crate types will embed this information.
+
+It's under "unresolved questions" since I don't have a strong stance on this, but I am leaning towards "yes" for the same reasons you've described.
+
+---
+
+@Lokathor · 2019-11-03T22:08:52Z:
+Bonus data point: A minimal hello world on Windows is ~3.5k, and the Cargo.lock for that is ~1.9k.
+
+The ratio generally gets _better_ as your program grows. The amount of code that usage of a dependency puts into your binary is usually a lot more than the line or two it takes to list the dependency.
+
+Dependencies that _hurt_ the ratio (adding a dependency entries but not adding code into the final binary) would likely be things like proc-macro crates, `macro_rules!`-only crates (eg: `cfg-if`), and bindings crates (eg: `winapi`).
+
+That said, I still don't want this in my programs because I just don't want extra stuff going in my files.
+
+---
+
+@Shnatsel · 2019-11-03T22:09:59Z:
+Size comparisons on binaries of varying sizes, as measured on Linux with ThinLTO:
+
+`exa` is 2.6Mb stripped, 1.5Mb unstripped, 25Kb Cargo.lock. <1% vs unstripped, <2% vs stripped
+`cargo-audit` is 6.5Mb unstripped, 3.6Mb stripped, Cargo.lock is 41Kb. <1% vs unstripped, <2% vs stripped
+`cargo-geiger` is 17Mb unstripped, 12Mb stripped, Cargo.lock is 95Kb. <1% even vs stripped
+`ripgrep` is 32Mb unstripped, 4.5Mb stripped. Its Cargo.lock is 24Kb, <1% even vs stripped
+
+We can do a Crater run to be sure.
+
+---
+
+@gmorenz · 2019-11-03T22:35:13Z:
+> reproducible builds
+
+It seems like we should aim to be reproducible even if the crates came from different sources. I.e. downloading something from a registry vs using a local path shouldn't change things.
+
+Maybe we could use a format this is just a sorted sequence of `(crate-name, version, hash)` instead of directly embedding Cargo.toml? This would also resolve almost all of the information leak concerns.
+
+---
+
+@Shnatsel · 2019-11-03T22:53:42Z:
+I fear omitting the registry where a certain dependency came from would mean losing too much information. This defeats use cases such as only allowing dependencies from a private registry, for example.
+
+---
+
+@tarcieri · 2019-11-03T23:00:23Z:
+> reproducible builds
+
+You can't reproduce a build without `Cargo.lock`, so if anything, including it in the binary is a helpful forensic artifact for reproducing its build.
+
+---
+
+@Ixrec · 2019-11-03T23:12:52Z:
+> Since build system and package management system are usually decoupled, most other languages did not have the opportunity to implement anything like this.
+
+For prior art and motivation completeness: Where I work at Bloomberg, our C++ codebase has enough control over such things that [we rolled our own version embedding tricks many years ago](https://github.com/bloomberg/bde/blob/master/groups/bsl/bsls/bsls_ident.h). On top of the security benefits, this has been utterly invaluable for diagnosing many bugs in production, and ensuring that fixes have been fully released. The specific format it uses doesn't make much sense for an open source ecosystem in a language with a proper module/package system, but I thought it was worth mentioning this sort of thing has precedent even in C++.
+
+---
+
+@rotty · 2019-11-03T23:33:04Z:
+As suggested by @Shnatsel, I'll drop a mention of my [`cargo-audit-tags`](https://github.com/rotty/cargo-audit-tags) Python script. It allows a similar check based on the source code, checking the historical Cargo.lock files in git, based on git tags. This allows checking released artifacts based on those tags for known vulnerabilities in dependencies. At work, we have this running as part of a daily CI job, which will send an email if vulnerabilities are detected.
+
+Of course, this does not cover the use case of the RFC, but it is a related tool that has some overlap with the goals of the RFC.
+
+---
+
+@joshtriplett · 2019-11-04T00:18:03Z:
+First of all: thank you for working on the problems of dependency tracking and security analysis! Please don't take any of the feedback below as suggesting that I disagree with the goals.
+
+I agree with the various other posts giving a rationale of not wanting to disclose excessive information, *especially* about local paths and registries. You need to scrub all of the potentially sensitive information, such as local registries, paths, and repository URLs.
+
+A quick check on my system turns up Cargo.lock files upwards of 100k-140k.
+
+I'm also concerned about exposing the potentially evolving Cargo.lock format (as mentioned in your unresolved questions section); that format has changed substantially over time.
+
+I think we could reduce that format substantially to serve this particular purpose. But at the very least, it seems worth compressing it before embedding it. A quick check suggests that basic zlib compression reduces the size of Cargo.lock files by 75-85%.
+
+You also need to consider the size of the delta from one version of a binary to another, as many distribution mechanisms want to distribute deltas. I can easily imagine the `Cargo.lock` delta taking up more space than the delta to the code itself. (Note that deltas interact with the issue of compression above; tools to compute deltas need to know about use of compression.)
+
+You should discuss the issue of format versioning. You could theoretically evolve this format by using a new section name if the version changes.
+
+Given that this uses a completely Rust-specific (and cargo-specific) format, the section name should not use something generic like `.dep-list`.
+
+> A "Hello World" on x86 Linux compiles into a ~1Mb file in the best case (recent Rust without jemalloc, LTO enabled).
+
+That's a problem that people are trying to fix. And that's with `std`. It's possible to build binaries less than 1kB today.
+
+> WASM, asm.js and embedded platforms are excempt from this mechanism since they have very strict code size requirements.
+
+(Typo: s/excempt/exempt/)
+
+People care about code size on other platforms, too, and the same target may get used for large applications and embedded development. You can't reliably classify every target into "embedded" and "not embedded".
+
+Also, this isn't just about code size; some use cases need to carefully construct binaries and care about any "unusual" sections that get generated in the binary. Some binaries will get built with linker scripts.
+
+You don't specify any mechanism to enable/disable this. You need to provide and specify appropriate configuration for that.
+
+For a first pass, I would propose addressing the issues above, and then proposing a version that's *initially* disabled by default. This will let people experiment with it, optimize it, audit the information it includes, and so on. We can always revisit questions of defaults and their interaction with various use cases in the future.
+
+---
+
+@vincentdephily · 2019-11-04T13:26:31Z:
+Regarding the "leaking sensitive information" issue, beyond the obvious "strip local paths and private urls" mitigation, it's useful to think in terms of threat model. How does embedding version info affect the balance between attacker and defender ? 
+
+- The version info is only beneficial if the system is dilligently updated.
+- A a system that can't be or isn't regularly updated could instead argue for security by obscurity.
+- An attacker typically has more practical ways to test for a vuln than reading the binary.
+- When dealing with zero-day vulns, the version info only benefits the attacker.
+
+For most cases I think the version info is a net gain for the defender (and therefore it should eventually be on by default once it matures), but there'll always be cases when it isn't.
+
+It's not just about security: as a user I may want to recompile my binaries when a performance fix is out for example.
+
+---
+
+@tarcieri · 2019-11-04T15:48:53Z:
+When I worked on an infosec team at a large payments company, we built a system based on Ruby's `Gemfile.lock`, which I think is quite similar to the goals of this proposal (and also as mentioned in the proposal).
+
+It scanned filesystems for these files, audited them against a similar vulnerability database (RubySec), opened tickets for vulnerable apps, and auto-closed them when they were updated to non-vulnerable versions.
+
+It seems there's a lot of concerns about potential leakage of internal repositories. However for the above feature to work, we needed that information (which we also used to file internal vulnerabilities against internal packages). Far from that information being a concern, it was something we actually leveraged in an enterprise context.
+
+For enterprises deploying in-house applications, I don't think leaking this information is any concern whatsoever.
+
+For crates published on crates.io, it also isn't a concern as these crates, by definition, can't refer to internal repositories.
+
+So the real information leakage concern is: publicly published binaries (e.g. through a vendor's web site or an app store) leaking this information accidentally because the publishers did not opt out of removing it. To me this is a somewhat valid concern: it's information exposure and a potential loss in defense-in-depth.
+
+But I do just want to make clear that I think, with that acknowledged, this is also a feature that enterprise users will want for *internal* binaries, to allow internal auditing of deployed application binaries.
+
+---
+
+@Shnatsel · 2019-11-04T15:57:17Z:
+@tarcieri could you clarify whether specifying the origin of the package is required?
+
+I am struggling to come up with use cases for it. I've considered using it to track down all binaries that depended on a registry that was found to be compromised, but crates from the compromised registry could execute arbitrary code through build.rs to alter the origin information embedded in the binary.
+
+---
+
+@Shnatsel · 2019-11-04T15:59:53Z:
+Also, regarding path disclosure concerns: it has been [pointed out](https://old.reddit.com/r/rust/comments/dr3ncb/rfc_for_making_production_rust_binaries_auditable/f6ifub5/) that the panic messages embedded in the binary already disclose source code location for all crates that may panic. Stripping debugging symbols is not sufficient to remove this information either.
+
+---
+
+@tarcieri · 2019-11-04T16:40:01Z:
+> could you clarify whether specifying the origin of the package is required?
+
+`cargo audit`/RustSec presently don't consult the `source` of `Cargo.lock` whatsoever, so the keys in question could be redacted as those projects work today.
+
+It would break the usefulness of using those Cargo.lock files for reproducing binaries. An easier solution there is just to check Cargo.lock into git along with the source code, however.
+
+The main place we used that sort of information in an enterprise context was deciding whether to audit a RubyGem listed in `Gemfile.lock` against the public RubySec database, or our internal vulnerability database.
+
+`cargo audit` doesn't support this now (i.e. maintaining an internal version of something like [RustSec/advisory-db](https://github.com/rustsec/advisory-db) for an internal crate repository) but I think it would be an interesting feature to add.
+
+---
+
+@Shnatsel · 2019-11-04T16:43:39Z:
+I imagine the private registry and the public registry have non-overlapping sets of packages, so I don't think there is any ambiguity there - you can simply check against both vulnerability databases.
+
+---
+
+@tarcieri · 2019-11-04T16:45:34Z:
+The information could also be sourced from `Cargo.toml`, particularly if you knew the git commit the binary was built from, but right now `cargo audit` works entirely on `Cargo.lock` alone.
+
+That said, there [have been requests to include `Cargo.toml` in the analysis](https://github.com/RustSec/cargo-audit/issues/153) for other reasons.
+
+---
+
+@notriddle · 2019-11-05T19:32:26Z:
+I'm not convinced that this is worthwhile.
+
+From work I've done with enterprise PHP apps, I've never needed the information to actually be in the "binaries" (actually tarballs and Docker images). Actually mining the data from a file would require logging into the server and poking at the files, which only some of the developers are actually allowed to do, and while the server could have provided an API endpoint to get at the dependency version info, I've never actually needed that.
+
+All I actually need is the git hash of the repository it was built from, which is both sufficient for version audits as long as you have access to the VCS, and useful in cases other than just that one. And unlike embedding all of `Cargo.lock`, there's basically negligible space overhead.
+
+This reasoning (that the dependency information is pointless without access to the VCS) is even more clearly applicable to Rust, since actually doing the version update requires the source code to rebuild the binary.
+
+---
+
+@kornelski · 2019-11-05T20:17:26Z:
+`Cargo.lock` contains more information than necessary, like the whole dependency structure. I suggest trimming it down to minimum, such as just a flattened list of crates used, with only crate name and version pair per line. Or maybe even just the crate checksum, assuming that it'll be enough to match known-bad crates.
+
+~~It should probably also contain Rustc/libstd version.~~
+
+---
+
+@Shnatsel · 2019-11-05T20:23:05Z:
+@kornelski sounds good to me. I will update the RFC with this proposal.
+
+> It should probably also contain Rust/libstd version.
+
+This is already encoded today, along with LLVM version. Try `strings your_executable | grep 'rustc version'`
+
+---
+
+@tarcieri · 2019-11-05T20:40:56Z:
+@notriddle 
+
+> Actually mining the data from a file would require logging into the server and poking at the files, which only some of the developers are actually allowed to do
+
+[Please see my post](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-549415651) which describes a real-world example of a production deployment of an infosec system which uses a similar feature. Rather than "logging into the server and poking at the files", our system leveraged endpoint agents (already a requirement anywhere FIM is required for compliance).
+
+---
+
+@tarcieri · 2019-11-05T20:43:14Z:
+@kornelski
+
+> `Cargo.lock` contains more information than necessary, like the whole dependency structure. I suggest trimming it down to minimum, such as just a flattened list of crates used, with only crate name and version pair per line. 
+
+`cargo-audit`, which is likely the main intended consumer of this information, leverages all of that information in order to display dependency trees of how impacted crates are included in a project. Including it would be helpful in leveraging that functionality using this method.
+
+As mentioned earlier though, it doesn't leverage `source`, which could potentially be redacted with no effect on `cargo-audit`
+
+---
+
+@rotty · 2019-11-06T07:04:21Z:
+> @kornelski
+> 
+> > `Cargo.lock` contains more information than necessary, like the whole dependency structure. I suggest trimming it down to minimum, such as just a flattened list of crates used, with only crate name and version pair per line.
+> 
+> `cargo-audit`, which is likely the main intended consumer of this information, leverages all of that information in order to display dependency trees of how impacted crates are included in a project. Including it would be helpful in leveraging that functionality using this method.
+> 
+Is this information really that useful when auditing binaries? To remedy the situation, you need to rebuild, so you need access to the source. When you have access to the corresponding source, you also have full `Cargo.lock` information.
+
+---
+
+@vincentdephily · 2019-11-06T11:04:30Z:
+I don't like to cop out of an important decision by turning everything into an option, but it sounds like we'll need different levels of Cargo.lock redaction for different deployment contexts ?
+
+---
+
+@tarcieri · 2019-11-06T14:04:23Z:
+> Is this information really that useful when auditing binaries?
+
+Yes, if someone were able to build a tool similar to the one I [described here](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-549415651), it would allow for the full functionality of `cargo-audit` to be present based on endpoint agent-based collection of Cargo.lock files alone.
+
+Contrarily, would degrading `cargo-audit`'s capabilities by removing this information really save enough space to be beneficial in any way?
+
+> I don't like to cop out of an important decision by turning everything into an option, but it sounds like we'll need different levels of Cargo.lock redaction for different deployment contexts ?
+
+It sounds like everyone is on board with redacting `source`, which seems to address most people's concerns.
+
+---
+
+@rotty · 2019-11-06T18:57:56Z:
+> > Is this information really that useful when auditing binaries?
+> 
+> Yes, if someone were able to build a tool similar to the one I [described here](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-549415651), it would allow for the full functionality of `cargo-audit` to be present based on endpoint agent-based collection of Cargo.lock files alone.
+>
+> Contrarily, would degrading `cargo-audit`'s capabilities by removing this information really save enough space to be beneficial in any way?
+>
+I'm not sure about that, I just want to understand what information needs to be present to actually cover the scenario you describe; quoting from your comment referenced above:
+
+> It seems there's a lot of concerns about potential leakage of internal repositories. However for the above feature to work, we needed that information (which we also used to file internal vulnerabilities against internal packages)
+
+If you redact just the `source` fields, as you agree is sensible (see quote below), wouldn't that be exactly be redacting the information you need, according to the above quote? If not, what's missing from the condensed format proposed by @kornelski (i.e. just include a flattened out list of dependencies, including their versions)? Quoting @Shnatsel:
+
+> I imagine the private registry and the public registry have non-overlapping sets of packages, so I don't think there is any ambiguity there - you can simply check against both vulnerability databases.
+
+So I just don't understand why the minimalistic format is not sufficient to be able to implement a tool as you described. Note that I'm not arguing for going with the minimalistic format, I just want to understand its limitations beyond being inconvenient, as it cannot be fed into `cargo audit`.
+
+> > I don't like to cop out of an important decision by turning everything into an option, but it sounds like we'll need different levels of Cargo.lock redaction for different deployment contexts ?
+> 
+> It sounds like everyone is on board with redacting `source`, which seems to address most people's concerns.
+
+I assume that would also include redacting the crate URLs included in the entries in the `dependencies`, for example, turning
+
+```toml
+[[package]]
+name = "arrayvec"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "nodrop 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+```
+
+into
+
+```toml
+[[package]]
+name = "arrayvec"
+version = "0.4.12"
+dependencies = [
+ "nodrop 0.1.14",
+]
+```
+Is that assumption correct?
+
+---
+
+@Lokathor · 2019-11-06T19:03:47Z:
+in this case, the registry of a crate should be part of its "full name", similar to how the version is as well.
+
+`crates.io/crates/arrayvec-0.1.14` or something like that.
+
+---
+
+@tarcieri · 2019-11-06T19:22:20Z:
+@rotty 
+
+> I'm not sure about that, I just want to understand what information needs to be present to actually cover the scenario you describe
+
+There seems to be quite a bit of confusion in this post, some of which I'm responsible for, mea culpa.
+
+Here is what `cargo-audit` presently uses in `Cargo.lock`:
+
+```toml
+[[package]]
+name = "..."
+version = "..."
+dependencies = ["..."]
+```
+
+It does *not* presently use:
+
+```
+[[package]]
+source = "..."
+
+[metadata]
+"..." = "..."
+```
+
+re: source
+
+> Wouldn't that be exactly be redacting the information you need, according to the above quote? 
+
+If you read the response from @Shnatsel [here](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-549441511) and my follow-up [here](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-549442356), I changed my mind on that.
+
+To further expound on that point: so long as the vulnerability databases contain packages with non-overlapping names, we can load both into `cargo-audit`'s internal vulnerability database and it would *not* need to consult source.
+
+However, separately from that, it has features for analyzing the dependency relationships between packages in order to display information about how those packages are included in projects.
+
+I think it would very much be nice if that capability weren't lost and `cargo-audit` needed to function in a degraded mode when sourcing Cargo.lock files from binaries.
+
+I also think the information in `dependencies` should compress very well w\ e.g. gzip, since it's repetitions of the same names (and sometimes version numbers/source info i.e. `registry+https://github.com/rust-lang/crates.io-index`, at least in the v1 format)
+
+I think the space savings of redacting this information, especially post-compression, would be negligible.
+
+I think the functionality lost from redacting this information is **not** negligible, and something we plan on leveraging more of in the future.
+
+Of all of the things to redact, `[metadata]` seems like it'd be the biggest win for space-savings, since the SHA-256 hashes are uniformly random and therefore incompressible.
+
+I don't imagine there will be much space savings on `package.dependencies` or `package.source` since these elements are highly repetitive. However, I'd still be in favor of redacting `source` due to the info leakage concerns.
+
+---
+
+@Shnatsel · 2019-11-06T19:29:45Z:
+It appears that the minimalistic format of `(name, version, hash)` serves the `cargo-audit` use case okay. So far no compelling use cases have been demonstrated for leveraging the crate origin information, so it will be redacted for privacy concerns.
+
+Dependency tree information is not _strictly_ required, but it does provide actionable insights in some cases. For example, `clap` currently depends on a version of `yaml` that is [vulnerable to a DoS attack](https://rustsec.org/advisories/RUSTSEC-2018-0006.html), but it only ever reads it from a trusted source and only at compile time; it may be important to distinguish between `yaml` included through `clap` (in which case no action is required) and `yaml` used directly (in which case the binary is probably vulnerable).
+
+I will update the RFC to include this as soon as I have the time.
+
+---
+
+@tarcieri · 2019-11-06T19:33:02Z:
+> It appears that the minimalistic format of (name, version, hash) serves the cargo-audit use case okay. 
+
+This comes at the burden of `cargo-audit` having two input formats for data, which is something I'd *really* like to avoid unless there is a very compelling case for it.
+
+I think if we redact the elements I just mentioned, after compression the space savings will be negligible. 
+
+---
+
+@Shnatsel · 2019-11-06T19:42:11Z:
+I'm afraid having two different formats is unavoidable because there are no stability guarantees for `Cargo.lock` format.
+
+Also, this metadata needs to be easy to consume by readily available tooling, and TOML is not nearly as widespread as e.g. JSON. I'd go for a trivial, safe-to-parse subset of JSON - something along the lines of `[{name: "crate1",version:"0.1.2",git:"deadb33f",sha256:"123456789098765432123456789"}]` where the strings cannot contain the `"` character, each crate data section is limited to 1Mb and the entire thing to 64Mb. Possibly nesting to incorporate dependency chains, although that's tricky to make DoS-resilient. This would allow easily implementing both a naive parser in any language (just deserialize it as JSON) and a DoS-resilient parser that doesn't know about the complexity of JSON at all and just reads until the next marker or until read limit is reached.
+
+---
+
+@tarcieri · 2019-11-06T19:44:13Z:
+> I'm afraid having two different formats is unavoidable because there are no stability guarantees for `Cargo.lock` format.
+
+I'm already supporting V1 and V2 of the `Cargo.lock` format. So this would be a third format...
+
+---
+
+@Shnatsel · 2019-11-06T19:46:56Z:
+Sadly, yes. But at least the entire rest of the tooling that uses this would not have to add v3, v4 and v5. This is especially pertinent due to the fact that this metadata could be an exploitation vector when scanning third-party binaries.
+
+---
+
+@tarcieri · 2019-11-06T20:41:53Z:
+I'd suggest considering the Cargo.lock V2 format, with `source` and `checksum` redacted. It already moves the source information out-of-band of `package.dependencies`, making the dependencies list nicely minimal (it only includes the package name by default, and adds version information only in the case that it's necessary to disambiguate).
+
+Re: JSON vs TOML, so long as the JSON is isomorphic to the TOML I really don't care. serde makes that easy.
+
+Re:
+
+> the entire rest of the tooling that uses this would not have to add v3, v4 and v5.
+
+That argument feels a little bit <https://xkcd.com/927/> to me. We could always transcode to the Cargo.lock V2 format. In fact the [cargo-lock](https://crates.io/crates/cargo-lock) crate used by `cargo-audit` has already been used to implement a [V2 to V1 Cargo.lock converter](https://crates.io/crates/cargo-old-lock).
+
+---
+
+@kornelski · 2019-11-06T20:46:53Z:
+A flat list could be transformed back into a tree by performing dependency resolution using the crates-io index. I think in practice it should be reliable and straightforward, given that Cargo has a rule of one version of crate per major version, and that considerably limits options, so even a naive greedy algorithm should do (it's a simpler problem than Cargo's own dependency resolution against version ranges).
+
+
+
+
+---
+
+@joshtriplett · 2019-11-06T20:46:57Z:
+@Shnatsel 
+> Also, regarding path disclosure concerns: it has been pointed out that the panic messages embedded in the binary already disclose source code location for all crates that may panic. Stripping debugging symbols is not sufficient to remove this information either.
+
+I'd consider that a bug, and it shouldn't serve as precedent for embedding more such information.
+
+---
+
+@tarcieri · 2019-11-06T21:02:01Z:
+@kornelski 
+
+> A flat list could be transformed back into a tree by performing dependency resolution using the crates-io index
+
+Wouldn't that depend on knowing which cargo features are activated for each of the crates?
+
+While there are ways to potentially recover this information, it also doesn't seem like that much overhead, especially after compression, to include it. I'd be happy to do some real-world measurements.
+
+---
+
+@Shnatsel · 2019-11-06T22:16:01Z:
+Regarding configuration: are there any use cases on toggling this on a per-profile basis? For example, enabling it for debug but not for release, or vice versa? Assuming the crate origin info is redacted, I cannot think of any, so I'm inclined to have a global way to toggle this.
+
+---
+
+@tarcieri · 2019-11-06T22:20:45Z:
+Seems like something that isn't profile-dependent to me. I'd want it on in the `release` profile, and for the other profiles I generally wouldn't care whether it's on or off.
+
+---
+
+@gmorenz · 2019-11-09T00:31:57Z:
+Is there a reason not to make it configurable per profile? I can't think of any great reasons but I can think of some ok reasons. Generally speaking that's where I would expect to find settings that effect how the binary is built.
+
+Ok reasons: Saving the few extra bytes in release builds. Not sending along information that makes it easier to spot vulnerabilities in release binaries that you know you will never be able to update.
+
+---
+
+@fowl2 · 2019-12-05T23:12:22Z:
+Rather than names - which can be ambiguous and a potential privacy problem - have we considered including in binaries only a list of hashes of dependencies? 
+
+This seems to me to be the smallest amount of information (and binary size, etc) strictly necessary. 
+
+This also weights the burden towards those doing the auditing/reporting - mapping hashes to packages and vulnerabilities.
+
+
+---
+
+@tarcieri · 2019-12-05T23:14:59Z:
+> have we considered including in binaries only a list of hashes of dependencies?
+
+There's not a lot of point in doing that for any packages on crates.io, considering the hashes can be easily reversed back to a particular crate release.
+
+It might make sense for crates served from internal/3rd party repos.
+
+---
+
+@fowl2 · 2019-12-06T01:19:32Z:
+> any packages on crates.io, considering the hashes can be easily reversed back to a particular crate release.
+
+Yes, that's why I suggested it. ;)
+
+Saves space in the binary and respects the public/private distinction already made for the crate by publishing it/not. 
+
+
+---
+
+@tarcieri · 2019-12-06T01:23:56Z:
+> Saves space in the binary
+
+Cryptographically secure digests like SHA-256 have substantially higher entropy (256-bits) than a crate name plus version number, and therefore compress less easily.
+
+If space-savings are what you're after, sticking with the original crate name + version number will have much lower (Shannon) entropy and therefore provide better space savings.
+
+---
+
+@Lokathor · 2019-12-06T04:08:35Z:
+Oddly related: https://internals.rust-lang.org/t/pre-rfc-lang-level-license-management/11436
+
+In the case of a binary, it's highly likely that distributed binaries are going to have to bundle a boatload of license info of exactly all their dependencies. Could be in the binary, could be in a file packed into the same zip file, but the point is that distributed binaries are going to have to reveal what crates they're built from for a majority of crates, so the "keep it secret" angle actually won't work out well.
+
+---
+
+@tarcieri · 2019-12-10T01:00:07Z:
+As it so happens, there is now an open RustSec PR to consider `source` when querying for vulnerabilities:
+
+https://github.com/RustSec/rustsec-crate/pull/128
+
+---
+
+@joshtriplett · 2020-01-22T21:39:26Z:
+We discussed this in the Cargo team meeting today.
+
+We understand that the story for this does depend on the metadata being widely available, which would be easier if it were on by default.
+
+However, we also feel that there's a *huge* design space here of potential implementations, and that the potential issues caused by enabling it by default have been lightly discussed here but not experimented with.
+
+Is there a prototype implementation of this available as a build script? Is this something that could be experimented with for a while via an unstable `-Z` option? Is there some way we could get practical experience with this *before* committing to a stable implementation? (If such experimentation has already taken place, we'd like to hear more about that.)
+
+---
+
+@Shnatsel · 2020-01-22T21:57:15Z:
+A prototype implementation exists: https://github.com/Shnatsel/rust-audit
+
+However, it sidesteps a lot of the complexity by simply storing Cargo.toml as-is. It also sidesteps the need to handle platform-specific linker arguments by encoding the dependencies in a `'static &str` (plus a gross hack to make it survive LTO) because I didn't know how to pass extra argument to the linker.
+
+I expect the exact format will be hard to settle on without real-world experimentation, so I believe an unstable `-Z` option is the best path forward.
+
+---
+
+@Shnatsel · 2020-08-24T15:10:44Z:
+I am working on a full-fledged implementation of this as a crate: https://github.com/Shnatsel/rust-audit
+
+Implementing this as a crate has drawbacks - most notably a significant increase in from-scratch compilation time - but it should let us validate the design.
+
+---
+
+@gilescope · 2020-09-07T16:40:30Z:
+Not quite the same thing but these two requests feel related: https://github.com/rust-lang/rust/issues/73917
+
+---
+
+@bstrie · 2022-02-28T20:17:47Z:
+Considering that Go has done something like this for a few years now (and appears to be expanding on it in an upcoming release: https://utcc.utoronto.ca/~cks/space/blog/programming/GoVersionOfYourSource ), has anyone investigated to see whether we can learn anything from their approach? In particular I'd be interested to know how much information Go binaries leak about the development machine, since that appears to be a big sticking point here.
+
+---
+
+@tgross35 · 2023-01-05T03:45:02Z:
+Just stumbled across this thread randomly but figured it's worth adding: [MessagePack](https://msgpack.org/index.html) might be a good format for the data. It's sort of a binary JSON and is pretty widely used, serde supports it so that is easy. It has the nice benefits of saving a lot of space, while keeping the strings still easily readable in the binary (as opposed to after compression)
+
+The below example as minified JSON is 250 bytes, converting to messagepack brings it down to 146 bytes (changing each hash to byte encoding). The savings aren't _quite_ as good as gzip for larger files, but it still shaves about 40% off and the extra step isn't needed to work with the data.
+
+```json5
+[
+   "v1", // format version indicator
+   {
+      "n":"serde",
+      "v":"1.2.3",
+      "f": ["default", "std", "derive"],
+      "h":"8b917c4b6163bc82ef4aff025c6f5f4d54205232c4595f39b7b43008256a6cb7"
+   },
+   {
+      "n":"bindgen",
+      "v":"0.12.4",
+      "f": ["default"],
+      "h":"e532d574fd9836092afbe9b302c460324f4027152efe10a4234f730ab9f2412a"
+   }
+]
+```
+
+Edit: updated to show features as requested, reran calculations
+
+Edit: ran some super simple tests. In general it seemed like messagepack consistently saved about 40% over the equivilent JSON for this use case. Running `gzip` on the JSON instead would reduce its size by around 30% for smaller lockfiles (worse than messagepack), and 70% for larger ones (better then messagepack).
+
+---
+
+@mathstuf · 2023-01-05T13:45:27Z:
+Note that you also want to store the set of enabled features for each crate (not that it affects the msgpack/JSON point, but while there's an example on-screen, I want to make sure that doesn't get missed.
+
+---
+
+@Shnatsel · 2023-01-05T15:40:30Z:
+The list of enabled features for each dependency has been stored by the [out-of-tree implementation](https://github.com/rust-secure-code/cargo-auditable), but subsequently dropped. The main issue was the lack of use cases for this information, but the increased implementation complexity (resolver v2 is [infeasible to support without changes to Cargo](https://github.com/rust-secure-code/cargo-auditable/issues/38)) and increased binary size also contributed.
+
+Either way, I believe this is irrelevant for the initial implementation because the list of features can be added later in a backwards-compatible way.
+
+---
+
+@mathstuf · 2023-01-05T15:55:09Z:
+Sounds good for now. It's just that knowing that `framework+async` has a CVE lets me ignore it if I can show that my BOM lacks the `async` feature. It can certainly be an optional thing to include and can be added later.
+
+---
+
+@tarcieri · 2023-01-05T16:13:05Z:
+FWIW, `cargo-audit` also lacks feature-awareness: https://github.com/rustsec/rustsec/issues/681
+
+This is because the primary "BOM" it consumes is Cargo.lock, which doesn't contain information about feature activation.
+
+If there's interest, we could potentially start collecting this information in advisories for future use.
+
+---
+
+@tgross35 · 2023-01-06T07:20:13Z:
+I wonder if cargo could store enabled features in Cargo.lock which would keep it as a single source of truth. Mixing information from both the lockfile and Cargo.toml sounds like a bit of a slippery slope. Maybe there's a good reason it's not there though, I don't know enough about it.
+
+Jumping back to the size thing: hashes are the biggest single space consumer, but it seems like storing the upper 64 bits of the 256-bit hash should be more than sufficient to identify the crate. Especially given that the name and version are available for the rare tiebreaker case.
+
+Size comparisons of a few different options from a medium sized lockfile, sorted by size:
+
+- Cargo.lock:  21K
+- output.json: 9.1K
+- mp_str.msgpack: 8.0K
+- Cargo.lock.gz: 5.5K
+- mp_bytes.msgpack: 5.3K
+- mp_str.msgpack.gz: 4.6K
+- output.json.gz: 4.5K
+- mp_bytes.msgpack.gz: 4.2K
+- mp_u64.msgpack: 3.1K
+- mp_min.msgpack: 2.5K
+- mp_u64.msgpack.gz: 2.0K
+- mp_min.msgpack.gz: 1.9K
+
+`mp_bytes` uses a byte representation of the hash, `mp_u64` stores only the upper 64 bits of the hash, and mp_min combines version (e.g., `pkg-name|1.2.3`) and uses a flat array instead of nested objects (saves key name size). Imho, either unzipped `mp_u64` or `mp_min` would be considered acceptable in almost all cases (the test project I pulled from creates three `.so`s with stripped symbols, each about 450kb each, so 1% increase in each binary size). Note that this test doesn't include features, since it just pulls from the lockfile.
+
+Binary output is still easy enough to read in a pinch:
+
+```
+00000000: dc00 bba2 7631 b361 686f 2d63 6f72 6173  ....v1.aho-coras
+00000010: 6963 6b7c 302e 372e 3230 cfcc 9364 19f9  ick|0.7.20...d..
+00000020: 6fa2 11bf 616e 6472 6f69 645f 7379 7374  o...android_syst
+00000030: 656d 5f70 726f 7065 7274 6965 737c 302e  em_properties|0.
+00000040: 312e 35cf 819e 7219 dbd4 1043 ac61 746f  1.5...r....C.ato
+00000050: 6d69 637c 302e 352e 31cf b88d 8266 7eca  mic|0.5.1....f~.
+```
+
+Gist for my quick & dirty test (py): https://gist.github.com/tgross35/16bc7d56705128cc168c20c63269ec95
+
+(it wouldn't be bad to include the current repo's hash if available (null if not), after the version indicator. This demo just doesn't show it. Maybe also an `uncommitted` flag like Go seems to have)
+
+---
+
+@Shnatsel · 2023-01-06T09:32:24Z:
+The format used in [`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable), the out-of-tree prototype, is zlib-compressed JSON with [this schema](https://github.com/rust-secure-code/cargo-auditable/blob/master/cargo-auditable.schema.json). It is optimized for size and ease of extraction - it can be recovered and parsed [in 5 lines of Python](https://github.com/rust-secure-code/cargo-auditable/blob/master/PARSING.md), or even in bash in a pinch.
+
+---
+
+@RaitoBezarius · 2023-04-29T00:54:25Z:
+Hello, I am a Nixpkgs developer, I don't have the time alas to review all the comments, but I wanted to point out that we recently enabled by default in all our Rust packages (_that can support it_, we are interested extending the support to UEFI binaries and more.) in https://github.com/NixOS/nixpkgs/pull/223320
+
+Obviously, some problems were discovered, but nothing that special, AFAIK, we have no one complaining yet about a binary increase size, which is very promising. It has been 1 month this was exposed to Nixpkgs users on the unstable channel (our rolling release channel).
+
+This will be exposed to our stable release in 1 month (in 23.05) if no blocker happens in the meantime.
+
+Trying to extend the support of `cargo auditable` showed there were a lack of adequate APIs in `rustc` unfortunately to discover information about the linker used in the compilation process, esp. its "flag" style, e.g. MSVC or GNU-style and probably makes cross-compilation harder.
+
+Either case, I am very much in favor of enabling this by default as this is a success IMHO. If it does not end up "enabled by default" in Cargo, I hope that distributions will do it at least.
+
+---
+
+@epage · 2023-08-03T14:27:41Z:
+Since sanitization has come up in this discussion, I thought I'd point out that #3127 was merged since this RFC was originally written.  Unsure how much can be shared but it least serves as prior art for the concept.
+
+---
+
+@Shnatsel · 2023-08-03T19:14:26Z:
+I have updated the RFC based on the lessons learned from [`cargo auditable`](https://crates.io/crates/cargo-auditable). It is a full-fledged out-of-tree implementation of this RFC. So if you want to see what this RFC would be like, just `cargo install cargo-auditable` and then `cargo audible build --release` your project.
+
+The RFC now includes a lot more specifics, including a precisely specified data format. I would appreciate another round of review.
+
+---
+
+@epage · 2023-08-03T19:59:24Z:
+> I have updated the RFC based on the lessons learned from [`cargo auditable`](https://crates.io/crates/cargo-auditable). It is a full-fledged out-of-tree implementation of this RFC. So if you want to see what this RFC would be like, just `cargo install cargo-auditable` and then `cargo audible build --release` your project.
+> 
+> The RFC now includes a lot more specifics, including a precisely specified data format. I would appreciate another round of review.
+
+Could you give a summary of the lessons learned, not the technical side as thats covered in the RFC, but how successful use of it has been?  How well deployed is it, have you gotten experience reports back, etc.
+
+---
+
+@Shnatsel · 2023-08-03T21:43:51Z:
+> Could you give a summary of the lessons learned, not the technical side as thats covered in the RFC, but how successful use of it has been? How well deployed is it, have you gotten experience reports back, etc.
+
+**Nix** and **NixOS** build all their packages with `cargo auditable`. So far only two opt-outs have been made: hypervisor firmware with a broken linker configuration, and https://github.com/rust-secure-code/cargo-auditable/issues/124
+
+This has shipped on the stable channel to all users at the end of May. 
+
+You can find a testimony from a NixOS developer in this thread: https://github.com/rust-lang/rfcs/pull/2801#issuecomment-1528342799
+
+**Void Linux** has also been building all their packages with `cargo auditable` for months now. I have been in touch with the maintainers and I am not aware of any complaints. @jcgruenhage could you share how `cargo auditable` has been working out for Void Linux?
+
+`cargo binstall` has been using `cargo auditable` for all their builds. @NobodyXu do you have any feedback on it, would you like to see it in `cargo` itself?
+
+**Microsoft** has been using it in production internally. @tofay has added support for this format to Syft and Trivy specifically for this use case. Last time I checked they were happy with it. Perhaps Tom can weigh in on their experience with `cargo auditable`?
+
+---
+
+@jcgruenhage · 2023-08-03T23:33:46Z:
+https://github.com/rust-secure-code/cargo-auditable/issues/124 has actually been reported by me, and we ran into that on Void Linux. Aside of that one exception, cargo auditable has not caused any problems at all :)
+
+---
+
+@NobodyXu · 2023-08-04T01:42:34Z:
+> `cargo binstall` has been using `cargo auditable` for all their builds. @NobodyXu do you have any feedback on it, would you like to see it in `cargo` itself?
+
+It's working fine for us and we don't have any failure related to it (even though we do pull in `gix`).
+I would definitely see it available in `cargo` and enabled by default, we currently cross-compile with `cargo-auditable` by setting environment variable `CARGO=cargo-zigbuild` which is a bit hacky, this would be solved once it is available in `cargo` itself, and I would also like to see `cargo-audit` available in `cargo` for auditing binaries released by `cargo` (and `cargo-auditable`).
+
+@Shnatsel I am, a little bit worried about the compatibility in the future if schema needs to be changed and the size of the schema.
+
+I think the version of the schema should be encoded as a separate symbol as a string, which guarantees anybody can parse it before parsing the actual embedded information to verify that they have the capability to extract and decode it.
+
+The embedded information itself, IMHO, is ok to be encoded in JSON given that most of the information is encoded as string and can be easily compressed.
+
+Though I do think it could be encoded by zstd instead of zlib, since AFAIK it has much better compression rate and the decompression speed is largely independent of compression level, it could yield smaller additional size for binaries that pull in a lot of dependencies, like `cargo-binstall`.
+
+Also, an additional bonus if it's possible to access compressed information in the binary itself (via `env!("EMBEDDED_INFO")` so that `cargo binstall -V -vv` can print the dependencies itself, give that it already pulls in zstd, zlib, gzip, bzip, serde, so we can decode the information ourselves regardless of which compression and format it uses.
+
+---
+
+@NobodyXu · 2023-08-04T01:46:39Z:
+@Shnatsel BTW, is there any command I can use to calculate size of the embedded information in [`cargo-binstall` release artifacts](https://github.com/cargo-bins/cargo-binstall/releases)?
+
+Given that `cargo-binstall` has so many dependencies, measuring the impact on it would give a us a good idea on its impact if being enabled by default.
+
+---
+
+@NobodyXu · 2023-08-04T06:20:02Z:
+I used `rust-audit-info` to extract auditable data embedded in [`cargo-binstall-aarch64-apple-darwin`](https://github.com/cargo-bins/cargo-binstall/releases/download/v1.1.2/cargo-binstall-aarch64-apple-darwin.zip).
+
+The decompressed data is 28.9KB, after compressed by `gzip -9` it's about 5KB.
+Compressing it using `zstd --ultra -22 --long` takes about 4.8KB, apparently I was wrong about suggestion of using zstd instead of zlib sinc `zstd` produce data set that is only 0.2KB smaller.
+
+Given that `cargo-binstall` has roughly 318 dependencies, 5KB is reasonable since our pre-built artifacts are already quite large (9.6M after decompressed).
+
+---
+
+@Shnatsel · 2023-08-04T08:53:28Z:
+> I think the version of the schema should be encoded as a separate symbol as a string, which guarantees anybody can parse it before parsing the actual embedded information to verify that they have the capability to extract and decode it.
+
+The RFC specifies a versioned section name, currently `.dep-v0`, and for it to be changed when the format changes. That way we are free to make any changes to the format in the future, and have the format detected before the parsing even starts, with no additional complexity in the parser.
+
+> Also, an additional bonus if it's possible to access compressed information in the binary itself (via `env!("EMBEDDED_INFO")` so that cargo `binstall -V -vv` can print the dependencies itself, give that it already pulls in zstd, zlib, gzip, bzip, serde, so we can decode the information ourselves regardless of which compression and format it uses.
+
+That's a good point, and something I have been experimenting with. Specifically `env!` will embed the data twice, but it may be possible to access the single copy of the data as symbol at runtime. This can be achieved today by running the extraction pipeline on `std::env::current_exe`, but there may be ways to implement this with fewer dependencies.
+
+I will add it to the future possibilities section.
+
+---
+
+@bjorn3 · 2023-08-04T14:07:52Z:
+Rather than doing this through cargo, maybe cargo could pass the required info for every crate to rustc and then rustc can produce this section when linking based on the recorded info in the crate metadata of all dependencies? This way standard library deps and non-cargo build systems work with this too.
+
+---
+
+@Shnatsel · 2023-08-05T13:08:27Z:
+@bjorn3 I have left the implementation strategy out of the RFC, but I do have a vision of how this should be achieved.
+
+**TL;DR:** add a flag to `rustc` that embeds the context of a given file into the specified section of the binary with the given symbol name. From the perspective of `rustc` the contents are a black box.
+
+**Rationale:**
+
+Adding sections to binaries requires platform-specific object files, and only `rustc` has the [necessary information](https://github.com/rust-lang/rust/blob/dcca6a375bd4eddb3deea7038ebf29d02af53b48/compiler/rustc_codegen_ssa/src/back/metadata.rs#L97-L206) to do so (and [already injects a section in all binaries](https://github.com/rust-lang/rust/blob/4f7bb9890c0402cd145556ac1929d13d7524959e/compiler/rustc_codegen_ssa/src/back/metadata.rs#L476)). In fact, I had to copy-paste some code from `rustc` into `cargo auditable` to get it to work, and some obscure tier-3 platforms are probably broken right now. So we definitely need assistance from `rustc` here.
+
+I was considering splitting the required code into the `object` crate so that `cargo` could make use of it directly, but since then it got quite entangled with the rest of `rustc` target information system, so it is likely infeasible now.
+
+As you pointed out, a `rustc` flag could also be used by build systems other than Cargo, which is a plus.
+
+On the other hand, `rustc` does not need to know what is inside the blob it is passed, and has no concept of crate origin for example. Also, `rustc` treating the contents as a black box will allow to more easily evolve the format, with only the producers needing to be changed and `rustc` would Just Work.
+
+I can add this to the RFC if you think it's a good idea to describe this.
+
+---
+
+@bjorn3 · 2023-08-05T14:03:49Z:
+I think having a per crate blob makes more sense. That is the only way to be able to get info for the standard library and in case of a package with multiple linked targets (like binaries) this is the only way to ensure only the actually linked crates end up in the final section. It is also easier to integrate with build systems that don't easily allow getting all indirect dependencies of a target. And finally if we want to have the ability to omit crates that are dynamically linked in the future (eg if we get the ability to define a stable abi for dylibs and thus allow replacing the dylib at runtime) rustc is the only thing that knows which crate will be statically linked and which one will be dynamically linked. Cargo can't reproduce this algorithm without reading the crate metadata (which is unstable).
+
+---
+
+@Shnatsel · 2023-08-05T14:50:24Z:
+That would make `rustc` responsible for aggregating this data into the JSON format, with Cargo only supplying version information and origin kind.
+
+I'm not sure how this interacts with build dependencies. Does rustc have information about those as well?
+
+---
+
+@bjorn3 · 2023-08-05T19:39:55Z:
+> That would make rustc responsible for aggregating this data into the JSON format, with Cargo only supplying version information and origin kind.
+
+True.
+
+> I'm not sure how this interacts with build dependencies. Does rustc have information about those as well?
+
+No, but the blob that cargo passes for a crate could include the content of the section that rustc emitted in the build script executable. I guess it would result in a bigger section if multiple build scripts share the same dependencies though.
+
+---
+
+@sivadeilra · 2023-08-07T15:13:07Z:
+I'm going to share my views, as _sort of_ a representative of Microsoft.  I work on the Engineering Systems org within Microsoft, and these are _my_ views alone (without any consensus from my teammates), but I think these points will be raised by myself and others within the company.
+
+The size regression is a deal-breaker.  Microsoft carefully tracks size regressions on many products, especially Windows and Office.  Paying a cost of anything close to 1% is a dealbreaker, even if the RFC says "less than 1%".  You also have to consider embedded environments, like highly resource-constrained ARM cores, code running in short-lived containers, code running in UEFI environments, etc.  Binary size is very important in these environments.
+
+In the Windows ecosystem, this kind of metadata is nearly always tracked in PDBs.  (PDB = Program Database, and it contains all sorts of metadata, including but not limited to debug info.)  PDBs are absolutely essential, and if we have "lost" a PDB then we have bigger problems.  Adding this information to PDBs would be easy and the size of the data would be tiny compared to the size of the PDBs.  Because PDBs are not put on the machines that run the binaries, we are much less sensitive to the size of PDBs.
+
+
+---
+
+@RaitoBezarius · 2023-08-07T15:45:53Z:
+> I'm going to share my views, as _sort of_ a representative of Microsoft. I work on the Engineering Systems org within Microsoft, and these are _my_ views alone (without any consensus from my teammates), but I think these points will be raised by myself and others within the company.
+> 
+> The size regression is a deal-breaker. Microsoft carefully tracks size regressions on many products, especially Windows and Office. Paying a cost of anything close to 1% is a dealbreaker, even if the RFC says "less than 1%". You also have to consider embedded environments, like highly resource-constrained ARM cores, code running in short-lived containers, code running in UEFI environments, etc. Binary size is very important in these environments.
+
+I do not agree that even in embedded environments this size cost is a deal-breaker, as a NixOS developer who does a lot of embedded/UEFI stuff in NixOS, this feature is very much welcomed. Not anyone has the Windows infra to have a symbolication server sent stuff around, the DWARFF ecosystem does not seem that mature and the cost of storing those at scale is non-trivial.
+
+> 
+> In the Windows ecosystem, this kind of metadata is nearly always tracked in PDBs. (PDB = Program Database, and it contains all sorts of metadata, including but not limited to debug info.) PDBs are absolutely essential, and if we have "lost" a PDB then we have bigger problems. Adding this information to PDBs would be easy and the size of the data would be tiny compared to the size of the PDBs. Because PDBs are not put on the machines that run the binaries, we are much less sensitive to the size of PDBs.
+
+I don't see any reason why this could not be added on the top of this feature.
+
+Overall, while I can sympathize with your challenges, I am not sure whether this is a "Microsoft uses Rust" problem or this RFC will make anyone unable to opt-out of those compromises (e.g. include SBOM-like data in the final binary) and build your own bespoke way to distribute this information.
+
+---
+
+@tgross35 · 2023-08-07T15:57:19Z:
+This feature is always going to be optional, correct? I.e., the RFC calls out that there would be a `Cargo.toml` configuration option to opt out (having to enable it is of course a bit of a downside, but it is a one time thing). Would that be better for the situation?
+
+On a related note, Cargo could probably use a `minimal-binary = true` option that just enables all the things that help make a binary small (`opt-level=z`, LTO, strip debug symbols, this...)
+
+---
+
+@ssokolow · 2023-08-07T15:58:46Z:
+...and, as a Linux user, I'd like to point out that we *already* have things like APT/RPM and Flatpak metadata to serve as analogues to storing SBOMs in PDBs, and I remember seeing tooling analogous to `cargo audit` based on package manager metadata and verifying that the md5sums of the installed files still matched those in the metadata. (I think it might have been back when I was on Gentoo a decade ago.)
+
+Feel free to have an option to disable it but, if it's not embedded in the binary as a result of default behaviour from things like `cargo install` or `cargo build && cp target/... ...`, then it's a lot of work for no added benefit.
+
+**EDIT:** Heck, I'd argue that half the value of this is making the SBOM available in contexts where you *don't* have the PDB. (eg. Enabling Windows security products to scan non-malicious binaries for vulnerabilities when they were installed by downloading a random zip off the Web and unpacking an EXE with no PDB from it.) Windows benefits *most* from this because Windows doesn't have a "rely on the package manager to install as much as you can" culture.
+
+---
+
+@epage · 2023-08-07T15:59:17Z:
+@sivadeilra 
+
+> The size regression is a deal-breaker. Microsoft carefully tracks size regressions on many products, especially Windows and Office. Paying a cost of anything close to 1% is a dealbreaker, even if the RFC says "less than 1%". You also have to consider embedded environments, like highly resource-constrained ARM cores, code running in short-lived containers, code running in UEFI environments, etc. Binary size is very important in these environments.
+
+Sounds like your concern is **if** this is not configurable, right?  So long as its configurable,, you can ensure its off (independent of whether this is on or off by default) and you won't have a size reduction.
+
+> In the Windows ecosystem, this kind of metadata is nearly always tracked in PDBs. (PDB = Program Database, and it contains all sorts of metadata, including but not limited to debug info.) PDBs are absolutely essential, and if we have "lost" a PDB then we have bigger problems. Adding this information to PDBs would be easy and the size of the data would be tiny compared to the size of the PDBs. Because PDBs are not put on the machines that run the binaries, we are much less sensitive to the size of PDBs.
+
+Whether this should be in the binary, debug info, both, user controllable, etc is a conversation on its own worth resolving.
+
+---
+
+@sivadeilra · 2023-08-07T17:09:20Z:
+> Sounds like your concern is if this is not configurable, right? So long as its configurable,, you can ensure its off (independent of whether this is on or off by default) and you won't have a size reduction.
+
+But if it's disabled, then we don't get the benefits of it.  I'd rather find a solution that works really well, so that it can be enabled by default.  That solution may be platform-dependent; maybe embedding an ELF section is the best on Linux platforms, while embedding another stream in a PDB is best when targeting MSVC.  i.e. I agree with you that that is a conversation worth having on its own.
+
+Microsoft is already doing a lot of work on SBOMs, on both PE/COFF (Windows) and ELF targets.  This proposal has a lot of overlap with that.  I think ideally we take information from the Rust/Cargo ecosystem (crate dependencies, etc.) and flow it into SBOMs, rather than creating a parallel system.
+
+> I do not agree that even in embedded environments this size cost is a deal-breaker [...]
+
+That's fine, but that's your environment, not ours.  In some of our environments, we cannot accept that cost for this kind of feature.  *For us*, this would be a deal-breaker for Rust in some applications.  Which means that we would need an "out-of-band" version of this, such as metadata in PDBs.
+
+---
+
+@RaitoBezarius · 2023-08-07T17:27:18Z:
+> > I do not agree that even in embedded environments this size cost is a deal-breaker [...]
+> 
+> That's fine, but that's your environment, not ours. In some of our environments, we cannot accept that cost for this kind of feature. _For us_, this would be a deal-breaker for Rust in some applications. Which means that we would need an "out-of-band" version of this, such as metadata in PDBs.
+
+Hence, the whole configurability discussion, I suppose. 
+
+As I develop UEFI programs for Linux (NixOS more specifically), I am dependent on Microsoft on many things (RISC-V support for example…), I am not sure if I would like this SBOM information to be exclusively locked inside PDBs if the rest of the Linux tooling regarding them is not appropriate either.
+
+It is likely that most environments can afford it, whereas most organizations cannot ship out of band information like PDBs easily, therefore, enabling by default in its current form makes the most sense, Microsoft, which has different environment constraints, can probably enable the support for tucking all the metadata inside the PDBs, right?
+
+>  I think ideally we take information from the Rust/Cargo ecosystem (crate dependencies, etc.) and flow it into SBOMs, rather than creating a parallel system.
+
+The parallel system makes a lot of sense, because, as said, this is supplementary information that may not be available on the target system. Even if you do have SBOMs, not a lot of folks are shipping **complete** system closure wide SBOMs to their target systems.
+
+---
+
+@ssokolow · 2023-08-07T17:30:26Z:
+\*nod* To do otherwise feels like the SBOM equivalent of making array bounds checking opt-in rather than opt-out because one large downstream user has a particularly uncommon hot loop.
+
+I periodically run into people who I have to educate on the importance of specifying a license for their creations (eg. game assets on Itch.io, small hobby projects on GitHub, etc.) and I can easily see people neither embedding nor distributing SBOMs for their builds of their utilities if embedding them isn't the default behaviour.
+
+---
+
+@RaitoBezarius · 2023-08-07T17:36:40Z:
+> *nod* To do otherwise feels like the SBOM equivalent of making array bounds checking opt-in rather than opt-out because one large downstream user has a particularly uncommon hot loop.
+> 
+> I periodically run into people who I have to educate on the importance of specifying a license for their creations (eg. game assets on Itch.io, small hobby projects on GitHub, etc.) and I can easily see people neither embedding nor distributing SBOMs for their builds of their utilities if embedding them isn't the default behaviour.
+
+To add to this: furthermore, it would greatly make it easier for any distribution to extract this information from the binary and make it available in their tooling.
+
+For example, NixOS has a small set of binaries-only packages (`sourceProvenance = binary`), those break the transparency property of our build graph and create holes in our SBOMs, which is sad. Sometimes, we cannot grab the source because, well, it's proprietary software.
+
+Given that Rust is popular and being increasingly used, having this feature on by default would also enable us to re-synthesize the correct build graph virtually and have better results in more situations like the previous one.
+
+Of course, if Rust would lead the way on this feature, I can totally see it contaminating other language ecosystems and there's opportunity for interesting things here.
+
+---
+
+@epage · 2023-08-07T17:59:46Z:
+For those pushing for this to be on-by-default, does it need to be in the initial release?
+
+The more decisions that have to be made in a single RFC, the more it takes to work through them all and to get everybody on-board (and the more that falls through the cracks).  The best way to streamline the RFC process is to find decisions that can be separated from the main one.
+
+I'm assuming there is a lot of value in this being available but off by default. It will be easier for people to opt-in who might not have otherwise (e.g. I might do it to my apps as its trivial but I wouldn't setup `cargo-auditable` in my CI because its non-trivial and non-standard).  It will work in more cases.  Build times will be slightly faster. 
+
+---
+
+@Shnatsel · 2023-08-08T11:43:43Z:
+I wanted to make it very clear that the goal is to *eventually* enable this by default.
+
+I have no objections to following the same path as sparse index support: opt-in on nightly -> default on nightly -> opt-in on stable -> default on stable.
+
+---
+
+@epage · 2023-08-08T14:04:57Z:
+> I wanted to make it very clear that the goal is to eventually enable this by default.
+
+Might be good to be clear if that is your goal or if the RFC is committing to that.  If the RFC is committing us to eventually on-by-default, that is effectively the same, wrt decision making, as being on-by-default now.  It does buy is a transition plan so long as we leave room for pivoting based on that plan.  
+
+---
+
+@ChrisDenton · 2023-08-08T15:04:41Z:
+Could there be more than two options here? Maybe it could be three options: "embed", "split" or false. Where "embed" does as is proposed here, "split" (needs bikeshedding) is like "split-debug" which uses platform specific ways to place it in a separate file (this would also provide a way for wasm and embedded to support this feature). On Windows this would allow people to opt-in to embedding it in the debug info and be read by standard PDB reading tools.
+
+---
+
+@tgross35 · 2023-08-08T15:34:05Z:
+There could also be some different levels. Maybe crates.io could issue a unique ID for each crate+version combo, and only that could be embedded.
+
+Meaning you’d need to check with cratesio to get any useful information (or in the cargo registry?), but then you only need to store a u64 array, 8 bytes per crate.
+
+---
+
+@epage · 2023-08-08T15:46:50Z:
+> There could also be some different levels. Maybe crates.io could issue a unique ID for each crate+version combo, and only that could be embedded.
+
+This only works if crates.io has sufficient information which would only happen if `--locked` is used.  If we had the tracking information for https://github.com/rust-lang/cargo/issues/5221, then we could record that instead of a full lockfile for `cargo install` without `--locked`.  The downside is it'd effectively take running cargo to extract the lockfile content for one of these binaries.
+
+---
+
+@Shnatsel · 2023-08-08T15:49:58Z:
+> Maybe crates.io could issue a unique ID for each crate+version combo, and only that could be embedded.
+
+This would be impossible for local or git dependencies.
+
+>  Maybe it could be three options: "embed", "split" or false. ... On Windows this would allow people to opt-in to embedding it in the debug info and be read by standard PDB reading tools.
+
+The PDB format is not publicly documented. There was an attempt to create open-source tools to consume it, but it has been [abandoned](https://github.com/microsoft/microsoft-pdb) before those tools even started compiling. It's impossible for anyone who is not Microsoft to reliably produce or consume PDBs.
+
+---
+
+@epage · 2023-08-08T16:01:11Z:
+@sivadeilra 
+> In the Windows ecosystem, this kind of metadata is nearly always tracked in PDBs. (PDB = Program Database, and it contains all sorts of metadata, including but not limited to debug info.) PDBs are absolutely essential, and if we have "lost" a PDB then we have bigger problems. Adding this information to PDBs would be easy and the size of the data would be tiny compared to the size of the PDBs. Because PDBs are not put on the machines that run the binaries, we are much less sensitive to the size of PDBs.
+
+@Shnatsel 
+> The PDB format is not publicly documented. There was an attempt to create open-source tools to consume it, but it has been [abandoned](https://github.com/microsoft/microsoft-pdb) before those tools even started compiling. It's impossible for anyone who is not Microsoft to reliably produce or consume PDBs.
+
+@sivadeilra if PDBs should be used, are you able to help connect with the right Microsoft people to make that possible?
+
+---
+
+@Shnatsel · 2023-08-08T16:13:39Z:
+I do not see compelling use cases for the split mode. The data format is designed around the constraints of embedding it into a binary with low overhead; if you are storing it separately, you might as well use a pre-existing format such as SPDX, CycloneDX, etc.
+
+This is something we could explore in the future, but I do not believe it should be part of the initial implementation.
+
+---
+
+@epage · 2023-08-08T16:27:13Z:
+> This is something we could explore in the future, but I do not believe it should be part of the initial implementation.
+
+At minimum, we need to consider whether the design allows this kind of future expansion.  If this was listed as a future possibility, one possibility to show its not blocked is that we can change a `bool` field to an enum in the future though that can cause its own problems (e.g. https://github.com/oli-obk/cargo_metadata/issues/240)
+
+---
+
+@sivadeilra · 2023-08-08T17:03:37Z:
+> if PDBs should be used, are you able to help connect with the right Microsoft people to make that possible?
+
+I am.  I've done a substantial amount of work on PDBs, and can provide direct guidance and support.
+
+> It is likely that most environments can afford it, whereas most organizations cannot ship out of band information like PDBs easily,
+
+Can you clarify this?  Why can organizations not ship PDBs?  Are you referring to "private" PDBs?  Because public (stripped) PDBs can easily be produced.  Microsoft ships only public PDBs for most of its closed-source products, while keeping private PDBs internally.
+
+
+---
+
+@RaitoBezarius · 2023-08-08T17:09:05Z:
+> > It is likely that most environments can afford it, whereas most organizations cannot ship out of band information like PDBs easily,
+> 
+> Can you clarify this? Why can organizations not ship PDBs? Are you referring to "private" PDBs? Because public (stripped) PDBs can easily be produced. Microsoft ships only public PDBs for most of its closed-source products, while keeping private PDBs internally.
+
+I am not aware of any free public infrastructure for organizations to distribute PDBs, for e.g., UEFI programs. I would be interested if there is any free open source software self-hostable that organizations can run to offer PDBs (as a Linux distribution maintainer.).
+
+---
+
+@joshtriplett · 2023-08-11T19:22:06Z:
+> *nod* To do otherwise feels like the SBOM equivalent of making array bounds checking opt-in rather than opt-out because one large downstream user has a particularly uncommon hot loop.
+
+You're equating the value of embedding package versions directly in binaries with the value of array bounds checking. 
+
+---
+
+@ssokolow · 2023-08-11T19:35:40Z:
+> You're equating the value of embedding package versions directly in binaries with the value of array bounds checking.
+
+I'm saying that "embedding package versions by default" is to SBOM as "bounds checking by default" is to arrays.
+
+Both are measures which:
+
+1. In the majority of use-cases, are harmless
+2. Need to support the remaining minority where they do cause problems
+3. The long tail of users will probably get wrong unless it's safe by default. (In the case of SBOM, I'd argue it's like licenses. I see *so many* programmers who don't understand licenses.)
+
+Rust has been lambasted and criticized by C and C++ developers again and again and again for various "safe by default" measures where you can opt out of that "opt into footguns, don't opt out of them" stance.
+
+Why should this be any different?
+
+---
+
+@joshtriplett · 2023-08-11T19:36:24Z:
+> I do not see compelling use cases for the split mode.
+
+The use case of the split mode is enabling it by default. Given a choice between split and enabled by default, or embedded in the binary and disabled by default, which of the two would you choose?
+
+
+
+
+> The data format is designed around the constraints of embedding it into a binary with low overhead
+
+That's fair, and if the split mode turns out to be the right tradeoff, it makes sense to consider the right design for the split.
+
+---
+
+@Shnatsel · 2023-08-11T19:37:34Z:
+I understand that making a change to how binaries are built by default, eventually affecting most users, should not be taken lightly. I feel that I have not provided sufficient rationale for this aspect in particular.
+
+I will write up a detailed rationale and explore of the trade-offs involved in the next few days.
+
+---
+
+@ssokolow · 2023-08-11T19:38:23Z:
+> The use case of the split mode is enabling it by default. Given a choice between split and enabled by default, or embedded in the binary and disabled by default, which of the two would you choose?
+
+I'd choose embedded and enabled because, while not as catastrophically bad, I see "split mode by default" as analogous to the C++ die-hard stance of "We don't need Rust because we've got linters and LLVM sanitizers."
+
+If something is extra work to do properly (i.e. ensuring the split SBOM gets to the place it needs to be at the time it needs to be there), the people who need it most will do it wrong.
+
+Add a `Cargo.toml` option and/or a `rustc` flag (as appropriate to the chosen design) to opt out of it, make it enabled by default with the next edition, and call it a day. Why is the equivalent of "If you need to bypass bounds-checking, use the `unsafe` keyword" so controversial?
+
+This feels like a less drastic analogue to "Everything should run as root because typing `sudo` is a hassle" or "Everything should run as root because actively opting into running my software as root, unlike everyone else, makes me feel like a bad person". Safe/correct by default; easy opt-out for people who need it.
+
+---
+
+@joshtriplett · 2023-08-11T19:57:35Z:
+@Shnatsel wrote:
+> I understand that making a change to how binaries are built by default, eventually affecting most users, should not be taken lightly. I feel that I have not provided sufficient rationale for this aspect in particular.
+
+You have *absolutely* provided detailed and clear rationale for it, and in particular, you've made it very clear what additional benefits it would provide if enabled by default. I don't feel that rationale tips the balance to enabling it by default, but that's not for any lack of provided rationale. I just place more weight on the factors on the other side of that tradeoff than you do.
+
+@Shnatsel wrote:
+> I wanted to make it very clear that the goal is to _eventually_ enable this by default.
+
+Then I would definitely recommend designing the split mode, which *seems* (to my knowledge, not speaking for the rest of the team) like it has a straightforward path to being enabled by default.
+
+---
+
+@joshtriplett · 2023-08-11T20:00:18Z:
+> I see "split mode by default" as analogous to the C++ die-hard stance of "We don't need Rust because we've got linters and LLVM sanitizers."
+
+Not at all. I think *disabled by default* would be analogous to this, but *enabled and split by default* (e.g. embedding it alongside split debug symbols) seems like a reasonable balance, much like split debug symbols themselves are.
+
+I do, personally, think split-and-enabled is a win over embedded-and-disabled, for this exact reason.
+
+> Why is the equivalent of "If you need to bypass bounds-checking, use the unsafe keyword" so controversial?
+
+Because it's not actually obvious that "embed versions of every dependency, no, straight in the binary, alongside is *not* enough" is a problem on par with buffer overruns. (Alongside is a far easier case to make.)
+
+---
+
+@ssokolow · 2023-08-11T20:14:27Z:
+> Not at all. I think _disabled by default_ would be analogous to this, but _enabled and split by default_ (e.g. embedding it alongside split debug symbols) seems like a reasonable balance, much like split debug symbols themselves are.
+
+It's a reasonable balance for debug symbols because debug symbols are multiple times the size of the binary and are only useful for processes that require, at minimum, an operator skilled enough to install a debugger and use a command like `bt full`.
+
+As has been said multiple times, these are on the order of single- to double-digit kilobytes for a multi-megabyte stripped-binary.
+
+Shnatsel [gave](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-549184251) several real-world data points back in 2019, all of which showed the size gain for embedding being less than 2% and only one was over 1%.
+
+> Because it's not actually obvious that "embed versions of every dependency, no, straight in the binary, alongside is _not_ enough" is a problem on par with buffer overruns. (Alongside is a far easier case to make.)
+
+Again, I didn't say they were comparable in absolute terms. I said "X is to Y as A is to B".
+
+Embedding the SBOM ensures that things *not* installed via a package manager can be scanned for vulnerabilities, and doing it by default maximizes the odds the information will be available for binaries produced by the people most likely to think "I have no idea what this file is, but the program runs without it, so it's probably something like a `.o` file that I can omit from my release and `cargo clean` away."
+
+If anything, I'd say that Rust needs it *more* because of how heavily Rust leans on static linking and Go-like "just copy the file into place if it has no FFI dependencies" deployment.
+
+Heck, given the sizes we're talking about, I'd argue that any argument against embedded SBOM cuts even more strongly against Microsoft's decision to pack multiple sizes into `.ico` files and then embed the `.ico` files inside the EXEs, instead of letting the installer only install the icons for the color depth and resolutions the user actually needs.
+
+For modern icons, I consider myself *lucky* if I can get the application icons down that far once I've got enough variants to make sure it looks good at all sizes I'm likely to encounter. In the Win9x era before PNG-based `.ico` was an option, but after higher color depths and icon sizes started to come on the scene? Forget it.
+
+---
+
+@Shnatsel · 2023-08-24T22:54:48Z:
+I have done some measurements of the impact of this on binary sizes using [`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable) (the out-of-tree prototype of this RFC). 
+
+I have found that the overhead is not just below 1% but comfortably **below 0.1%** (i.e. less than 1/1000). Take a look:
+
+| binary          | plain size | auditable size | overhead |
+|-----------------|------------|----------------|----------|
+| cargo           | 21605704   | 21613752       | 0.037%   |
+| resvg           | 3189152    | 3190056        | 0.028%   |
+| cargo-auditable | 977296     | 977880         | 0.059%   |
+| hello-world | 379272 | 379424 | 0.04% |
+
+All measurements done on rustc 1.72.0 on x86_64-unknown-linux-gnu with **stripped** binaries. In unstripped binaries the overhead is even more negligible.
+
+[`cargo`](https://github.com/rust-lang/cargo) is selected as a point of reference for a large Rust project.
+
+[`resvg`](https://github.com/RazrFalcon/resvg) is selected as a project that deeply cares about binary size and eschews ecosystem-standard crates for custom implementations for the sake of lower binary size (e.g. pico-args instead of clap).
+
+[`cargo-auditable`](https://github.com/rust-secure-code/cargo-auditable) is selected as a small but useful Rust project.
+
+---
+
+@lfrancke · 2023-08-28T15:37:58Z:
+I would love to see this even in its current form.
+It will be hard to reconstruct a SBOM from the data as a lot of it is missing, in that case it'd be easier to just start from the Cargo.toml file (as done in https://github.com/CycloneDX/cyclonedx-rust-cargo).
+
+For other use-cases license information would be needed (already mentioned) and hashes of dependencies. Those would cover the minimum and recommended fields from the [NTIA document](https://www.ntia.doc.gov/files/ntia/publications/sbom_minimum_elements_report.pdf) on SBOMs. The german BSI [lists](https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/Publikationen/TechnischeRichtlinien/TR03183/BSI-TR-03183-2.pdf?__blob=publicationFile&v=3) licenses and hashes as required for SBOMs.
+
+I personally and we as a company would happily have larger binaries if they included a fully complete and valid SBOM according to (e.g.) the CycloneDX standard but I totally understand the reasoning on why this is not done here and I don't mean to start an argument.
+
+The current data is great for vulnerability scanning.
+
+---
+
+@epage · 2023-09-19T14:03:31Z:
+> Not at all. I think _disabled by default_ would be analogous to this, but _enabled and split by default_ (e.g. embedding it alongside split debug symbols) seems like a reasonable balance, much like split debug symbols themselves are.
+
+This came up in some conversations at RustConf.  This RFC is very much targeted at `cargo-auditable` but because of its limitations, it can have security vulnerability false positives (report for all code paths even unused) and won't work for SBOMs more generally.  For both cases, we'd need all build inputs (RUSTFLAGS, enabled features, etc) as well as decisions made by `-sys` build scripts, etc.  Baking all of this into the binary would lead to bloat and non-reproducible builds.  The solution offered is that we model this off of [debug settings in profiles](https://doc.rust-lang.org/cargo/reference/profiles.html#debug).  We automatically build a "full" SBOM in split mode and offer subsets of the information to be embedded by cargo with the possibility to control how much is embedded.  This would reduce the work / hacks needed by each specific SBOM format (just convert from our data dump) while allowing a built-in solution for auditing deployed binaries.
+
+The question is what is the minimum solution we should start with to work towards this.
+
+---
+
+@Shnatsel · 2023-09-19T14:14:34Z:
+>  it can have security vulnerability false positives (report for all code paths even unused)
+
+This can be solved without modifications to the way binaries are compiled by leveraging the debug info. `osv-scanner` already includes [an experimental feature](https://google.github.io/osv-scanner/experimental/#call-analysis-in-rust) to parse the debug info and report issues only in functions *actually used* in the binary.
+
+However, the debug information does not contain the *versions* of the compiled dependencies nor the dependency tree. Knowing the used functions without version information would also result in false positives.
+
+It is the debug info (for functions) and `cargo auditable` (for versions) **combined** is what enables precise analysis without false positives.
+
+---
+
+@epage · 2023-10-04T16:00:47Z:
+We talked about this in a recent cargo team meeting and there seemed to be interest in first focusing on identifying the needs and seeing what part cargo should be playing in solving the larger SBOM situation.  If there is a built-in solution, I assume the extent of the information will mean it would be large and not reproducible, so we'd like want to start with the separate artifact.  From there, we can further explore the aims of embedding a subset of the SBOM in the binary.
+
+@Shnatsel would you be interested in pivoting this RFC in that direction and leading or taking part in that effort?
+
+---
+
+@Shnatsel · 2023-10-04T17:01:54Z:
+I just got contracted to advance [cargo-cyclonedx](https://crates.io/crates/cargo-cyclonedx). So I am getting quite involved in the broader issue of SBOM generation, and I've done a bit of research on what is required for it to work well.
+
+There are some gaps in the information that `cargo metadata` exposes, most notably the dependency hashes not supporting the feature resolver v2; but I do not see any fundamental reason for SBOM generation not to be built on top of stable APIs of Cargo, such as `cargo metadata`, once those issues are addressed. The fact that we are dealing with generating a separate SBOM file as opposed to injecting something into the build process also makes things easier. So **I don't think it makes sense to build generic SBOM handling into Cargo** when external tools can do it equally well (and potentially move faster).
+
+I am planning to migrate `cargo cyclonedx` to `cargo metadata` as the backend as part of this contract work, so in a month or two we are going to see if `cargo metadata` is actually suitable for SBOM use cases, or is there something I'm overlooking.
+
+---
+
+@jcgruenhage · 2023-10-04T17:13:09Z:
+@epage On the two concerns mentioned, I'd like to quote from the 
+https://github.com/rust-secure-code/cargo-auditable#faq:
+
+> #### Doesn't this bloat my binary?
+> In a word, no. The embedded dependency list uses under 4kB even on large dependency trees with 400+ entries. This typically translates to between 1/1000 and 1/10,000 of the size of the binary.
+
+> #### Does this impact reproducible builds?
+> The data format is specifically designed not to disrupt reproducible builds. It contains no timestamps, and the generated JSON is sorted to make sure it is identical between compilations. If anything, this helps with reproducible builds, since you know all the versions for a given binary now.
+
+Putting the info into a separate artifact will reduce the usefulness of this immensely, and I'd be very happy if that could be avoided.
+
+If you're interested in what needs there are for this, maybe it'd make sense to reach out to known users for cargo-auditable and inquire about their use cases and what they think about it? @Shnatsel has provided detailed info about some of those up in https://github.com/rust-lang/rfcs/pull/2801#issuecomment-1664683031, specifically @void-linux, @NixOS and @microsoft. If you're interested I can also talk about how we're using cargo-auditable at @famedly?
+
+---
+
+@epage · 2023-10-04T17:16:37Z:
+> I am planning to migrate `cargo cyclonedx` to `cargo metadata` as the backend as part of this contract work, so in a month or two we are going to see if `cargo metadata` is actually suitable for SBOM use cases, or is there something I'm overlooking.
+
+For some of the people I talked to about SBOMs, `cargo metadata` sounded insufficient:
+
+>  For both cases, we'd need all build inputs (RUSTFLAGS, enabled features, etc) as well as decisions made by -sys build scripts, etc
+
+---
+
+@epage · 2023-10-04T17:19:18Z:
+@jcgruenhage I'm not sure why you brought those quotes up as I did not bring up either of those as concerns for this RFC.  I was speaking to the larger SBOM 
+needs and their potential impact.
+
+I also did not say that putting things in a separate artifact is the only permanent solution; just that we are more interested in starting there.
+
+---
+
+@jcgruenhage · 2023-10-04T17:21:08Z:
+@epage, I'm sorry, then I must have misunderstood what you meant with this:
+
+> If there is a built-in solution, I assume the extent of the information will mean it would be large and not reproducible, so we'd like want to start with the separate artifact.
+
+Maybe I've missed some of the context around this comment in the thread, I'll go re-read those then. Re-reading done: I'm sorry, yes, I missed some context and then misinterpreted what you said. Feel free to mark my comments as off-topic so that they're hidden by default, or if you'd prefer, I can just delete them, so that they don't clutter the thread?
+
+---
+
+@Shnatsel · 2023-10-04T17:37:35Z:
+> For both cases, we'd need all build inputs (RUSTFLAGS, enabled features, etc) as well as decisions made by -sys build scripts, etc
+
+All of this can be captured with the machinery already used by `cargo auditable`. It relies solely on the stable interfaces to Cargo and `rustc`. Enabled features are already collected, and `RUSTFLAGS` aren't but trivially could be, and "decisions made by -sys build scripts" are a whole separate problem.
+
+Generic SBOM generation is a much bigger scope with a much bigger design space, so I am a bit puzzled how that would make a reasonable starting point. The scope of this RFC is intentionally very narrow, and the format is also designed so that we can easily extend it later if other compelling use cases emerge. This is done specifically to make the change as straightforward and uncontroversial as possible.
+
+---
+
+@tarcieri · 2023-10-05T12:18:03Z:
+@epage reading previous comments, it sounds like your concern regarding missing SBOM data is about false positive elimination, however this is a known and longstanding issue with e.g. `cargo audit` in general https://github.com/rustsec/rustsec/issues/21
+
+It's something we've long been meaning to address, but also if we held off on shipping anything until it was solved we wouldn't have anything to show for it.
+
+Even if it were implemented immediately, it can't yet be consumed by `cargo audit`, so is there really a good reason to make it a blocker for the implementation of this feature?
+
+At any rate, it's no worse than the current state of affairs with Cargo.lock auditing using `cargo audit`.
+
+---
+
+@epage · 2023-10-05T13:21:30Z:
+Maybe put a different way, this solves one problem (identifying vulnerabilities in released binaries that lack a chain of custody) but, for the limited bandwidth of the cargo team, we are interested in putting our efforts in solving a different problem (SBOMs).  They are related (cargo-audit has a subset of the needed dependency information).  Independent of our general focus, there is the question of designing the manifest configuration for this and I suspect looking at SBOMs first has us looking at the bigger picture and will help us have more of the information we need for the manifest configuration.
+
+---
+
+@tarcieri · 2023-10-05T13:29:52Z:
+But if this feature used an SBOM format like CycloneDX, it could be an incremental first step towards full SBOM support that itself is independently useful for vulnerability auditing.
+
+Someone else just needs to, as an additive second step, fill in the missing gaps you've highlighted.
+
+---
+
+@Shnatsel · 2023-10-05T13:41:43Z:
+This RFC is deliberately scoped so narrowly that we wouldn't need to design manifest configuration beyond an on/off switch.
+
+I still believe that SBOM generation is better solved outside Cargo. The SBOM formats are still evolving, as is the ecosystem around them. New use cases, requirements and regulations pop up all the time. This rapidly evolving landscape would conflict with Cargo's stability guarantees, and the limited reviewer bandwidth for a rapidly changing implementation would be a hindrance.
+
+I expect to produce proof of this belief in the next couple of months in the form of `cargo cyclonedx`.
+
+---
+
+@Shnatsel · 2023-10-05T14:11:21Z:
+It is clear that the RFC needs major revisions. At least:
+
+ - The details of how this is configured should be specified
+ - The Cargo team has expressed a desire in having this off by default, at least initially, which should be reflected in the text
+ - I want to experiment with using an industry standard format, CycloneDX, and see if compression will compensate for its verbosity
+ - Interactions with other scanning approaches and ways to reduce false positives, such as parsing debug info, should be documented
+
+So I am converting this PR to draft to clearly indicate its status.
+
+---
+
+@epage · 2024-05-21T15:22:30Z:
+@rfcbot postpone
+
+I propose we finish up and stabilize #3553 before evaluating next steps for tracking of artifacts.
+
+---
+
+@rfcbot · 2024-05-21T15:22:32Z:
+Team member @epage has proposed to postpone this. The next step is review by the rest of the tagged team members:
+
+* [x] @Eh2406
+* [ ] @Muscraft
+* [x] @arlosi
+* [x] @ehuss
+* [x] @epage
+* [ ] @joshtriplett
+* [x] @weihanglo
+
+No concerns currently listed.
+
+Once a majority of reviewers approve (and at most 2 approvals are outstanding), this will enter its final comment period. If you spot a major issue that hasn't been raised at any point in this process, please speak up!
+
+See [this document](https://github.com/rust-lang/rfcbot-rs/blob/master/README.md) for info about what commands tagged team members can give me.
+
+---
+
+@rfcbot · 2024-06-11T13:56:13Z:
+:bell: **This is now entering its final comment period**, as per the [review above](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-2122880882). :bell:
+
+---
+
+@rfcbot · 2024-06-21T13:57:12Z:
+The final comment period, with a disposition to **postpone**, as per the [review above](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-2122880882), is now **complete**.
+
+As the automated representative of the governance process, I would like to thank the author for their work and everyone else who contributed.
+
+This is now postponed.
+
+---
+
+@Shnatsel · 2024-08-15T19:25:05Z:
+Note to future self: configuration not being sufficiently defined was brought up as a blocker for this RFC. 
+
+https://github.com/rust-lang/cargo/pull/14222 has documented the configuration considerations for Cargo. This document should be used as a starting point later.
+
+---
+
+@alex · 2019-11-03T17:43:03Z:
+```suggestion
+WASM, asm.js and embedded platforms are exempt from this mechanism since they have very strict code size requirements. For those platforms we encourage you to use tooling that record the hash of every executable in a database and associates the hash with its Cargo.lock, compiler and LLVM version used for the build.
+```
+
+---
+
+@alex · 2019-11-03T17:44:42Z:
+Go embeds `go.mod` dependency information into its compiled binaries.
+
+I haven't used this for tracking vulnerability info (because Go does not have a rustsec equivalent yet), but it is used for doing license audits: https://github.com/mitchellh/golicense
+
+---
+
+@joshlf · 2019-11-03T20:05:10Z:
+Do we actually need Cargo support for this? Would it be possible to have an empty crate with a `build.rs` script that performs the appropriate analysis and emits the appropriate linker flags? That would certainly defeat the goal of being on-by-default, but it could be a useful first step before Cargo support is ratified and deployed.
+
+---
+
+@Shnatsel · 2019-11-03T20:13:53Z:
+AFAIK this can't be fit into a crate because `build.rs` is invoked *before* the rest of the code is compiled. But this almost certainly can be implemented as a Cargo wrapper - just call `objdump` or the platform equivalent after Cargo is done. An example for Linux is included in the RFC.
+
+Also I have a [working prototype](https://github.com/Shnatsel/rust-audit) but with a different implementation approach - `&'static str` with start/stop markers.
+
+---
+
+@joshlf · 2019-11-03T20:19:54Z:
+When running `build.rs`, Cargo provides the [`CARGO_MANIFEST_DIR`](https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts) environment variable. I believe that you could use this to locate the `Cargo.lock` file, and use its location to emit the appropriate linker flags.
+
+---
+
+@Shnatsel · 2019-11-03T20:25:50Z:
+I have zero knowledge about using linkers directly (or configuring them), but I would welcome any attempts at prototyping this.
+
+---
+
+@joshlf · 2019-11-03T20:34:14Z:
+I have no time, but I'm posting this to This Week in Rust's CFP :)
+
+---
+
+@jayvdb · 2023-01-09T22:52:11Z:
+I filed https://stackoverflow.com/questions/75052086/how-to-locate-the-cargo-lock-from-build-rs/75052128 about locating Cargo.lock from build.rs . Would love a simpler solution than the approach I have, esp given https://github.com/neilwashere/rust-project-root/pull/18 would break it. `cargo-lock` crate doesnt seem to have a file locator, but I guess something in https://github.com/rustsec/rustsec/ needs to be able to do this.
+
+---
+
+@Shnatsel · 2023-08-03T18:33:59Z:
+A full-fledged out-of-tree implementation of this RFC is now available: https://github.com/rust-secure-code/cargo-auditable
+
+---
+
+@epage · 2023-08-03T19:51:55Z:
+I'm reading the RFC as saying this config option exists.  If so, I would expect the relevant `Cargo.toml` or `config.toml` schema to be specified in the RFC
+
+---
+
+@epage · 2023-08-03T19:52:32Z:
+What about alternative [SBOM formats](https://github.com/rust-secure-code/cargo-auditable/issues/31)?
+
+---
+
+@epage · 2023-08-03T19:53:51Z:
+I think its also worth pointing out the gaps that occur when this isn't first-party, like https://github.com/rust-secure-code/cargo-auditable/issues/124 which happened because `cargo-auditable` is trying to interpret information in a way its not intended to but can't get any other way
+
+---
+
+@epage · 2023-08-03T19:56:03Z:
+> and origin
+
+nit: this makes it sound like full origin information is encoded.  This is clarified later but you might lose some readers before then.  Clarifying this to be something like "and origin kind" or something could help
+
+---
+
+@epage · 2023-08-03T19:56:26Z:
+Thank you for that link!  I find reading schemas to not be the easiest way to consume information
+
+---
+
+@epage · 2023-08-03T19:57:45Z:
+Normally I would consider a "runtime" dependency to be dynamically linked.
+
+In cargo, we call these "normal" dependencies which isn't very clear :)
+
+e.g. from `cargo tree`)
+```
+  -e, --edges <KINDS>         The kinds of dependencies to display (features, normal, build, dev, all, no-normal,
+                              no-build, no-dev, no-proc-macro)
+```
+
+---
+
+@Shnatsel · 2023-08-03T19:58:03Z:
+They are not designed for this use case, and we found them unsuitable for a variety of reasons - the size too large, they require a timestamp that disrupts reproducible builds, etc.
+
+[Syft](https://github.com/anchore/syft) can be used to convert from this internal format to other SBOM formats, right now. I believe external tooling that converts between formats is the way to go. 
+
+The proposed format is similar to other SBOMs in structure, so supporting it in tooling that deals with SBOMs is rather trivial (or at least it was in Syft).
+
+---
+
+@epage · 2023-08-03T20:08:28Z:
+What about future compat for an unsupported platform that becomes supported?
+
+---
+
+@Shnatsel · 2023-08-03T21:30:08Z:
+I'm not sure how this config should look like exactly, so I'm moving it to "Unresolved questions"
+
+---
+
+@Shnatsel · 2023-08-03T21:30:21Z:
+Added to the RFC
+
+---
+
+@Shnatsel · 2023-08-03T21:30:31Z:
+Done
+
+---
+
+@Shnatsel · 2023-08-03T21:30:40Z:
+Added to the RFC
+
+---
+
+@Shnatsel · 2023-08-03T21:31:58Z:
+At this point renaming that causes a format break and requires the whole ecosystem around this (cargo-audit, Syft, Trivy) to transition to these new names. I'm not opposed to this on principle, but we should make sure the changes are worth the breakage.
+
+---
+
+@dpaoliello · 2023-08-03T22:32:11Z:
+```suggestion
+WASM, asm.js and embedded platforms are exempt from this mechanism by default since they have very strict code size requirements. For those platforms we encourage you to use tooling that record the hash of every executable in a database and associates the hash with its Cargo.lock, compiler and LLVM version used for the build.
+```
+
+---
+
+@epage · 2023-08-03T22:52:19Z:
+Can you call out specifically the section name fo we can do that bike shedding or call out in unresolved questions
+
+---
+
+@epage · 2023-08-03T22:52:49Z:
+Do we need format versioning? With the entry name or in the schema?
+
+---
+
+@Shnatsel · 2023-08-03T23:00:26Z:
+Good question! The section name is versioned, to allow potentially transitioning away from JSON+Zlib in the future. I'll add it to the RFC.
+
+---
+
+@Shnatsel · 2023-08-03T23:04:25Z:
+Done
+
+---
+
+@dpaoliello · 2023-08-03T23:07:28Z:
+How much does the zlib compression actually save?
+
+---
+
+@dpaoliello · 2023-08-03T23:07:33Z:
+It might be too verbose, but would it be worth recording the feature flags for each crate (in case there is a vuln associated with a specific feature being enabled)?
+
+---
+
+@dpaoliello · 2023-08-03T23:11:49Z:
+Could you please add a note about recording the version information in the debug symbols? This has the benefit of avoiding the binary cost (when debug symbols are stripped or separate) but potentially allowing the info to be accessed via whatever mechanism is provided for getting debug symbols (e.g., symbol servers on Windows).
+
+---
+
+@dpaoliello · 2023-08-03T23:13:13Z:
+Another piece of information that may be useful is the flags provided to the compiler (which would allow checking if various mitigations, like control-flow guard and retpoline, were enabled).
+
+---
+
+@dpaoliello · 2023-08-03T23:15:28Z:
+```suggestion
+An out-of-tree implementation of this RFC exists, see [`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable/), and has garnered considerable interest. NixOS and Void Linux build all their Rust packages with it today; it is also used in production at Microsoft. Extracting the embedded data is already supported by [`rust-audit-info`](https://crates.io/crates/rust-audit-info) and [Syft](https://github.com/anchore/syft). Auditing such binaries for known vulnerabilities is already supported by [`cargo audit`](https://crates.io/crates/cargo-audit) and [Trivy](https://github.com/aquasecurity/trivy).
+```
+
+---
+
+@Shnatsel · 2023-08-03T23:23:40Z:
+I'm seeing a reduction from 10kb to 2kb on the `cargo audit` dependency information. So, 5x savings. Very much worth it.
+
+---
+
+@Shnatsel · 2023-08-03T23:26:51Z:
+I have included that in the initial prototype, but eventually removed it. 
+
+It increased the data size by nearly 2x. Also, nothing was actually consuming this information - neither rustsec.org that powers `cargo audit` nor any other vulnerability database allows expressing the concept that only a specific feature is affected.
+
+However, this can be added later without breaking existing consumers if there are compelling enough use cases to justify the binary size overhead.
+
+---
+
+@Shnatsel · 2023-08-03T23:28:59Z:
+This can already be detected by dedicated tools without requiring this information to be explicitly recorded at compile time: https://github.com/slimm609/checksec.sh https://github.com/trailofbits/winchecksec etc.
+
+---
+
+@Shnatsel · 2023-08-03T23:40:04Z:
+I do not see a compelling reason for storing this in debug symbols. However, I see many drawbacks to that approach.
+
+There are use cases for keeping this data when debug symbols are stripped. For example, many Linux distributions ship debug symbols in separate packages. We want the binaries to contain this data, not the separately shipped debug symbols.
+
+If encoding into debug symbols were to be supported, then there would be two different places where this information could be located. This would require more complex extraction code.
+
+Debug symbols are also highly platform-specific and have many variations even within one platform. To make matters worse, Windows PDB format is undocumented. Parsing debug info would be much more difficult than extracting a binary section, even if that were the *only* place where this information was recorded.
+
+---
+
+@Shnatsel · 2023-08-03T23:49:49Z:
+I've added this to the RFC.
+
+---
+
+@NobodyXu · 2023-08-04T06:25:26Z:
+Here's a [`cargo-binstall`'s audtiable data](https://gist.github.com/NobodyXu/f904d194c670549ee1c94bf759a9353f), hope you find it useful when paired with the schema.
+
+---
+
+@NobodyXu · 2023-08-04T06:26:15Z:
+Here's a part of it for a rough idea:
+
+```json
+  "packages": [
+    {
+      "name": "adler",
+      "version": "1.0.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "ahash",
+      "version": "0.7.6",
+      "source": "crates.io",
+      "dependencies": [
+        93,
+        202,
+        323
+      ]
+    },
+    {
+      "name": "ahash",
+      "version": "0.8.3",
+      "source": "crates.io",
+      "dependencies": [
+        42,
+        93,
+        202,
+        323
+      ]
+    },
+    {
+      "name": "aho-corasick",
+      "version": "1.0.2",
+      "source": "crates.io",
+      "dependencies": [
+        186
+      ]
+    },
+```
+
+---
+
+@NobodyXu · 2023-08-04T06:27:34Z:
+Perhaps you can make `runtime` a deprecated alias of `normal` and make newer tools only produce `normal`?
+
+---
+
+@NobodyXu · 2023-08-04T06:29:07Z:
+For `cargo-binstall`, the decompressed info is about 28.9KB, after compressing using `gzip -9` it is only 5KB large, so definitely worth it.
+
+https://github.com/rust-lang/rfcs/pull/2801#issuecomment-1665073360
+
+---
+
+@Shnatsel · 2023-08-04T11:45:11Z:
+This is still a breaking change. It would require changing all pasers of this data to recognize the `normal` variant.
+
+---
+
+@NobodyXu · 2023-08-04T11:50:06Z:
+That's true, but it breaks less than directly renaming `runtime` => `normal`.
+
+---
+
+@Shnatsel · 2023-08-04T11:58:26Z:
+I imagine it would go through the same staging process - a lengthy period of canarying on nightly followed by a rollout to stable with an announcement in the release notes.
+
+I'm not sure I understand the question, so please let me know if there's something I didn't address.
+
+---
+
+@ssokolow · 2023-08-04T12:08:12Z:
+Honestly, this is sounding like the "Firefox responds to certain `-webkit-`-prefixed CSS properties" de-facto standardization situation that Rust's system of RFCs and nightlies and `#[feature]` was designed to avoid.
+
+---
+
+@NobodyXu · 2023-08-04T12:41:46Z:
+> This is still a breaking change. It would require changing all pasers of this data to recognize the `normal` variant.
+
+@Shnatsel Perhaps you can add this to the `auditable` and `audit` implementation to `cargo` nightly only, then add support for it in `cargo-audit`.
+
+Once it stablised, you can then deprecated `cargo-auditable` and `cargo-audit` for latest `cargo` and all the previous `cargo-audit` versions can support decoding embedded information encoded by `cargo`.
+
+---
+
+@NobodyXu · 2023-08-04T12:41:59Z:
+> Honestly, this is sounding like the "Firefox responds to certain `-webkit-`-prefixed CSS properties" de-facto standardization situation that Rust's system of RFCs and nightlies and `#[feature]` was designed to avoid.
+
+Yeah it's a bit unfortunate.
+
+---
+
+@epage · 2023-08-04T13:57:45Z:
+Going to re-raise a concern from earlier in the thread
+
+> Given that this uses a completely Rust-specific (and cargo-specific) format, the section name should not use something generic like .dep-list.
+
+(now `.dep-v0`)
+
+---
+
+@epage · 2023-08-04T13:58:42Z:
+Should we separately encode schema + version + compression?
+
+---
+
+@epage · 2023-08-04T14:00:33Z:
+tl;dr I don't think this should be punted out of the RFC
+
+Thinking further about this, by putting this here, you are punting this onto the implementer and/pr the cargo team.  Unless a cargo team member steps up to help move this along, we are asking people to take on more ownership of these things to move forward.    There are also important aspects to this that should have the wider visibility of the RFC rather than being buried in the tracking issue
+
+---
+
+@epage · 2023-08-04T14:01:32Z:
+I assume first-party will also be faster because we won't need to do a redundant `cargo metadata` call
+
+---
+
+@epage · 2023-08-04T14:04:11Z:
+What is the build-time impact of this change?
+
+I know first-party will be faster but still wondering about the overhead.  Both for debug builds generally but also with the upcoming cargo-script
+
+I wonder if we should enable it on a per-profile basis so it can be enabled for release builds but not debug builds
+
+---
+
+@bjorn3 · 2023-08-04T14:05:38Z:
+Note that there is a hard limit of 8 bytes on the name due to MSVC limits: https://github.com/rust-lang/rust/blob/4f7bb9890c0402cd145556ac1929d13d7524959e/compiler/rustc_codegen_ssa/src/back/metadata.rs#L462-L475
+
+---
+
+@NobodyXu · 2023-08-04T14:07:42Z:
+[`cargo-binstall` CI](https://github.com/cargo-bins/cargo-binstall/actions/runs/5758584682/job/15611362302) has been using `cargo-auditable` for release build and it seems that impact on build time is insignificant.
+
+---
+
+@Shnatsel · 2023-08-05T11:55:00Z:
+Allowing permutations of schema+version+compression methods is an explicit non-goal. Experiments with other compression methods show that they provide little to no gain over zlib for this use case. JSON is carefully chosen to be easy to consume both programmatically and by humans in a pinch.
+
+Allowing more format variations would also complicate parsers - they would have to support several variants of the format, which leads to more attack surface and more room for bugs.
+
+---
+
+@Shnatsel · 2023-08-05T12:40:44Z:
+You can measure the impact right now with this command:
+
+```bash
+hyperfine --max-runs 5 --prepare 'cargo clean' 'cargo build' 'cargo auditable build'
+```
+
+It shows a 3% build time regression when building `cargo auditable` itself in debug mode, or a 400ms increase. A large portion of that time is spent in a call to `cargo metadata` and repeated calls to `rustc -vV`. (This is on a system with `rustup`, so most of that time is spent in `rustup` parsing its configuration on every call to `rustc`). 
+
+`cargo auditable` itself is so fast that it doesn't even show up on the profile with a 1000Hz sampling interval: https://share.firefox.dev/4529Yq8
+
+The code is also quite naive right now. I have not attempted to optimize it in any way because it was already fast enough, so there are performance gains to be had if build time ever becomes a problem. The only thing I have tried using lighter Zlib compression in debug mode builds, but this did not result in any measurable changes because the files being compressed are just dozens of kilobytes and that's near-instant regardless.
+
+---
+
+@Shnatsel · 2023-08-05T12:43:12Z:
+On a [large workspace](https://github.com/rustsec/rustsec) `cargo auditable` actually comes out 5% faster on my machine, so the compile time differences must be within noise threshold.
+
+---
+
+@Shnatsel · 2023-08-05T12:58:55Z:
+Indeed. There are even more savings to be had by avoiding the repeated `rustc -vV` calls, which are costly on systems with `rustup` because `rustup` has to parse its configuration every time to select the right `rustc` version.
+
+---
+
+@Shnatsel · 2023-08-05T13:23:21Z:
+I simply lack the relevant experience with the target specification files to be able to propose anything specific here.
+
+I would be happy to work this out with someone familiar with the relevant infrastructure prior to merging the RFC.
+
+---
+
+@Shnatsel · 2023-08-05T13:27:17Z:
+For example, would the target specification JSON files be a good place to track whether a target supports embedding such metadata into the binaries?
+
+---
+
+@epage · 2023-08-05T13:31:34Z:
+Thanks! And to be clear, I expect this to not be too noticeable for most projects but I am protective of build times for "cargo script".
+
+---
+
+@epage · 2023-08-05T13:32:26Z:
+I still wonder if we should distinguish between debug and release builds.
+
+---
+
+@NobodyXu · 2023-08-05T13:34:48Z:
+> Thanks! And to be clear, I expect this to not be too noticeable for most projects but I am protective of build times for "cargo script".
+
+I think it does not make sense to enable this for "cargo script", given that it is distributed by source code instead of the pre-built artifacts?
+
+---
+
+@Shnatsel · 2023-08-05T13:36:30Z:
+I don't think it's possible to decide at the design stage, without trying it and seeing what the impact actually is.
+
+I can add a sentence about it being always enabled for release builds, and for debug builds only if the compilation time impact is deemed to be negligible, how does that sound?
+
+---
+
+@epage · 2023-08-05T13:40:54Z:
+Id rather not hack up cargo with special cases for "cargo script" and we do plan to eventually allow publishing them which means you can `cargo install` one, one day.
+
+With that long term route in mind, we shouldn't preclude "cargo scripts" from using this feature. However, they are run in debug mode by default, so if we make put the setting in the profile and have it be different for debug vs release, then day-to-day "cargo scripts" won't use it.
+
+---
+
+@joshtriplett · 2023-08-05T18:29:33Z:
+Unless there's a specific established standard we need to be compatible with here, can we please use zstd for this? It's typically smaller, typically faster to compress for the same size, and almost always faster to decompress.
+
+---
+
+@joshtriplett · 2023-08-05T18:39:18Z:
+Per profile, definitely. That will allow people to opt into shipping this information in specific build configurations, while omitting it in others.
+
+---
+
+@Shnatsel · 2023-08-05T18:41:38Z:
+This has been tested, and the gains from zstd compression are [negligible](https://github.com/rust-lang/rfcs/pull/2801#issuecomment-1665073360) even at extreme compression ratios.
+
+The decompression speed does not really matter because the data is very small (under 50kb uncompressed, even in sprawling dependency trees). It is only a small part of the parsing time.
+
+Zstd does have drawbacks, however. For one, zstd does not have a Rust compressor implementation, and its Rust decompressor implementation is slow (3x slower than the reference C impl). This creates a highly non-trivial, memory-unsafe C dependency for all consumers of this format. 
+
+So using zstd will complicate parsing and create far more attack surface for no real gain.
+
+---
+
+@Shnatsel · 2023-08-05T18:57:49Z:
+Does per-platform configuration make sense? Could we have it configured for *both* certain platforms and certain build profiles?
+
+---
+
+@joshtriplett · 2023-08-05T20:27:48Z:
+Perhaps, but not more so than other profile settings. In general we would probably benefit from a mechanism to have target-specific profile settings, but I probably don't think we need that as a prerequisite for this.
+
+---
+
+@Shnatsel · 2023-08-06T15:58:10Z:
+Thanks! I've updated the RFC to specify this.
+
+---
+
+@Shnatsel · 2023-08-06T16:02:07Z:
+I have included the build time considerations into the RFC, and added a clause that if the compile time impact ends up being noticeable, this feature will be disabled for debug build by default prior to stabilization.
+
+---
+
+@Shnatsel · 2023-08-06T16:08:32Z:
+I've noted in the RFC that the exact name of the section is subject to bikeshedding.
+
+---
+
+@Shnatsel · 2023-08-06T16:09:07Z:
+I've specified in the RFC that the target specification JSON controls whether this is done for a given platform or not.
+
+---
+
+@Shnatsel · 2023-08-06T16:13:11Z:
+In practice the "runtime" string never appears in the resulting. It is the default case and it is omitted to save space. So the point is rather moot anyway.
+
+---
+
+@8573 · 2023-08-06T23:31:01Z:
+I'm not advocating for including the feature information if nothing actually needs it, but I have questions on two points.
+
+> It increased the data size by nearly 2x.
+
+Was this with all the feature names included as strings in the JSON? The set of features for a given package (name, version, source)-triple is knowable out-of-band, right (from the source's index)? So the data on which features are enabled for a package could be stored as, e.g., a base64-encoded bitset, with each bit representing whether a feature is enabled, with the bits in the order of the package's sorted feature names?
+
+> neither rustsec.org [...] allows expressing the concept that only a specific feature is affected.
+
+If a RustSec advisory marks only certain functions as affected, and all those functions are behind a feature flag (or set of feature flags), wouldn't that express that only that feature is affected (or that only those features are affected)?
+
+---
+
+@8573 · 2023-08-06T23:37:16Z:
+> Note that there is a hard limit of 8 bytes on the name
+
+Am I right to think that that still would allow, e.g., `.rsdeps0` (or `.rsDeps0` if upper-case letters work)? If a version number > 9 is needed, `deps` could be shortened further to `dep`.
+
+---
+
+@Shnatsel · 2023-08-07T09:22:11Z:
+> Was this with all the feature names included as strings in the JSON?
+
+Yes.
+
+> The set of features for a given package (name, version, source)-triple is knowable out-of-band, right (from the source's index)? So the data on which features are enabled for a package could be stored as, e.g., a base64-encoded bitset, with each bit representing whether a feature is enabled, with the bits in the order of the package's sorted feature names?
+
+This would work for packages from crates.io, at the cost of requiring the crates.io index to recover this information. This would not work for packages from a private registry.
+
+> If a RustSec advisory marks only certain functions as affected, and all those functions are behind a feature flag (or set of feature flags), wouldn't that express that only that feature is affected (or that only those features are affected)?
+
+Theoretically yes, but the tooling to recover function-feature relationships does not exist yet. It is also possible to have features that do not add new functions but alter the behavior of the code, which would not be possible to capture with such a system.
+
+---
+
+@Shnatsel · 2023-08-07T09:35:35Z:
+Yes, that is permitted by the section naming constraints.
+
+---
+
+@Shnatsel · 2023-08-07T09:38:45Z:
+The list of features can be added later in a backwards-compatible way, if there are compelling use cases for it, since it's just an extra field.
+
+---
+
+@Shnatsel · 2023-08-07T11:12:37Z:
+I've changed it from "runtime" to "normal" for consistency with the help text.
+
+---
+
+@joshtriplett · 2023-08-08T17:12:51Z:
+FWIW I would love to have a pure-Rust zstd compressor and fast decompressor. I'm not willing to block on this, though. If a pure-Rust version becomes available in the future, perhaps dep-v1 can switch to it.
+
+---
+
+@joshtriplett · 2023-08-08T17:30:30Z:
+```suggestion
+The data is encoded in JSON which is compressed with Zlib. All arrays are sorted to not disrupt reproducible builds.
+```
+
+---
+
+@joshtriplett · 2023-08-08T17:35:28Z:
+```suggestion
+Every time an executable is compiled with Cargo, Cargo can record the dependency tree of the executable in a special section in the binary. This includes the names, versions, dependency kind (build or normal), and origin kind (crates.io, git, local filesystem, custom registry). Development dependencies are not recorded, since they cannot affect the final binary. All filesystem paths and URLs are redacted to preserve privacy. The data is encoded in JSON and compressed with zlib to reduce its size.
+
+This data can be recovered using existing tools like `readelf` or Rust-specific tooling. It can then be used to create a Software Bill of Materials (SBOM) in a common format, or audit the dependency list for known vulnerabilities.
+
+A per-profile configuration option in `Cargo.toml` can be used to opt into this behavior when desired (e.g. when not concerned about binary size or information disclosure). The exact name of this option is subject to bikeshedding.
+
+For users who don't enable this option, we encourage using tooling that separately records the hash of every executable in a database and associates the hash with its Cargo.lock, compiler and LLVM version used for the build.
+```
+
+(And perhaps an addition to the future-work section saying that Cargo itself could help with the separate-database case, perhaps by emitting the dep information in a separate file rather than embedded, so that the user can record it.)
+
+Toggling this from opt-out to opt-in (and also making some minor language tweaks).
+
+Noting, explicitly, that I'm aware of the advocated value gained from an on-by-default mechanism, such as that you have it on existing binaries built before you knew you wanted this.
+
+---
+
+@joshtriplett · 2023-08-08T17:38:13Z:
+```suggestion
+Not all compilations targets support embedding this data. Whether the target supports it is recorded in the [target specification JSON](https://doc.rust-lang.org/rustc/targets/custom.html). The exact name of the configuration option is subject to bikeshedding.
+```
+
+Toggling from opt-out to opt-in.
+
+---
+
+@ssokolow · 2023-08-08T19:49:12Z:
+That doesn't sound like changing from opt-out to opt-in... it just sounds like it's clarifying it and making the phrasing  orthogonal to the question of opt-out vs. opt-in.
+
+---
+
+@bjorn3 · 2023-08-09T10:44:48Z:
+Object uses the ruzstd crate for decompressing zstd compressed sections. Ruzstd is a pure rust zstd decompressor. According to it's readme it is about 1.4-3.5x slower than the reference implementation.
+
+---
+
+@NobodyXu · 2023-08-09T10:54:53Z:
+@joshtriplett Using zstd instead of zlib doesn't provide much benefit at all:
+
+> I used `rust-audit-info` to extract auditable data embedded in [`cargo-binstall-aarch64-apple-darwin`](https://github.com/cargo-bins/cargo-binstall/releases/download/v1.1.2/cargo-binstall-aarch64-apple-darwin.zip).
+> 
+> The decompressed data is 28.9KB, after compressed by `gzip -9` it's about 5KB.
+> Compressing it using `zstd --ultra -22 --long` takes about 4.8KB, apparently I was wrong about suggestion of using zstd instead of zlib sinc `zstd` produce data set that is only 0.2KB smaller.
+> 
+> Given that `cargo-binstall` has roughly 318 dependencies, 5KB is reasonable since our pre-built artifacts are already quite large (9.6M after decompressed).
+
+Originally posted at https://github.com/rust-lang/rfcs/pull/2801#issuecomment-1665073360
+
+---
+
+@joshtriplett · 2023-08-11T21:20:22Z:
+> If the mechanism proposed in this RFC is not enabled by default, it will not let you discover all vulnerable binaries in the system, and at that point it might as well not exist.
+
+You may not wish to escalate this to the point of "if you're never going to enable this by default, reject this RFC entirely", or you may find the RFC rejected entirely.
+
+---
+
+@epage · 2023-08-11T21:31:20Z:
+imo this deserves its own section.  What are the formats and how do they differ?  This doesn't just help people understand this (this is currently relying on "trust me" rather than "come join me in understanding") but it can help reviewers better analyze the proposed format and provide suggestions
+
+---
+
+@epage · 2023-08-11T21:31:36Z:
+e.g this could just be in Prior Art and this could link out to it
+
+---
+
+@epage · 2023-08-11T21:35:57Z:
+Could you get into more detail or link out to it?
+- What do they call this section?
+- Whats its layout?
+- Is there any user control over it and what does it look like?
+
+Much like SBOMs, having more detail on this could help in figuring in bringing reviewers up to a common level of understanding and might spur additional ideas.
+
+---
+
+@epage · 2023-08-11T21:36:54Z:
+This proposal is focused on security but I imagine corporate legal audits would also appreciate license information.  Should we consider that to any degree?
+
+The number of times we had random binaries when doing legal audits...
+
+---
+
+@bjorn3 · 2023-08-11T21:49:11Z:
+You can get the license information by looking the crate versions up on crates.io, right? The tool which extracts the dependency info from the executable can have an option to lookup the license too.
+
+---
+
+@epage · 2023-08-11T21:55:14Z:
+So long as the dependency is from crates.io.
+
+---
+
+@Shnatsel · 2023-08-11T21:57:32Z:
+Good question! Off the top of my head, https://utcc.utoronto.ca/~cks/space/blog/programming/GoVersionOfYourSource linked up the thread, but I'll try to find more detailed docs on it.
+
+---
+
+@Shnatsel · 2023-08-11T21:58:32Z:
+For crates.io, yes. Not all packages originate from crates.io.
+
+---
+
+@bjorn3 · 2023-08-11T21:59:38Z:
+It is `.go.buildinfo`. https://pkg.go.dev/runtime/debug#BuildInfo is the full format. Basically the go version, build settings (which includes the checked out git commit) as well as for every module the path, version and checksum.
+
+The dependency info intentionally can't be omitted 
+: https://github.com/golang/go/issues/50501#issuecomment-1010225207 Only the git commit seems to be omitable with a flag.
+
+---
+
+@epage · 2023-08-11T22:04:14Z:
+Thanks!
+
+> Replace *[Module](https://pkg.go.dev/runtime/debug#Module) // replaced by this module
+
+Do we do anything about these?  I assume `cargo metadata` (what `cargo auditble` uses) doesn't say anything about these.  I've not used them enough to see what gets included in the `Cargo.lock`
+
+---
+
+@epage · 2023-08-11T22:06:00Z:
+Sounds like go also has native support for displaying this embedded information and lists that as one of the rationals for making it unconfigurable.
+
+---
+
+@Shnatsel · 2023-08-11T22:09:48Z:
+I will sleep on it and perhaps revise it. Thank you for the feedback.
+
+---
+
+@Shnatsel · 2023-08-12T09:05:43Z:
+I've rewritten this part, thank you for pointing it out.
+
+---
+
+@8573 · 2023-08-25T00:28:36Z:
+```suggestion
+If you have 10 programs on your computer that depend on a library exploitable over the network and use that library in a way that exposes it to exploitation, your computer and your data are vulnerable as long as even **a single program** remains vulnerable.
+```
+If you'll forgive my pedantry, the buggy library might not be exposed to attackers' input, and some of the data on the computer might be unreachable from the vulnerable program(s) (e.g., protected by SELinux, or maybe the programs are in FreeBSD jails).
+
+---
+
+@8573 · 2023-08-25T00:33:56Z:
+```suggestion
+Linux distributions can alert you if you're running a vulnerable software version and you can opt in to automatic security updates. Cargo not only has no automatic update infrastructure, it doesn't even know which libraries or library versions went into compiling a certain binary, so there's no way to check if your system is vulnerable or not.
+```
+My Linux distribution doesn't alert me, alas.
+
+---
+
+@jokeyrhyme · 2023-08-25T01:09:13Z:
+It's out of scope for this RFC, but it'd be nice if Rust tooling could ignore vulnerabilities that are not in the call-graph, the same way the Go tooling does: https://go.dev/blog/vuln
+
+---
+
+@teor2345 · 2023-08-25T20:51:15Z:
+Typo?
+```suggestion
+WASM, asm.js and embedded platforms are exempt from this mechanism by default since they have very strict code size requirements. For those platforms we encourage you to use tooling that records the hash of every executable in a database and associates the hash with its Cargo.lock, compiler and LLVM version used for the build.
+```
+
+---
+
+@x10an14 · 2023-08-25T22:54:44Z:
+I believe that's valid English. It's the tooling that makes a record of the hashes. 
+
+---
+
+@8573 · 2023-08-26T02:37:07Z:
+The grammatical number of "record(s)" here depends on that of "tooling", which is singular, entailing "records".  Alternatively, "tooling" could be changed to "tools" to match "record".
+
+---
+
+@Shnatsel · 2023-08-26T23:44:31Z:
+There is ongoing work to implement this in https://google.github.io/osv-scanner/, see https://github.com/google/osv-scanner/pull/452
+
+https://github.com/rustfoundation/painter might also come in handy
+
+---
+
+@lfrancke · 2023-08-27T20:44:22Z:
+Just as an FYI that CycloneDX now has a way to do reproducible builds.
+https://github.com/CycloneDX/cyclonedx-property-taxonomy/pull/70
+The other argument is still valid.
+
+---
+
+@Shnatsel · 2023-08-27T21:07:23Z:
+Thanks for the pointer!
+
+I got in touch with some people involved with CycloneDX and I'm investigating if it's possible to select just the right combination of optional fields to have it not blow up the size. 
+
+It is noticeably bigger than the custom format when uncompressed, but gzip does a really good job compacting it. I will revise the RFC with a CycloneDX-compatible format if the prototype shows promise.
+
+---
+
+@lfrancke · 2023-08-27T21:17:56Z:
+I'm active in trying to get the https://github.com/CycloneDX/cyclonedx-rust-cargo project going again which is supposed to create CycloneDX SBOMs for Rust projects.
+It turns out to be harder than expected so I'm looking at how auditable does it but that doesn't embed all information needed and not all information can be easily recovered from the current JSON format either. I'm torn on how to continue.
+
+But that is a bit separate from this discussion and I don't mean to derail it.
+
+---
+
+@jokeyrhyme · 2023-08-27T21:18:17Z:
+> tooling that records the hash
+
+In this phrase, I believe "tooling" is a noun and "records" is a verb (present tense), so it's valid the way it is
+
+=== ROW 57 | f011014 | https://github.com/rust-lang/rfcs/pull/3772 | 2025-03-08 | rfc;twir-links ===
+RFC: Deprecate the per-build-target `edition` field in `Cargo.toml`
+
+---
+
+@epage · 2025-02-13T19:53:18Z:
+Deprecate `lib.edition`, etc in favor of only setting `package.edition`, removing the fields in the next Edition.
+
+
+
+[Rendered](https://github.com/rust-lang/rfcs/blob/master/text/3772-build-target-edition.md)
+
+---
+
+@clarfonthey · 2025-02-13T22:22:43Z:
+I didn't even know this was an option, and I agree it's very confusing, especially considering how cargo itself is affected by editions.
+
+I honestly would go further and propose working with the existing crates that use this feature to remove it, then disabling it for all editions in a future version. Making the presence of an edition field depend on edition feels weird.
+
+---
+
+@Lokathor · 2025-02-13T22:28:37Z:
+So the error case is if you set an edition >= X in your `package` and then also set any edition value at all in particular build targets?
+
+---
+
+@joshtriplett · 2025-02-17T00:26:30Z:
+@rfcbot merge
+
+---
+
+@rfcbot · 2025-02-17T00:26:32Z:
+Team member @joshtriplett has proposed to merge this. The next step is review by the rest of the tagged team members:
+
+* [ ] @Eh2406
+* [x] @Muscraft
+* [x] @Rustin170506
+* [x] @arlosi
+* [x] @ehuss
+* [x] @epage
+* [x] @joshtriplett
+* [x] @weihanglo
+
+No concerns currently listed.
+
+Once a majority of reviewers approve (and at most 2 approvals are outstanding), this will enter its final comment period. If you spot a major issue that hasn't been raised at any point in this process, please speak up!
+
+See [this document](https://github.com/rust-lang/rfcbot-rs/blob/master/README.md) for info about what commands tagged team members can give me.
+
+---
+
+@ehuss · 2025-02-25T15:57:05Z:
+I'm checking my box, though I do note that cross-edition testing, particularly of macros, can be challenging. However, it seems evident that it is extremely rare that anyone is doing that, and there are workarounds (such as using separate test packages), and the benefits seem to outweigh that drawback to me.
+
+
+---
+
+@rfcbot · 2025-02-26T18:30:26Z:
+:bell: **This is now entering its final comment period**, as per the [review above](https://github.com/rust-lang/rfcs/pull/3772#issuecomment-2661706489). :bell:
+
+---
+
+@rfcbot · 2025-03-08T18:33:26Z:
+The final comment period, with a disposition to **merge**, as per the [review above](https://github.com/rust-lang/rfcs/pull/3772#issuecomment-2661706489), is now **complete**.
+
+As the automated representative of the governance process, I would like to thank the author for their work and everyone else who contributed.
+
+This will be merged soon.
+
+---
+
+@ehuss · 2025-03-08T21:06:46Z:
+The @rust-lang/cargo team has decided **to accept** this RFC.
+
+To track further discussion, subscribe to the tracking issue here: https://github.com/rust-lang/cargo/issues/15283
+
+---
+
+@epage · 2025-02-14T15:25:08Z:
+@clarfonthey from https://github.com/rust-lang/rfcs/pull/3772#issuecomment-2657834236
+
+> I didn't even know this was an option, and I agree it's very confusing, especially considering how cargo itself is affected by editions.
+> 
+> I honestly would go further and propose working with the existing crates that use this feature to remove it, then disabling it for all editions in a future version. Making the presence of an edition field depend on edition feels weird.
+
+
+
+---
+
+@epage · 2025-02-14T15:25:20Z:
+This seems to run counter to our compatibility guarantees.  We take this approach to help people as we fix bugs that people accidentally relied on but this was intentional behavior supported in the manifest and documented as part of working with Editions.  In practice, this would mean that new versions of cargo would not be able to build older versions of crates like `linkme`, `nameof`, and `num-derive`.
+
+
+---
+
+@epage · 2025-02-14T15:26:25Z:
+@Lokathor  from https://github.com/rust-lang/rfcs/pull/3772#issuecomment-2657842887
+
+> So the error case is if you set an edition >= X in your `package` and then also set any edition value at all in particular build targets?
+
+
+
+---
+
+@epage · 2025-02-14T15:26:49Z:
+Yes. I will make that more clear.
+
+---
+
+@epage · 2025-02-14T15:33:12Z:
+See 13702bb 
+
+---
+
+@epage · 2025-02-14T15:42:04Z:
+I added d8c992a3 which discusses one edition field affecting another
+
+---
+
+@clarfonthey · 2025-02-14T18:21:54Z:
+That's very fair, and I guess my justification comes from the fact that the feature is extremely counter-intuitive and not used very often. However, from what you've mentioned, it *is* used a lot in the ecosystem, just not in very many crates, which means that at least half of my argument is invalid.
+
+So, it's fair to prefer this over an edition boundary rather than removing it outright.
+
+---
+
+@0xPoe · 2025-03-04T13:44:28Z:
+Is this intended to be a hyperlink, or is it just meant to indicate 'package-edition'?
+
+---
+
+@epage · 2025-03-04T14:17:12Z:
+This was copied out of the Cargo book and edited.  The link will be fixed when put back in the Cargo book.  I can fix it now if it matters.
+
+---
+
+@0xPoe · 2025-03-04T14:40:46Z:
+I don’t think it matters. I just got confused when I saw it in render mode.
+

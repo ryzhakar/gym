@@ -1,0 +1,2637 @@
+=== ROW 77 | f012563 | https://blog.rust-lang.org/inside-rust/2025/06/21/announcing-the-clippy-feature-freeze | 2025-06-25T00:00:00 | twir-links ===
+Announcing the Clippy feature freeze | Inside Rust Blog
+Inside Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Announcing the Clippy feature freeze
+June 21, 2025 · blyxyas
+on behalf of the Clippy team
+The Clippy project will be on feature-freeze for 12 weeks, starting from Rust
+1.89.0 beta (June 26th 2025) to September 18th 2025 (Rust 1.89.0 stable
+release). During this time no new features will be accepted, only bug fixes.
+This feature freeze comes from a lack of the necessary capacity needed
+to maintain all the current lints (over 750 of them 😱) and still add new ones.
+We need to care for the Clippy project the same way that Clippy cares about our
+code, and note that every single one of them needs maintaining and accounting
+for current and future changes in the compiler as a whole.
+As a team we’ll focus on making contributing the best it can be, and mark the
+issues that could be great as a starting point to get familiar with the project.
+What can I expect as a user?
+As a user you can expect to have more accurate lints, with less false positives
+and more edge cases covered. A bump into Clippy’s toolchain would not involve
+the same risk for false positives as it has been until now. We hope that by
+upping the standard for lints all around the project we can allow users to
+expect even more from the already great linter.
+If you have a lint which you want to be implemented, you can still open an
+issue for it, but PRs adding new lints won't be reviewed during the feature
+freeze. Instead, they will be put into a queue and reviewed (and merged) after
+the feature freeze is over.
+Open pull requests that add new lints and are in a very advanced state
+might still get reviewed and/or merged during the feature freeze.
+Can I help?
+As always, any help on the project is very appreciated. Apart from opening bug
+reports, you can follow our contributing guidelines and check our suggested
+good first issues for opening pull requests. Everything from fixing diagnostic
+issues and improving documentation, to fixing application-wide crashes
+really helps Clippy get into the excellent state that our users deserve.
+If you need direct help when fixing a bug, don't hesitate to open a thread on
+Zulip and/or open a draft PR with the questions you have in order to start
+the feedback stream.
+Conclusion
+Thanks a lot for all these years of supporting Clippy, we hope that via this
+little feature hiatus we can achieve the excellence that the Rust user base
+deserves.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 78 | f012584 | https://polarsignals.com/blog/posts/2025/07/08/dst-rust | 2025-07-09T00:00:00 | twir-links ===
+Deterministic Simulation Testing in Rust: A Theater Of State Machines | Polar Signals
+Use Cases
+Pricing
+Docs
+Blog
+Sign InSign UpSchedule a call
+Use Cases
+Rust ProfilingDebug Rust bottlenecks
+GPU ProfilingUnderstand GPU performance
+Understand IncidentsResolve issues faster
+Optimize PerformanceTune application performance
+Save Infrastructure CostsCut infrastructure wastePricingDocsBlog
+Sign InSign UpSchedule a call
+Blog
+Deterministic Simulation Testing in Rust: A Theater Of State Machines
+How we designed our database for complete control over concurrency, time, randomness, and failure injection.
+Author:
+Alfonso Subiotto Marqués
+JUL 8, 2025
+10 min
+It's been just a year since we wrote about how we implemented deterministic simulation testing (DST) of our Go database (FrostDB). Since then, we have been hard at work writing our new database backed by object storage in Rust (read more here about why). In this blog post, I want to lay out the approach we took to build our new Rust database with DST principles front-and-center and how it compares to the approach we took with FrostDB.
+As a quick recap, DST tests are randomized full system integration tests where any failure can be reproduced using the same initial random seed. DST helps you find complex bugs in your system before customers hit them in production. Since failures can be deterministically reproduced, it significantly reduces the time needed to replicate hard-to-find bugs and streamlines the debugging process so that more time can be spent on feature work. The confidence this provides in system correctness is transformative: developers can ship complex features at full speed, knowing that DST will catch any subtle regressions before they reach production. For more on DST principles and benefits, see our previous blog post.
+The Four Ingredients of DST
+In essence, DST can be boiled down to controlling four main ingredients: concurrency, time, randomness, and failure injection. The first three are non-negotiable: you must have full control over task scheduling while injecting replayable sources of time and randomness. Deterministic execution can already be achieved with just these three ingredients. Failure injection is not required: zero failure injection is just a deterministic and reproducible integration test of a random execution schedule of your system, which is already valuable. However, the real power of DST is when you turn up the failure injection knob.
+This amount of control requires you to think carefully about how your code is designed and run. When we implemented DST in FrostDB, we had to achieve this level of control with an existing codebase. In Go, the default concurrency model is that goroutines are multiplexed by the language runtime onto a set of OS threads, giving up your scheduling control to not one, but two external actors. Our choices were therefore to rewrite an existing complex codebase with its own scheduler, or figure out a way to control the existing scheduler by forcing single-threaded execution and making the runtime scheduler decisions deterministic.
+We chose the latter approach and with some small changes, gained control of time and randomness. This approach was effective and found a good number of issues, including data loss and data duplication bugs. However, we were never really satisfied with the amount of failure injection we were able to achieve with this approach, since every type of failure required a specific interface implementation (e.g. VFS) and any scheduler-related failure injection (e.g. randomized execution schedules) would have required us to modify the Go runtime scheduler more than we wanted to.
+We could have gone down the same path with our Rust database. The folks at RisingWave have helpfully written a deterministic futures executor called madsim, a drop-in replacement for tokio. Madsim offers deterministic execution of futures given a random seed, and also helpfully implements failure injection for some interfaces.
+For an existing Rust codebase implementing DST, madsim is probably a good choice. However, writing a new codebase from scratch gave us a golden opportunity to claim the responsibility of full control over concurrency, time, randomness, and failure injection. So we decided to go all in.
+Enter State Machines
+Confident in our decision, we chose to architect our new database as a set of state machines, heavily inspired by the actor-based concurrency model outlined in the sled simulation guide. The idea is that all of your core components are written as single-threaded state machines. In production, these state machines are wrapped by a “driver” that routes messages to other state machines via the network and handles local state machine outputs. In testing, a single thread drives an event loop and routes messages between state machines using a message bus.
+These state machines implement a simple interface that defines a Message type as the sole method of communication with other state machines. This is a way to implement a technique known as dimensionality reduction: by constraining all interactions to message passing, we collapse the complex space of possible component interactions into a single, well-defined channel. Every state change and side effect must flow through the same messaging interface, which makes the system far easier to reason about and test.
+pub trait StateMachine {
+fn receive(
+&mut self,
+m: Message,
+) -> Option<Vec<(Message, Destination)>>;
+fn tick(
+&mut self,
+curtime: Instant,
+) -> Option<Vec<(Message, Destination)>>;
+}
+The tick method is called periodically for any timer-related events state machines implement (e.g. flushing buffers) and is the only source of messages without inputs in the system. receive implements the core state machine code that produces any number of messages for a given input message from another component in the system.
+With this architecture, the state of the system can be described at any point in time as the combination of individual state machine states. Since state only changes through tick and receive calls, we can simulate our entire system exactly as it would run in production.
+The Message Bus: The Director
+The message bus that connects these state machines in deterministic simulation tests becomes a very powerful abstraction because it is the only component responsible for ticking and applying messages to state machines. This is where this state machine architecture really shines for DST because the control of all four ingredients is cleanly centralized in one place. Let's take a look at how this works in practice:
+Scheduling
+The event loop runs on a single thread and either ticks a random state machine (through tick) or applies a message to a destination state machine (calling receive). The state machine interface does not include the async keyword, which ensures at compile time that there are no runaway futures spawned inside state machines, ensuring the main thread will run tick or receive to completion. Each call to a state machine can be thought of as an asynchronous task executed to completion, described as a (Message, Destination) tuple in the message bus event queue. This results in the message bus fully controlling task scheduling since the execution schedule is just the order in which messages are applied to state machines.
+Time
+State machines have no direct access to system time. They only perceive time through the timestamp explicitly passed in to tick. In our case, we mostly use this to implement logic to flush buffers based on some amount of time passing. Production drivers typically set up a task that calls this method periodically with the real current time, but the message bus can precisely choose what the “current time” is. This gives the message bus complete control over temporal behavior, allowing arbitrary time manipulation with CPU performance as the only limiting factor.
+Randomness
+Controlling randomness boils down to using a single pseudo-random number generator everywhere random decisions need to be made. This random number generator is initialized with a random seed printed out at the start of each test. Every random decision (e.g. event re-ordering, state machine selection for ticks, failure injection) is made based on this random number generator. Seeding this random number generator with the same seed guarantees the same sequence of random decisions.
+Failure Injection
+The conventional way failure injection is designed is by providing components with an abstract dependency that is swapped out during testing for a randomly fallible dependency. For example, in our FrostDB DST implementation we implemented an in-memory VFS interface that would randomly fail. As mentioned earlier, the downside with this approach is that failure injection needs to be implemented for every single fallible interface. Additionally, passing a random number generator to each fallible dependency implementation creates a lot of boilerplate and complexity.
+With the state machine architecture, dependencies are not “injected” into components that need them. Instead, dependencies are modeled as state machines themselves and therefore dynamically resolved at runtime. For example, an IO write just becomes a message with some bytes sent to the IO state machine. In production, these messages are handled explicitly and result in what you would expect, but in testing the message bus is free to do anything with these messages.
+Since all calls to fallible dependencies are just messages, the message bus implements failure injection by sending back an error for any given message to the original component. It can also choose whether to do this before or after applying the original message to the destination state machine, or even drop messages at any point. Crucially, this failure injection needs to be implemented only once in the message bus to apply to all state machines (including all dependencies). This results in very powerful and comprehensive failure injection while avoiding the complexity of reimplementing failure injection for every fallible component.
+Disadvantages
+The state machine architecture allows for flexible and powerful simulation, but does come with some disadvantages that need to be navigated when applied in practice.
+First, forcing the system to be written as a set of state machines imposes considerable cognitive overhead on developers. For DST to be effective, core system logic must be located in state machines, which implies certain restrictions on the developer. From a theoretical point of view this is great, because it forces developers to think very carefully about the exact state transitions state machines make, but in practice the path of least resistance is taken. As a result, code that should be in state machines leaks up into the production driver and is not tested in DST tests. However, this is more of an issue now because our database architecture is still evolving rapidly and I’m hopeful that this will improve over time as it stabilizes.
+Second, external dependencies can introduce nondeterminism, reducing DST coverage since you cannot control what goes on inside the dependency. Dependency nondeterminism must be eliminated, otherwise DST reproducibility goes out the window. In practice, we categorize dependencies as either non-deterministic (varying output for the same input) or deterministic (consistent output for the same input). The first kind of dependencies must be mocked out during testing (e.g. UUID generation), but the second kind can be wrapped in a state machine during testing for maximum coverage. Even if the dependency spawns multiple futures under the hood, we use block_on on any async functions to block the testing thread on the dependency output. However, there is no easy answer to avoiding reduced DST coverage due to dependency use. Our approach to this problem is to remove as many dependencies as possible over time.
+Conclusion
+There are many ways to implement DST in your system. For existing applications considering implementing DST, I still think that relying on third parties is the correct tradeoff to make (WASM+runtime in Go, madsim in Rust) since a full codebase rewrite is usually too much to stomach. However, the state machine architecture outlined in this blog post offers both a simpler and more powerful way to build a system where determinism is paramount for correctness.
+After our experience retrofitting DST into FrostDB, this new architecture was the right choice for us. We lost the ability to “just write code” and let the DST harness we built for FrostDB handle determinism, but gained tremendous control over the critical ingredients required for DST. This approach has already proven its value – we've discovered two critical bugs in our new Rust database: one causing data loss and another causing data duplication. Testing aside, this architecture is also a powerful mental model to reason about system behavior. Even though cognitive overhead during implementation is significant, it comes from having to think explicitly about your system’s state transitions. In the long term, this is a good thing.
+I hope this blog post inspires you to implement deterministic simulation testing into whatever you’re building and gives you an idea of some ways to do this. If you have any questions or comments, I’m always happy to chat (reachable at alfonso@polarsignals.com). Let’s build more correct systems together!
+Read more
+MAY 28, 2024
+(Mostly) Deterministic Simulation Testing in Go
+How we used WASM and some Go runtime modifications to run deterministic simulation tests against FrostDB
+TestingGo+5JUL 7, 2026
+Loading Lakes
+Optimizing loading Great Lake tables with DataFusion
+Delta LakeDatabases+1
+TestingDeterministic Simulation TestingRustDatabasesDistributed Systems
+On this page
+The Four Ingredients of DST
+Enter State Machines
+The Message Bus: The Director
+Disadvantages
+Conclusion
+Keep up with Polar Signals
+Receive new posts, product updates, and insights on performance engineering straight to your inbox.
+Subscribe
+Build reliable systems faster
+© 2026 Polar Signals. All rights reserved.
+Company
+About us
+Careers
+Contact us
+Resources
+Blog
+Pricing
+Docs
+Status
+Polar Signals Cloud
+pprof.me
+Parca
+Connect
+X (Twitter)
+Discord
+GitHub
+YouTube
+Book a Call
+Legal
+Terms of Service
+Privacy Policy
+Cookie Policy
+
+=== ROW 79 | f012654 | https://youtube.com/live/PZZfVAaYTP8?si=2nfis0-IrN9aMkti | 2025-09-03T00:00:00 | twir-links ===
+[00:06]
+[Music]
+Okay, welcome everyone. Welcome live. Um
+I am your host Matt. Um welcome to the
+embedded Ross class by Professor Brad.
+So um I'll be going off now and giving
+professor Radi grants to give us what a
+med class will be having for us and then
+welcome to the first class in the four
+four week series. Thank you very much.
+Thank you all. Um it's great to see you.
+[01:08]
+Hi, I'm Bart Massie. Um and I'm excited
+today to teach you some embedded Rust. I
+couldn't be more excited. Honestly, this
+is the start of a journey and it's the
+start of sort of an experiment in the
+sense that I've never tried to teach
+this many people remotely before and
+especially from a very mixed group of
+people that are from all different
+places and with all different
+backgrounds. But I think we can make
+this work and I'm very very excited to
+give it a try. Um,
+let me uh let me mention as we start
+pasted in here somewhere
+in the studio chat is or in the chat I
+think is a link to a GitHub which is
+where I'll be working from for this
+course. Um, let's take a look at what
+we're doing here. Um, that thing has a
+bunch of the links
+that we'll need. Let's go to the course
+outline and talk for a second about
+[02:13]
+this is a
+8week course. Uh we will have today some
+basic stuff about Rust. Uh and then on
+Wednesday we'll do some more Rust. Then
+we'll have a week off while I attend uh
+the rest global conference in China and
+after that we'll start in really with
+embedded. So
+I I'm imagining that some of you know
+some Rust. I'm imagining that all of you
+know how to program a computer in some
+programming language. That's probably
+necessary. But you don't really have to
+know much or even any Rust to start with
+this course. But you do need to learn a
+lot of Rust very quickly.
+Uh let's talk a little bit about um
+about all of that. Yeah. So also you may
+not know anything about embedded
+[03:14]
+hardware. I expect most of you won't and
+that's fine. Uh but if you do, it'll be
+helpful. Um, meh doesn't matter. Um,
+I should tell you a little bit about
+myself.
+I'm Bart Massie. I'm a professor of
+computer science at Portland State for
+the past 26 years in Portland, Oregon in
+the USA.
+I uh did my graduate work at University
+of Oregon. I have a master's in
+programming language implementation, a
+doctorate in artificial intelligence,
+but not that kind. Um,
+I started doing embedded in the 1970s
+when
+it was kind of a new thing and have been
+doing it ever since off and on. I spent
+a couple years out at Tektronics here in
+Oregon um doing embedded development for
+[04:16]
+television measurement products
+a while ago and I started doing Rust
+about
+soon after Rust 1.0 um like nine or 10
+years ago.
+So what are the tools to have to
+kickstart with Rust? We'll talk about
+that. That's a great question and we'll
+talk about that in a second. Um
+the
+the um basics here are going to be
+looking at the Rust programming language
+book and uh getting Rust installed and
+I'll talk about both of those things
+here just very shortly. Um
+I one thing that didn't make it into the
+slides so I'll fix it now. um
+is
+[05:16]
+uh I wanted to thank Rust Africa first
+of all and Morai and the gang for um for
+making setting this up and making it
+possible. The work that that's been done
+to make this a thing is really really
+amazing. I want to thank futureway which
+has provided me with funding that makes
+this course possible by giving me
+release time. I wanted to thank the rest
+embedded working group
+um that is you know the people who are
+the sort of focal point for Rust
+embedded. I'm fortunate enough to be a
+member of that working group and have
+gotten to help them with some stuff and
+that's great. Dang it. That's not
+supposed to happen. My apologies.
+Uh, let's kill that so it can't happen
+again.
+And I knew I forgot something today. And
+uh
+I also want to thank uh Portland State,
+my employer, who um who has given me all
+[06:17]
+kinds of time and and stuff to do this.
+Anyway, how to get the most out of the
+course. Yeah, look,
+here's the deal with this course.
+I could have recorded these as lectures
+so that you could play them at your
+leisure. It would have been a completely
+one-way street. Um,
+I wouldn't have
+I, you know, and that if we'd wanted to
+do that, it would have been fine. But
+the reason that we're doing it this way
+is because I want it to be a two-way
+street. I want you to talk to me and
+tell me what you need to know. Tell me
+if I'm going too fast. Tell me if I'm
+going too slow.
+I need you during the course have a
+conversation with me because that's
+what'll be fun.
+And
+outside the course, I need you to try
+out stuff. You know, get Rust installed
+on something and try it out. Get Rust
+embedded installed on something and try
+[07:18]
+it out. um you really need to play with
+stuff so that you can come back next
+time with questions from what you've
+done. I'll also talk about some places
+in a minute that you can actually go
+to chat with me between classes because
+I'm not just here to lecture. I'm here
+to also help out um in general.
+So, let's actually do that. That's
+probably a good
+so
+the quick start of the language is this.
+Let's just do this. Let's just do this
+So,
+[08:23]
+one moment, please. So, rustup.rs
+um I hope that's big enough to read for
+everybody
+is
+where you go to install Rust. If you
+haven't installed Rust yet, that should
+be your project for the day is to get
+Rust installed and up and running. And
+what you'll get when you go to this
+place is
+some instructions about how to install
+Rust and it will install the Rust
+installer. Rust up. RustUp is an amazing
+tool and is the preferred way to have
+Rust on your computer. This will work
+fine for Windows, Mac or Linux. Um I am
+a Linux guy and I'm going to be
+demonstrating everything using Linux
+just because that's what I know.
+Mac will be pretty similar.
+Windows will be somewhat similar. I
+don't think there will be huge
+differences, but if you have a problem,
+then you know we can talk about that
+that's specific to your platform.
+So, you first do do this thing and
+[09:25]
+install Rust
+and then um the book that I recommend
+for absolute beginners to Rust is the
+Rust programming language. And that's
+the book we're going to kind of follow
+uh for these first two lectures. The
+rest programming language is again
+freely available online. Um you can read
+it in a web browser. You can download it
+as an ebook. You can download it as you
+know you can buy it as a paperback book,
+but I just read it online. Um and it's a
+pretty good introduction to the Rust
+programming language. Um, I think it's
+quite a good way to start with Rust.
+And so what I would suggest
+to answer your question from a bit ago
+is get Rust installed on your machine as
+quick as you can. You can do it during
+this or at right after it and then go
+[10:25]
+through this book and uh learn what's in
+it. and we're going to go kind of along
+with it today once we get going. So,
+there's that. Um, I mentioned
+this. I I'm the founder and current
+director of a thing called rusted
+edgu.org.
+Um, and this link here,
+zulip.rusted.org,
+is a link that um
+absolutely a place you can go to chat.
+I've set up a channel there, Rust Africa
+Embedded. Zulip's kind of a weird chat
+program, but it's the one we use. So, um
+the point is you can find me there
+anytime and uh I'll try to answer your
+questions and help you as you get
+started.
+Um,
+yeah, I think that's the stuff we need
+to talk about from here today.
+[11:25]
+So, yeah, one more thing and then we'll
+get going with the actual Rust unless
+people I'm I'm not sure I'm seeing the
+actual chat. I've got something that
+says private chat, but what I really
+want is the chat chat. I don't quite
+know how to do that. Give me a minute
+here. Try to figure stuff out.
+Oh, there we go. Okay. Okay.
+&gt;&gt; All right. I found it. Sorry, it took me
+a second. I'm just bad at bad at
+this is showing up mirrored. Can you Is
+this text mirrored or is it not
+mirrored?
+&gt;&gt; Yeah. Yeah, I can. Everything is clear.
+Yeah, I can read the screen.
+&gt;&gt; All good. All right, cool. Sorry. I just
+wanted to make sure we weren't um
+talking and couldn't read stuff. All
+right, so we've got um now I found the
+actual chat. That's good. Please,
+[12:25]
+please, please, you know, ask questions
+in the chat. I I'm absolutely excited um
+about this. No, the chat isn't the only
+way to ask questions. That Zulip link is
+the other one. Um I'll try to watch the
+chat real careful as we go. So, let's um
+go back here.
+We'll go for 45 minutes or so, then
+we'll take a little break in the middle
+somewhere. Um, so that people can go get
+coffee, use the restroom, and reset
+their brains. Um,
+yeah. So, that's what we're doing today.
+So, let's actually go back to the course
+outline.
+Let's see. So, once you've installed
+Rust,
+what do you got? Well, you've got a tool
+rust C.
+Rust C is the Is this font big enough
+too? Also, um please let me know if it's
+too small. Um Rust C is the Rust
+compiler and uh it's a very nice Rust
+[13:28]
+compiler. We almost never use the Rust
+compiler directly. It's a really unusual
+to do that. Um, what we normally do is
+we use a tool called cargo and cargo is
+the build tool for Rust. And it's kind
+of one of the things that makes Rust an
+amazing programming language. So, let's
+Um,
+so I'm going to make a new project with
+cargo. And you do that with just cargo
+new. I said d-bin to make it a program
+rather than a library.
+And the program we we're making is
+called rust basics. And if you you'll
+notice that when it when cargo makes a
+new directory for code, it makes a file
+called cargo.toml.
+And the cargo.toml describes, you know,
+[14:29]
+is the setup file essentially for cargo.
+And it also makes for us a default main.
+Um, so this is a program. This is
+absolutely the normal rest program. And
+you, you know, it's a tradition since
+Kernnean and Richie to print hello world
+Fun here says we're declaring a
+function. Maine is the name of the
+function. The function takes no
+arguments and returns no value. Um,
+that's not quite true, but it's close
+enough. And print here is print with a
+new line. And it also has an exclamation
+point. That exclamation point means that
+it's a macro. We don't need to worry
+about that now, but we'll talk about it
+later. And then this thing is just a
+string like in any programming language.
+Uh, Rust uses semicolon as a terminator.
+And this string hello world is just what
+you think it is. So the point is that
+[15:32]
+with all this if I say cargo run
+um cargo will look for a source/main.rs
+it will build it and then um it will run
+it for us. So let's do that. And look it
+prints hello world. We are now
+programming in Rust. Well, so far Cargo
+is programming in Rust for us, but
+that's a thing, too.
+Um,
+let's We could have just said cargo
+build and that would have just built it
+without running it. Um, Rust programs
+are ordinary binary programs like you'd
+get out of any compiled programming
+language. If you look in target debug
+um and our program name Rust basics,
+that is actually
+an executable program produced by the
+[16:32]
+Rust compiler. Um that does what we
+wanted it to do. And I can run that
+directly if I want to. Absolutely works
+fine. Um I can move that around and
+stuff. It's what's called statically
+linked, meaning that other than libc
+here. Um, and a few other small things.
+Mostly there's no dynamic libraries for
+people who know what that is. This this
+program is pretty portable. I can carry
+it to a lot of other Linux machines and
+have it work.
+Um, Rust is very crossplatform. It
+doesn't care. I could compile this
+program for Windows pretty easily. I can
+compile it for Mac pretty easily from my
+Linux box. And that's important because
+later we will be absolutely um cross
+compiling for our magic hardware. Um let
+me show you our magic hardware quickly
+since we're running while we're uh since
+[17:33]
+it's lying around. It'll be a nice thing
+to do. Let's see. Um this should work.
+So this is the BBC micro:bit version
+two. Yeah, I believe that it is being
+recorded.
+Um,
+this is the BBC micro:bit version two.
+It's a little Rust embedded board um or
+sorry, a little embedded board made by
+the British Broadcasting Corporation as
+an educational tool. Um,
+some of you will have these already.
+Some of you will get them later. Uh,
+without them, you can follow along with
+the course, but if you want to actually
+try stuff out, you're going to need one
+of these. This is sort of the official
+board for this course. It's not a super
+cheap board. It's $20 US or so. Um, but
+it's uh and probably more if you buy it
+[18:33]
+from somewhere, you know, other than the
+US. I don't know how much it is, but
+it's small enough and cheap enough that
+you that you can, you know, sort of bang
+around with it and learn how it works.
+So, this is a little computer. Um, you
+can see on the back is uh the actual
+computer part and a speaker and another
+computer and a whole bunch of hardware.
+Um, we'll learn about all this hardware
+in the course of this course.
+And so, yeah, we'll have to compile this
+thing's way too small to run a compiler
+itself. So, we'll have to compile stuff
+on our computer for this computer. And
+that is part of the fun.
+So going back to what we were doing,
+um the other thing you should know is
+that by default,
+[19:34]
+Cargo compiles things for debugging,
+which means that the binaries are big
+and very slow
+um compared to what you should. If you
+want it to go at a reasonable speed, you
+can build with the release flag. And
+that that should have been the default,
+but we made a mistake when we were
+creating Rust and it's not the default.
+So I would recommend that you normally
+always use unless you're actually
+planning to do debugging, you normally
+always use d-release when you do stuff.
+Um,
+hey.
+And uh, so let's
+let's actually
+learn some Rust by playing with this
+program that Cargo built for us. We will
+come back to the microcontrollers in a
+class or two, but for now, I think we're
+just going to work through some Rust and
+[20:38]
+So, here's a function. Um, it's
+absolutely boring, but it does a thing.
+obviously REST has strings.
+Rest strings are a little weird and I'll
+talk more about that at some point
+probably, but for now it doesn't matter
+very much because we're going to be
+doing embedded programming. Um, it also
+has uh numbers as you would expect. So,
+Oh, I remember what I was going to tell
+you about setting up that I didn't tell
+you yet. I'm using Emacs, which is a
+text editor, and it's an ancient,
+terrible text editor, but it's what I'm
+[21:38]
+comfortable with. Um, so I wouldn't
+recommend that. What I would recommend
+for you if you're getting started for
+editing your REST programs is that you
+use Visual Studio Code, Microsoft's
+Visual Studio Code. Um, you can get that
+again for Mac, Windows, Linux, and um,
+it'll give you an IDE interface. That's
+sure, why not? Um, did not mean to do
+that, but okay. And, uh, let's go back
+here. And uh
+one of the things you can do you should
+you should um look for uh rust
+analyzer
+um
+and you should install rust analyzer
+[22:41]
+um it's absolutely the standard tool to
+use with Rust um in Visual Studio and
+you'll be really really glad that you
+have it because it helps you edit your
+rest as you go. Um
+the you may also want to install Git
+support and that kind of stuff. VS
+Code's an excellent tool. There's plenty
+of tutorials on YouTube and other places
+about how to use it with Rust.
+And I'm not going to teach it here
+because I don't use it very much, but
+that's probably what most of you will
+want to use. There's other choices. Jet
+Brains has excellent tool um idees and
+other tools. Um and there are other
+things around. Um but the point is,
+sorry about Emacs, but that's where I'm
+uh
+that's where I kind of live, so I'm just
+[23:47]
+sorry. Let me get out of this stuff.
+Okay, let's just close rust analyzer.
+Close VS Code. All right. So meanwhile,
+back in the world of Emacs, um if I run
+this,
+I get five, which is kind of what you
+expected.
+Um
+Rust's integer types are interesting
+because there's a whole bunch of them.
+There's Yeah, Rust Rover is good 100%.
+Um the
+Yeah. Um, Sea Lion is or whatever it is
+from Jet Brains is also pretty good, but
+I think they're really encouraging
+everybody to use Rust Rover.
+Yeah. Um, the other one is Zed. If you
+have a Windows box, I believe it
+currently only runs on Windows. Well,
+[24:48]
+but Zed is a Rust IDE written in Rust,
+which is pretty good.
+Um
+Rust's data is implicitly Rust integers
+have types. Um there's sort of two kinds
+of um
+integers. There's signed and unsigned
+integers. If I say 3 minus4 here
+um I'll get um minus one as you expect.
+But I can actually say what type a
+In this case, I'm making the number be
+U8, which is unsigned 8 bit integers.
+Um, do I need to talk about
+Oh, right. This is a difference from
+Python which uses similar formatting
+which is that because of the way Rust
+works, you have to put these expressions
+[25:48]
+over here. Another way to get it that
+would work in modern Rust is um
+this will work as long as you can put a
+name inside the curly brackets, but you
+can't put an expression inside the curly
+brackets. It's super annoying. And so I
+usually just write things this way. Um
+Oh, but let's as long as we're here,
+let's leave it this way. Let's compile
+it. Make sure it still says minus one.
+Oh. Oh, interesting.
+See, now because I said this is
+unsigned. Well, unsigned means that the
+number can be zero or bigger. It can't
+notice that this is not a runtime error.
+This didn't try to compile the code and
+then run it and then have it report a
+mistake. The compiler actually noticed
+that I was trying to at compile time
+[26:48]
+that I was trying to do a uh
+smaller number from a bigger one and uh
+a big you know bigger number from a
+smaller one. And so it's like no that'll
+never work. You can't you can't even um
+if I if I let if I tell the compiler no
+we're going to let you we're going to
+make it um do this
+then um you know not having this so it's
+going to be okay. Um then the compiler
+will go ahead and do it
+and we'll get a panic. Notice that this
+is a runtime error message now. And it
+says, "Oh, no, no, no, no. You you tried
+to subtract and it overflowed."
+Um,
+and
+so in safe Rust,
+you can't ever have the program go wrong
+in some horrible way.
+But in this case, it's more than that.
+[27:49]
+It's a special check. Um,
+let's see what happens if we cargo run
+d-release
+here.
+Oh, shoot. It came and ran and it let it
+overflow. Another mistake that was made
+in the early design of Rust is that it
+checks for overflows in debug mode but
+not in release mode. You can turn that
+check on for re for optimized
+compilations, but you have to turn it on
+special.
+Um, but the good news is that it didn't
+like crash or do some weird thing. It
+just let the arithmetic wrap around.
+So, who needs a reminder about how bits
+work in bit arithmetic?
+Anybody?
+[28:49]
+Okay, then I will just assume that
+people know that eight bits means you
+know U8 is a thing that can hold a
+number between um
+0 and 255 and uh U16 is an integer that
+Yeah.
+&gt;&gt; Oh, okay. There we go. There's a Yes,
+please. I do. Um, all right. So,
+let's do it this way.
+oh, no. Let's just do this in a separate
+file.
+Um,
+[29:51]
+a number in a computer is pretty much
+always represented
+using um
+the bits of the computer. A bit is a
+thing that can be a value that can be
+either zero or one. it's a charge or not
+a charge inside the computer somewhere
+of electricity
+and um so if I go
+uh
+this is let's say that this is a
+position so memory consists of a whole
+bunch of boxes
+and each box can hold a number hold a
+value and the values are um really eight
+bits um each one of them. So in here
+somewhere is some number like
+[30:52]
+um sitting in here. But how is that 17
+represented? really the bo the that box
+is an 8 bit bite and so it's a number
+uh you know it's not a number it's a
+bunch of switches and the way we do that
+is
+we say that the the value of these
+positions um of each of these positions
+so Um,
+position zero is worth one cuz two to
+the 0 is one. Position one is worth two
+uh two is worth four and so forth.
+And um so you know these grow 8 16
+uh 32 64
+[31:54]
+128 and that should be all eight of
+them. Yep. And so um
+and so here if I want to represent 17
+I turn on the um two to the
+fourth bit which is this one. And I turn
+on one more. And so now I get 16 + 1 is
+17.
+Yeah.
+And so if you work through all the
+possibilities, all the possible
+combinations of these, you find out that
+they they make numbers between zero when
+they're all zero through 255 when
+they're all one. Um, and that's a thing.
+Now
+we also have signed numbers
+[32:54]
+uh because sometimes you want to be able
+to have negative numbers and those are
+represented using a very similar scheme
+except this except different where this
+high order bit is treated as a sign bit
+and then um the rest of the bits are um
+done in uh two where where it's one if
+it's negative, zero if it's positive,
+and it's done in two's complement. And
+we don't really need to worry about the
+details of two's complement here. Um you
+can go look it up when you're interested
+in it, but um it's a way to represent
+negative numbers and that will let us re
+represent minus 128 through 127 if it's
+a signed number. Now that's an 8bit
+number that fits each that number fits
+in one bite of memory. But sometimes you
+want to be able to deal with bigger
+[33:54]
+numbers. So going back to our computer
+program
+um
+I'm going to do this
+put this back um and just comment it
+out. Tremendous what we done. Um here we
+have a U16 that is an unsigned 16bit
+number and that does the same binary
+numbering scheme but it fits in two
+bytes and can hold a number up to
+between 0ero and 65536.
+Rust also has U32
+which can hold a number up to 4 billion
+or so. It also has U64 which can hold a
+number up to 16 billion billion or so.
+And then it has U128 which again you
+don't you almost never use U128s.
+They're a weird type but U64 is sort of
+the natural type of the computer of big
+computers. Big computers typically have
+[34:54]
+inter special internal memory that's 64
+bits wide like this one I'm running on
+now. our little micro:bit has 32-bit
+special internal memory registers. Um
+and so um and so um you know these are
+kind of natural sizes to use. the
+default if I don't say in Rust is um
+I32.
+Um it turns out just because it is. Um
+but that default almost never is a
+factor for reasons we'll talk about in a
+bit.
+The other thing I should say about Rust
+is that it's very strict about types. Um
+this will fail compile
+because you can't um you can't subtract
+two different types um or or operate you
+know the operations don't work with two
+[35:55]
+different data types. I have to cast one
+of these to the other. In this case I
+can say adds U32 and then it'll work.
+But you know it's it's something to
+watch out for is that Rust checks a lot
+of things at compile time. The reason it
+does that is to keep you from making
+mistakes.
+But let's talk a little bit about what
+we've done here.
+Um X here is a variable. This is how we
+make variables in Rust is with the let
+statement which is different again than
+Um,
+um,
+[36:55]
+I'm going to get a compile time error.
+Cannot assign twice to immutable
+variable x. And this is a good example
+of Rust's error messages, which are kind
+of best in the business error messages.
+It says, you know what, you're not
+allowed to do that. Well, why am I not
+allowed to do that? In every other
+programming language I've ever used, you
+can assign values to variables. It says,
+well, because by default, you're just
+not allowed to assign to variables. You
+have to say it's allowed. And the way
+you say it's allowed, well, how do you
+say it's allowed? and it says, "Oh, fix
+it like this." So, not only is it giving
+you an error message, it's suggested a
+correction to your program. And that's
+very much a Rust thing and it's also
+very much a mild trap. You should make
+sure you understand what correction the
+compiler is suggesting because it's just
+guessing and it's not that smart. But in
+this case, it is definitely guessed
+correctly. This is clearly the right
+[37:58]
+answer. And so now um I should get two
+as the output.
+And sure enough,
+this is a good time to introduce some
+other tools uh that you should know
+about. Uh one of those is Cargo Clippy.
+Um Clippy is a bad joke based on an old
+Microsoft uh program that's become a
+meme. But the point of Clippy is to be
+what's called a llinter. It's supposed
+to check your program even more than the
+compiler does and warn you about things
+that seem bad here. Um, when I run
+Clippy, it's like, you know, you could
+have written this this other way.
+And sure enough, it's right. This is the
+same as C and Python both have plus
+equals operators. Um,
+we have them in Russ, too. And Clippy's
+like, "Yeah, you would normally write
+that with a plus equals operator."
+Clippy is a very useful tool and I
+strongly suggest you fix not only all
+[38:59]
+the compiler warnings in your programs
+but all the clippy warnings as well.
+Let's see if Clippy's happy now. It is.
+The other tool um that you should know
+and that checks to see if your program
+is a formatted in the official Rust
+formatting style. Turns out in this case
+it is, but if I for example used a
+different brace style like some people
+do, um,
+cargo format would be like nah.
+And if you ask it to fix it,
+um
+it'll go ahead and fix it
+for you um to be the official Rust
+style.
+Clippy. Yeah, it's Yes. Yes. Um Clippy
+and Rust format will be installed when
+you install Rust. They're absolutely
+[40:02]
+default tools that are always available.
+Um, so cargo format is good now. Cargo
+Clippy is good. And so we're ready to go
+the the official Rust format
+is not everybody's cup of tea. A lot of
+people get real mad at
+some of the decisions that were made by
+the Rust creators about formatting.
+That's fine to be really mad. It won't
+solve anything. Um, just follow the
+official Rust format. It is good enough
+and everybody in the community expects
+to be able to you to use that format so
+that they can read your code easily. Um,
+and everybody is communicating in
+essentially the same language. It's, you
+know, just just take Rust format
+[41:02]
+suggestions and Clippy suggestions for
+the most part, even if you're you
+disagree with them, especially when
+you're getting started. Um, the tools
+are probably right and you're probably
+wrong. Um, that sounds harsh, but I
+think it's reality.
+Um, like I say, we have string types,
+we have integer types,
+we also have floatingoint types, which
+we'll use a little bit in embedded
+programming because weirdly our tiny
+cheap computer has floating point
+numbers. Floating point numbers are the
+kind with with decimal points in them
+and they have weird special formats that
+we won't discuss. But I can certainly
+um
+um or I can say F32 meaning a 32-bit
+[42:04]
+floatingoint number or F64 which is a
+64-bit floatingoint number. Um
+and uh
+and that's a perfectly legitimate um
+thing
+and you can do math with floatingoint
+numbers etc. Again you can't mix them.
+Um
+that won't work.
+um can't add an integer to a float and
+the suggested
+um and there's not even a suggested fix
+but there should be um I think into may
+there we go now work um and uh
+yeah so we got integer and floatingoint
+numbers we got strings
+none of these are very surprising. I
+think
+[43:20]
+and we have if statements like you'd
+expect.
+And so this um you know this um thing
+here
+is the expression. It isn't like C. It
+doesn't have parentheses around it. It's
+just the expression. And if that
+expression is true, then um let's make
+it be something more interesting. Well,
+we'll do it first this way. This runs
+fine and prints exactly as we think. We
+this right
+oops 6.0 cuz it's floating point number.
+Um
+and that works. But of course we
+wouldn't normally do that. We just say
+this.
+And now we've got booleans and if
+statements.
+Um,
+so
+[44:25]
+and if statements obviously have else
+parts.
+Um, that's fine. You'll notice that in
+Rust
+state bodies of control statements are
+fully bracketed. These curly braces
+aren't optional. The compiler will not
+let you leave them out. Um,
+even if I, you know, comment all this
+out.
+Another style rest comment.
+This, the compiler is going to refuse.
+It's going to say, "No, no, no, no, no.
+You're supposed to have curly brackets
+there." So, this is absolutely required
+right here.
+Um, if you want this to compile,
+um,
+[Music]
+All right.
+So, the last thing we'll talk about and
+[45:26]
+then we'll take a bit of a break while I
+go refill my coffee and we get a chance
+to use the restroom and that kind of
+you'll notice that I haven't written any
+data types anywhere. Rust is a strongly
+typed statically strongly typed
+language. That is the compiler knows the
+type of everything or has to know the
+type of everything at compile time.
+And in this case, like I say, the type
+here really is I32 for this. And right
+here, the type is um F32.
+Um
+and uh so I can actually declare these
+types like this. This is perfectly legal
+Rust
+and is considered decent style if you
+want to do that.
+But the thing you should know is that
+Rust is
+a little special. I am going to get rid
+[46:27]
+of this. It's uglying up everything.
+Rust is a little special. If I don't do
+this,
+then the compiler does what's called
+type inference.
+Type inference is um the process of
+figuring out what type must be here
+by looking at how it's used. Um, so here
+F-32 because it's a number that could be
+an F-32 plus a number that definitely is
+an F-32. And so the compiler can figure
+out that this must be F-32, which means
+that you don't have to write it. And
+this is all checked at compile time.
+That's the important thing to
+understand. This isn't like Python where
+you'll get a runtime error if you're if
+the types don't match up. It's at
+compile time you'll get an error if the
+[47:27]
+types match don't match up even though
+you didn't write down the types. It's
+pretty super cool. Um, if I try to make
+um
+right, that looks perfectly innocuous,
+but it knows that Y is an F-32 because
+it can tell from here and so it can't be
+an F-64, which it needs here. So, we'll
+get a compile time error. Mismatched
+types. And that's a compile time error.
+That's the important thing. um is that
+uh
+you know it fails at compile time.
+Yeah, we have this recorded so any stuff
+you missed you can come back and get um
+later plus I'll put notes up of what we
+did. Um,
+so
+yeah. Um, the underbar here, by the way,
+[48:27]
+just tells the compiler, don't whine
+about the fact that, um, don't whine
+about the fact that, uh,
+well, first of all, this should have
+been 12.064, but it's all fine. Um,
+and uh, don't whine about the fact that
+we're not using Z again. without this
+like this compiler's going to be like uh
+yeah you know you made this variable Z
+but you didn't actually use it and then
+it tells you what to do about that. It's
+like if you meant to not use this
+variable then just do this and it'll
+shut it up. Yeah, fine.
+Um
+yeah, so that's compile time type
+inference and it's pretty strong
+and it
+means that you can write code without
+[49:27]
+very many explicit types in it and still
+uh have the code type checked at compile
+So, I'm going to take
+six minutes until 50 after and we can
+take a little break and figure out what
+we're, you know, while we get ourselves
+together and then we'll go on reviewing
+Russ. What I would like you to do during
+the break is if you think we're going
+too slow or you think you're going too
+fast, leave a comment because I can
+speed up or slow down to match what
+people need to know for sure
+and let me know anything else that would
+be helpful. I will see you all in five
+[50:49]
+Tell
+Hello um the builder. How you guys
+doing?
+&gt;&gt; Yes.
+[Music]
+going over there.
+&gt;&gt; Nice.
+[Music]
+[54:57]
+Oh, hello professor. Are you still
+there?
+&gt;&gt; Uh, yeah, I'm back.
+&gt;&gt; Okay.
+&gt;&gt; Um, so we'll get going again. Um, what I
+was about to type in the comments here
+is, uh, I hear people saying I'm going a
+little too slow. I don't hear anybody
+saying I'm going too fast. So, I'm going
+to, um,
+speed up a little bit. Um, I think a lot
+of the stuff I covered so far,
+stuff that we definitely needed to
+cover. But assuming that everybody's
+pretty comfortable with what we just
+said, then we can go quite a bit faster
+and maybe we can get through more of the
+Rust
+today than we intended and be ready to
+start with the actual embedded Rust a
+little sooner. So yeah.
+[55:57]
+All right. So as you can tell from the
+fact that main is this function, albeit
+a special function, Rust has functions.
+Who knew?
+Um
+and in Rust functions there is no type
+inference. You actually have to declare
+all the types. So here um we'll make
+this be an i32 and we'll make the result
+be an i32.
+Um
+and we will make the function return x.
+Sorry.
+&gt;&gt; Hello. Sorry. We are not seeing
+&gt;&gt; Oh, sorry. I'm not on the screen again.
+Yeah, thank you. I do this mistake all
+the time. Thank you for yelling. Uh, I
+appreciate it. Um, yeah, let's try that
+again. So, rest has functions just like
+you think it does. And, uh, you know,
+here we have a function called sub3 that
+[56:57]
+takes an an argument x. Notice that x
+has to have its type declared and the
+result type of the function has to be
+declared. That's just a requirement in
+Russ. There's no type inference except
+inside the body of functions.
+And so this thing's going to take an
+i32. It's going to return an i32. And
+like its name implies, it's going to
+return xus3.
+Now you'll know, you might have expected
+me to write it like this. And indeed,
+that's legal rust, but um it's not
+considered good rust. We'll talk about
+well, first of all, I probably should
+call this um,
+let's call this somewhere.
+There we go.
+Notice the type inference here. It knows
+that X is an I32 because um, that this
+four is an I32 because X is an I32.
+Here, I can change this actually. I can
+[57:58]
+make it be U64
+if I want to. And the compiler will be
+perfectly happy because you know the
+argument to sub three is a U64. Four is
+a U64. Life is good.
+This is legal rust.
+But if I asked Clippy about it,
+it's like, you know, this isn't how we
+normally write Rust. Um, remove the
+return and the semicolon. So,
+let's try that. Does that really work
+and produce the same answer? It does.
+Um.
+Oh, right. It Well, it compiles. Does it
+produce the same answer? Yeah, it really
+does.
+Why? Well, because in Russ
+blocks have a value.
+uh the value of this bo function body is
+[58:59]
+is the last expression. You know,
+anything with curly braces is what we
+call a block. And this block has the
+value xus 3 because that's the last
+expression in the block.
+Um
+this is uh this is standard um stuff for
+rust and this is always the way you
+would write this in rust. A really
+common mistake to make is this.
+Um, and you'd think that would work
+fine, but it does not. Let's see what it
+says. It says mismatch types expected
+U64 found open parentheses close
+parentheses. Well, that's gross. What
+the heck's going on? Well, what's going
+on is that um
+that
+this is a statement. It's an expression
+valued statement. After this is an
+implicit expression and the implicit
+[60:02]
+expression is
+the value has the value unit. We read
+this open parentheses close parentheses
+thing as unit. And the unit type is a
+special type that has only one possible
+value. That value is also unit and is
+spelled the same way. So I can write
+this
+uh
+and that's a legitimate piece of rust.
+But the problem is that here if I try to
+if I if the last expression has a unit
+type and it's supposed to have a U64
+type, I get a type error. And I put this
+out in particular because it's really
+common to get really confused by this.
+So I'm just warning you for later. Um
+let's make this be underbar Y so it
+doesn't whine about it and everything's
+good. And now we have um a perfectly
+legit RS program. So every function
+returns a value. Sometimes it's just the
+[61:11]
+and in that case um
+implicitly
+this function returns unit value. Um,
+it's the same as if I'd written this,
+except I don't have to. And so if I down
+here put a three, then it's going to
+complain about a type error again. But
+if I do this, then it returns unit and
+all it warns about is print stuff is
+never used. So we'll stick an underbar
+in front of it so that it doesn't whine
+and we're good to go. So that's Rust
+functions. Um, pretty much all of it.
+Um
+um if statements,
+Rust has while and for loops.
+Um
+[62:34]
+And uh
+let's go.
+And now sure enough, x was two. So we
+get zero and then one. Notice that for
+loops in Rust are the same as in C. You
+stop just be or Java or Python or
+whatever. You stop just before the top
+value. Um like Python's range operator
+for example. So um
+so yeah, that that's a completely boring
+for loop.
+Um,
+the interesting thing about Rust's
+completely boring for loops is that this
+is what's called a range expression.
+This is actually not some piece of fixed
+syntax. That dot dot is the range
+operator. And so you can actually um,
+you know, you can actually play games
+with that to make more complicated
+expressions. So for example
+um I can write this to reverse it and
+[63:35]
+now it'll print these numbers in the
+Rust for loops are pretty weird and next
+week when we talk about traits and
+stuff um we'll talk about some of the
+weirdness of Rust for loops. But they're
+really nice to use. They're very not
+errorprone. If I want it to go all the
+way, by the way, there's also a a range
+operate, an inclusive range operator
+that looks like this. And so I can
+actually make it go all the way to the
+thing if I want to.
+Um,
+yeah. Uh, that's four loops. While loops
+are just pretty much what you think they
+are. I'm not really sure there's a lot
+of point wasting time on them. Um
+the
+oh the other thing I wanted to say
+is that if statements in uh
+[64:35]
+if else statements in Rust are actually
+expressions like question colon and C. I
+something like
+let Z equ= if
+else
+minus one. That is absolutely a
+legitimate thing to write. Notice the
+semicolon here because this whole if is
+part of the let statement.
+and uh
+that will um that will work fine. And
+this is actually a style that's used a
+lot. Again, notice that these are just
+the values of these blocks. There's
+[65:36]
+nothing special about them. So it's all
+uh it's all pretty uh it's all pretty
+regular and all pretty full of joy. You
+know you kind of things that you want to
+so that's the basic data types. That's
+functions. What else were we supposed to
+do today?
+Oh,
+basic data types, variables,
+expressions, and statements, functions.
+Yeah. So, we've moved a little faster
+than I actually thought we would, and we
+have time to do some more stuff. So, if
+people are cool with it, um,
+yeah, you'd like to know how it would
+fit. Okay, it's good to hear someone say
+we're moving a little bit fast. Um,
+yeah, hopefully after today you'll go
+grab the rest programming language and
+[66:37]
+catch up with some of this stuff if you
+haven't looked at it before. Um, it's
+going to be one of those things where
+yeah, we're going to do kind of a quick
+start because we want to get to embedded
+in a reasonable amount of time, but I'll
+try to I'll try to keep the pace
+reasonable. How does it fit in your job?
+Well,
+Rust is a very rapidly growing
+programming language. people like it,
+industry likes it. It's sort of a whole
+thing at this point. Um that
+is uh especially uh
+exciting to see its growth. Um and
+the place it most obviously fits is in
+low-level programming. Rust is going
+into the Linux kernel. Rust is replacing
+C and C++ in a lot of places where C and
+C++ are used or at least is being used
+for new code in places where it would
+[67:37]
+otherwise be used. And Rust is also
+being used for highle things. I teach a
+whole course and I'm working on a book
+right now on Rust web development. um
+the combination of really good compile
+time checking that catches a lot of
+errors, really good runtime checking
+that catches a lot of the rest of the
+errors, uh and
+really powerful tools, really good
+support
+is and producing programs that run fast
+in small amounts of memory. That
+combination is pretty good for a lot of
+things. And so I don't know what your
+job actually is, but it's likely to be a
+job that might benefit from Rust. Um,
+I write mostly in Rust these days or
+Python. Those are my two main languages.
+And I don't write Python if it's more
+than
+50 lines. It's starting to be big
+[68:40]
+enough. I'd rather write in Rust. Um,
+hopefully that answers your question.
+Uh
+yeah, let's go back to the screen here.
+So I think we can just keep going and
+talk about some of Russ's fancy features
+you know, this language is cool, but
+it's just a programming language, right?
+The there's nothing super fancy. I have
+written C since
+1983 or so. And
+every time I sit down to write C right
+now
+it because I think I have to I try to
+figure out a way I could do it in Rust
+instead. I strongly personally prefer
+Rust to C for everything that C wants to
+do. Um it's just a easier language to
+write in. it produces, you know, it's
+[69:41]
+it's much less errorprone. Um, it has a
+lot better tools and libraries. One of
+the things we will talk about later in
+this course is Russ's amazing
+uh crates.io uh library ecosystem, which
+is kind of best of class.
+And so, yeah, um I'm very much a
+Rust person oversee. Um,
+obviously there's a billion trillion
+lines of legacy C code and obviously not
+that's not all going to get rewritten in
+Rust, but for new code I use Rust.
+Um, yeah.
+So,
+so far we haven't talked much about
+memory.
+Yes, I think over time Rust will mostly
+supplant over 20 or 30 years Rust will
+mostly supplant C as the embedded
+language of choice. I not positive of
+that, but it sure looks like it's going
+that way. Um for embedded development,
+[70:42]
+Rust is a really nice programming
+language and we'll see that in the next
+few weeks. Um
+so
+yeah, memory. So,
+let's just start
+a new piece of code. I think I don't
+Okay.
+So,
+Yeah, I agree with all of those things
+one place where C is still being used
+for for new code is weird
+microcontrollers. The new embedded code
+is weird microcontrollers that Rust
+doesn't support yet, but that
+situation's getting better every month
+[71:51]
+let's let's let's take a look at how
+Rust deals with memory because we
+haven't really talked much about memory
+yet and obviously in embedded
+programming
+um
+it's a thing.
+So
+that we talked before this is four bytes
+of memory that has to go somewhere to
+store the value of x. And like in most
+programming languages that the place
+where it stores that is the stack. Um
+the stack is
+a chunk of memory per function that is
+used to allocate local storage for that
+function.
+And uh
+because
+um
+[72:54]
+because it's in memory like that, I can
+also see where in what address in the
+uh, I'm going to write it this way so
+Um, I think the compiler will take this.
+Let's find out. Yep. And it says,
+Whoops. Oh, sorry. No, that isn't what I
+wanted at all. Um,
+right. So this says
+take the a reference to X that is take
+the address of X and use that as a
+thing. But unfortunately then Printlin
+actually goes and dreferences it
+implicitly. So I need to tell Printland
+not to do that. Now let's see if I can
+remember how you do that. I kind of want
+No.
+[74:01]
+Uh, yes, there we go. So, um, you you
+can tell that that value three is a is a
+four byte value living at machine
+address
+that weird hexadesimal number, right?
+We're going to be working a lot with
+hexadesimal in uh
+embedded. Hexadimal is just base 16.
+So the digits of hexadesimal are 0 1 2 3
+4 5 6 7 8 9 A B C D E F.
+And so this C here is worth is worth 13.
+This three is worth 3 * 16. Um the seven
+is worth seven times 256 and so forth.
+It's place value just like binary but
+with a much larger base. But the magic
+of hexadesimal
+is that you can convert it to binary
+pretty easily. So like I say C is 13
+[75:01]
+which is um
+I think
+um
+um yeah 84 and one is 13. So that's the
+the last digits that the other digits
+three
+um and then the next digit to the left
+of that is a seven.
+uh
+like that. And so this is you know this
+is a shorter representation of a very
+long binary number. The the point is um
+you know and we can convert that to
+decimal if we must. It's easy enough to
+do use a tool. This is a programming
+language I wrote a long time ago. Um and
+it says oh sorry
+and uh
+so that's the address in memory um where
+[76:03]
+and
+these references like you saw
+can be used to
+you know for multiple things to refer to
+the same value.
+Um,
+so
+now we get to have fun with Russ's
+so-called borrow checker, which
+everybody's afraid of, but honestly, I
+think they're more afraid of it than
+they need to be.
+The thing is that it's really easy to
+make
+terrible mistakes here um in C with with
+pointers, right? These references are
+kind of like C pointers. Um, right. We
+like that. This says, oh, this is a
+reference to a U32.
+[77:05]
+It's super easy to make weird mistakes
+by messing with the pointers in weird
+ways in C. Rust doesn't let you make
+these weird mistakes.
+And in this case,
+um,
+I might want to change
+Um,
+by the way, because type inference, I
+let's do it like this.
+So now you might think everything will
+be cool. We'll change this to four. So
+this will print four. This will print
+four. And this will print the address.
+Same address we got before.
+No. Cannot assign twice to immutable
+variable X. Well, let's make X mutable
+[78:09]
+Oh, can I assign to X because it is
+borrowed. And this is the borrow checker
+that
+there's only a single source of truth, a
+single so-called owner for any value.
+And in this case, the value of X is
+owned by the variable X.
+Here X owns that three.
+Right? Here
+we borrow that three. that is we take a
+reference to it and we store that in XP.
+And while that's true, you can't change
+X. This is just not allowed. There's no
+way to do it until you get rid of that
+pointer. If I now if I print this
+[79:13]
+and then get rid of that pointer which
+you can do with ruts drop.
+I can get rid of that pointer and make
+it go away. And now the compiler is cool
+with it because once once X isn't
+borrowed anymore, then you can change it
+all you want. Oops. Warning calls this.
+Oh.
+I don't actually have to explicitly drop
+it here because the borrow checker will
+still let it work, I guess. Let's um
+let's just get rid of this, right? So,
+the borrow checker is fine with this. It
+says once you're not using this pointer
+anymore, then this assignment works
+absolutely fine. Um
+the
+[80:15]
+um
+I think you're right about rust but
+we'll see the this pointer is this this
+works absolutely fine because I don't
+ever use x this borrowed value again and
+because of that then it's not borrowed
+anymore and now I can change it. This is
+the borrow checker in action. By the way
+I can borrow it multiple times.
+Um
+that's perfectly fine.
+Um
+doing this
+whatever I want to do. And um all these
+things work. I'm gonna get
+[81:19]
+And all of these should print the same
+thing
+like that. And everybody's perfectly
+happy. So, I can have multiple things
+borrowing the same owned value. But the
+borrow here um keeps the value from
+changing underneath. From now until all
+the borrows are gone,
+X is sort of frozen in place.
+So that's borrowing.
+There's also mutable borrowing.
+something like um since X is mutable I
+can say let XP
+equals and I'm going to quit writing the
+type maybe now I'll write it here
+remember these types are optional type
+inference will get them all but I can
+say this
+[82:20]
+now I've borrowed X mutably that is I
+have a pointer I can write through.
+Again, these are like C pointers except
+with more protections, more constraints.
+And so now I have a pointer I can write
+to. And uh
+and that's fine. I can now store through
+that pointer um in exactly the same way
+I want. I did, you know, I would in C.
+And then I can
+And the funny part here is this won't
+compile. Let's watch.
+Cannot borrow X is immutable because it
+is also borrowed as mutable. Okay. Well,
+there's that.
+Um,
+oh,
+it hasn't figured out that it's no
+longer mutably
+borrowed.
+[83:21]
+Right. No, no, no. Sorry. Right. Sorry.
+This error message is very confusing.
+What it's telling you is that I can't
+I can't access X at all right now
+because directly because I have
+immutable I've borrowed it mutably. I
+borrowed it exclusively and because of
+that I can't do this. If I just do this
+everything's great and it's like yeah
+sure that's a thing. Um
+um
+until I release this I can't say let y =
+x + 1. That's not allowed. I can't even
+let say let um Z equals
+and X right neither of those are
+allowed. The only thing that's allowed
+to access
+[84:21]
+that location right now is this mutable
+this this exclusive pointer. So this
+won't work. And even if I do this, this
+won't work. So those are the those are
+the rules. They're the rules that are
+like the rules in databases for um
+shared and exclusive
+access, right? You can read lock
+something in a database or read lock
+something with a readr lock in
+Rust or whatever. And that allows
+everybody to be able to read, but nobody
+can write during that time.
+And then you can write lock which means
+that only the person who owns the right
+lock can write or read the thing until
+you release the right lock.
+This is one of the more complicated
+concepts in Rust and a lot of people
+struggle over it a lot but mostly they
+[85:23]
+they don't run in they run into it in
+panic. Um, this kind of message
+is super scary because it doesn't
+correspond to anything you understand.
+And the trick when you run into these
+borrow check errors, which we'll run
+into throughout this whole series,
+is first of all to not panic.
+Second of all to reason about how
+borrowing works in Rust and try to
+figure out what's going on. And
+sometimes that's really hard. Sometimes
+you're like very confused after 10 years
+of programming in Rust. Sometimes I'm
+very confused about a borrow checker
+error. And what I do is stop and go away
+and come back and see if I can spot it.
+But if I still can't, I use one of
+Russ's superpowers.
+And what is that Russ superpower?
+It's Russ's community, which is just
+amazing. You can get on the Rust
+[86:24]
+Language Zulip. You can get on the Rust
+Reddit if you're still a Redditor, which
+I'm not anymore. You can get on um the
+Rust engine Zulip in our channel.
+There's a million places you can ask
+questions for Rust stuff. When you get
+stuck with something like a borrow check
+error and just can't figure it out, go
+ask somebody. Uh don't be shy about
+asking questions. The the the reason I
+call the REST community a superpower
+is that the REST community is one of the
+most friendly,
+helpful, caring groups of people around
+any programming language I've ever seen.
+Um, if you're used to toxic programming
+language communities, and you may well
+be, um, know that we work really hard in
+the REST project and with the REST
+Foundation to make that not a thing. We
+have a serious code of conduct and we
+mean it. But more than that, we just
+have a bunch of people who want to help
+[87:24]
+each other and have fun. So, you know,
+obviously
+there is a point beyond which, you know,
+you should figure stuff out for
+yourself, but it's a lot lower than you
+think. Um, people are happy to help you.
+People are happy to share stuff. People
+are happy to help you figure stuff out.
+And
+that's the way you really fight the
+borrow checker is you don't fight the
+borrow checker alone. You fight it with
+a friend beyond a certain point. Um the
+AIs are actually all now pretty decent
+too. I use Google Gemini mostly and if
+you ask Google Gemini about a borrow
+checker error, it can probably help you
+with it more than you think. So that's a
+good backs stop. But you know there's
+nothing wrong with asking a human being.
+Um,
+absolutely nothing wrong with that.
+So,
+what was our next topic here? Let's go
+back here. Let's go find what our next
+[88:25]
+topic was supposed to be.
+Oops.
+Um,
+hooray.
+Um, so
+Rust has structured data types just like
+any
+language, modern language does, except
+Python. Um,
+yeah, it's linked off the front page of
+the Rust book. I think that's the Brown
+book, I guess. Oh, no, this is a video
+series.
+Yeah. Um,
+yeah, there's absolutely other um things
+out there. If you go to rusty.org, we
+have a very outofdate list of resources.
+I would love to have somebody help us
+put better ones up, but yeah, there's a
+lot of stuff out there for beginning
+Rust. Another thing I really like that I
+should have probably put in the links on
+[89:31]
+is um if you're looking for just
+exercises to screw around with. I'm kind
+of a fan of exorcisms restra um it's
+okay and is definitely one that I've
+worked through most of and can vouch for
+you know reasonable quality for the
+exercises. is let me get a link to that.
+Exorcism.org
+Yeah, this is a good this is a good set
+of sort of generic exercises. They
+aren't rust specific and but they are
+reasonably well done and reasonably
+usable and provide for me a good
+starting place. The other thing that
+people like a lot is Rustlings.
+I have had mixed success with Rustlings,
+but I should put it up here because a
+lot of people like it. Um,
+Rustlings is another tutorial of Rust
+with Exercises. That's an official
+[90:33]
+project of the Rust uh programming
+language. So, um,
+that's that's another thing you can do
+to learn Rust real quick. Um,
+it's got tooling and you sort of work
+along with the exercises and that sort
+of thing.
+Uh,
+I'm just now realizing we are out of
+time. Are we not? I think this is the
+scheduled
+stop time for today.
+In fact, I'm a minute over and I
+apologize. Um, let's call it good.
+And I really look forward to talking to
+you on the Russ Zulip over the next
+couple days. And I really look forward
+to talking to you here again in on
+Wednesday for the next thing. Yeah,
+Hacker Rank has some stuff. I haven't
+looked at it much.
+Cool. Thanks. Thanks everybody. I hope
+this was useful. I hope that I hope the
+[91:36]
+um I hope the uh
+everything's as good as it can be.
+Definitely give me feedback. I am more
+than happy to adjust and I really
+appreciate the people who made comments
+today. That was really and had questions
+and that kind of thing. I really want
+this to be a conversation. I'm very down
+for that.
+Okay, thank you very much, Professor.
+Thank you for the amazing class. Um we
+enjoy having you
+&gt;&gt; and then um for everyone that is tuning
+in we expect to see you um same time by
+Wednesday um for the next class um for
+further um knowledge. The class is going
+to run for four weeks and the course um
+outline is on the GitHub which um is
+current I will also share with you guys
+and also from the GitHub you can have
+the um you can see the link to join the
+Zuloop. It will be nice having you guys
+on the zul where we can you can discuss
+[92:36]
+more you can meet more people you can
+discuss more and then um for the um the
+class going to run so you're going to
+see the outline of how the class is
+going to run till when we start. So
+thank you very much everyone for joining
+and thank I'm sorry for taking two
+minutes extra of your time. God bless
+you. Thank you for having you professor
+Brad and see you next time.
+&gt;&gt; See you from Russ on Wednesday. Look
+forward to it. Thank you. Bye
+&gt;&gt; bye.
+Okay, thank you be for having you.
+exit screen.
+Okay.
+&gt;&gt; Stay in the studio.
+I'm supposed to stay in the studio until
+my recordings are uploaded, it looks
+like. So,
+[93:37]
+&gt;&gt; yeah. Yeah. Yeah. Please stay on studio.
+So, your recording is uploaded. Um, I've
+end.
+All right.
+
+=== ROW 80 | f013199 | https://users.rust-lang.org/t/treeshaking-wasm/101515 | 2023-10-22 | users-forum ===
+Treeshaking wasm?
+
+@anon80458984 · 2023-10-22T02:30:52.860Z:
+I have a Rust/wasm32 binary output of size 5.3M.
+This is not too bad concerned to modern JS spa webapps. However, it is a bit surprising.
+Besdies modifying Cargo.toml to optimize for size, is there anything else to reduce size? [Perhaps treeshaking unused code?]
+Thanks!
+
+---
+
+@CBenoit · 2023-10-22T02:47:38.684Z:
+There are many other ways to minimize the size of Rust binaries in general (enabling lto, etc). See this repository for a comprehensive and updated list of techniques: GitHub - johnthagen/min-sized-rust: 🦀 How to minimize Rust binary size 📦
+For WASM specifically, you may check the Rust and WebAssembly Book: Shrinking .wasm Size - Rust and WebAssembly
+This one wasn’t updated since 2021 however. I especially recommend you to not use wee_alloc as they recommend, this crate is not maintained anymore and there is an unbounded memory leak bug and possibly other bad things lurking in it (you can check the issue tracker for more). An alternative is lol_alloc, but keep in mind that it’s not considered "production-grade" either, use at your own risk.
+
+---
+
+@kpreid · 2023-10-22T02:54:17.995Z:
+“Tree shaking” isn't a step you can take here because that's a concept applying to programs distributed in a theoretically editable form (originally Lisp memory images, then JavaScript source code), where you have to choose to discard unused things because the easiest path is to not perform the analysis and keep all of them.
+With compiled programs, the linker or the compiler will automatically leave out unused items (unless they are marked as to be kept regardless, such as with #[used] or #[no_mangle]).
+
+---
+
+@anon80458984 · 2023-10-22T03:33:36.473Z:
+Is there a "size profiler" of sorts? To output things like
+crate foo; file bar.rs is responsible for 100kB of final output size
+etc ...
+
+---
+
+@CBenoit · 2023-10-22T03:42:08.502Z:
+Yes, twiggy (I still recommend you read the resources I posted above, twiggy was mentioned there)
+
+---
+
+@Release-Candidate · 2023-10-22T04:09:11.366Z:
+wasm-opt, either the cli program or Rust library, does shrink the size of Rust generated WASM most(?) of the time.
+But if you didn't get to 5MB because of a debug build, the result will still be unusable big.
+
+---
+
+@anon80458984 · 2023-10-22T08:25:49.154Z:
+Release-Candidate:
+But if you didn't get to 5MB because of a debug build, the result will still be unusable big.
+This is a release build.
+
+---
+
+@Michael-F-Bryan · 2023-10-22T17:51:26.173Z:
+Sounds like you need to look at your dependency tree and start looking at what you do or don't need. The best way to make your binary smaller is to just not include as much code.
+
+---
+
+@anon80458984 · 2023-10-22T19:01:35.517Z:
+Does anything here look particularly offensive ?
+anyhow = "1.0.51"
+anymap = "0.12.1"
+async-channel = "1.9.0"
+async-mutex = "1.4.0"
+base64 = "0.13.0"
+byteorder = "1.4.3"
+console_error_panic_hook =    "0.1.7"
+field-offset = "0.3.4"
+flate2 = "1.0.23"
+futures = "0.3.5"
+futures-lite = "1.12.0"
+futures-signals = { version = "0.3.20", default-features=false, features = [] }
+getrandom = { features = ["js" ] , version = "0.2"}
+image =                                                    { version = "0.24.7",  default-features=false, features = ["png", "jpeg" ]}
+instant = { version = "0.1.11", features = [ "wasm-bindgen"] }
+js-sys = "0.3.58"
+json = "0.12.4"
+jsonrpc-core = "18.0.0"
+lazy_static = "1.4.0"
+lz4_flex = { version = "0.9.3"  }
+memoffset =                   "0.8.0"
+nanoserde = "0.1.33"
+nanoserde-derive =  "0.1.20"
+once_cell = "1.7.2"
+regex = "1.5.4"
+smallvec = "1.9.0"
+tar = "0.4.38"
+wasm-bindgen = "^0.2.81"
+wasm-bindgen-futures = "0.4.31"
+wgpu =                        { version = "0.16.1", features = ["webgl"] }
+web-sys = { version = "^0.3.61", features = [
+"AbortController",
+"AbortSignal",
+"AudioContext",
+"AudioDestinationNode",
+"AudioNode",
+"AudioParam",
+"BinaryType",
+"Blob",
+"BlobPropertyBag",
+"CanvasRenderingContext2d",
+"console",
+"CssStyleDeclaration",
+"DedicatedWorkerGlobalScope",
+"Document",
+"DragEvent",
+"DynamicsCompressorNode",
+"DynamicsCompressorOptions",
+"Element",
+"ErrorEvent",
+"Event",
+"EventTarget",
+"FileReader",
+"GainNode",
+"Headers",
+"HtmlBodyElement",
+"HtmlButtonElement",
+"HtmlCanvasElement",
+"HtmlDivElement",
+"HtmlIFrameElement",
+"HtmlPreElement",
+"HtmlSelectElement",
+"HtmlSpanElement",
+"HtmlStyleElement",
+"ImageData",
+"IirFilterNode",
+"KeyboardEvent",
+"Location",
+"MessageChannel",
+"MessageEvent",
+"MessagePort",
+"MouseEvent",
+"Navigator",
+"NodeList",
+"OscillatorNode",
+"OscillatorType",
+"PannerNode",
+"PeriodicWave",
+"ProgressEvent",
+"Request",
+"RequestInit",
+"RequestMode",
+"Response",
+"ScriptProcessorNode",
+"StereoPannerNode",
+"Storage",
+"UiEvent",
+"Url",
+"WaveShaperNode",
+"WebGl2RenderingContext",
+"WebGlBuffer",
+"WebglDrawBuffers",
+"WebGlFramebuffer",
+"WebGlProgram",
+"WebGlRenderbuffer",
+"WebGlShader",
+"WebGlTexture",
+"WebGlUniformLocation",
+"WebSocket",
+"WheelEvent",
+"Window",
+"Worker",
+"WorkerOptions",
+"WorkerType"
+]}
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+winit = { version = "0.28.6", default-features = false }
+[still figuring out how to read twiggy wasm output]
+
+---
+
+@Release-Candidate · 2023-10-22T19:58:02.566Z:
+Dead code would be caught by wasm-opt. But it shouldn't have been included by the LLVM codegen to begin with.
+
+---
+
+@anon80458984 · 2023-10-22T20:32:55.114Z:
+cargo build ~9mb
+after wasmbindgen cli tools: ~5mb
+after wasm-opt: ~3mb
+
+---
+
+@Michael-F-Bryan · 2023-10-23T03:33:24.364Z:
+Release-Candidate:
+Dead code would be caught by wasm-opt. But it shouldn't have been included by the LLVM codegen to begin with.
+Yep. What I'm suggesting is to remove existing code and replace it with something simpler.
+Just because it's not detected as dead by the optimiser, doesn't mean it isn't overkill for what you need. The dead code analysis passes also aren't perfect - for example, if I instantiate a trait object but only ever use one method, the other methods will still be marked as used because they need to be put in the vtable. You also have situations which are logically impossible, but not probable, but that's more of a micro-optimisation.
+5mb of WebAssembly is pretty chunky, and if you want to cut that down you'll need to start making architecture changes and cutting dependencies.
+anon80458984:
+Does anything here look particularly offensive ?
+It might be better to look at the output from cargo tree because transitive dependencies are a prime candidate for bloat. For example, if jsonrpc-core pulls in tokio, that'll add up quickly.
+Similarly, look out for duplicate dependencies, both in versions and functionality.
+For example, I can practically guarantee you've already got serde-json in your dependency tree somewhere, so using the json crate means you'll be including two JSON parsers in your project. Similarly, you'll have both nanoserde and serde in your dependency tree, so that's multiple serialisation frameworks.
+
+---
+
+@Release-Candidate · 2023-10-23T04:49:36.150Z:
+Michael-F-Bryan:
+What I'm suggesting is to remove existing code and replace it with something simpler.
+Yes, but I hesitate to suggest "rewrite it in JavaScript, or, if you really don't want to use JS, in a language that compiles to JS, like Purescript or Rescript. And only after profiling maybe use WASM (not necessarily written in Rust) for the long running, performance critical parts." in a Rust forum
+
+---
+
+@anon80458984 · 2023-10-23T05:28:56.974Z:
+Is 5MB even unreasonable for ~50k lines of code [not counting dependencies; as counted by cloc] ?
+This is what, 100 bytes per ";" ? This actually seems within the limits of reasonableness to me. Especially factoring the blowup from monomorphism and external libraries.
+
+---
+
+@Release-Candidate · 2023-10-23T06:15:34.656Z:
+The question isn't if it's unreasonable to use 5MB for a 50k LoC executable (which it is for a size-optimised Version without embedded "resources"), but if you really need that much code for what you are trying to accomplish.
+And having megabytes of code (without any other files) is (almost) always way too much for the web. Don't forget that that gigantic WASM-blob isn't something like a "native executable", but has to be interpreted by the browser. Don't get mé wrong, it is nice and interesting as a way to see what is possible using WASM (and Rust), but for "real" use that's not what you want to do.
+"People" rightfully complain about the "usual" number of JS's package dependencies, but Rust's package dependency bloat is actually worse by size (maybe not number), it just doesn't matter most of the time, except when it does ;). You have to be really, really careful which crates to use, to keep the number of dependencies small (by size and number).
+
+---
+
+@anon80458984 · 2023-10-23T06:38:45.434Z:
+Release-Candidate:
+And having megabytes of code (without any other files) is (almost) always way too much for the web. Don't forget that that gigantic WASM-blob isn't something like a "native executable", but has to be interpreted by the browser. Don't get mé wrong, it is nice and interesting as a way to see what is possible using WASM (and Rust), but for "real" use that's not what you want to do.
+I'm building a 3D game that runs in the browser. All the code I have written is necessary.
+My motivation for optimizing output size is not "how does the end user feel about a 5MB blob" but rather "how much is my CDN going to charge me"
+
+---
+
+@Release-Candidate · 2023-10-23T09:52:46.960Z:
+anon80458984:
+I'm building a 3D game that runs in the browser.
+That's a bit of information that is quite important  For a game to load the user is prepared to wait quite some time (not too much, of course).
+
+---
+
+@jplatte · 2023-10-23T11:18:27.869Z:
+You have a few duplications in there:
+futures and futures-lite provide mostly the same functionality
+async-channel provides mostly the same functionality as futures-channel, which you might pull in through futures (cargo tree -d is your friend)
+async-mutex' functionality should also be provided by futures (futures-util)
+once_cell provides all the functionality of lazy_static and more
+you are pulling in multiple compression libs, can you avoid that? (flate2, lz4_flex)
+You could also try replacing futures-signals with eyeball / eyeball-im (my crates), though I only built them to be easier to use, the artifact size might only be marginally better, or worse than futures-signals.
+
+---
+
+@kpreid · 2023-10-23T12:58:36.664Z:
+Also try setting default-features = false for all your dependencies and adding explicit features as needed. In most cases this will have no effect on size since it will just remove some already-dead code (though it would decrease compilation time), but in some cases it will allow the library to simplify its code to handle fewer situations.
+
+---
+
+@anon80458984 · 2023-10-23T13:22:49.025Z:
+If I'm reading the output of twiggy correctly, the thing that is killing me is naga from wgpu. However, I already have default-features = false on that crate, and both webgl and wgsl are necessary features. [Why the ???? am I bundling a wgsl -> glsl transpiler?]
+
+---
+
+@Release-Candidate · 2023-10-23T13:49:33.509Z:
+anon80458984:
+Why the ???? am I bundling a wgsl -> glsl transpiler?
+WGSL is WebGPU and GLSL is WebGL (which you are using). If you are not supporting WebGPU too, there is no reason to use WGSL.
+
+---
+
+@anon80458984 · 2023-10-23T15:11:18.570Z:
+even with webgl + glsl only, wgpu still seems to pull in naga
+
+---
+
+@kpreid · 2023-10-23T15:17:36.680Z:
+In order to avoid naga, you need to avoid wgpu-core, which means using wgpu's “direct” WebGPU backend, which means disabling the webgl feature and therefore requiring browser WebGPU support.
+I'm not sure whether it would be possible to modify wgpu to allow GLSL-only without naga; I suspect it might not be because wgpu-core needs to rewrite shaders slightly, but I could be wrong. Ask the actual wgpu developers that question.
+
+---
+
+@Release-Candidate · 2023-10-23T15:59:28.502Z:
+anon80458984:
+even with webgl + glsl only, wgpu still seems to pull in naga
+wgpu is a WebGPU crate. If you do not use WebGPU, you don't need it. web-sys is all you need.
+
+---
+
+@anon80458984 · 2023-10-23T17:15:40.757Z:
+LOL. Not porting code from wgpu to webgl2. Waiting for webgpu to become more popular, then switching to webgpu entirely and dropping webgl2 support.
+
+---
+
+@nickmertin · 2023-10-27T15:38:05.486Z:
+If I'm understanding correctly, you're linking in a WGSL to GLSL transpiler in the actual output binary. If you want to keep your shaders in WGSL, it should be possible to do the transpilation at build time rather than run time, which means the output binary would only contain the translated (and probably minimized) GLSL shaders, rather than the WGSL shaders and the transpiler.
+
+---
+
+@anon80458984 · 2023-10-27T16:52:45.573Z:
+Yes. Is there a way to write *.wgsl, compile it to glsl (at build time), and have the wgpu crate (at runtime) not include naga ?
+
+---
+
+@nickmertin · 2023-10-28T19:38:38.613Z:
+I am not familiar with these particular libraries, but in general the approach for this kind of thing would be to add the library which is needed for transpilation as a build dependency, rather than (or in addition to) a normal dependency. You can then write a build script, which runs at compile time (cargo builds and runs it for the host machine before invoking the rust compiler on the main source code). That build script would call into the library to do the translation, and store the output in a file which is then incorporated into the program, for example using the include_str! macro.
+
+---
+
+@anon80458984 · 2023-10-28T21:03:23.491Z:
+I do not know wgpu internals, so this is likely the blind arguing with the blind.
+I suspect I can not drop the naga dependency for the following reason.
+Regardless of whether I provide the shaders as wgsl or glsl, wgpu will want to validate the shader / shader descriptors. This requires parsing the shader (at runtime). So at the very least, this requires the parser part of naga to be present at runtime.
+
+---
+
+@simonbuchan · 2023-10-28T23:27:19.068Z:
+How much work is replacing the wgpu apis themselves vs the shaders? The latter you could ahead of time use naga on using it's CLI
+
+---
+
+@kornel · 2023-10-29T01:13:06.109Z:
+tar — if it's for your assets, you could probably pick a simpler format.
+flate2 — browser fetch will decompress data compressed on the HTTP level for you.
+image — do you need to decode images yourself? could you make <canvas> do it for you? If you drop flate2, then try dropping png too.
+
+---
+
+@nickmertin · 2023-10-29T02:07:19.605Z:
+anon80458984:
+I suspect I can not drop the naga dependency for the following reason.
+That may be true, but as others in the thread have pointed out, the compiler/linker will automatically exclude binary code for any functions which aren't used. So you'll still be paying the cost of including that dependency in terms of compile time, but likely not (or at least not much) in terms of binary size.
+
+---
+
+@system · 2024-01-27T02:07:47.275Z:
+This topic was automatically closed 90 days after the last reply. We invite you to open a new topic if you have further questions or comments.
+
+=== ROW 81 | f013230 | https://users.rust-lang.org/t/serde-yaml-deprecation-alternatives/108868 | 2024-03-25 | users-forum ===
+Serde-yaml deprecation. alternatives?
+
+@cirocavani · 2024-03-25T15:12:40.277Z:
+Hi,
+With the recent deprecation of serde_yaml, is there an alternative? Make sense to update serde documentation to point out that YAML support is deprecated?
+(my project works fine with current version of serde-yaml, but I think this could become a technical debt in future updates of other dependencies in the future)
+github.com/dtolnay/serde-yaml
+Release 0.9.34
+committed 12:50AM - 25 Mar 24 UTC
+dtolnay
++2
+-2
+https://crates.io/crates/serde_yaml/0.9.34+deprecated
+
+---
+
+@syphar · 2024-03-26T07:22:49.579Z:
+According to the advisory there is a maintained fork.
+edit: I might have been too quick in connecting dots, early morning. The advisory is talking about the yaml-rust crate, while you were talking about serde_yaml. Sorry about that.
+Forking is always an option, perhaps just providing the serde wrappers?
+
+---
+
+@andreisilviudragnea · 2024-03-26T11:11:10.365Z:
+I believe there should have been a discussion with the maintainer about first asking if there is anyone open to maintaining the project further, instead of just archiving it all of a sudden on a whim.
+
+---
+
+@2e71828 · 2024-03-26T12:04:03.878Z:
+I, on the other hand, think that we should be grateful for all of the work that @dtolnay has donated to the community in the form of this project (and others); we have no right to expect future donations of the same kind.
+Even updating the repository to let everyone know that it’s no longer maintained was not strictly necessary— Lots of maintainers simply disappear with no notice or warning when other things become a higher priority in their life.
+
+---
+
+@bourumir-wyngs · 2024-05-06T08:37:28.760Z:
+I created a fork on GithHub,  serde-yaml-bw and expect to provide some basic maintenance, like moving ahead the version numbers of used packages, bug fixes and maybe some small enhancements that do not break the backward compatibility. I do not think we should abandon the open source project just because it lost the maintainer.
+
+---
+
+@paramagnetic · 2024-05-06T08:57:55.637Z:
+I'm wondering why nobody pointed out the obvious but: did you know you can just keep using the package even though there's a scary sticker in its README? It won't bitrot. You won't get the shiny new features of YAML, if any (but that's probably for the better, given the history of Billion Laughs and the like).
+
+---
+
+@cirocavani · 2024-05-06T09:49:12.461Z:
+My initial concern was to depend on a library that holds updating other dependencies. I am using YAML as a configuration file for my own services and jobs. The easy alternative is to change them to a TOML file format (I also try to keep compatibility with JSON for parsing parameters, but I prefer to use as a default format one that supports comments). But for reading YAML from other sources (other systems, k8s...) the current library is very good (and a fork that keep up with the rest of dependencies is even better ).
+And to add, serde/serde_json/serde_yaml are very good libraries. Thank you all.
+
+---
+
+@simonbuchan · 2024-05-06T10:07:56.675Z:
+Just marking deprecated is probably a better idea in a post-libxz attack world. Passing the built up reputation of a mega popular library to an unvetted maintainer is just asking for a supply chain attack.
+The closest to a solution to this sort of thing is something like the Apache Software Foundation, which provides a common trust base to diffuse ownership across; but I don't think that thing happens easily, especially in a post GitHub world!
+Forking seems like a perfectly reasonable option in comparison.
+
+---
+
+@SkiFire13 · 2024-05-06T11:03:35.462Z:
+Because it has been added to RUSTSEC, so cargo audit will complain. If you're making a binary you probably can ignore that, but if you're making a library other people will complain that you're using a dependency flagged by cargo audit and will ask you to stop using it.
+lucumr.pocoo.org
+On Tech Debt: My Rust Library is now a CDO
+Bringing the great successes of financial engineering to Rust.
+
+---
+
+@paramagnetic · 2024-05-07T07:25:45.626Z:
+SkiFire13:
+Because it has been added to RUSTSEC, so cargo audit will complain.
+But that's dumb. "dtolnay hasn't touched this in two years" is not any more dangerous than "dtolnay hasn't touched it in one year". (Let alone passing maintenance to some random untrusted guy.) This really shouldn't be a "security advisory". It has nothing to do with security, this is pure, useless bureaucracy.
+I would just mark any such complaints as WONTFIX with an explanation.
+
+---
+
+@SkiFire13 · 2024-05-07T08:48:16.296Z:
+To be clear, the issue was more with yaml-rust than serde-yaml (only the latter was maintained by dtolnay), whose maintainer has been unreachable for 4 years. And the RUSTSEC advisory doesn't even list it as a security issue, just as "info" (see RUSTSEC-2024-0320: yaml-rust: yaml-rust is unmaintained. › RustSec Advisory Database). Many people however won't take their time to understand what that means and will instead just panic and go around asking dependencies to not depend on that crate.
+dtolnay then just took the opportunity to mark their own crate as unmaintained as well. Note though that's there's no RUSTSEC advisory for that yet.
+
+---
+
+@bourumir-wyngs · 2024-05-07T13:52:32.539Z:
+I understand your problem with the lack of trust but currently cannot offer a solution. I tried to contact the author of the package but so far received no reply so posting here one more time, maybe he is reading. If the you think the project absolutely should not be continued by me, let me known, I will delete my repository on GitHub. My goal was to contribute to open source and Rust community, not do something that just causes disrespect.
+
+---
+
+@jofas · 2024-05-07T14:13:29.768Z:
+bourumir-wyngs:
+do something that just causes disrespect.
+This has very little to do with respect and a lot with security.  I think it's better to deprecate than to transfer ownership to an untrusted party. serde_yaml is downloaded over 100k times a day. Lots of projects and people depend on it. Giving control over it away to a stranger on the internet would be a huge security risk. You know you don't have the intention to use that kind of reach to infect other devs' computers with your ransomware, but how should the current owner know that? Granted, best would be to keep ownership and add a co-maintainer whose work can be reviewed till trust is created, but that is nothing that can be asked lightly from a FLOSS maintainer, especially with a portfolio like dtolnay's, and any decision they make must be respected by the community that freely benefited from their work.
+
+---
+
+@bourumir-wyngs · 2024-05-07T16:00:53.172Z:
+This may be potentially resolved by somebody more trusted in Rust community contacting me personally, verifying my identity, checking my CV and things the like. Maybe Rust foundation could  do something if the maintainer is not willing to talk? Until that, I think I will simply keep the minimally maintained fork as a dedicated dependency for my own project to avoid annoying messages about deprecated dependencies.
+
+---
+
+@derspiny · 2024-05-07T16:32:04.768Z:
+It's not the community's or the Foundation's decision to make, though - it's dtolnay's, since it's their library we're talking about. Publishing it for others to use does not, socially, entail that they have an obligation to take community input over its maintenance.
+The crates.io maintainers do have a say, but they have repeatedly affirmed the position that crate names are first-come-first-serve, other than outright abuse or legal issues. For them to reverse course and overrule a maintainer by handing over their crate name to someone else would be a striking and substantial deviation from that policy, and would severely undermine developers' trust in the crates.io repository.
+You want the crate maintained. That's a valid want. I think the solution you've settled on - maintaining it for yourself - is the best possible solution in the situation we have today. Dtolnay's licensing choices for serde-yaml allow this solution, and even allow you to go on developing your version of the library and publishing it (subject to very relaxed requirements around attribution), if you like. They have already authorized this, by choice, probably at least in part as a solution to continuity for the project should they let it go.
+
+---
+
+@parasyte · 2024-05-07T16:43:49.764Z:
+paramagnetic:
+It won't bitrot.
+This is a common misconception. Software may not degrade on its own, but in an environment that changes, it may as well bitrot. Ossification is just as troubling to manage.
+
+---
+
+@the8472 · 2024-05-07T18:54:39.152Z:
+SkiFire13:
+Many people however won't take their time to understand what that means and will instead just panic and go around asking dependencies to not depend on that crate.
+If they don't spend the time to even understand the issue why should anyone spend time (other than WONTFIX) about their complaints?
+If info-level notices cause them to panic then there's some misconfiguration or misunderstanding going on that shouldn't be everyone else's problem.
+
+---
+
+@bourumir-wyngs · 2024-05-08T11:41:48.389Z:
+TL;DR - yaml-rust2 is the way to go.
+You say, Many people however won't take their time to understand what that means. Ok, I did. I have discovered an interesting history behind the implementations of Yaml processing in Rust.
+While stepping over serde-yaml soure code with debugger, I have finally arrived to some strange and ugly code, with pointers, with lots of unsafe, something clearly autogenerated. After digging out more, I found that, indeed serdes-yaml 0.9 is internally relying on unsafe-libyaml version 0.2 that is auto-translated code of libyaml, a C library. I see no reason of using such a drastic approaches in the code that merely parses some text input. Among other things, this unsafe-libyaml is also set read only on GitHub so we have one more unmaintained package. In C.
+I also found that there is an open source pure Rust YAML parser available, yaml_rust. The code of this parser have been sitting in GitHub for three years without development and looks like with the broken build as well. It still does. However it has been forked and continued as yaml_rust2. I do not know much about the reasons and people behind this forking. The yaml-rust2 fork really took off only on March this year and currently has 53,936 downloads on crates .io.
+I initially assumed that unsafe-libyaml is some early hack from the dawn of Rust when lots of critical functionality was missing and the time was scarce. However going over Git history revealed for me the more mysterious story: serde-yaml has actually been using yaml-rust in the past! Yaml-rust has been replaced by the auto-translated C code on July 18, 2022, by dtolnay (see this commit). I am not sure why this has been done. There are three pull requests making these changes , but none of them has any kind of discussion. They were all both submitted and merged by dtolnay. There are also two closed issues related to this replacement but also without any discussion. Hence looks more like single sided decision of the maintainer which he obviously has right to make on his own project but there may still be various views towards the change itself.
+As a result of all these findings, I am switching into yaml-rust2 and recommend others to do the same. Using this library may be a little bit less straightforward with less things happening automagically but anyway all migration only took for me less than an hour and this includes including learning yaml-rust2 from scratch. Not a big deal.
+Sorry for all noise I created here about the alternative maintenance, I needed some forensic not just in the code of serde-yaml but also in few other projects to understand the actual situation. I do not longer recommed using my own fork of serdes-yaml. The amazing world of Free Software is still full of mysterious legends worth Linux vs Minix. And the world is full of wonderful problems waiting to be solved.
+P.S. The first version of this posting included many hyperlinks documenting my findings, but as a new user I am only allowed to post two links per post so I was forced to remove most of them.
+UPDATE: I suggest taking a look at serde-saphyr, which I implemented after the original project became unmaintained. It’s built on top of the serde-saphyr parser, written in idiomatic Rust, and — surprisingly — turned out to be significantly faster, not slower. It currently provides only deserialization, but it supports native merge keys, nested enums, duplicate key rejection, and strongly avoids panicking on invalid syntax.
+
+---
+
+@simonbuchan · 2024-05-09T01:12:50.790Z:
+Though of course it doesn't implement serde
+
+---
+
+@drmason13 · 2024-05-09T17:02:55.745Z:
+simonbuchan:
+Just marking deprecated is probably a better idea in a post-libxz attack world. Passing the built up reputation of a mega popular library to an unvetted maintainer is just asking for a supply chain attack.
+(Edited to add the above quote)
+There might be the potential to find a vetted maintainer and officially handover the crate.
+I think it would be a fork in GitHub but the ability to publish new versions as serde_yaml would be part of the handover. It signifies that dtolnay no longer has responsibility for the crate, but avoids churn in the ecosystem from switching dependencies.
+Of course there's a huge question mark over what such a handover looks like and how a maintainer could be vetted and who's going to do the vetting. Something to perhaps work towards as a goal if the libs team are enthusiastic for it.
+I expect it will be too late for serde_yaml to have such a blessed solution, which is a shame but sooner or later a fork (or 3) will appear if there's enough demand for it.
+I'm gradually building up to contributing some maintenance effort for the rust ecosystem but I have no real proficiency yet. It's a difficult thing to start - I would feel obligated to work hard and worry I'd struggle with time/motivation to do so
+
+---
+
+@SkiFire13 · 2024-05-09T17:15:34.680Z:
+bourumir-wyngs:
+TL;DR - yaml-rust2 is the way to go.
+I've seen people complaining that it requires more dependencies and has a very high MSRV. The MSRV in particular is a problem because it's much higher than the original yaml-rust, and it's technically a breaking change to bump it.
+
+---
+
+@BurntSushi · 2024-05-09T17:31:38.930Z:
+SkiFire13:
+and it's technically a breaking change to bump it.
+There is no consensus on whether bumping MSRV is a breaking change or not, and the general recommendation in Cargo's documentation is to treat it as a semver minor change.
+(I am responding narrowly here and not trying to say that folks complaining about MSRV are wrong to do so, but I feel it's important not to leave factual statements like "bumping MSRV is technically a breaking change" unchallenged.)
+
+---
+
+@simonbuchan · 2024-05-10T01:08:19.641Z:
+drmason13:
+There might be the potential to find a vetted maintainer and officially handover the crate.
+Keep in mind the libxz attack was two years of the attacker building up reputation with contributions before having maintainer status granted and adding the attack.
+Unless we're doing background checks on maintainers, or perhaps where there's a Apache Foundation situation where there's a diffusion of maintenance responsibility there's not really any good way to safely vet maintainers for such high value packages.
+
+---
+
+@ratmice · 2024-05-12T08:40:21.975Z:
+simonbuchan:
+drmason13:
+There might be the potential to find a vetted maintainer and officially handover the crate.
+Keep in mind the libxz attack was two years of the attacker building up reputation with contributions before having maintainer status granted and adding the attack.
+Further, the powers of a crate maintainer exceed those of a maintainer of a c library in the sense that
+a crate maintainer has the ability to make sem-ver compatible releases.  While the xz attack made quite a bit of effort just attempting to convince people to upgrade.
+To flip this around, the trust you place in the maintainer when taking a dependency on a crate is that future sem-ver compatible releases of the crate will also be trustworthy.  Which seems to me like additional risk to be taken into account when transferring ownership of a crate, since they come with a captive audience.
+
+---
+
+@asomers · 2024-05-12T15:22:18.656Z:
+The serde_yml crate has picked up where serde-yaml left off.  It's a fork.  I've just updated my project to it, and it works.  And the author is developing new features, too.
+
+---
+
+@jwodder · 2024-05-12T15:36:37.350Z:
+I just glanced at that project's dependencies, and it seems to have added a number of irrelevant dependencies for no discernable reason, including openssl, env_logger, and figlet-rs.  I don't trust it.
+
+---
+
+@asomers · 2024-05-12T15:39:03.880Z:
+Yeah, I agree.  I'm preparing a PR to eliminate those right now.  Also shady, the author didn't mention that serde_yml was a fork of serde-yaml until somebody mentioned it on an issue.  It may have been an oversight, or me may have been trying to claim undue credit.
+
+---
+
+@dvdmgl · 2024-05-12T17:13:50.339Z:
+With the recent deprecation of serde_yaml by dtolnay, i have the following thoughts:
+Problem: The current crate dependency ecosystem in Rust can be fragile when a single maintainer abandons a well used crate like serde_yaml. This lack of continuity can cause issues for projects relying on it and also
+Proposed Solution: Implement a "batteries-included assurance" system through a preset group of maintainers.
+Group Ownership: Critical crates would have a designated group of maintainers responsible for upkeep and updates.
+Transfer of Ownership: When the original developer decides to step down, they can seamlessly transfer ownership to the group, ensuring continued maintenance.
+Benefits:
+Improved Stability: Projects depending on these crates would benefit from continued maintenance and reduced risk of abandonment.
+Faster Response: A group can handle issues and updates more efficiently than a single maintainer.
+Knowledge Transfer: The group can share knowledge and expertise, fostering long-term sustainability.
+Security: Already trustworthy vetted developers, reducing chances of and libxz attack.
+Challenges:
+Resource Management: Identifying and allocating resources for the maintainer group.
+Decision Making: Establishing a clear decision-making process within the group.
+
+---
+
+@SkiFire13 · 2024-05-12T17:50:18.759Z:
+It's not just the dependencies. From a quick glance to the repository:
+there is a run function that seems to print ascii art and log some stuff to a file;
+there is an example build.rs that does nothing;
+there are various comments that seem AI generated (look for example at the src/main.rs file)
+the history is a mess. It could be just how the author works, but it makes looking around even harder, for example the commit that introduces a bunch of those useless dependencies also runs rustfmt on the whole repository, totaling 3k lines changed.
+I prefer using the deprecated serde_yaml or creating my own fork rather than using this mess.
+
+---
+
+@asomers · 2024-05-12T18:14:47.985Z:
+All of those criticisms are valid, @SkiFire13.  And here's another: serde_yml's author forked unsafe-libyaml to a new crated yamed libyml.  Most of the same mistakes he made in serde_yml he also made in libyml.
+But the key point remains: serde_yml is the only fork I know of.  So it's our only option.  Unless you're volunteering to maintain one?
+
+---
+
+@SkiFire13 · 2024-05-12T19:16:18.641Z:
+asomers:
+But the key point remains: serde_yml is the only fork I know of. So it's our only option. Unless you're volunteering to maintain one?
+Continuing to use the original serde_yaml is still an option and IMO better than using this fork. It's not like a crate like this needs continuous maintenance. And if an issue actually does pop up, you always have the option to make a kinda-private fork and fix it for yourself, and that's assuming the issue will even affect you.
+
+---
+
+@decathorpe · 2024-05-13T12:13:10.280Z:
+Since I maintain the packages for the serde_yaml and unsafe-libyaml crates for Fedora Linux, I reached out to dtolnay about continuing basic maintenance of serde_yaml and unsafe-libyaml. His response's TL;DR boiled down to "please don't".
+If I understood his response correctly (big caveat here!), there is no YAML library in Rust that supports both YAML 1.2 and the features that would be necessary to losslessly represent YAML syntax with Rust data structures, so there seems to currently be no way toward a future where serde_yaml supports both YAML 1.2 and all weird-but-valid YAML features at the same time.
+I think unsafe-libyaml was used for serde_yaml 0.9 because it supported more things than the now unmaintained yaml_rust crate, but it didn't support the latest YAML 1.2 standard. And while the maintained yaml-rust2 fork does claim to be compliant with YAML 1.2, it doesn't represent all YAML syntax in a way that's usable by serde_yaml.
+So IIUC, there's currently no YAML library available that would satisfy all the needs of a fully featured and YAML 1.2 conformant YAML frontend for serde.
+
+---
+
+@ShangBrol · 2024-05-15T08:11:52.210Z:
+In addition, dtolnay seems to think differently about "only option"
+Releases · dtolnay/serde-yaml (github.com)
+
+---
+
+@erelde · 2024-05-15T09:16:29.301Z:
+I think there is no yaml parser (in any language) out there implementing the whole specification. I may be misremembering.
+
+---
+
+@bourumir-wyngs · 2024-05-15T11:04:39.896Z:
+yaml-rust2 has only three direct runtime dependencies: arraydeque, encoding_rs and hashlink. This looks like a reasonable number for a general purpose library. Serde-yaml requires five: indexmap, itoa, ryu, serde and the notable unsafe-libyaml. It is easy to check by looking into Cargo.toml files in GitHub.
+I would also be happy to review the code of the run function you talk about but unable to find it. grep run . -r  | grep fn only lists  some bundled tests and tools:
+./tests/yaml-test-suite.rs:fn run_yaml_test(test: &Test) -> Outcome {
+./tools/bench_compare/src/main.rs:fn run_bench(config: &Config) -> Result<(), Error> {
+./tools/bench_compare/src/main.rs:fn save_run_bench_csv(
+If such a thing hangs out in production part, seems not a bad idea to open an PR for dropping it.
+
+---
+
+@bourumir-wyngs · 2024-05-15T11:30:57.603Z:
+Deciding from the comparison matrix, looks like there are only two: libfyaml (that is not the same as  libyaml) and the Perl Generated RefParser.
+But some YAML features like empty key are such that really not every project needs them.  You can read about these features on the bottom right.
+
+---
+
+@SkiFire13 · 2024-05-15T12:34:00.017Z:
+bourumir-wyngs:
+yaml-rust2 has only three direct runtime dependencies: arraydeque, encoding_rs and hashlink. This looks like a reasonable number for a general purpose library. Serde-yaml requires five: indexmap, itoa, ryu, serde and the notable unsafe-libyaml. It is easy to check by looking into Cargo.toml files in GitHub.
+yaml-rust2 would be a replacement for yaml-rust, which only depends on linked_hash_map (itself without dependencies, while yaml-rust2 also has some transitive dependencies). Also, yaml-rust2 has a 1.70.0 MSRV, released less than a year ago, while yaml-rust supports at least rust 1.51, released more than 3 years ago.
+
+---
+
+@erelde · 2024-05-15T13:48:47.286Z:
+The comparison matrix and its suite must be a bit lacking. We know that for example this trivial bit of yaml:
+- false
+- n
+- off
+Will be successfully parsed by most parsers but might give very different outputs. Some will give a array of boolean, others will give an array of strings. Other still might give you a mix of bool and strings. This is compliant with the spec and will pass the official test suite (of course since it is compliant). But it's not really what we want.
+
+---
+
+@drmason13 · 2024-05-15T15:59:41.427Z:
+There's rust-yaml yaml-rust (EDIT: I brain farted rust-yaml instead of yaml-rust. Nobody get any ideas it's confusing enough as it is ) which doesn't appear to get any maintenance for a few years, maintainer not responding.
+Then there's yaml-rust2 which is a maintained version of yaml-rust, targets more recent version of rust and aims for stable API. A drop-in replacement for yaml-rust:
+[dependencies]
+yaml-rust = { version = "#.#", package = "yaml-rust2" }
+The new maintainers also wanted to update the API, make breaking changes, so they have made another project for people interested in that and don't mind the churn. That's called saphyr. More info on that page and this helpful issue on yaml-rust2.
+Downside with all of this is both saphyr and yaml-rust[2]  lack serde support, it seems saphyr has it planned but not started yet.
+All interesting stuff, but still no obvious answer for a replacement for serde_yaml.
+I'd personally avoid serde_yml (note the missing a), it seems sus.
+I found serde_yaml_ng which seems to be an honest continuation of serde_yaml. That might be the best short term solution, I don't want to put undue pressure on it's owner, they talk about their motivation in the readme which I found refreshing
+I've got no affiliation with any of these crates, just an interested observer searching on GitHub.
+
+---
+
+@bourumir-wyngs · 2024-05-23T16:24:17.522Z:
+serde_yml has 5890 downloads on crates. io.  serde_yaml_ng has 473 downloads. The developer stats of serde_yaml_ng does not look reliable as it lists 39 developers with dtolnay first that likely comes from forking. Something is done for the fork that it does not longer display the message about the parent repository.
+Could you clarify why one project seems sus while another does not? Is it only the name that looks obfuscated or something more?
+
+---
+
+@simonbuchan · 2024-05-23T20:26:15.001Z:
+You're referring to behavior pre yaml 1.2 that is now defined by schemas. See norway problem · Issue #122 · yaml/yaml-test-suite · GitHub
+The short version is that schemas in 1.2 should be controlled by the application, so that example can be mapped however the use case needs.
+
+---
+
+@drmason13 · 2024-05-23T21:37:21.525Z:
+jwodder:
+just glanced at that project's dependencies, and it seems to have added a number of irrelevant dependencies for no discernable reason, including openssl, env_logger, and figlet-rs. I don't trust it.
+asomers:
+Yeah, I agree. I'm preparing a PR to eliminate those right now. Also shady, the author didn't mention that serde_yml was a fork of serde-yaml until somebody mentioned it on an issue. It may have been an oversight, or me may have been trying to claim undue credit.
+SkiFire13:
+It's not just the dependencies. From a quick glance to the repository:
+there is a run function that seems to print ascii art and log some stuff to a file;
+there is an example build.rs that does nothing;
+there are various comments that seem AI generated (look for example at the src/main.rs file)
+the history is a mess. It could be just how the author works, but it makes looking around even harder, for example the commit that introduces a bunch of those useless dependencies also runs rustfmt on the whole repository, totaling 3k lines changed.
+I prefer using the deprecated serde_yaml or creating my own fork rather than using this mess.
+Closed Issues
+These comments/issues from other users inform my sense of unease about the project. Looking again at some of the more recent commits, copyright claims have been removed and the main.rs file has been removed, along with some ascii_art error generation...
+I do think at least part of the activity in the repo is AI generated. Could be it's gaming that bright green GitHub commit graph for portfolio/showing off to prospective employer reasons. Maybe they're just enthusiastically using copilot and just realised some of the output isn't particularly useful, I don't know.
+
+---
+
+@asomers · 2024-05-24T03:10:29.211Z:
+I worked with the owner of serde_yml to fix some of that crate's problems.  And he did accept some of my suggestions.  But ultimately I lost confidence in it.  The worst part wasn't even the AI-generated crap.  That at least can be removed.  The worst part, for me, was the obfuscated git history.  The fact that he blew away serde_yaml's history when he forked, and then made so many major changes without descriptive commit messages, means that it's very difficult to tell what has changed, and almost impossible to tell why.  So I'm trying to switch to serde-yaml-ng now.
+
+---
+
+@erelde · 2024-05-24T08:34:30.372Z:
+But it doesn't address communication between applications which may have made different choices
+
+---
+
+@simonbuchan · 2024-05-24T09:14:47.019Z:
+In what sense? Presumably there's some source of agreement between these processes, given that they understand the structure. The schema used for scalar mapping is just another part of that mutual agreement.
+
+---
+
+@acatton · 2024-05-24T15:53:38.322Z:
+bourumir-wyngs:
+The developer stats of serde_yaml_ng does not look reliable as it lists 39 developers with dtolnay first that likely comes from forking. Something is done for the fork that it does not longer display the message about the parent repository.
+I'm the guy in question. I'm not sure what makes me unreliable. I'm usually working from codeberg(dot)org, but crates(dot)io forces me to use github. This is why I might look inactive on github.
+It sounds like you think I'm reliable because I've done nothing with the project yet. And, if that's your reason, yes I'm unreliable  . The reason why I started this fork was to use it in my personal project, I plan to fix any issue I encounter, if people send pull requests, I'll take a look, if people have issues with the fork, I'll take a stab at trying to fix them. I'm working on my spare time, I'm not promising anything.
+But I just learned about this discussion today because somebody mentioned it in on the issues they filed. Now I'll take a look at what can be done about it
+(I'm sorry about the foo(dot)bar domains, but it looks like this forum deleted my 5 year old account due to inactivity, I had to re-register and I'm limited to only one link per post  )
+
+---
+
+@bourumir-wyngs · 2024-05-24T16:52:57.347Z:
+I do not say your project is unreliable; I only say that the GitHub widget showing 39 contributors behind exactly your fork likely should not be trusted. It may be a plain bug of the GitHub server for which you are not responsible. For your fork, the GitHub server does not show the link to the parent project that is normally visible after forking, making things much clearer. I do not know why it stopped showing the link.
+I agree it is a good idea to base a new project on the clean fork of the trusted repository and not on some bulky "initial commit." Anyone wanting to review the code can start with the new changes after forking. You can, indeed, build a credibility by making easy to view all new changes separately from the old content.
+
+---
+
+@acatton · 2024-05-24T17:08:51.064Z:
+Ah! I'm sorry, I misread your comment, now what you say makes sense
+Regarding the fork issue, it might be my fault. I might have made the mistake to clone and push on codeberg.org, and then once I've realized that crates(dot)io wanted a github account, I pushed my codeberg.org repo into a new repo on github, which lost the fork "metadata" thingy. But I don't remember what I did exactly anymore.
+
+---
+
+@2e71828 · 2024-05-24T17:23:39.915Z:
+Note that, while crates.io uses GitHub accounts for authentication, there’s no requirement that the repository itself is hosted there— If your primary repository is elsewhere, you should probably consider using that as your repository link.  Most of my crates link to GitLab instead, for example.
+
+---
+
+@system · 2024-08-22T17:24:03.332Z:
+This topic was automatically closed 90 days after the last reply. We invite you to open a new topic if you have further questions or comments.
+
