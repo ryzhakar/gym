@@ -22,7 +22,7 @@
 | a-saL1-f005516-c7 | CONFIRMED | | | | unknown | | quote exact at both cited timestamps (@hsivonen 2025-06-10T00:43:48-05:00 and 10:38:09-05:00) |
 | a-saL1-f005516-c8 | CONFIRMED | | | | unknown | | quote exact, @fanf reply 2025-06-10T07:57:08-05:00 |
 | a-saL1-f005516-c9 | CONFIRMED | | | | unknown | | quote exact at both cited timestamps (@dataangel 2025-06-12T07:56:20-05:00 and 2025-06-13T20:10:53-05:00); gap:voice-unverified stands |
-| a-saL2-f011092-c1 | CONFIRMED | | | | unknown | | quote matches modulo one auto-caption slip ("test weed" for "test suite"), ~[31:24] and ~[34:25] |
+| a-saL2-f011092-c1 | UNFAITHFUL | | | built a custom wrapper around `cargo test` that builds test binaries on one machine, ships them to other machines as a zip, shards execution, and converts cargo's unstable JSON test output into JUnit XML; tried cargo-nextest first but rejected it because its different test-execution model broke an assumption their own tests relied on, and fixing that would have taken more time than they had | unknown | | quote not verbatim, drop quote: the transcript says "...that would cause our test weed to fail..." at ~[34:25], not "test [suite]" — the claim's own bracket substitutes a cleaned-up word for a real auto-caption garble rather than eliding text with an ellipsis. Wrapper description at ~[31:24] and Q&A framing otherwise match |
 | a-saL2-f011092-c2 | CONFIRMED | | | | unknown | | quote exact across ~[40:37]-[42:43] |
 | a-saL2-f011092-c3 | CONFIRMED | | | | unknown | | quote exact, ~[26:21]-[28:24]; AWS/GCP/Azure/Stripe specifics all verified |
 | a-saL2-f011092-c4 | CONFIRMED | | | | unknown | | quote exact, ~[37:27] |

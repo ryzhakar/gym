@@ -27,7 +27,7 @@
 | a-sa20-f009698-c2 | CONFIRMED | | | | unknown | | quote exact, comment by @jswrenn posted 2025-04-18 |
 | a-sa20-f009698-c3 | CONFIRMED | | | | unknown | | quote exact, comment by @lqd posted 2025-05-05 |
 | a-sa20-f009698-c4 | CONFIRMED | | | | unknown | | quote exact, comment by @obi1kenobi posted 2025-05-03 |
-| a-sa21-f011069-c1 | CONFIRMED | | | | unknown | | paraphrase strongly corroborated by the transcript's [14:41]-[17:49] span (unit-testing rejection through "Wrong again." on integration tests); the literal "right? Well, no." wording is not rendered in this auto-caption transcript, which cuts from "The simple solution is usually right," straight to the next clause — likely a caption gap around a spoken pause, not a fabrication, but not independently verifiable from this text |
+| a-sa21-f011069-c1 | UNFAITHFUL | | | states the OP's desired rejection of both unit and integration testing for this problem, corroborated by the transcript's [14:41]-[17:49] span (unit-testing rejection through "Wrong again." on integration tests) | unknown | | quote not in transcript; drop quote. The literal "right? Well, no." wording is not rendered in this auto-caption transcript, which cuts from "The simple solution is usually right," straight to the next clause |
 | a-sa21-f011069-c2 | CONFIRMED | | | | unknown | | quote exact, ~[19:52] |
 | a-sa21-f011069-c3 | CONFIRMED | | | | unknown | | quote exact, ~[19:52]-[20:53] boundary |
 | a-sa21-f011069-c4 | CONFIRMED | | | | unknown | | quote exact, ~[10:37] |
@@ -38,7 +38,7 @@
 | a-sa23-f011186-c3 | CONFIRMED | | | | unknown | | quote exact, ~[11:06] |
 | a-sa23-f011186-c4 | CONFIRMED | | | | unknown | | quote exact, ~[25:17]; methods.rs / never-overwritten detail verified in same section |
 | a-sa23-f011186-c5 | CONFIRMED | | | | unknown | | quote exact, ~[29:21] |
-| a-sa24-f011220-c1 | CONFIRMED | | | | unknown | | quote matches modulo an auto-caption mishearing ("servus"/"serous" for "serverless"), ~[38:29]-[39:29]; 512MB/850-invokes/1,350-invokes, p50 and cold-start figures all verified earlier in the transcript |
+| a-sa24-f011220-c1 | UNFAITHFUL | | | after porting the same Rust web API and Kafka-consuming background service from Fargate to Lambda, latency/p50/p99 held steady, memory dropped, cold starts were rare, and idle 24/7 container cost went away; concludes serverless should be reached for by default | unknown | | quote not verbatim, drop quote: the transcript reads "just consider servus see how that might help" at ~[38:29]-[39:29], not "consider serverless" — an auto-caption mishearing, not what's on the page. 512MB/850-invokes/1,350-invokes, p50 and cold-start figures underlying the paraphrase are independently verified earlier in the transcript |
 | a-sa24-f011220-c2 | CONFIRMED | | | | unknown | | quote exact, ~[13:13]; ports-and-adapters/hexagonal architecture detail verified later in the transcript (~[26:xx]) |
-| a-sa25-f011413-c1 | CONFIRMED | | | | unknown | | quote matches modulo a smoothed ASR stutter ("memorize getting granting" → "[grant]"), ~[02:09] |
+| a-sa25-f011413-c1 | UNFAITHFUL | | | procedural macros are a pure AST transform shaped as Rust source that the compiler must compile, optimize, run, and grant disk/network access to "just in case"; many people have tried to fix this and nothing has stuck | unknown | | quote not verbatim, drop quote: the transcript reads "...run and memorize getting granting it full disk and network access just in case" at ~[02:09] — the claim's bracketed "[grant]" replaces a genuine (if stuttered) ASR rendering, not an ellipsis over omitted text |
 | a-sa25-f011413-c2 | CONFIRMED | | | | unknown | | quote exact, ~[03:09] |

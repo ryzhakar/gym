@@ -3,7 +3,7 @@
 | a-sa25-f011413-c3 | CONFIRMED | | | | unknown | | quote exact, ~[03:09]-[04:09] boundary |
 | a-sa25-f011413-c4 | CONFIRMED | | | | unknown | | quote exact, ~[06:09]; "100%" figure verified |
 | a-sa25-f011413-c5 | CONFIRMED | | | | unknown | | quote exact, ~[10:12] |
-| a-sa25-f011413-c6 | CONFIRMED | | "microbenchmarks are always lies" overstates the source, which says "probably lies" — everything else (Canada/lie wordplay, the ULP-rounding/precise-mode explanation) matches exactly | | unknown | | ~[19:19]-[20:21] |
+| a-sa25-f011413-c6 | UNFAITHFUL | | | his own "Canada" benchmark against serde_json is not apples-to-apples because it skips serde's precise floating-point rounding mode; states microbenchmarks should be treated as suspect by default | unknown | | quote not verbatim, drop quote: the transcript says "All of these are probably lies," not "microbenchmarks are always lies" — a real word swap that overstates the source's hedged claim. Everything else (Canada/lie wordplay, the ULP-rounding/precise-mode explanation) matches exactly, ~[19:19]-[20:21] |
 | a-sa25-f011413-c7 | CONFIRMED | | | | unknown | | quote exact, ~[21:21]; the Ollie/Ali naming ambiguity the claim itself flags is real — both spellings appear in this transcript at different timestamps |
 | a-sa26-f011305-c1 | CONFIRMED | | | | unknown | | quote exact, ~[03:01] |
 | a-sa26-f011305-c2 | CONFIRMED | | | | unknown | | quote exact, ~[02:01] |
@@ -20,7 +20,7 @@
 | a-sa26-f011993-c1 | CONFIRMED | | | | unknown | | quote exact, @kornel 2024-07-04T18:13:51.115Z |
 | a-sa26-f012146-c1 | CONFIRMED | | | | unknown | | quote exact, ~[07:06] |
 | a-sa27-f012237-c1 | CONFIRMED | | | | unknown | | quote exact, § Generating the FFI Bindings |
-| a-sa27-f012237-c2 | CONFIRMED | | (page's own dateline reads "Published: December 3, 2024," one day before the claim's 2024-12-04 — likely a timezone artifact, flagged rather than silently passed) | | unknown | | quote exact, § Generating the XCFramework |
+| a-sa27-f012237-c2 | DATE-WRONG | | 2024-12-03 | | unknown | | quote exact, § Generating the XCFramework; the page's own dateline reads "Published: December 3, 2024," one day before the claim's 2024-12-04 |
 | a-sa28-f012469-c1 | CONFIRMED | | | | unknown | | quote exact, @llogiq post 2015-06-06T16:29:42.304Z citing "kibwen on /r/rust"; gap:voice-unverified stands |
 | a-sa28-f012469-c10 | CONFIRMED | | | | unknown | | quote exact, @MaloJaffre post 2017-08-31T19:26:05.909Z, "Another one from Aturon about ergonomics initiative RFCs" |
 | a-sa28-f012469-c11 | CONFIRMED | | | | unknown | | quote exact, @bluss post 2015-04-27T11:36:54.924Z |
