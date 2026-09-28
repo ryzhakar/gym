@@ -768,3 +768,4 @@
 2026-09-28T12:32 | agent:r-voice-cal | receipt | calibration revised: 21 of 24 flips reverted to MEETS on all four kinds (crate owners with dependents, papers, talks); 3 FAILS stand (asahi-lina, chescock, skifire13); 110 MEETS, 8 FAILS of 118 re-checked
 2026-09-28T12:32 | self | delegation | r-voice-cal continued: re-check asahi-lina (own Rust GPU driver, talks) and the8472 (team listing)
 2026-09-28T12:32 | owner | receipt | mid-turn in conversation: 'just stop.'; r-voice-cal stopped mid re-check of asahi-lina and the8472; no further calls
+2026-09-28T12:33 | owner | receipt | correction: stop meant the no-op calls, not the agent; r-voice-cal resumed
