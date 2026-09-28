@@ -267,6 +267,164 @@ previous run (2,364 → 1,354).
 | `b-sb18-f005332-c4` | August 2024 (public appearance, per the article) |
 
 
+
+## Voice-verification pass (lead ruling, 2026-09-28)
+
+Applied `RECON/verify/voices-chunk-00..15.md` (399 Voice blocks — one per
+existing Voice — from a Tier-3 track-record check) and
+`RECON/verify/voices-calibration.md` (a re-check of 118 of those: 112
+original MEETS candidates whose only cited evidence was production/role,
+5 FAILS candidates whose `checked` field mentioned commits or merged PRs,
+plus steffahn). Calibration's verdicts and evidence override the chunk
+files wherever both speak; the chunk file's own evidence is used as-is
+elsewhere. Script:
+`docs/orchestration_log/recon/2026-09-27/research/rust-map/compile/verify_voices.py`.
+
+### Verdict counts (399 original ids, before merging)
+
+| verdict | count |
+| --- | --- |
+| MEETS | 300 |
+| FAILS | 77 |
+| UNKNOWN | 22 |
+
+301 of these 399 are set by the chunk files unchanged; 117 are set by the
+calibration's override (steffahn's calibration row is a pure re-confirmation
+of the chunk's own finding, so the chunk's own track_record — already
+url-bearing — was kept rather than replaced with the calibration table's
+non-url `gh api` citation of the same fact).
+
+### Per-Voice fields written
+
+- **MEETS**: `type`, `track_record` (kind, evidence, url, date — parsed
+  from the chunk/calibration prose) and `influence` written as evidenced.
+- **FAILS / UNKNOWN**: `type` and `track_record` left unset where the chunk
+  file itself found nothing ("checked <kind>: no evidence found" bullets,
+  and the single-line "none found"/"none meets the bar" variants, are a
+  negative finding, not a track record — transcribed as absence, not as
+  content). Where a FAILS/UNKNOWN entry's chunk file nonetheless names an
+  identity-based `type` guess independent of the bar (some do), that guess
+  is transcribed as given.
+- **2 illegal `type` values**: `ralfjung` and
+  `r-my-rakic-on-behalf-of-the-compiler-performance-working` give
+  `type: role` in their chunk file — not one of the six legal Voice types
+  (`role` is a *track_record kind* word, not a type). Left unset rather
+  than guessed; both keep their real, url-bearing `track_record` (MEETS on
+  other grounds).
+- **10 MEETS Voices have no url anywhere in `track_record`**: `bjoernq`,
+  `jamesmunns`, `jessebraham`, `laggui`, `ssokolow`, `stefan-baumgartner`,
+  `vaultwarden-maintainers-dani-garcia-vaultwarden`, `warre-snaet`,
+  `yanshay`, `yatekii` — each one's only cited evidence is a `gh api ...`
+  command or a bare description, not a browsable URL. Transcribed as
+  given; these fail the validator's track-record-url check despite being
+  genuinely established.
+
+### Same-person merges (18 clusters, 25 ids merged away)
+
+14 clusters from the calibration file's "Same-person id pairs" list, plus
+4 named directly in the chunk files (dominaezzz, jkelleyrtp/jonathan-kelly,
+kornel, nazmul-idris — none of these four are in the calibration table).
+The canonical id per cluster is the bare/shortest handle-like id; every
+other member's `track_record`/`influence` lines are unioned into the
+canonical (deduped; a pure "same as `<canonical>`" cross-reference with no
+url of its own is dropped rather than kept as a content-free line), and
+every Claim naming a merged-away id is repointed to the canonical id.
+40 Claims were repointed.
+
+| canonical | merged away |
+| --- | --- |
+| arqu | arqu-n0-computer-iroh-engineer-production-post-mortem-author |
+| dignifiedquire | dignifiedquire-byline-iroh-blog-rust-connection-in-source, dignifiedquire-iroh-n0-computer, dignifiedquire-n0-computer-iroh-maintainer, iroh-n0-dignifiedquire-post-author |
+| bugadani-esp-hal-maintainer | bugadani-esp-hal-maintainer-pr-author |
+| cfallin | cfallin-chris-fallin |
+| felipebalbi | felipebalbi-nxp-embedded-engineer-embassy-nxp-contributor |
+| fitzgen | fitzgen-bytecode-alliance-wasmtime-core-arbitrary-crate |
+| lukewagner | luke-wagner-fastly-w3c-bytecode-alliance-component-model-co |
+| saulecabrera | saulecabrera-bytecode-alliance-wasmtime-winch-baseline |
+| ramfox | ramfox-byline-iroh-blog-rust-connection-in-source-iroh, ramfox-matheus23, ramfox-matheus23-iroh-n0-blog-authors |
+| jamesmunns | jamesmunns-embassy-maintainer |
+| jakub-ber-nek-on-behalf-of-the-rust-funding-team | jakub-ber-nek-on-behalf-of-the-rust-project-mentorship-team |
+| hannah-wang-ben-yang-and-fisher-darling | hannah-wang-ben-yang-fisher-darling-cloudflare |
+| b5 | dig-b5-and-ramfox-iroh-team |
+| r-diger-klaehn-n0-iroh-iroh-blobs | iroh-n0-friedel-ziegelmayer-r-diger-klaehn-post-authors |
+| dominaezzz | dominaezzz-esp-hal-reviewer |
+| jkelleyrtp | jonathan-kelly, jonathan-kelly-likely-kelley-unconfirmed |
+| kornel | kornel-2, kornel-forum-handle-identity-track-record-not-established |
+| nazmul-idris-r3bl-tui-maintainer | nas-ceo-founder-rebel-author-developerlife-com-maintainer |
+
+Not merged, though similarly named: bare `bugadani` and bare
+`r-diger-klaehn` are distinct files from their maintainer/blog-suffixed
+namesakes above and are outside the named lists — left untouched rather
+than guessed into a cluster.
+
+### Name correction
+
+`sam-cutter` → id renamed to `sam-cutler`, `name` corrected to "Sam Cutler"
+(YouTube oEmbed title evidence in the calibration file; the id itself was
+the misspelling, so it was renamed and its 2 Claims repointed, not just the
+`name` field). `zeke-hunter-green` was checked and is not a misspelling
+(same oEmbed title).
+
+### Claims: `gap` added for FAILS/UNKNOWN Voices
+
+Rule: MEETS → nothing more. FAILS → `voice-below-bar`. UNKNOWN →
+`voice-unverified` (same text the initial compile already used for the 30
+Rust-and-WebAssembly-book Claims whose Voice field was explicitly
+`[voice-unverified]`; joined with `; ` rather than duplicated where a Claim
+already carried a `gap`). **107 Claims gapped `voice-below-bar`**; **28
+gapped `voice-unverified`** by this pass specifically (`voice-unverified`
+across both sources: 58 Claims total, 0 overlap with `voice-below-bar`).
+These Claims are excluded from "resolved Claims" per rule 4's
+`resolved_claims` filter in spirit, though no Question in this batch is
+`status: closed` for that filter to actually gate.
+
+Two re-run artifacts, not real gaps: while iterating the script, 2 Claims
+(`b-sb24-f011295-c1`, `b-sb24-f011295-c2`) were briefly logged as
+"voice has no verification entry" because a *second* run read back their
+already-renamed `voice: sam-cutler` field (the chunk files key this person
+under `sam-cutter`). Both Claims are correct in the final state — `sam-cutler`
+is MEETS, needs no gap — this is a script-idempotency note, not a content
+finding.
+
+### Voices: final counts
+
+374 Voice files (399 originals − 25 merged away). Type distribution:
+builder 219, unset 88, institution 29, educator 22, language-designer 12,
+critic 4.
+
+### Validator run
+
+`uv run python scripts/map/check_map.py --map maps/rust`
+
+**427 FAIL** (up from 1,354 before this pass — see below for why "up" is
+the correct direction here), by rule:
+
+| cause | count | vs. previous pass |
+| --- | --- | --- |
+| Voice missing `type` | 88 | was 399 (declared gap) — now most MEETS Voices have one |
+| Voice missing `track_record` | 86 | was 399 — now most MEETS Voices have one |
+| Voice `track_record` has no url (rule 6) | 96 | was 399 — 86 FAILS/UNKNOWN Voices genuinely have none, 10 MEETS Voices cite a `gh api` command instead of a url |
+| Source missing `date` (6 Sources) | 6 | unchanged |
+| Position missing `tag` (9 Positions) | 9 | unchanged |
+| Question missing `domains` (2 Questions) | 2 | unchanged |
+| Claim missing `date` (70 Claims) | 70 | unchanged |
+| Claim date not ISO (same 70 Claims) | 70 | unchanged |
+
+Voice FAILs did not drop to (399 − 300 MEETS) × 3 = 297 as a first estimate
+might suggest, because merging cut the Voice count to 374 (fewer files to
+fail, but also fewer files to pass) and because fixing this pass's own
+parsing bugs *increased* the count partway through: two classes of chunk-file
+bullet — `checked <kind>: <negative finding>` and a bare `none checkable`
+sentence — read at first pass as if they were positive track-record entries
+(they are the FAILS/UNKNOWN explanation, phrased to look like evidence).
+Once corrected, several dozen FAILS/UNKNOWN Voices that had briefly acquired
+a fabricated-looking `type` and `track_record` correctly lost them again,
+adding required-field FAILs that a wrong-but-present value had been masking.
+Reported here because a FAIL count moving in the "wrong" direction from a
+mid-pass bug fix should never be assumed to reflect regression: the
+1,354 → 427 comparison is the one that matters, taken pass-to-pass on
+correct data.
+
 Full output verbatim follows.
 
 ```
@@ -283,756 +441,158 @@ FAIL  maps/rust/positions/same-state-transition-trigger--p3.yaml  missing requir
 FAIL  maps/rust/positions/ui-dsl-vs-plain-rust--p1.yaml  missing required field 'tag'
 FAIL  maps/rust/voices/2e71828.yaml  missing required field 'type'
 FAIL  maps/rust/voices/2e71828.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/aatch.yaml  missing required field 'type'
-FAIL  maps/rust/voices/aatch.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/abrown.yaml  missing required field 'type'
-FAIL  maps/rust/voices/abrown.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/adam-surname-unconfirmed-self-id-only.yaml  missing required field 'type'
-FAIL  maps/rust/voices/adam-surname-unconfirmed-self-id-only.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/adam.yaml  missing required field 'type'
-FAIL  maps/rust/voices/adam.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/adriangb.yaml  missing required field 'type'
-FAIL  maps/rust/voices/adriangb.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/afetisov.yaml  missing required field 'type'
 FAIL  maps/rust/voices/afetisov.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ajdecon.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ajdecon.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/alamb.yaml  missing required field 'type'
-FAIL  maps/rust/voices/alamb.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/alandekok.yaml  missing required field 'type'
 FAIL  maps/rust/voices/alandekok.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/alejandra-gonz-lez-blyxyas.yaml  missing required field 'type'
-FAIL  maps/rust/voices/alejandra-gonz-lez-blyxyas.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/alejandra-gonz-lez.yaml  missing required field 'type'
-FAIL  maps/rust/voices/alejandra-gonz-lez.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/aleksandr-petrosyan.yaml  missing required field 'type'
-FAIL  maps/rust/voices/aleksandr-petrosyan.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/alex-crichton.yaml  missing required field 'type'
-FAIL  maps/rust/voices/alex-crichton.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/alexcrichton.yaml  missing required field 'type'
-FAIL  maps/rust/voices/alexcrichton.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/alice-i-cecile.yaml  missing required field 'type'
-FAIL  maps/rust/voices/alice-i-cecile.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/alonely0.yaml  missing required field 'type'
 FAIL  maps/rust/voices/alonely0.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/amos-fasterthanlime.yaml  missing required field 'type'
-FAIL  maps/rust/voices/amos-fasterthanlime.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/andrei-alexandrescu-creator-of-d.yaml  missing required field 'type'
 FAIL  maps/rust/voices/andrei-alexandrescu-creator-of-d.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/andrew-jakubowicz-and-co-presenter-canva.yaml  missing required field 'type'
-FAIL  maps/rust/voices/andrew-jakubowicz-and-co-presenter-canva.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/andrew-jakubowicz.yaml  missing required field 'type'
-FAIL  maps/rust/voices/andrew-jakubowicz.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/andrews05.yaml  missing required field 'type'
-FAIL  maps/rust/voices/andrews05.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/anthonygrondin.yaml  missing required field 'type'
 FAIL  maps/rust/voices/anthonygrondin.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/anthonytorlucci.yaml  missing required field 'type'
-FAIL  maps/rust/voices/anthonytorlucci.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/antimora-tracel-ai-burn-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/antimora-tracel-ai-burn-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/antimora.yaml  missing required field 'type'
-FAIL  maps/rust/voices/antimora.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/antonio-pirino.yaml  missing required field 'type'
-FAIL  maps/rust/voices/antonio-pirino.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/araz-abishov.yaml  missing required field 'type'
-FAIL  maps/rust/voices/araz-abishov.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/arnaud-gourlay.yaml  missing required field 'type'
-FAIL  maps/rust/voices/arnaud-gourlay.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/arqu-n0-computer-iroh-engineer-production-post-mortem-author.yaml  missing required field 'type'
-FAIL  maps/rust/voices/arqu-n0-computer-iroh-engineer-production-post-mortem-author.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/arqu.yaml  missing required field 'type'
-FAIL  maps/rust/voices/arqu.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/arthur-zucker-hugging-face-tokenizers-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/arthur-zucker-hugging-face-tokenizers-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/arthurbrussee.yaml  missing required field 'type'
-FAIL  maps/rust/voices/arthurbrussee.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/asahi-lina.yaml  missing required field 'type'
-FAIL  maps/rust/voices/asahi-lina.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/async-book-rust-lang-github-io-rust-async-working-group.yaml  missing required field 'type'
-FAIL  maps/rust/voices/async-book-rust-lang-github-io-rust-async-working-group.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/aturon-aaron-turon-rust-language-design-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/aturon-aaron-turon-rust-language-design-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/author-of-ideas-reifying-ideas-reify-ing-not-named-in-the.yaml  missing required field 'type'
-FAIL  maps/rust/voices/author-of-ideas-reifying-ideas-reify-ing-not-named-in-the.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/author-of-ideas-reifying-ideas-reify-ing.yaml  missing required field 'type'
-FAIL  maps/rust/voices/author-of-ideas-reifying-ideas-reify-ing.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/b5.yaml  missing required field 'type'
-FAIL  maps/rust/voices/b5.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/badeend.yaml  missing required field 'type'
 FAIL  maps/rust/voices/badeend.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bd103.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bd103.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/benwis-leptos-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/benwis-leptos-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bjoernq.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bjoernq.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bjorn3.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bjorn3.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/bogdan-petru.yaml  missing required field 'type'
 FAIL  maps/rust/voices/bogdan-petru.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bojan-serafimov.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bojan-serafimov.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/boringcactus-melody.yaml  missing required field 'type'
-FAIL  maps/rust/voices/boringcactus-melody.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/brooklyn-zelenka.yaml  missing required field 'type'
-FAIL  maps/rust/voices/brooklyn-zelenka.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/brooksmtownsend-wasmcloud-engineer-contributor-to-mio-tokio.yaml  missing required field 'type'
-FAIL  maps/rust/voices/brooksmtownsend-wasmcloud-engineer-contributor-to-mio-tokio.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/bruce-perens.yaml  missing required field 'type'
 FAIL  maps/rust/voices/bruce-perens.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bryan-cantrill.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bryan-cantrill.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/bsder.yaml  missing required field 'type'
 FAIL  maps/rust/voices/bsder.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/bstrie-attribution-hedged-by-the-poster-themselves-im.yaml  missing required field 'type'
 FAIL  maps/rust/voices/bstrie-attribution-hedged-by-the-poster-themselves-im.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bugadani-esp-hal-maintainer-pr-author.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bugadani-esp-hal-maintainer-pr-author.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bugadani-esp-hal-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bugadani-esp-hal-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bugadani.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bugadani.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bunnybites.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bunnybites.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/burntsushi.yaml  missing required field 'type'
-FAIL  maps/rust/voices/burntsushi.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/bushrat011899.yaml  missing required field 'type'
-FAIL  maps/rust/voices/bushrat011899.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cad97.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cad97.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/caio-c410-f3r.yaml  missing required field 'type'
-FAIL  maps/rust/voices/caio-c410-f3r.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cart.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cart.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/carter-anderson-cart-bevy-creator-and-project-lead.yaml  missing required field 'type'
-FAIL  maps/rust/voices/carter-anderson-cart-bevy-creator-and-project-lead.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cbjamo.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cbjamo.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cbournhonesque.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cbournhonesque.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cecton.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cecton.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/celso-martinho-ruskin-constant-rui-figueira-and-lu-s-duarte.yaml  missing required field 'type'
-FAIL  maps/rust/voices/celso-martinho-ruskin-constant-rui-figueira-and-lu-s-duarte.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cfallin-chris-fallin.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cfallin-chris-fallin.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cfallin.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cfallin.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/chayan-mistry.yaml  missing required field 'type'
 FAIL  maps/rust/voices/chayan-mistry.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/chescock.yaml  missing required field 'type'
 FAIL  maps/rust/voices/chescock.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/clarfonthey.yaml  missing required field 'type'
-FAIL  maps/rust/voices/clarfonthey.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cliff-l-biffle.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cliff-l-biffle.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cloudflare-hyperdrive-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cloudflare-hyperdrive-team.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/co-presenter-taj-touch-unclear.yaml  missing required field 'type'
 FAIL  maps/rust/voices/co-presenter-taj-touch-unclear.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cobaltcause.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cobaltcause.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/comphead.yaml  missing required field 'type'
-FAIL  maps/rust/voices/comphead.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/conradirwin.yaml  missing required field 'type'
-FAIL  maps/rust/voices/conradirwin.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/coreh.yaml  missing required field 'type'
 FAIL  maps/rust/voices/coreh.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/crazyboyqcd.yaml  missing required field 'type'
 FAIL  maps/rust/voices/crazyboyqcd.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/crutcher.yaml  missing required field 'type'
-FAIL  maps/rust/voices/crutcher.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/cryze.yaml  missing required field 'type'
-FAIL  maps/rust/voices/cryze.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/danieljoyce.yaml  missing required field 'type'
 FAIL  maps/rust/voices/danieljoyce.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/danielkeep-author-of-the-little-book-of-rust-macros-cited.yaml  missing required field 'type'
-FAIL  maps/rust/voices/danielkeep-author-of-the-little-book-of-rust-macros-cited.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/dataangel.yaml  missing required field 'type'
 FAIL  maps/rust/voices/dataangel.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/david-chisnall.yaml  missing required field 'type'
 FAIL  maps/rust/voices/david-chisnall.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/david-vin-felgo.yaml  missing required field 'type'
-FAIL  maps/rust/voices/david-vin-felgo.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/davidpdrsn-axum-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/davidpdrsn-axum-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/daxpedda-wasm-bindgen-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/daxpedda-wasm-bindgen-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/daxpedda.yaml  missing required field 'type'
-FAIL  maps/rust/voices/daxpedda.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/denis-bezrukov.yaml  missing required field 'type'
-FAIL  maps/rust/voices/denis-bezrukov.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/dhruv-ahuja.yaml  missing required field 'type'
 FAIL  maps/rust/voices/dhruv-ahuja.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dig-b5-and-ramfox-iroh-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dig-b5-and-ramfox-iroh-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dignifiedquire-byline-iroh-blog-rust-connection-in-source.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dignifiedquire-byline-iroh-blog-rust-connection-in-source.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dignifiedquire-iroh-n0-computer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dignifiedquire-iroh-n0-computer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dignifiedquire-n0-computer-iroh-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dignifiedquire-n0-computer-iroh-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dignifiedquire.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dignifiedquire.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dimforge-nalgebra-maintainers.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dimforge-nalgebra-maintainers.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dirbaio.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dirbaio.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dirkjan-ochtman.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dirkjan-ochtman.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dist1ll.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dist1ll.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dlight.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dlight.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dominaezzz-esp-hal-reviewer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dominaezzz-esp-hal-reviewer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dominaezzz.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dominaezzz.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/dragondev1906.yaml  missing required field 'type'
-FAIL  maps/rust/voices/dragondev1906.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/drewridley.yaml  missing required field 'type'
-FAIL  maps/rust/voices/drewridley.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ds84182.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ds84182.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/durka42.yaml  missing required field 'type'
 FAIL  maps/rust/voices/durka42.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ealmloff.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ealmloff.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ecoskey.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ecoskey.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/edjopato.yaml  missing required field 'type'
-FAIL  maps/rust/voices/edjopato.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/eggyal.yaml  missing required field 'type'
-FAIL  maps/rust/voices/eggyal.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ekleog.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ekleog.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ekuber.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ekuber.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/elipsitz.yaml  missing required field 'type'
-FAIL  maps/rust/voices/elipsitz.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/elitetk.yaml  missing required field 'type'
-FAIL  maps/rust/voices/elitetk.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/emilk.yaml  missing required field 'type'
-FAIL  maps/rust/voices/emilk.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/emily-dixon.yaml  missing required field 'type'
-FAIL  maps/rust/voices/emily-dixon.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/epage.yaml  missing required field 'type'
-FAIL  maps/rust/voices/epage.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/eric-zhang.yaml  missing required field 'type'
-FAIL  maps/rust/voices/eric-zhang.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/eucliddivisionlemma.yaml  missing required field 'type'
-FAIL  maps/rust/voices/eucliddivisionlemma.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/eugineerd.yaml  missing required field 'type'
-FAIL  maps/rust/voices/eugineerd.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/evgenii-seliverstov.yaml  missing required field 'type'
-FAIL  maps/rust/voices/evgenii-seliverstov.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/fanf.yaml  missing required field 'type'
-FAIL  maps/rust/voices/fanf.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/farnz.yaml  missing required field 'type'
-FAIL  maps/rust/voices/farnz.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/fasterthanlime.yaml  missing required field 'type'
-FAIL  maps/rust/voices/fasterthanlime.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/federico-mena-quintero.yaml  missing required field 'type'
-FAIL  maps/rust/voices/federico-mena-quintero.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/felipebalbi-nxp-embedded-engineer-embassy-nxp-contributor.yaml  missing required field 'type'
-FAIL  maps/rust/voices/felipebalbi-nxp-embedded-engineer-embassy-nxp-contributor.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/felipebalbi.yaml  missing required field 'type'
-FAIL  maps/rust/voices/felipebalbi.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ferrous-systems-jonathan.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ferrous-systems-jonathan.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/fitzgen-bytecode-alliance-wasmtime-core-arbitrary-crate.yaml  missing required field 'type'
-FAIL  maps/rust/voices/fitzgen-bytecode-alliance-wasmtime-core-arbitrary-crate.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/fitzgen.yaml  missing required field 'type'
-FAIL  maps/rust/voices/fitzgen.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/freyja-moth.yaml  missing required field 'type'
-FAIL  maps/rust/voices/freyja-moth.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/friedel-ziegelmayer-r-diger-klaehn-iroh-n0-computer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/friedel-ziegelmayer-r-diger-klaehn-iroh-n0-computer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/frostie314159.yaml  missing required field 'type'
-FAIL  maps/rust/voices/frostie314159.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/gbj-greg-johnston-leptos-creator.yaml  missing required field 'type'
-FAIL  maps/rust/voices/gbj-greg-johnston-leptos-creator.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/gbj.yaml  missing required field 'type'
-FAIL  maps/rust/voices/gbj.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/glademiller.yaml  missing required field 'type'
-FAIL  maps/rust/voices/glademiller.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/graham-king.yaml  missing required field 'type'
-FAIL  maps/rust/voices/graham-king.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/graydon2-graydon-hoare-rusts-original-language-designer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/graydon2-graydon-hoare-rusts-original-language-designer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/gregstoll.yaml  missing required field 'type'
-FAIL  maps/rust/voices/gregstoll.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/guy-bedford-hood-chatham-and-logan-gatlin-cloudflare.yaml  missing required field 'type'
-FAIL  maps/rust/voices/guy-bedford-hood-chatham-and-logan-gatlin-cloudflare.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/guy-bedford-hood-chatham-and-logan-gatlin.yaml  missing required field 'type'
-FAIL  maps/rust/voices/guy-bedford-hood-chatham-and-logan-gatlin.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/guybedford.yaml  missing required field 'type'
-FAIL  maps/rust/voices/guybedford.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/hannah-wang-ben-yang-and-fisher-darling.yaml  missing required field 'type'
-FAIL  maps/rust/voices/hannah-wang-ben-yang-and-fisher-darling.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/hannah-wang-ben-yang-fisher-darling-cloudflare.yaml  missing required field 'type'
-FAIL  maps/rust/voices/hannah-wang-ben-yang-fisher-darling-cloudflare.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/haricot.yaml  missing required field 'type'
 FAIL  maps/rust/voices/haricot.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/hecrj.yaml  missing required field 'type'
-FAIL  maps/rust/voices/hecrj.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/howardjohn.yaml  missing required field 'type'
-FAIL  maps/rust/voices/howardjohn.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/hsivonen.yaml  missing required field 'type'
-FAIL  maps/rust/voices/hsivonen.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ian-mcdonald.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ian-mcdonald.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ian-wagner.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ian-wagner.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ian-whitney-blog-post-rust-via-its-core-values-cited.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ian-whitney-blog-post-rust-via-its-core-values-cited.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ickshonpe.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ickshonpe.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/iiyese.yaml  missing required field 'type'
-FAIL  maps/rust/voices/iiyese.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/im-lunex.yaml  missing required field 'type'
 FAIL  maps/rust/voices/im-lunex.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/inactive-user.yaml  missing required field 'type'
 FAIL  maps/rust/voices/inactive-user.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/iroh-n0-dignifiedquire-post-author.yaml  missing required field 'type'
-FAIL  maps/rust/voices/iroh-n0-dignifiedquire-post-author.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/iroh-n0-friedel-ziegelmayer-r-diger-klaehn-post-authors.yaml  missing required field 'type'
-FAIL  maps/rust/voices/iroh-n0-friedel-ziegelmayer-r-diger-klaehn-post-authors.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/its-the-shrimp.yaml  missing required field 'type'
-FAIL  maps/rust/voices/its-the-shrimp.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ivan-nikulin.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ivan-nikulin.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ivarflakstad.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ivarflakstad.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ivmarkov.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ivmarkov.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/jackdk.yaml  missing required field 'type'
 FAIL  maps/rust/voices/jackdk.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jacko-io.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jacko-io.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jake-goulding-for-the-rust-infrastructure-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jake-goulding-for-the-rust-infrastructure-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jakub-ber-nek-on-behalf-of-the-rust-funding-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jakub-ber-nek-on-behalf-of-the-rust-funding-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jakub-ber-nek-on-behalf-of-the-rust-project-mentorship-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jakub-ber-nek-on-behalf-of-the-rust-project-mentorship-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/james-eastham.yaml  missing required field 'type'
-FAIL  maps/rust/voices/james-eastham.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jamesmunns-embassy-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jamesmunns-embassy-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jamesmunns.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jamesmunns.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/janhohenheim.yaml  missing required field 'type'
-FAIL  maps/rust/voices/janhohenheim.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/jasn-armstrng.yaml  missing required field 'type'
 FAIL  maps/rust/voices/jasn-armstrng.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jdahlstrom.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jdahlstrom.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jessebraham.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jessebraham.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jiachun-feng-co-founder-greptime.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jiachun-feng-co-founder-greptime.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jimmy-hartzell.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jimmy-hartzell.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jkelleyrtp.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jkelleyrtp.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/joel-dice-fermyon-component-model-wasmtime-contributor.yaml  missing required field 'type'
-FAIL  maps/rust/voices/joel-dice-fermyon-component-model-wasmtime-contributor.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/john-nagle.yaml  missing required field 'type'
-FAIL  maps/rust/voices/john-nagle.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jonas-b-ttiger-joboet.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jonas-b-ttiger-joboet.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jonathan-kelley.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jonathan-kelley.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jonathan-kelly-likely-kelley-unconfirmed.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jonathan-kelly-likely-kelley-unconfirmed.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jonathan-kelly.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jonathan-kelly.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jonathan-pallant-ferrous-systems.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jonathan-pallant-ferrous-systems.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jondot.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jondot.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/josh.yaml  missing required field 'type'
-FAIL  maps/rust/voices/josh.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/joshka-ratatui-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/joshka-ratatui-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/joshka.yaml  missing required field 'type'
-FAIL  maps/rust/voices/joshka.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/joshua-mo-shuttle.yaml  missing required field 'type'
-FAIL  maps/rust/voices/joshua-mo-shuttle.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/joshua-mo.yaml  missing required field 'type'
-FAIL  maps/rust/voices/joshua-mo.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jplatte.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jplatte.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jrose.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jrose.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jswrenn.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jswrenn.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/jumpnbrownweasel.yaml  missing required field 'type'
 FAIL  maps/rust/voices/jumpnbrownweasel.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/juntyr.yaml  missing required field 'type'
-FAIL  maps/rust/voices/juntyr.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/justin-handville.yaml  missing required field 'type'
 FAIL  maps/rust/voices/justin-handville.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/jvcmarcenes.yaml  missing required field 'type'
 FAIL  maps/rust/voices/jvcmarcenes.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/jynn-ferrous-systems-ferrocene-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/jynn-ferrous-systems-ferrocene-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kaplanelad.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kaplanelad.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kerollmops-tamo.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kerollmops-tamo.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/kev009.yaml  missing required field 'type'
 FAIL  maps/rust/voices/kev009.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kevincox.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kevincox.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/khimru.yaml  missing required field 'type'
 FAIL  maps/rust/voices/khimru.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/kibwen.yaml  missing required field 'type'
 FAIL  maps/rust/voices/kibwen.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/kingcol13.yaml  missing required field 'type'
 FAIL  maps/rust/voices/kingcol13.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kirillsemyonkin.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kirillsemyonkin.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/klaehn.yaml  missing required field 'type'
-FAIL  maps/rust/voices/klaehn.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kornel-2.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kornel-2.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kornel-forum-handle-identity-track-record-not-established.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kornel-forum-handle-identity-track-record-not-established.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kornel.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kornel.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/kpreid.yaml  missing required field 'type'
-FAIL  maps/rust/voices/kpreid.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/kristoff.yaml  missing required field 'type'
 FAIL  maps/rust/voices/kristoff.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ksxgithub.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ksxgithub.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/laggui.yaml  missing required field 'type'
-FAIL  maps/rust/voices/laggui.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/lake.yaml  missing required field 'type'
 FAIL  maps/rust/voices/lake.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/lalit-basin.yaml  missing required field 'type'
-FAIL  maps/rust/voices/lalit-basin.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/lann.yaml  missing required field 'type'
-FAIL  maps/rust/voices/lann.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/laurentmazare.yaml  missing required field 'type'
-FAIL  maps/rust/voices/laurentmazare.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/lei-huang.yaml  missing required field 'type'
-FAIL  maps/rust/voices/lei-huang.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/lewis.yaml  missing required field 'type'
 FAIL  maps/rust/voices/lewis.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/lilnasy.yaml  missing required field 'type'
 FAIL  maps/rust/voices/lilnasy.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/limeth.yaml  missing required field 'type'
-FAIL  maps/rust/voices/limeth.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/linus-torvalds.yaml  missing required field 'type'
-FAIL  maps/rust/voices/linus-torvalds.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/llogiq-rust-clippy-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/llogiq-rust-clippy-maintainer.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/lonjil.yaml  missing required field 'type'
 FAIL  maps/rust/voices/lonjil.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/lorenzleutgeb.yaml  missing required field 'type'
-FAIL  maps/rust/voices/lorenzleutgeb.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/louisfd-tracel-ai-burn-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/louisfd-tracel-ai-burn-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/lqd.yaml  missing required field 'type'
-FAIL  maps/rust/voices/lqd.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ltrlg.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ltrlg.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/luca-casonato.yaml  missing required field 'type'
-FAIL  maps/rust/voices/luca-casonato.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/luciano-mammino.yaml  missing required field 'type'
-FAIL  maps/rust/voices/luciano-mammino.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/luke-wagner-fastly-w3c-bytecode-alliance-component-model-co.yaml  missing required field 'type'
-FAIL  maps/rust/voices/luke-wagner-fastly-w3c-bytecode-alliance-component-model-co.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/lukechu10.yaml  missing required field 'type'
-FAIL  maps/rust/voices/lukechu10.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/lukewagner.yaml  missing required field 'type'
-FAIL  maps/rust/voices/lukewagner.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/maahl-maahl-net.yaml  missing required field 'type'
-FAIL  maps/rust/voices/maahl-maahl-net.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/mabezdev.yaml  missing required field 'type'
-FAIL  maps/rust/voices/mabezdev.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/madhadron.yaml  missing required field 'type'
 FAIL  maps/rust/voices/madhadron.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/madoshakalaka.yaml  missing required field 'type'
-FAIL  maps/rust/voices/madoshakalaka.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/matheus23-iroh-maintainer-n0.yaml  missing required field 'type'
-FAIL  maps/rust/voices/matheus23-iroh-maintainer-n0.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/matheus23-n0-computer-iroh-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/matheus23-n0-computer-iroh-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/matklad.yaml  missing required field 'type'
-FAIL  maps/rust/voices/matklad.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/matt-keeter.yaml  missing required field 'type'
-FAIL  maps/rust/voices/matt-keeter.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/mattuwu-yew-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/mattuwu-yew-maintainer.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/mattya.yaml  missing required field 'type'
 FAIL  maps/rust/voices/mattya.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/michael-de-silva.yaml  missing required field 'type'
-FAIL  maps/rust/voices/michael-de-silva.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/milenkovicm.yaml  missing required field 'type'
-FAIL  maps/rust/voices/milenkovicm.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/mordecai-emmanuel-etukudo.yaml  missing required field 'type'
 FAIL  maps/rust/voices/mordecai-emmanuel-etukudo.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/moss.yaml  missing required field 'type'
-FAIL  maps/rust/voices/moss.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/mrgvsv.yaml  missing required field 'type'
-FAIL  maps/rust/voices/mrgvsv.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/mrsubidubi.yaml  missing required field 'type'
-FAIL  maps/rust/voices/mrsubidubi.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ms2ger.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ms2ger.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/mtset.yaml  missing required field 'type'
 FAIL  maps/rust/voices/mtset.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/musicalninjadad.yaml  missing required field 'type'
-FAIL  maps/rust/voices/musicalninjadad.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/n0-inc-iroh-services-post-by-rae-mckelvey.yaml  missing required field 'type'
-FAIL  maps/rust/voices/n0-inc-iroh-services-post-by-rae-mckelvey.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/n0-inc-iroh-team-post-by-ramfox.yaml  missing required field 'type'
-FAIL  maps/rust/voices/n0-inc-iroh-team-post-by-ramfox.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/n0-post-by-ramfox-matheus23-b5.yaml  missing required field 'type'
-FAIL  maps/rust/voices/n0-post-by-ramfox-matheus23-b5.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nadrieril.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nadrieril.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/nakedible.yaml  missing required field 'type'
 FAIL  maps/rust/voices/nakedible.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/narsil.yaml  missing required field 'type'
-FAIL  maps/rust/voices/narsil.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nas-ceo-founder-rebel-author-developerlife-com-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nas-ceo-founder-rebel-author-developerlife-com-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/natalie-klestrup-r-ijezon-natkr.yaml  missing required field 'type'
-FAIL  maps/rust/voices/natalie-klestrup-r-ijezon-natkr.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nathan-sobo-zed-founder.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nathan-sobo-zed-founder.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nathanielsimard.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nathanielsimard.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nazmul-idris-r3bl-tui-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nazmul-idris-r3bl-tui-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nemo157.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nemo157.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/newpavlov.yaml  missing required field 'type'
-FAIL  maps/rust/voices/newpavlov.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/nick-kuntz.yaml  missing required field 'type'
 FAIL  maps/rust/voices/nick-kuntz.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nico-blitz-dioxus-labs-maintains-servo-adjacent-blitz-taffy.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nico-blitz-dioxus-labs-maintains-servo-adjacent-blitz-taffy.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nico.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nico.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nicole-tietz-sokolskaya.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nicole-tietz-sokolskaya.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nikomatsakis.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nikomatsakis.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/nmn-nmn-sh-blog-author.yaml  missing required field 'type'
-FAIL  maps/rust/voices/nmn-nmn-sh-blog-author.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/noah-gift.yaml  missing required field 'type'
-FAIL  maps/rust/voices/noah-gift.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/nobody1707.yaml  missing required field 'type'
 FAIL  maps/rust/voices/nobody1707.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/notfilippo.yaml  missing required field 'type'
-FAIL  maps/rust/voices/notfilippo.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/oakchris1955.yaml  missing required field 'type'
-FAIL  maps/rust/voices/oakchris1955.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/obi1kenobi.yaml  missing required field 'type'
-FAIL  maps/rust/voices/obi1kenobi.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/okhsunrog.yaml  missing required field 'type'
-FAIL  maps/rust/voices/okhsunrog.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/osiewicz.yaml  missing required field 'type'
-FAIL  maps/rust/voices/osiewicz.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ouillie.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ouillie.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ozankabak.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ozankabak.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/parasyte.yaml  missing required field 'type'
-FAIL  maps/rust/voices/parasyte.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/pauan.yaml  missing required field 'type'
-FAIL  maps/rust/voices/pauan.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/pavel-perikov.yaml  missing required field 'type'
 FAIL  maps/rust/voices/pavel-perikov.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/pickfire.yaml  missing required field 'type'
 FAIL  maps/rust/voices/pickfire.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/playfulfence.yaml  missing required field 'type'
-FAIL  maps/rust/voices/playfulfence.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/pm.yaml  missing required field 'type'
 FAIL  maps/rust/voices/pm.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/porky11.yaml  missing required field 'type'
-FAIL  maps/rust/voices/porky11.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/primoly.yaml  missing required field 'type'
 FAIL  maps/rust/voices/primoly.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/quanyi-ma.yaml  missing required field 'type'
-FAIL  maps/rust/voices/quanyi-ma.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/quinedot.yaml  missing required field 'type'
 FAIL  maps/rust/voices/quinedot.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/r-diger-klaehn-n0-iroh-iroh-blobs.yaml  missing required field 'type'
-FAIL  maps/rust/voices/r-diger-klaehn-n0-iroh-iroh-blobs.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/r-diger-klaehn.yaml  missing required field 'type'
-FAIL  maps/rust/voices/r-diger-klaehn.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/r-my-rakic-on-behalf-of-the-compiler-performance-working.yaml  missing required field 'type'
-FAIL  maps/rust/voices/r-my-rakic-on-behalf-of-the-compiler-performance-working.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rae-mckelvey-iroh-n0.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rae-mckelvey-iroh-n0.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rahulchaphalkar.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rahulchaphalkar.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ralfjung.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ralfjung.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ramfox-byline-iroh-blog-rust-connection-in-source-iroh.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ramfox-byline-iroh-blog-rust-connection-in-source-iroh.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ramfox-matheus23-iroh-n0-blog-authors.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ramfox-matheus23-iroh-n0-blog-authors.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ramfox-matheus23.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ramfox-matheus23.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ramfox.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ramfox.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/renkenono.yaml  missing required field 'type'
 FAIL  maps/rust/voices/renkenono.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rhai-project-rhaiscript-maintainers.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rhai-project-rhaiscript-maintainers.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rklaehn.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rklaehn.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/romgrk.yaml  missing required field 'type'
 FAIL  maps/rust/voices/romgrk.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rossberg.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rossberg.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rpjohnst.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rpjohnst.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rreverser-wasm-bindgen-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rreverser-wasm-bindgen-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rtic-developers-rtic-rs-maintainers.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rtic-developers-rtic-rs-maintainers.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rtic-developers.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rtic-developers.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rtic-project-rtic-rs-maintainers-unnamed-individually.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rtic-project-rtic-rs-maintainers-unnamed-individually.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/rtpg.yaml  missing required field 'type'
 FAIL  maps/rust/voices/rtpg.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rust-and-webassembly-book-rustwasm-github-io-unmaintained.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rust-and-webassembly-book-rustwasm-github-io-unmaintained.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rust-and-webassembly-working-group.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rust-and-webassembly-working-group.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rust-async-book-async-book-rust-lang-github-io.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rust-async-book-async-book-rust-lang-github-io.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rust-gamedev-working-group.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rust-gamedev-working-group.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rust-leadership-council.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rust-leadership-council.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rustunit.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rustunit.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/rustwasm-working-group-rust-and-webassembly-book.yaml  missing required field 'type'
-FAIL  maps/rust/voices/rustwasm-working-group-rust-and-webassembly-book.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/salmans.yaml  missing required field 'type'
-FAIL  maps/rust/voices/salmans.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/sam-cutter.yaml  missing required field 'type'
-FAIL  maps/rust/voices/sam-cutter.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/sam-van-overmeire.yaml  missing required field 'type'
-FAIL  maps/rust/voices/sam-van-overmeire.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/saulecabrera-bytecode-alliance-wasmtime-winch-baseline.yaml  missing required field 'type'
-FAIL  maps/rust/voices/saulecabrera-bytecode-alliance-wasmtime-winch-baseline.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/saulecabrera.yaml  missing required field 'type'
-FAIL  maps/rust/voices/saulecabrera.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/schungx.yaml  missing required field 'type'
-FAIL  maps/rust/voices/schungx.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/scottmcm.yaml  missing required field 'type'
-FAIL  maps/rust/voices/scottmcm.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/sebastian-imlay-simlay.yaml  missing required field 'type'
-FAIL  maps/rust/voices/sebastian-imlay-simlay.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/serdar-yegulalp-infoworld-senior-writer.yaml  missing required field 'type'
 FAIL  maps/rust/voices/serdar-yegulalp-infoworld-senior-writer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/sigmasd.yaml  missing required field 'type'
-FAIL  maps/rust/voices/sigmasd.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/simolus3.yaml  missing required field 'type'
 FAIL  maps/rust/voices/simolus3.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/skifire13.yaml  missing required field 'type'
 FAIL  maps/rust/voices/skifire13.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/smarcd.yaml  missing required field 'type'
 FAIL  maps/rust/voices/smarcd.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/soares-chen.yaml  missing required field 'type'
-FAIL  maps/rust/voices/soares-chen.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/softmaximalist-pr-author-burn-contributor.yaml  missing required field 'type'
 FAIL  maps/rust/voices/softmaximalist-pr-author-burn-contributor.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/someonetoignore.yaml  missing required field 'type'
-FAIL  maps/rust/voices/someonetoignore.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ssokolow.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ssokolow.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/st0rmbtw.yaml  missing required field 'type'
 FAIL  maps/rust/voices/st0rmbtw.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/stefan-baumgartner.yaml  missing required field 'type'
-FAIL  maps/rust/voices/stefan-baumgartner.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/steffahn.yaml  missing required field 'type'
-FAIL  maps/rust/voices/steffahn.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/steve-klabnik.yaml  missing required field 'type'
-FAIL  maps/rust/voices/steve-klabnik.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/steveklabnik.yaml  missing required field 'type'
-FAIL  maps/rust/voices/steveklabnik.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/summer-rs-project-github-com-spring-rs-spring-rs-readme-now.yaml  missing required field 'type'
 FAIL  maps/rust/voices/summer-rs-project-github-com-spring-rs-spring-rs-readme-now.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/sunshowers.yaml  missing required field 'type'
-FAIL  maps/rust/voices/sunshowers.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/superdump.yaml  missing required field 'type'
 FAIL  maps/rust/voices/superdump.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/sycamore.yaml  missing required field 'type'
-FAIL  maps/rust/voices/sycamore.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/sylvain-kerkour.yaml  missing required field 'type'
-FAIL  maps/rust/voices/sylvain-kerkour.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/taladar.yaml  missing required field 'type'
-FAIL  maps/rust/voices/taladar.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tamschi.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tamschi.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tantaluspath-serendipity-systems-llc.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tantaluspath-serendipity-systems-llc.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/tapghoul.yaml  missing required field 'type'
 FAIL  maps/rust/voices/tapghoul.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/taylor-and-tyler.yaml  missing required field 'type'
-FAIL  maps/rust/voices/taylor-and-tyler.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/taylor.yaml  missing required field 'type'
-FAIL  maps/rust/voices/taylor.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ted-tso.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ted-tso.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/teohhanhui.yaml  missing required field 'type'
 FAIL  maps/rust/voices/teohhanhui.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/the-spin-project-fermyon-cncf-spin-institution.yaml  missing required field 'type'
-FAIL  maps/rust/voices/the-spin-project-fermyon-cncf-spin-institution.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/the-spin-project.yaml  missing required field 'type'
-FAIL  maps/rust/voices/the-spin-project.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/the8472.yaml  missing required field 'type'
-FAIL  maps/rust/voices/the8472.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/thesys-engineering-team.yaml  missing required field 'type'
-FAIL  maps/rust/voices/thesys-engineering-team.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/thorsten-hans.yaml  missing required field 'type'
-FAIL  maps/rust/voices/thorsten-hans.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tiemensch.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tiemensch.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/tim-mccallum-bytecode-alliance.yaml  missing required field 'type'
 FAIL  maps/rust/voices/tim-mccallum-bytecode-alliance.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/toastal.yaml  missing required field 'type'
 FAIL  maps/rust/voices/toastal.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tomas-tauber.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tomas-tauber.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/totalkrill.yaml  missing required field 'type'
 FAIL  maps/rust/voices/totalkrill.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tristan-solo-rust-bevy-game-developer-green-fit-heaven.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tristan-solo-rust-bevy-game-developer-green-fit-heaven.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tristan.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tristan.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tronical-olivier-goffart-slint-co-founder-maintainer.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tronical-olivier-goffart-slint-co-founder-maintainer.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/tumdum.yaml  missing required field 'type'
-FAIL  maps/rust/voices/tumdum.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/turbo87.yaml  missing required field 'type'
-FAIL  maps/rust/voices/turbo87.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/ukoehb.yaml  missing required field 'type'
-FAIL  maps/rust/voices/ukoehb.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/unidentified-reviewer.yaml  missing required field 'type'
 FAIL  maps/rust/voices/unidentified-reviewer.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/urben1680.yaml  missing required field 'type'
 FAIL  maps/rust/voices/urben1680.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/vangata-ve.yaml  missing required field 'type'
 FAIL  maps/rust/voices/vangata-ve.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/vaultwarden-maintainers-dani-garcia-vaultwarden.yaml  missing required field 'type'
-FAIL  maps/rust/voices/vaultwarden-maintainers-dani-garcia-vaultwarden.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/vectorware.yaml  missing required field 'type'
-FAIL  maps/rust/voices/vectorware.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/vitalyd.yaml  missing required field 'type'
 FAIL  maps/rust/voices/vitalyd.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/vorpal.yaml  missing required field 'type'
@@ -1041,44 +601,18 @@ FAIL  maps/rust/voices/vri.yaml  missing required field 'type'
 FAIL  maps/rust/voices/vri.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/wandbrandon.yaml  missing required field 'type'
 FAIL  maps/rust/voices/wandbrandon.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/warre-snaet.yaml  missing required field 'type'
-FAIL  maps/rust/voices/warre-snaet.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/wedson-almeida-filho.yaml  missing required field 'type'
-FAIL  maps/rust/voices/wedson-almeida-filho.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/wingertge-pr-author-tracel-ai-burn-contributor.yaml  missing required field 'type'
-FAIL  maps/rust/voices/wingertge-pr-author-tracel-ai-burn-contributor.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/withoutboats.yaml  missing required field 'type'
-FAIL  maps/rust/voices/withoutboats.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/wofo-quoting-the-dropshot-projects-own-stated-design-goal.yaml  missing required field 'type'
 FAIL  maps/rust/voices/wofo-quoting-the-dropshot-projects-own-stated-design-goal.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/worldsender.yaml  missing required field 'type'
-FAIL  maps/rust/voices/worldsender.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/wucke13.yaml  missing required field 'type'
-FAIL  maps/rust/voices/wucke13.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/yakira-neko.yaml  missing required field 'type'
 FAIL  maps/rust/voices/yakira-neko.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/yanshay.yaml  missing required field 'type'
-FAIL  maps/rust/voices/yanshay.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/yatekii.yaml  missing required field 'type'
-FAIL  maps/rust/voices/yatekii.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/yawaramin.yaml  missing required field 'type'
 FAIL  maps/rust/voices/yawaramin.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/yevgen-safronov-nikita-lapkov-j-r-me-schneider-cloudflare.yaml  missing required field 'type'
-FAIL  maps/rust/voices/yevgen-safronov-nikita-lapkov-j-r-me-schneider-cloudflare.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/yinho999.yaml  missing required field 'type'
 FAIL  maps/rust/voices/yinho999.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/ysalitrynskyi.yaml  missing required field 'type'
 FAIL  maps/rust/voices/ysalitrynskyi.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/yuri-iozzelli.yaml  missing required field 'type'
-FAIL  maps/rust/voices/yuri-iozzelli.yaml  missing required field 'track_record'
 FAIL  maps/rust/voices/zackw.yaml  missing required field 'type'
 FAIL  maps/rust/voices/zackw.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/zaidoon-abd-al-hadi.yaml  missing required field 'type'
-FAIL  maps/rust/voices/zaidoon-abd-al-hadi.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/zcash-foundation-zebra-project.yaml  missing required field 'type'
-FAIL  maps/rust/voices/zcash-foundation-zebra-project.yaml  missing required field 'track_record'
-FAIL  maps/rust/voices/zeke-hunter-green.yaml  missing required field 'type'
-FAIL  maps/rust/voices/zeke-hunter-green.yaml  missing required field 'track_record'
 FAIL  maps/rust/claims/a-sB01-f000149-c1.yaml  missing required field 'date'
 FAIL  maps/rust/claims/a-sB01-f000149-c2.yaml  missing required field 'date'
 FAIL  maps/rust/claims/a-sB01-f000149-c3.yaml  missing required field 'date'
@@ -1226,411 +760,108 @@ FAIL  maps/rust/claims/b-sb18-f005332-c2.yaml  date 'None' is not ISO (YYYY-MM-D
 FAIL  maps/rust/claims/b-sb18-f005332-c3.yaml  date 'None' is not ISO (YYYY-MM-DD)
 FAIL  maps/rust/claims/b-sb18-f005332-c4.yaml  date 'None' is not ISO (YYYY-MM-DD)
 FAIL  maps/rust/voices/2e71828.yaml  no track_record line with a url
-FAIL  maps/rust/voices/aatch.yaml  no track_record line with a url
-FAIL  maps/rust/voices/abrown.yaml  no track_record line with a url
-FAIL  maps/rust/voices/adam-surname-unconfirmed-self-id-only.yaml  no track_record line with a url
-FAIL  maps/rust/voices/adam.yaml  no track_record line with a url
-FAIL  maps/rust/voices/adriangb.yaml  no track_record line with a url
 FAIL  maps/rust/voices/afetisov.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ajdecon.yaml  no track_record line with a url
-FAIL  maps/rust/voices/alamb.yaml  no track_record line with a url
 FAIL  maps/rust/voices/alandekok.yaml  no track_record line with a url
-FAIL  maps/rust/voices/alejandra-gonz-lez-blyxyas.yaml  no track_record line with a url
-FAIL  maps/rust/voices/alejandra-gonz-lez.yaml  no track_record line with a url
-FAIL  maps/rust/voices/aleksandr-petrosyan.yaml  no track_record line with a url
-FAIL  maps/rust/voices/alex-crichton.yaml  no track_record line with a url
-FAIL  maps/rust/voices/alexcrichton.yaml  no track_record line with a url
-FAIL  maps/rust/voices/alice-i-cecile.yaml  no track_record line with a url
 FAIL  maps/rust/voices/alonely0.yaml  no track_record line with a url
-FAIL  maps/rust/voices/amos-fasterthanlime.yaml  no track_record line with a url
 FAIL  maps/rust/voices/andrei-alexandrescu-creator-of-d.yaml  no track_record line with a url
-FAIL  maps/rust/voices/andrew-jakubowicz-and-co-presenter-canva.yaml  no track_record line with a url
-FAIL  maps/rust/voices/andrew-jakubowicz.yaml  no track_record line with a url
-FAIL  maps/rust/voices/andrews05.yaml  no track_record line with a url
 FAIL  maps/rust/voices/anthonygrondin.yaml  no track_record line with a url
-FAIL  maps/rust/voices/anthonytorlucci.yaml  no track_record line with a url
-FAIL  maps/rust/voices/antimora-tracel-ai-burn-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/antimora.yaml  no track_record line with a url
-FAIL  maps/rust/voices/antonio-pirino.yaml  no track_record line with a url
-FAIL  maps/rust/voices/araz-abishov.yaml  no track_record line with a url
-FAIL  maps/rust/voices/arnaud-gourlay.yaml  no track_record line with a url
-FAIL  maps/rust/voices/arqu-n0-computer-iroh-engineer-production-post-mortem-author.yaml  no track_record line with a url
-FAIL  maps/rust/voices/arqu.yaml  no track_record line with a url
-FAIL  maps/rust/voices/arthur-zucker-hugging-face-tokenizers-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/arthurbrussee.yaml  no track_record line with a url
-FAIL  maps/rust/voices/asahi-lina.yaml  no track_record line with a url
-FAIL  maps/rust/voices/async-book-rust-lang-github-io-rust-async-working-group.yaml  no track_record line with a url
-FAIL  maps/rust/voices/aturon-aaron-turon-rust-language-design-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/author-of-ideas-reifying-ideas-reify-ing-not-named-in-the.yaml  no track_record line with a url
-FAIL  maps/rust/voices/author-of-ideas-reifying-ideas-reify-ing.yaml  no track_record line with a url
-FAIL  maps/rust/voices/b5.yaml  no track_record line with a url
 FAIL  maps/rust/voices/badeend.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bd103.yaml  no track_record line with a url
-FAIL  maps/rust/voices/benwis-leptos-maintainer.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bjoernq.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bjorn3.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bogdan-petru.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bojan-serafimov.yaml  no track_record line with a url
-FAIL  maps/rust/voices/boringcactus-melody.yaml  no track_record line with a url
-FAIL  maps/rust/voices/brooklyn-zelenka.yaml  no track_record line with a url
-FAIL  maps/rust/voices/brooksmtownsend-wasmcloud-engineer-contributor-to-mio-tokio.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bruce-perens.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bryan-cantrill.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bsder.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bstrie-attribution-hedged-by-the-poster-themselves-im.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bugadani-esp-hal-maintainer-pr-author.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bugadani-esp-hal-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bugadani.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bunnybites.yaml  no track_record line with a url
-FAIL  maps/rust/voices/burntsushi.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bushrat011899.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cad97.yaml  no track_record line with a url
-FAIL  maps/rust/voices/caio-c410-f3r.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cart.yaml  no track_record line with a url
-FAIL  maps/rust/voices/carter-anderson-cart-bevy-creator-and-project-lead.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cbjamo.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cbournhonesque.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cecton.yaml  no track_record line with a url
-FAIL  maps/rust/voices/celso-martinho-ruskin-constant-rui-figueira-and-lu-s-duarte.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cfallin-chris-fallin.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cfallin.yaml  no track_record line with a url
 FAIL  maps/rust/voices/chayan-mistry.yaml  no track_record line with a url
 FAIL  maps/rust/voices/chescock.yaml  no track_record line with a url
-FAIL  maps/rust/voices/clarfonthey.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cliff-l-biffle.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cloudflare-hyperdrive-team.yaml  no track_record line with a url
 FAIL  maps/rust/voices/co-presenter-taj-touch-unclear.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cobaltcause.yaml  no track_record line with a url
-FAIL  maps/rust/voices/comphead.yaml  no track_record line with a url
-FAIL  maps/rust/voices/conradirwin.yaml  no track_record line with a url
 FAIL  maps/rust/voices/coreh.yaml  no track_record line with a url
 FAIL  maps/rust/voices/crazyboyqcd.yaml  no track_record line with a url
-FAIL  maps/rust/voices/crutcher.yaml  no track_record line with a url
-FAIL  maps/rust/voices/cryze.yaml  no track_record line with a url
 FAIL  maps/rust/voices/danieljoyce.yaml  no track_record line with a url
-FAIL  maps/rust/voices/danielkeep-author-of-the-little-book-of-rust-macros-cited.yaml  no track_record line with a url
 FAIL  maps/rust/voices/dataangel.yaml  no track_record line with a url
 FAIL  maps/rust/voices/david-chisnall.yaml  no track_record line with a url
-FAIL  maps/rust/voices/david-vin-felgo.yaml  no track_record line with a url
-FAIL  maps/rust/voices/davidpdrsn-axum-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/daxpedda-wasm-bindgen-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/daxpedda.yaml  no track_record line with a url
-FAIL  maps/rust/voices/denis-bezrukov.yaml  no track_record line with a url
 FAIL  maps/rust/voices/dhruv-ahuja.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dig-b5-and-ramfox-iroh-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dignifiedquire-byline-iroh-blog-rust-connection-in-source.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dignifiedquire-iroh-n0-computer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dignifiedquire-n0-computer-iroh-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dignifiedquire.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dimforge-nalgebra-maintainers.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dirbaio.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dirkjan-ochtman.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dist1ll.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dlight.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dominaezzz-esp-hal-reviewer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dominaezzz.yaml  no track_record line with a url
-FAIL  maps/rust/voices/dragondev1906.yaml  no track_record line with a url
-FAIL  maps/rust/voices/drewridley.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ds84182.yaml  no track_record line with a url
 FAIL  maps/rust/voices/durka42.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ealmloff.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ecoskey.yaml  no track_record line with a url
-FAIL  maps/rust/voices/edjopato.yaml  no track_record line with a url
-FAIL  maps/rust/voices/eggyal.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ekleog.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ekuber.yaml  no track_record line with a url
-FAIL  maps/rust/voices/elipsitz.yaml  no track_record line with a url
-FAIL  maps/rust/voices/elitetk.yaml  no track_record line with a url
-FAIL  maps/rust/voices/emilk.yaml  no track_record line with a url
-FAIL  maps/rust/voices/emily-dixon.yaml  no track_record line with a url
-FAIL  maps/rust/voices/epage.yaml  no track_record line with a url
-FAIL  maps/rust/voices/eric-zhang.yaml  no track_record line with a url
-FAIL  maps/rust/voices/eucliddivisionlemma.yaml  no track_record line with a url
-FAIL  maps/rust/voices/eugineerd.yaml  no track_record line with a url
-FAIL  maps/rust/voices/evgenii-seliverstov.yaml  no track_record line with a url
-FAIL  maps/rust/voices/fanf.yaml  no track_record line with a url
-FAIL  maps/rust/voices/farnz.yaml  no track_record line with a url
-FAIL  maps/rust/voices/fasterthanlime.yaml  no track_record line with a url
-FAIL  maps/rust/voices/federico-mena-quintero.yaml  no track_record line with a url
-FAIL  maps/rust/voices/felipebalbi-nxp-embedded-engineer-embassy-nxp-contributor.yaml  no track_record line with a url
-FAIL  maps/rust/voices/felipebalbi.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ferrous-systems-jonathan.yaml  no track_record line with a url
-FAIL  maps/rust/voices/fitzgen-bytecode-alliance-wasmtime-core-arbitrary-crate.yaml  no track_record line with a url
-FAIL  maps/rust/voices/fitzgen.yaml  no track_record line with a url
-FAIL  maps/rust/voices/freyja-moth.yaml  no track_record line with a url
-FAIL  maps/rust/voices/friedel-ziegelmayer-r-diger-klaehn-iroh-n0-computer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/frostie314159.yaml  no track_record line with a url
-FAIL  maps/rust/voices/gbj-greg-johnston-leptos-creator.yaml  no track_record line with a url
-FAIL  maps/rust/voices/gbj.yaml  no track_record line with a url
-FAIL  maps/rust/voices/glademiller.yaml  no track_record line with a url
-FAIL  maps/rust/voices/graham-king.yaml  no track_record line with a url
-FAIL  maps/rust/voices/graydon2-graydon-hoare-rusts-original-language-designer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/gregstoll.yaml  no track_record line with a url
-FAIL  maps/rust/voices/guy-bedford-hood-chatham-and-logan-gatlin-cloudflare.yaml  no track_record line with a url
-FAIL  maps/rust/voices/guy-bedford-hood-chatham-and-logan-gatlin.yaml  no track_record line with a url
-FAIL  maps/rust/voices/guybedford.yaml  no track_record line with a url
-FAIL  maps/rust/voices/hannah-wang-ben-yang-and-fisher-darling.yaml  no track_record line with a url
-FAIL  maps/rust/voices/hannah-wang-ben-yang-fisher-darling-cloudflare.yaml  no track_record line with a url
 FAIL  maps/rust/voices/haricot.yaml  no track_record line with a url
-FAIL  maps/rust/voices/hecrj.yaml  no track_record line with a url
-FAIL  maps/rust/voices/howardjohn.yaml  no track_record line with a url
-FAIL  maps/rust/voices/hsivonen.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ian-mcdonald.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ian-wagner.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ian-whitney-blog-post-rust-via-its-core-values-cited.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ickshonpe.yaml  no track_record line with a url
-FAIL  maps/rust/voices/iiyese.yaml  no track_record line with a url
 FAIL  maps/rust/voices/im-lunex.yaml  no track_record line with a url
 FAIL  maps/rust/voices/inactive-user.yaml  no track_record line with a url
-FAIL  maps/rust/voices/iroh-n0-dignifiedquire-post-author.yaml  no track_record line with a url
-FAIL  maps/rust/voices/iroh-n0-friedel-ziegelmayer-r-diger-klaehn-post-authors.yaml  no track_record line with a url
-FAIL  maps/rust/voices/its-the-shrimp.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ivan-nikulin.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ivarflakstad.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ivmarkov.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jackdk.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jacko-io.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jake-goulding-for-the-rust-infrastructure-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jakub-ber-nek-on-behalf-of-the-rust-funding-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jakub-ber-nek-on-behalf-of-the-rust-project-mentorship-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/james-eastham.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jamesmunns-embassy-maintainer.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jamesmunns.yaml  no track_record line with a url
-FAIL  maps/rust/voices/janhohenheim.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jasn-armstrng.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jdahlstrom.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jessebraham.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jiachun-feng-co-founder-greptime.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jimmy-hartzell.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jkelleyrtp.yaml  no track_record line with a url
-FAIL  maps/rust/voices/joel-dice-fermyon-component-model-wasmtime-contributor.yaml  no track_record line with a url
-FAIL  maps/rust/voices/john-nagle.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jonas-b-ttiger-joboet.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jonathan-kelley.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jonathan-kelly-likely-kelley-unconfirmed.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jonathan-kelly.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jonathan-pallant-ferrous-systems.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jondot.yaml  no track_record line with a url
-FAIL  maps/rust/voices/josh.yaml  no track_record line with a url
-FAIL  maps/rust/voices/joshka-ratatui-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/joshka.yaml  no track_record line with a url
-FAIL  maps/rust/voices/joshua-mo-shuttle.yaml  no track_record line with a url
-FAIL  maps/rust/voices/joshua-mo.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jplatte.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jrose.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jswrenn.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jumpnbrownweasel.yaml  no track_record line with a url
-FAIL  maps/rust/voices/juntyr.yaml  no track_record line with a url
 FAIL  maps/rust/voices/justin-handville.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jvcmarcenes.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jynn-ferrous-systems-ferrocene-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kaplanelad.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kerollmops-tamo.yaml  no track_record line with a url
 FAIL  maps/rust/voices/kev009.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kevincox.yaml  no track_record line with a url
 FAIL  maps/rust/voices/khimru.yaml  no track_record line with a url
 FAIL  maps/rust/voices/kibwen.yaml  no track_record line with a url
 FAIL  maps/rust/voices/kingcol13.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kirillsemyonkin.yaml  no track_record line with a url
-FAIL  maps/rust/voices/klaehn.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kornel-2.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kornel-forum-handle-identity-track-record-not-established.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kornel.yaml  no track_record line with a url
-FAIL  maps/rust/voices/kpreid.yaml  no track_record line with a url
 FAIL  maps/rust/voices/kristoff.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ksxgithub.yaml  no track_record line with a url
 FAIL  maps/rust/voices/laggui.yaml  no track_record line with a url
 FAIL  maps/rust/voices/lake.yaml  no track_record line with a url
-FAIL  maps/rust/voices/lalit-basin.yaml  no track_record line with a url
-FAIL  maps/rust/voices/lann.yaml  no track_record line with a url
-FAIL  maps/rust/voices/laurentmazare.yaml  no track_record line with a url
-FAIL  maps/rust/voices/lei-huang.yaml  no track_record line with a url
 FAIL  maps/rust/voices/lewis.yaml  no track_record line with a url
 FAIL  maps/rust/voices/lilnasy.yaml  no track_record line with a url
-FAIL  maps/rust/voices/limeth.yaml  no track_record line with a url
-FAIL  maps/rust/voices/linus-torvalds.yaml  no track_record line with a url
-FAIL  maps/rust/voices/llogiq-rust-clippy-maintainer.yaml  no track_record line with a url
 FAIL  maps/rust/voices/lonjil.yaml  no track_record line with a url
-FAIL  maps/rust/voices/lorenzleutgeb.yaml  no track_record line with a url
-FAIL  maps/rust/voices/louisfd-tracel-ai-burn-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/lqd.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ltrlg.yaml  no track_record line with a url
-FAIL  maps/rust/voices/luca-casonato.yaml  no track_record line with a url
-FAIL  maps/rust/voices/luciano-mammino.yaml  no track_record line with a url
-FAIL  maps/rust/voices/luke-wagner-fastly-w3c-bytecode-alliance-component-model-co.yaml  no track_record line with a url
-FAIL  maps/rust/voices/lukechu10.yaml  no track_record line with a url
-FAIL  maps/rust/voices/lukewagner.yaml  no track_record line with a url
-FAIL  maps/rust/voices/maahl-maahl-net.yaml  no track_record line with a url
-FAIL  maps/rust/voices/mabezdev.yaml  no track_record line with a url
 FAIL  maps/rust/voices/madhadron.yaml  no track_record line with a url
-FAIL  maps/rust/voices/madoshakalaka.yaml  no track_record line with a url
-FAIL  maps/rust/voices/matheus23-iroh-maintainer-n0.yaml  no track_record line with a url
-FAIL  maps/rust/voices/matheus23-n0-computer-iroh-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/matklad.yaml  no track_record line with a url
-FAIL  maps/rust/voices/matt-keeter.yaml  no track_record line with a url
-FAIL  maps/rust/voices/mattuwu-yew-maintainer.yaml  no track_record line with a url
 FAIL  maps/rust/voices/mattya.yaml  no track_record line with a url
-FAIL  maps/rust/voices/michael-de-silva.yaml  no track_record line with a url
-FAIL  maps/rust/voices/milenkovicm.yaml  no track_record line with a url
 FAIL  maps/rust/voices/mordecai-emmanuel-etukudo.yaml  no track_record line with a url
-FAIL  maps/rust/voices/moss.yaml  no track_record line with a url
-FAIL  maps/rust/voices/mrgvsv.yaml  no track_record line with a url
-FAIL  maps/rust/voices/mrsubidubi.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ms2ger.yaml  no track_record line with a url
 FAIL  maps/rust/voices/mtset.yaml  no track_record line with a url
-FAIL  maps/rust/voices/musicalninjadad.yaml  no track_record line with a url
-FAIL  maps/rust/voices/n0-inc-iroh-services-post-by-rae-mckelvey.yaml  no track_record line with a url
-FAIL  maps/rust/voices/n0-inc-iroh-team-post-by-ramfox.yaml  no track_record line with a url
-FAIL  maps/rust/voices/n0-post-by-ramfox-matheus23-b5.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nadrieril.yaml  no track_record line with a url
 FAIL  maps/rust/voices/nakedible.yaml  no track_record line with a url
-FAIL  maps/rust/voices/narsil.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nas-ceo-founder-rebel-author-developerlife-com-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/natalie-klestrup-r-ijezon-natkr.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nathan-sobo-zed-founder.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nathanielsimard.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nazmul-idris-r3bl-tui-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nemo157.yaml  no track_record line with a url
-FAIL  maps/rust/voices/newpavlov.yaml  no track_record line with a url
 FAIL  maps/rust/voices/nick-kuntz.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nico-blitz-dioxus-labs-maintains-servo-adjacent-blitz-taffy.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nico.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nicole-tietz-sokolskaya.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nikomatsakis.yaml  no track_record line with a url
-FAIL  maps/rust/voices/nmn-nmn-sh-blog-author.yaml  no track_record line with a url
-FAIL  maps/rust/voices/noah-gift.yaml  no track_record line with a url
 FAIL  maps/rust/voices/nobody1707.yaml  no track_record line with a url
-FAIL  maps/rust/voices/notfilippo.yaml  no track_record line with a url
-FAIL  maps/rust/voices/oakchris1955.yaml  no track_record line with a url
-FAIL  maps/rust/voices/obi1kenobi.yaml  no track_record line with a url
-FAIL  maps/rust/voices/okhsunrog.yaml  no track_record line with a url
-FAIL  maps/rust/voices/osiewicz.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ouillie.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ozankabak.yaml  no track_record line with a url
-FAIL  maps/rust/voices/parasyte.yaml  no track_record line with a url
-FAIL  maps/rust/voices/pauan.yaml  no track_record line with a url
 FAIL  maps/rust/voices/pavel-perikov.yaml  no track_record line with a url
 FAIL  maps/rust/voices/pickfire.yaml  no track_record line with a url
-FAIL  maps/rust/voices/playfulfence.yaml  no track_record line with a url
 FAIL  maps/rust/voices/pm.yaml  no track_record line with a url
-FAIL  maps/rust/voices/porky11.yaml  no track_record line with a url
 FAIL  maps/rust/voices/primoly.yaml  no track_record line with a url
-FAIL  maps/rust/voices/quanyi-ma.yaml  no track_record line with a url
 FAIL  maps/rust/voices/quinedot.yaml  no track_record line with a url
-FAIL  maps/rust/voices/r-diger-klaehn-n0-iroh-iroh-blobs.yaml  no track_record line with a url
-FAIL  maps/rust/voices/r-diger-klaehn.yaml  no track_record line with a url
-FAIL  maps/rust/voices/r-my-rakic-on-behalf-of-the-compiler-performance-working.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rae-mckelvey-iroh-n0.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rahulchaphalkar.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ralfjung.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ramfox-byline-iroh-blog-rust-connection-in-source-iroh.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ramfox-matheus23-iroh-n0-blog-authors.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ramfox-matheus23.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ramfox.yaml  no track_record line with a url
 FAIL  maps/rust/voices/renkenono.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rhai-project-rhaiscript-maintainers.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rklaehn.yaml  no track_record line with a url
 FAIL  maps/rust/voices/romgrk.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rossberg.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rpjohnst.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rreverser-wasm-bindgen-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rtic-developers-rtic-rs-maintainers.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rtic-developers.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rtic-project-rtic-rs-maintainers-unnamed-individually.yaml  no track_record line with a url
 FAIL  maps/rust/voices/rtpg.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rust-and-webassembly-book-rustwasm-github-io-unmaintained.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rust-and-webassembly-working-group.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rust-async-book-async-book-rust-lang-github-io.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rust-gamedev-working-group.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rust-leadership-council.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rustunit.yaml  no track_record line with a url
-FAIL  maps/rust/voices/rustwasm-working-group-rust-and-webassembly-book.yaml  no track_record line with a url
-FAIL  maps/rust/voices/salmans.yaml  no track_record line with a url
-FAIL  maps/rust/voices/sam-cutter.yaml  no track_record line with a url
-FAIL  maps/rust/voices/sam-van-overmeire.yaml  no track_record line with a url
-FAIL  maps/rust/voices/saulecabrera-bytecode-alliance-wasmtime-winch-baseline.yaml  no track_record line with a url
-FAIL  maps/rust/voices/saulecabrera.yaml  no track_record line with a url
-FAIL  maps/rust/voices/schungx.yaml  no track_record line with a url
-FAIL  maps/rust/voices/scottmcm.yaml  no track_record line with a url
-FAIL  maps/rust/voices/sebastian-imlay-simlay.yaml  no track_record line with a url
 FAIL  maps/rust/voices/serdar-yegulalp-infoworld-senior-writer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/sigmasd.yaml  no track_record line with a url
 FAIL  maps/rust/voices/simolus3.yaml  no track_record line with a url
 FAIL  maps/rust/voices/skifire13.yaml  no track_record line with a url
 FAIL  maps/rust/voices/smarcd.yaml  no track_record line with a url
-FAIL  maps/rust/voices/soares-chen.yaml  no track_record line with a url
 FAIL  maps/rust/voices/softmaximalist-pr-author-burn-contributor.yaml  no track_record line with a url
-FAIL  maps/rust/voices/someonetoignore.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ssokolow.yaml  no track_record line with a url
 FAIL  maps/rust/voices/st0rmbtw.yaml  no track_record line with a url
 FAIL  maps/rust/voices/stefan-baumgartner.yaml  no track_record line with a url
-FAIL  maps/rust/voices/steffahn.yaml  no track_record line with a url
-FAIL  maps/rust/voices/steve-klabnik.yaml  no track_record line with a url
-FAIL  maps/rust/voices/steveklabnik.yaml  no track_record line with a url
 FAIL  maps/rust/voices/summer-rs-project-github-com-spring-rs-spring-rs-readme-now.yaml  no track_record line with a url
-FAIL  maps/rust/voices/sunshowers.yaml  no track_record line with a url
 FAIL  maps/rust/voices/superdump.yaml  no track_record line with a url
-FAIL  maps/rust/voices/sycamore.yaml  no track_record line with a url
-FAIL  maps/rust/voices/sylvain-kerkour.yaml  no track_record line with a url
-FAIL  maps/rust/voices/taladar.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tamschi.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tantaluspath-serendipity-systems-llc.yaml  no track_record line with a url
 FAIL  maps/rust/voices/tapghoul.yaml  no track_record line with a url
-FAIL  maps/rust/voices/taylor-and-tyler.yaml  no track_record line with a url
-FAIL  maps/rust/voices/taylor.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ted-tso.yaml  no track_record line with a url
 FAIL  maps/rust/voices/teohhanhui.yaml  no track_record line with a url
-FAIL  maps/rust/voices/the-spin-project-fermyon-cncf-spin-institution.yaml  no track_record line with a url
-FAIL  maps/rust/voices/the-spin-project.yaml  no track_record line with a url
-FAIL  maps/rust/voices/the8472.yaml  no track_record line with a url
-FAIL  maps/rust/voices/thesys-engineering-team.yaml  no track_record line with a url
-FAIL  maps/rust/voices/thorsten-hans.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tiemensch.yaml  no track_record line with a url
 FAIL  maps/rust/voices/tim-mccallum-bytecode-alliance.yaml  no track_record line with a url
 FAIL  maps/rust/voices/toastal.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tomas-tauber.yaml  no track_record line with a url
 FAIL  maps/rust/voices/totalkrill.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tristan-solo-rust-bevy-game-developer-green-fit-heaven.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tristan.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tronical-olivier-goffart-slint-co-founder-maintainer.yaml  no track_record line with a url
-FAIL  maps/rust/voices/tumdum.yaml  no track_record line with a url
-FAIL  maps/rust/voices/turbo87.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ukoehb.yaml  no track_record line with a url
 FAIL  maps/rust/voices/unidentified-reviewer.yaml  no track_record line with a url
 FAIL  maps/rust/voices/urben1680.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vangata-ve.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vaultwarden-maintainers-dani-garcia-vaultwarden.yaml  no track_record line with a url
-FAIL  maps/rust/voices/vectorware.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vitalyd.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vorpal.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vri.yaml  no track_record line with a url
 FAIL  maps/rust/voices/wandbrandon.yaml  no track_record line with a url
 FAIL  maps/rust/voices/warre-snaet.yaml  no track_record line with a url
-FAIL  maps/rust/voices/wedson-almeida-filho.yaml  no track_record line with a url
-FAIL  maps/rust/voices/wingertge-pr-author-tracel-ai-burn-contributor.yaml  no track_record line with a url
-FAIL  maps/rust/voices/withoutboats.yaml  no track_record line with a url
 FAIL  maps/rust/voices/wofo-quoting-the-dropshot-projects-own-stated-design-goal.yaml  no track_record line with a url
-FAIL  maps/rust/voices/worldsender.yaml  no track_record line with a url
-FAIL  maps/rust/voices/wucke13.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yakira-neko.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yanshay.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yatekii.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yawaramin.yaml  no track_record line with a url
-FAIL  maps/rust/voices/yevgen-safronov-nikita-lapkov-j-r-me-schneider-cloudflare.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yinho999.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ysalitrynskyi.yaml  no track_record line with a url
-FAIL  maps/rust/voices/yuri-iozzelli.yaml  no track_record line with a url
 FAIL  maps/rust/voices/zackw.yaml  no track_record line with a url
-FAIL  maps/rust/voices/zaidoon-abd-al-hadi.yaml  no track_record line with a url
-FAIL  maps/rust/voices/zcash-foundation-zebra-project.yaml  no track_record line with a url
-FAIL  maps/rust/voices/zeke-hunter-green.yaml  no track_record line with a url
 
 counts per kind:
   question: 401
   position: 607
   argument: 0
   value: 6
-  voice: 399
+  voice: 374
   claim: 771
   source: 267
   convention: 0
@@ -1650,7 +881,7 @@ per stratum (domain):
   wasm: questions open=71 closed=0
   web: questions open=56 closed=0
 claims confirmed (resolved to a Position): 769 / 771
-voices: 399
+voices: 374
 
-map: 1354 FAIL
+map: 427 FAIL
 ```
