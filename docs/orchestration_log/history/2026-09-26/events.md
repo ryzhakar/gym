@@ -736,3 +736,5 @@
 2026-09-28T11:02 | agent:r-fb-1 | receipt | fill b file 03: 60 rows for 60 Claims, 45 Positions summarized; 2 low-confidence assignments flagged (b-sb23-f009334-c2, dedicated-design-vs-duplicate-now--p3); on file 04
 2026-09-28T11:06 | agent:r-fb-1 | receipt | fill b file 04: 60 rows for 60 Claims, 47 Positions; 1 medium-confidence assignment flagged (a-sa30-f013276-c5); fill b 13/13 done
 2026-09-28T11:11 | self | delegation | r-fa-1 resumed: fill a file 04 absent at 11:11, last output 00:32
+2026-09-28T11:14 | agent:r-fa-1 | receipt | fill a file 04: 60 rows, 49 Positions; 1 low-confidence flag (dyn-compatibility-rules-relaxation); fill a 13/13 done
+2026-09-28T11:14 | self | delegation | agent:t4-fill-resolve-b1, opus, fresh: resolve fill a vs fill b per prompts/t4-fill-resolve.md; third blind fill on disagreements; outputs fill/resolved-b1.csv, positions-final-b1.md, resolve-b1.md
