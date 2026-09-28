@@ -327,3 +327,60 @@ record: 0 FAIL
 check; the real `training/rust/items/` tree was untouched by any of my own testing this round (the
 files showing as modified/untracked under `items/` in `git status` are other agents' concurrent P3
 work, unrelated to this change).
+
+## Repointing the trainer's grants at the staged copies (team lead, 2026-09-28, go-ahead on the flagged item above)
+
+Every place `CRATE` meant `training/rust/<unit>/` now means the staged practice copy,
+`training/rust/work/<session_id>/<unit>/practice/`:
+
+- `session.unit_paths(unit, session_id)` — now takes `session_id` too. `UNIT` (`items/<unit>/`) is
+  prose-only from here: `attempt.md`, `example.md`, `hints.yaml`. `CRATE` is the staged practice dir.
+- `session.permission_settings(unit, session_id)` — dropped the direct `Read(UNIT/reuse-1/**)`,
+  `Read(UNIT/reuse-2/**)`, `Read(UNIT/unshown/**)` rows entirely (the staged copy covers them via
+  `CRATE/**`); kept the three prose rows.
+- `session.write_settings_file`/`trainer_launch_command` — both thread `session_id` through; a
+  direct call still defaults to a fresh one, but the docstring is explicit that nothing is staged
+  under a session id nobody staged anything into.
+- **Kept the two staging areas apart on purpose.** `probe.stage_item` gained a required `kind`
+  argument (`"probe"` from `probe.py`, `"practice"` from `session.stage_practice_items`), so a
+  session that runs a delayed probe for a unit *and* practices that same unit in the same session
+  never has the probe's staged copy fall inside `CRATE/**` by a naming or path coincidence — rule 19,
+  the trainer must never see a probe. `PRACTICE_STAGE_KIND = "practice"` names the segment
+  `unit_paths` and `permission_settings` both point at.
+- **`trainer_guard.py`'s cwd check widened, not loosened.** `CRATE` now holds several sibling crates
+  (`attempt/`, `reuse-1/`, `reuse-2/`, `unshown/`), so `cargo test`'s cwd is one of them, not `CRATE`
+  itself. `cwd_is_under(cwd, crate)` accepts `crate` or anything starting with `crate + "/"` — a
+  string-prefix trap (`.../practice-extra` incorrectly passing a bare `.startswith(crate)`) is
+  covered by its own test.
+- **`docs/orchestration_log/recon/2026-09-28/trainer/agent/allowlist.md` updated to match** — UNIT/CRATE
+  redefined, the direct reuse/unshown/attempt reads moved from "Allow" to an explicit callout under
+  "Deny", the "Claude Code permission form" section brought current, and the three "Open points" from
+  the original draft rewritten as built-and-tested facts (the hook, the cwd check, the verified
+  `--settings` syntax) rather than defaults. `allowlist.md` is still prose kept in sync by hand, not
+  parsed at run time — the same disclosed relationship as before, just re-synced.
+
+12 new/changed tests: `test_trainer_guard.py` gained
+`test_cargo_in_a_sibling_crate_under_the_staged_practice_dir_is_allowed` and
+`test_cargo_just_outside_the_staged_practice_dir_is_denied` (the string-prefix trap, explicitly);
+`test_session.py`'s allowlist tests now pass an explicit `session_id` and assert the
+reuse-1/reuse-2/unshown/attempt rows are *absent* from `allow` (they used to assert presence);
+`test_probe.py`'s `stage_item`/byte-identical tests updated for the new `kind` segment in the staged
+path.
+
+```
+$ uv run pytest scripts/train/tests
+============================== 74 passed in 7.29s ==============================
+$ uv run python scripts/train/check_record.py
+record: 0 FAIL
+```
+
+Verified live against the real repo (a scratch `session_id`, no actual staging triggered by a bare
+`permission_settings()` call, so nothing needed cleanup): `permission_settings("u01-own-move-borrow",
+"verify-sess")` produces `CRATE = .../training/rust/work/verify-sess/u01-own-move-borrow/practice`
+and a hook command naming that exact path with `--crate`.
+
+**Not done, not asked**: `ensure_unit_crate`'s `cargo new` workspace scaffold at
+`training/rust/<unit>/` is still called from `open_session` (an existing, passing test depends on
+it) but is no longer where any permission grant points — it's now unused by the trainer's own
+sandbox. Flagging it as dead weight rather than removing it unasked: happy to delete it (and the
+`training/rust/Cargo.toml` workspace machinery it maintains) on the word, since nothing reads it now.
