@@ -1,6 +1,7 @@
 """Draw one batch's stratified samples for the Rust map's wide pass (fable-plan.md § 2, Tier 2).
 
-Usage: `uv run python scripts/map/sample.py --frame frame.csv --out samples/ --batch n --seed s (--per-team k | --cells cells.csv) [--by-class]`.
+Usage: `uv run python scripts/map/sample.py --frame frame.csv --out samples/ --batch n --seed s (--per-team k | --cells cells.csv) [--by-class]`,
+or `... --frame frame.csv --out samples/ --batch n --seed s --replace ids.csv` to replace drawn rows.
 
 Strata are (language, domain-hint) cells; a row with several domain hints falls
 into several cells and is de-duplicated once selected. Per cell, per team, draws
@@ -19,7 +20,14 @@ row's class string; a class with fewer rows than its share passes the rest to
 the others, and which classes take the remainder is drawn by the same RNG. Rows
 this team already drew in the batch leave the later cells' pools, so every cell
 gets its full `k` when it has the rows. Without the flag the draw is batch 1's,
-and batch 1 re-draws from its logged seed.
+and batch 1 re-draws from its logged seed. With the flag, the cell that drew
+each row is written to `batch-n-team-T-cells.csv` (id, language, hint, class).
+
+`--replace` (columns team, frame_id) swaps each listed row of `batch-n-team-T.csv`
+for one row drawn from the same (language, hint, class) cell, excluding every
+row the team has drawn in any batch or had replaced; the RNG is
+`Random(f"{seed}-{team}")`. An empty cell leaves the row out with no
+replacement. Every swap is appended to `batch-n-team-T-replaced.csv`.
 """
 
 from __future__ import annotations
@@ -31,6 +39,8 @@ import sys
 from pathlib import Path
 
 FRAME_FIELDS = ["id", "url", "title", "author", "date", "language", "class", "domain_hints"]
+CELL_FIELDS = ["id", "language", "hint", "class"]
+REPLACED_FIELDS = ["replaced_id", "replacement_id", "language", "hint", "class", "pool", "seed"]
 TEAMS = ["a", "b"]
 
 
@@ -109,8 +119,42 @@ def draw_for_team(strata: dict[tuple[str, str], list[dict]], used: set[str], per
             drawn = pool if len(pool) <= k else rng.sample(pool, k)
         print(f"  cell {key[0]}/{key[1]}: pool {len(pool)}  drawn {len(drawn)}")
         for row in drawn:
-            selected.setdefault(row["id"], row)
+            selected.setdefault(row["id"], {**row, "cell": key})
     return [selected[row_id] for row_id in sorted(selected)]
+
+
+def in_cell(row: dict, cell: tuple[str, str]) -> bool:
+    language, hint = cell
+    return row["language"] == language and (hint == "*" or hint in row["domain_hints"].split(";"))
+
+
+def replace_rows(frame_rows: list[dict], current: list[dict], cell_of: dict[str, tuple[str, str]], replace_ids: list[str],
+                 excluded: set[str], rng: random.Random) -> tuple[list[dict], list[dict]]:
+    by_id = {row["id"]: row for row in current}
+    excluded = excluded | set(by_id) | set(replace_ids)
+    log: list[dict] = []
+    for row_id in sorted(replace_ids):
+        old = by_id.pop(row_id)
+        cell, row_class = cell_of[row_id], sampling_class(old)
+        pool = sorted((row for row in frame_rows if row["id"] not in excluded and in_cell(row, cell)
+                       and sampling_class(row) == row_class), key=lambda row: row["id"])
+        new = rng.choice(pool) if pool else None
+        if new:
+            excluded.add(new["id"])
+            by_id[new["id"]] = new
+            cell_of[new["id"]] = cell
+        log.append({"replaced_id": row_id, "replacement_id": new["id"] if new else "", "language": cell[0],
+                    "hint": cell[1], "class": row_class, "pool": len(pool)})
+    return [by_id[row_id] for row_id in sorted(by_id)], log
+
+
+def write_rows(path: Path, fields: list[str], rows: list[dict], append: bool = False) -> None:
+    new_file = not (append and path.exists())
+    with path.open("a" if append else "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        if new_file:
+            writer.writeheader()
+        writer.writerows({field: row.get(field, "") for field in fields} for row in rows)
 
 
 def write_sample(path: Path, rows: list[dict]) -> None:
@@ -129,11 +173,14 @@ def main() -> int:
     quota = parser.add_mutually_exclusive_group(required=True)
     quota.add_argument("--per-team", type=int, dest="per_team")
     quota.add_argument("--cells", type=Path, help="CSV: language,hint,per_team; hint * is the whole language")
+    quota.add_argument("--replace", type=Path, help="CSV: team,frame_id; rows of this batch to replace")
     parser.add_argument("--by-class", action="store_true", dest="by_class")
     parser.add_argument("--seed", required=True, type=int)
     args = parser.parse_args()
 
     rows = read_frame(args.frame)
+    if args.replace:
+        return replace_main(args, rows)
     if args.cells:
         per_team = read_cells(args.cells)
         cells = {**strata_of(rows), **whole_language_cells(rows)}
@@ -151,8 +198,39 @@ def main() -> int:
         used = already_used(args.out, team, args.batch)
         drawn = draw_for_team(strata, used, per_team, rng, args.by_class)
         write_sample(args.out / f"batch-{args.batch}-team-{team}.csv", drawn)
+        if args.by_class:
+            write_rows(args.out / f"batch-{args.batch}-team-{team}-cells.csv", CELL_FIELDS,
+                       [{"id": row["id"], "language": row["cell"][0], "hint": row["cell"][1], "class": sampling_class(row)} for row in drawn])
         print(f"seed: {args.seed + offset}  batch: {args.batch}  team: {team}  rows: {len(drawn)}")
 
+    return 0
+
+
+def replace_main(args: argparse.Namespace, rows: list[dict]) -> int:
+    requests = read_frame(args.replace)
+    for team in TEAMS:
+        replace_ids = [row["frame_id"] for row in requests if row["team"] == team]
+        if not replace_ids:
+            continue
+        sample_path = args.out / f"batch-{args.batch}-team-{team}.csv"
+        cells_path = args.out / f"batch-{args.batch}-team-{team}-cells.csv"
+        log_path = args.out / f"batch-{args.batch}-team-{team}-replaced.csv"
+        current = read_frame(sample_path)
+        cell_of = {row["id"]: (row["language"], row["hint"]) for row in read_frame(cells_path)}
+        missing = sorted(set(replace_ids) - {row["id"] for row in current})
+        if missing:
+            raise SystemExit(f"team {team}: not in {sample_path.name}: {missing}")
+        replaced_before = {row["replaced_id"] for row in read_frame(log_path)} if log_path.exists() else set()
+        excluded = already_used(args.out, team, args.batch) | replaced_before
+        rng = random.Random(f"{args.seed}-{team}")
+        updated, log = replace_rows(rows, current, cell_of, replace_ids, excluded, rng)
+        write_sample(sample_path, updated)
+        write_rows(cells_path, CELL_FIELDS, [{"id": row["id"], "language": cell_of[row["id"]][0], "hint": cell_of[row["id"]][1],
+                                             "class": sampling_class(row)} for row in updated])
+        write_rows(log_path, REPLACED_FIELDS, [{**entry, "seed": args.seed} for entry in log], append=True)
+        for entry in log:
+            print(f"team {team}: {entry['replaced_id']} -> {entry['replacement_id'] or '(cell empty)'}  "
+                  f"cell {entry['language']}/{entry['hint']}/{entry['class']}  pool {entry['pool']}")
     return 0
 
 

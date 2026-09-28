@@ -40,7 +40,11 @@ ARXIV_ID_RE = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
 PAYWALLED_DOMAINS = {
     "packtpub.com", "amazon.com", "manning.com", "leanpub.com",
     "edx.org", "linkedin.com",
+    # batch 2 (2026-09-28): publisher and paid-course pages, same ruling
+    "pragprog.com", "rheinwerk-verlag.de", "dpunkt.de", "pluralsight.com",
+    "udemy.com", "coursera.org", "educative.io", "oreilly.com",
 }
+BOOK_CLASSES = {"books-courses", "books"}  # en frame and de frame spell the class differently
 
 
 class FetchError(Exception):
@@ -123,9 +127,14 @@ CHALLENGE_MARKERS = (
     "just a moment...",
 )
 MIN_PAGE_CHARS = 1500  # below this, an "HTML route" page is more likely a stub than an article
+# Hosts whose page shows it is whole: every marker present means the page rendered its post,
+# comment section and footer, so a short post is a short post, not a stub. The length floor
+# was set on English pages; a whole rustcc.cn thread is often under 1,500 CJK characters
+# (batch-2 prefetch, 2026-09-28: 66 of 195 rustcc.cn rows).
+COMPLETE_PAGE_MARKERS = {"rustcc.cn": ("评论区", "Rust.cc 版权所有")}
 
 
-def validate_page_text(text: str, min_chars: int = MIN_PAGE_CHARS) -> str:
+def validate_page_text(text: str, min_chars: int = MIN_PAGE_CHARS, url: str = "") -> str:
     """Reject a bot-challenge/login-wall stub or a suspiciously thin page.
 
     Only called on whole-page text from an HTML-producing route (route_html, the html
@@ -137,6 +146,9 @@ def validate_page_text(text: str, min_chars: int = MIN_PAGE_CHARS) -> str:
     for marker in CHALLENGE_MARKERS:
         if marker in lower:
             raise FetchError([f"bot-wall/login-wall marker matched ({len(text)} chars)"])
+    markers = COMPLETE_PAGE_MARKERS.get(urllib.parse.urlparse(url).netloc.lower().removeprefix("www."))
+    if markers and all(marker in text for marker in markers):
+        return text
     if len(text) < min_chars:
         raise FetchError([f"page too short to trust ({len(text)} chars, min {min_chars})"])
     return text
@@ -144,7 +156,9 @@ def validate_page_text(text: str, min_chars: int = MIN_PAGE_CHARS) -> str:
 
 CLIENT_REDIRECT_RE = re.compile(
     rb'location\.replace\(\s*["\']([^"\']+)["\']|'
-    rb'http-equiv=["\']refresh["\'][^>]*url=([^"\'>]+)',
+    rb'http-equiv=["\']?refresh["\']?[^>]*url=([^"\'>]+)|'
+    # attribute order reversed and unquoted, as minified sites write it (bevy.org, 2026-09-28)
+    rb'<meta\s+content=["\']?\d+;\s*url=([^"\'>\s]+)["\']?[^>]*http-equiv=["\']?refresh',
     re.I,
 )
 
@@ -179,7 +193,7 @@ def follow_client_redirect(url: str, raw: bytes, timeout: int = 25, max_hops: in
         m = CLIENT_REDIRECT_RE.search(raw)
         if not m:
             return raw, url
-        target = urllib.parse.urljoin(url, (m.group(1) or m.group(2)).decode())
+        target = urllib.parse.urljoin(url, next(g for g in m.groups() if g).decode())
         if target in seen:
             return raw, url
         seen.add(target)
@@ -663,16 +677,29 @@ def vtt_to_text(raw: str) -> str:
     return "\n".join(out_lines)
 
 
-def route_video(url: str) -> Fetched:
+SUB_LANGS = {"en": "en.*", "uk": "uk,en.*", "de": "de,en.*", "zh": "zh-Hans,zh-CN,zh,zh-Hant,en.*"}
+YT_SPACING_SECS = 20  # between consecutive yt-dlp calls in one fetch-csv run
+YT_RETRY_WINDOW_SECS = 600  # wait before the second, last try of every row YouTube throttled
+
+
+class ThrottledError(FetchError):
+    """YouTube answered 429: worth one more try after the retry window, not now."""
+
+
+def route_video(url: str, language: str = "en") -> Fetched:
     with tempfile.TemporaryDirectory() as td:
         out = subprocess.run(
-            ["yt-dlp", "--write-auto-subs", "--skip-download", "--sub-lang", "en",
+            ["yt-dlp", "--write-subs", "--write-auto-subs", "--skip-download",
+             "--sub-langs", SUB_LANGS.get(language, "en.*"),
              "--sub-format", "vtt", "-o", f"{td}/%(id)s.%(ext)s", url],
             capture_output=True, timeout=90,
         )
-        vtts = list(Path(td).glob("*.vtt"))
+        vtts = sorted(Path(td).glob("*.vtt"))
         if not vtts:
-            raise FetchError([f"yt-dlp: no subtitles ({out.stderr.decode(errors='replace')[:150]})"])
+            err = out.stderr.decode(errors="replace")
+            if "429" in err:
+                raise ThrottledError([f"yt-dlp: HTTP 429 ({err[-150:]})"])
+            raise FetchError([f"yt-dlp: no subtitles ({err[:150]})"])
         text = vtt_to_text(vtts[0].read_text(errors="replace"))
         if not text:
             raise FetchError(["yt-dlp: subtitles present but empty after cleanup"])
@@ -681,7 +708,7 @@ def route_video(url: str) -> Fetched:
 
 def route_html(url: str) -> Fetched:
     tried = []
-    for name, fn in (("html", lambda: validate_page_text(html_to_text(http_get_html(url)))),
+    for name, fn in (("html", lambda: validate_page_text(html_to_text(http_get_html(url)), url=url)),
                       ("wayback", lambda: wayback_fallback(url)),
                       ("browser", lambda: browser_route(url))):
         try:
@@ -695,7 +722,11 @@ def domain_of(url: str) -> str:
     return urllib.parse.urlparse(url).netloc.removeprefix("www.")
 
 
-def fetch_by_class_route(url: str, source_class: str) -> Fetched:
+def is_book_class(source_class: str) -> bool:
+    return bool(BOOK_CLASSES & set(source_class.split(";")))
+
+
+def fetch_by_class_route(url: str, source_class: str, language: str = "en") -> Fetched:
     d = domain_of(url)
     if "reddit.com" in d:
         return route_reddit(url)
@@ -704,13 +735,15 @@ def fetch_by_class_route(url: str, source_class: str) -> Fetched:
     if "github.com" in d:
         return route_github(url)
     if d in ("youtube.com", "youtu.be"):
-        return route_video(url)
+        return route_video(url, language)
     if d == "news.ycombinator.com":
         return route_hn(url)
     if "lobste.rs" in d:
         return route_lobsters(url)
-    if "books-courses" in source_class and d in PAYWALLED_DOMAINS:
+    if is_book_class(source_class) and d in PAYWALLED_DOMAINS:
         raise FetchError([f"paywalled domain {d}: not attempted (owner ruling, not a scraping project)"])
+    if is_book_class(source_class):
+        return fetch_whole_book(url)
     return route_html(url)
 
 
@@ -718,7 +751,9 @@ def fetch_by_class_route(url: str, source_class: str) -> Fetched:
 
 BOOK_MAX_PAGES = 60
 BOOK_MAX_CHARS = 400_000
-BOOK_LINK_RE = re.compile(rb'<a\s+[^>]*href="([^"#][^"]*)"[^>]*>(.*?)</a>', re.S)
+# href quoted either way or unquoted (minified sites, e.g. bevy.org)
+BOOK_LINK_RE = re.compile(
+    rb'<a\s+[^>]*href=(?:"([^"#][^"]*)"|\'([^\'#][^\']*)\'|([^\s>"\'#][^\s>]*))[^>]*>(.*?)</a>', re.S)
 BOOK_TAG_STRIP_RE = re.compile(rb"<[^>]+>")
 
 
@@ -750,14 +785,34 @@ def print_html_url(root_url: str) -> str:
     return root_url.rstrip("/") + "/print.html"
 
 
+def book_root_candidates(url: str) -> list[str]:
+    """The URL itself, then, when it names a page (`.../chapter.html`) or a chapter
+    directory, up to two parent directories: a frame row may point at a chapter of an
+    mdBook, whose print.html sits at the book's root (embedded-trainings, lang-team,
+    plotly.rs, 2026-09-28)."""
+    parsed = urllib.parse.urlparse(url.split("#")[0])
+    path = parsed.path
+    if path.endswith(".html"):
+        path = path.rsplit("/", 1)[0]
+    parts = [part for part in path.split("/") if part]
+    roots = [url]
+    for depth in range(len(parts), max(len(parts) - 3, -1), -1):
+        candidate = urllib.parse.urlunparse(parsed._replace(path="/" + "/".join(parts[:depth]), query="", fragment=""))
+        if candidate.rstrip("/") != url.rstrip("/") and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
 def try_fetch_book_print_page(root_url: str) -> bytes | None:
     """mdBook sites publish a /print.html with the whole book on one page, in chapter
     order - by far the simplest, fewest-requests way to get a book's full text. Tried
     direct first, then via Wayback, for the given root and its www variant."""
-    candidates = [root_url]
-    parsed = urllib.parse.urlparse(root_url)
-    if not parsed.netloc.startswith("www."):
-        candidates.append(root_url.replace(parsed.netloc, "www." + parsed.netloc, 1))
+    candidates = []
+    for root in book_root_candidates(root_url):
+        candidates.append(root)
+        parsed = urllib.parse.urlparse(root)
+        if not parsed.netloc.startswith("www."):
+            candidates.append(root.replace(parsed.netloc, "www." + parsed.netloc, 1))
     for candidate in candidates:
         target = print_html_url(candidate)
         try:
@@ -806,15 +861,16 @@ def _no_port(url: str) -> str:
     return re.sub(r":\d+(?=/)", "", url)
 
 
-def extract_same_root_links(raw: bytes, base_url: str) -> list[tuple[str, str]]:
-    """(absolute_url, link_text) for every <a> under the same path-root as base_url, in
-    document order, deduped - a book's table of contents when it has no print.html."""
-    root = _no_port(base_url.rstrip("/"))
+def extract_same_root_links(raw: bytes, base_url: str, root_url: str | None = None) -> list[tuple[str, str]]:
+    """(absolute_url, link_text) for every <a> under the same path-root as base_url (or
+    root_url, when given), in document order, deduped - a book's table of contents when it
+    has no print.html. Relative links always resolve against base_url, the page's own URL."""
+    root = _no_port((root_url or base_url).rstrip("/"))
     seen: set[str] = {_no_port(base_url.split("#")[0].rstrip("/"))}
     out = []
     for m in BOOK_LINK_RE.finditer(raw):
-        href = m.group(1).decode(errors="replace").strip()
-        text = BOOK_TAG_STRIP_RE.sub(b"", m.group(2)).decode(errors="replace").strip()
+        href = next(g for g in m.groups()[:3] if g).decode(errors="replace").strip()
+        text = BOOK_TAG_STRIP_RE.sub(b"", m.group(4)).decode(errors="replace").strip()
         if not href or not text:
             continue
         abs_url = urllib.parse.urljoin(base_url, href).split("#")[0].rstrip("/")
@@ -842,7 +898,15 @@ def extract_toc_links(front_raw: bytes, base_url: str) -> list[tuple[str, str]]:
             return extract_same_root_links(http_get(toc_url), base_url)
         except Exception:  # noqa: BLE001 - fall through to the front page's own links
             pass
-    return extract_same_root_links(front_raw, base_url)
+    links = extract_same_root_links(front_raw, base_url)
+    if links:
+        return links
+    # The frame's URL may be the book's first chapter, not its root (bevy.org's quick-start
+    # "introduction"): its sibling chapters live one path level up.
+    parent = base_url.rstrip("/").rsplit("/", 1)[0] + "/"
+    if urllib.parse.urlparse(parent).path.strip("/"):
+        return extract_same_root_links(front_raw, base_url, parent)
+    return []
 
 
 def fetch_book(url: str) -> Fetched:
@@ -877,6 +941,19 @@ def fetch_book(url: str) -> Fetched:
     if len(text) > BOOK_MAX_CHARS:
         text = text[:BOOK_MAX_CHARS] + f"\n[... truncated at {BOOK_MAX_CHARS:,} chars ...]\n"
     return Fetched(text, "book-crawl")
+
+
+def fetch_whole_book(url: str) -> Fetched:
+    """A book or docs site as a source: print.html for mdBook, else a table-of-contents crawl
+    (fetch_book). A result no longer than a front page is a stub, not a book."""
+    fetched = fetch_book(url)
+    if fetched.route == "book-crawl" and fetched.text.count("\n## ") == 0:
+        raise FetchError([f"book: no chapters found past the front page ({len(fetched.text)} chars)"])
+    validate_page_text(fetched.text)
+    return fetched
+
+
+BOOK_ROUTES = {"book-print", "book-crawl"}
 
 
 # --- subcommands ----------------------------------------------------------
@@ -949,30 +1026,58 @@ DEFAULT_STATUS_CSV = (
 
 
 def cmd_fetch_csv(csv_path: str, status_csv: str = DEFAULT_STATUS_CSV) -> int:
+    """Fetch every row by its class route. A book-class row whose cached text is not a whole
+    book is fetched again as one. A YouTube row answered with 429 gets its second, last try
+    after YT_RETRY_WINDOW_SECS; yt-dlp calls are spaced YT_SPACING_SECS apart."""
     rows = list(csv.DictReader(Path(csv_path).open(newline="")))
     status_path = Path(status_csv)
     is_new = not status_path.exists()
+    throttled: list[dict] = []
+    last_video = [0.0]
+
+    def attempt(row: dict, w, final: bool) -> None:
+        url, source_class, rid = row["url"], row["class"], row["id"]
+        key = url_key(url)
+        is_video = domain_of(url) in ("youtube.com", "youtu.be")
+        if is_video:
+            time.sleep(max(0.0, last_video[0] + YT_SPACING_SECS - time.time()))
+        try:
+            fetched = fetch_by_class_route(url, source_class, row.get("language", "en"))
+        except ThrottledError as e:
+            if not final:
+                throttled.append(row)
+                return
+            w.writerow([rid, url, source_class, "failed", "", 0, ("second try after retry window: " + "; ".join(e.tried))[:300]])
+            return
+        except FetchError as e:
+            w.writerow([rid, url, source_class, "failed", "", 0, "; ".join(e.tried)[:300]])
+            return
+        except Exception as e:  # noqa: BLE001
+            w.writerow([rid, url, source_class, "failed", "", 0, f"unexpected: {e}"[:300]])
+            return
+        finally:
+            if is_video:
+                last_video[0] = time.time()
+        save_text(key, fetched.text, fetched.route, url)
+        w.writerow([rid, url, source_class, "fetched", key, len(fetched.text), fetched.route])
+
     with status_path.open("a", newline="") as sf:
         w = csv.writer(sf)
         if is_new:
             w.writerow(["id", "url", "class", "status", "key", "chars", "route"])
         for row in rows:
-            url, source_class, rid = row["url"], row["class"], row["id"]
-            hit = find_cached(url)
-            if hit:
-                w.writerow([rid, url, source_class, "cached", hit["key"], hit["chars"], hit["route"]])
+            hit = find_cached(row["url"])
+            if hit and not (is_book_class(row["class"]) and hit["route"] not in BOOK_ROUTES):
+                w.writerow([row["id"], row["url"], row["class"], "cached", hit["key"], hit["chars"], hit["route"]])
                 continue
-            key = url_key(url)
-            try:
-                fetched = fetch_by_class_route(url, source_class)
-            except FetchError as e:
-                w.writerow([rid, url, source_class, "failed", "", 0, "; ".join(e.tried)[:300]])
-                continue
-            except Exception as e:  # noqa: BLE001
-                w.writerow([rid, url, source_class, "failed", "", 0, f"unexpected: {e}"[:300]])
-                continue
-            save_text(key, fetched.text, fetched.route, url)
-            w.writerow([rid, url, source_class, "fetched", key, len(fetched.text), fetched.route])
+            attempt(row, w, final=False)
+            sf.flush()
+        if throttled:
+            print(f"{len(throttled)} YouTube rows throttled; second try in {YT_RETRY_WINDOW_SECS}s")
+            time.sleep(YT_RETRY_WINDOW_SECS)
+            for row in throttled:
+                attempt(row, w, final=True)
+                sf.flush()
     print(f"wrote {status_path}")
     return 0
 

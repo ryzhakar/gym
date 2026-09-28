@@ -78,3 +78,31 @@ def test_prepare_drops_listed_rows_and_older_window() -> None:
     out = prepare(rows, {"f2"})
     assert [(row["id"], row["domain_hints"]) for row in out] == [("f1", "core"), ("f5", "core")]
 
+
+
+def test_replace_draws_from_the_same_cell_and_class_and_logs(tmp_path: Path) -> None:
+    import csv
+    header = "id,url,title,author,date,language,class,domain_hints\n"
+    lines = [f"b{i},u,t,x,d,en,books-courses,ml\n" for i in range(4)] + [f"t{i},u,t,x,d,en,talks,ml\n" for i in range(4)] \
+        + ["c0,u,t,x,d,en,books-courses,core\n"]
+    frame_path = tmp_path / "frame.csv"
+    frame_path.write_text(header + "".join(lines), encoding="utf-8")
+    (tmp_path / "cells.csv").write_text("language,hint,per_team\nen,ml,4\n", encoding="utf-8")
+    run = [sys.executable, str(GYM / "scripts/map/sample.py"), "--frame", str(frame_path), "--out", str(tmp_path), "--batch", "1"]
+    subprocess.run(run + ["--cells", str(tmp_path / "cells.csv"), "--by-class", "--seed", "5"], check=True, capture_output=True)
+    drawn = [row["id"] for row in csv.DictReader((tmp_path / "batch-1-team-a.csv").open())]
+    books = [row_id for row_id in drawn if row_id.startswith("b")]
+    assert len(books) == 2
+    (tmp_path / "replace.csv").write_text(f"team,frame_id\na,{books[0]}\na,{books[1]}\n", encoding="utf-8")
+    subprocess.run(run + ["--replace", str(tmp_path / "replace.csv"), "--seed", "9"], check=True, capture_output=True)
+    after = [row["id"] for row in csv.DictReader((tmp_path / "batch-1-team-a.csv").open())]
+    new_books = sorted(set(after) - set(drawn))
+    assert len(after) == 4 and not set(books) & set(after)
+    assert new_books == sorted({"b0", "b1", "b2", "b3"} - set(books))
+    log = list(csv.DictReader((tmp_path / "batch-1-team-a-replaced.csv").open()))
+    assert [row["seed"] for row in log] == ["9", "9"] and {row["class"] for row in log} == {"books-courses"}
+    assert subprocess.run(run + ["--replace", str(tmp_path / "replace.csv"), "--seed", "9"], capture_output=True).returncode != 0
+    (tmp_path / "replace.csv").write_text(f"team,frame_id\na,{new_books[0]}\n", encoding="utf-8")
+    subprocess.run(run + ["--replace", str(tmp_path / "replace.csv"), "--seed", "10"], check=True, capture_output=True)
+    log = list(csv.DictReader((tmp_path / "batch-1-team-a-replaced.csv").open()))
+    assert log[-1]["replacement_id"] == "" and log[-1]["pool"] == "0"
