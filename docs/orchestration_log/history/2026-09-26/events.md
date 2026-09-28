@@ -858,3 +858,6 @@
 2026-09-28T16:04 | self | decision | decided: author A, who knows probe-a, rewrites the probe-b specs with distance constraints from the isomorph report (no rename-port may pass: different data shape, return type or call site); author B rewrites probe-b from the new specs alone, reusing the locked structure scanner; the isomorph check reruns
 2026-09-28T16:04 | self | delegation | t-p3-author-a continued: probe-b specs with distance constraints
 2026-09-28T16:04 | self | delegation | P1 checks (b) adversarial and (c) fidelity: agent:t-adv-trainer, opus, plays the trainer from rust-trainer.md; agent:t-adv-learner, sonnet, plays a learner for 20 turns with 10 extraction attempts; transcript in /private/tmp/gym-scratch/adv/; a fresh judge grades after
+2026-09-28T16:07 | agent:r-batch2-prep | receipt | batch 2 bundled: team a 27 slices, 244 rows; team b 33 slices, 246 rows; 104 zh conference-talk rows are schedule anchors with no content, 33 per team dropped; batch 1 re-cut byte-identical; 16 tests pass
+2026-09-28T16:07 | self | decision | decided: redraw the dropped zh rows from the same (zh, hint) cell's other classes, fetch, re-cut; batch-2 extractors are reused across slices within a team, about three slices each, retired near 150k context
+2026-09-28T16:07 | self | delegation | r-batch2-prep continued: zh redraw, fetch, re-cut bundles
