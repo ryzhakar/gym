@@ -181,3 +181,40 @@ Denied. The scratch unit's crate directory was removed afterward; `training/rust
 
 No FAIL, no skip on this machine (`cargo` is on PATH); the `@pytest.mark.skipif(CARGO_MISSING, ...)`
 guards are a defensive default for a machine without `cargo`, not exercised here.
+
+## Follow-up: reported gaps in `$(`, `<`, a second line, and key-path arguments (team lead, 2026-09-28)
+
+Checked each of the four against `scripts/train/hooks/trainer_guard.py` as committed (`29cefa9`)
+before changing anything:
+
+- `$(` — already in `CHAIN_TOKENS`; direct call and a live subprocess both denied the team lead's
+  exact reported command (`cargo test --manifest-path training/rust/u01/Cargo.toml
+  $(cat training/rust/items/u01/key/x)`), reason `chaining token '$(' is not allowed`.
+- `<` — already in `CHAIN_TOKENS`; `test_chained_bash_command_is_denied[<]` already covered it and
+  passed.
+- any argument with a `key` path component — already checked by `command_denied_segment` regardless
+  of chaining; `test_bash_naming_a_key_path_is_denied_even_without_chaining` already covered it.
+- a second line (a literal newline in one Bash call) — **this one was genuinely missing.** `"\n"`
+  was not in `CHAIN_TOKENS`; a two-line command whose second line named no `key`/`probe-*` segment
+  (e.g. `cargo test --manifest-path ...\nrm -rf /tmp/whatever`) would have passed. Added `"\n"` to
+  `CHAIN_TOKENS`; a bare newline is now denied on its own, not only incidentally when the second
+  line happens to reference `key/`.
+
+I'm reporting the first three as already-passing rather than silently re-implementing them, since my
+direct testing (both `trainer_guard.check_bash()` called in-process and the real script over stdin
+via subprocess) shows them denied against the exact command given. If a live run still lets one of
+these three through, the discrepancy is worth a closer look — possibly an outer shell evaluating
+`$(...)` before the payload ever reaches this script, which would be a caller-side issue, not this
+hook's. Four new/updated tests added: the three tokens plus the exact reported command
+(`test_the_exact_reported_command_substitution_gap_is_denied`), and the new bare-newline case
+(`test_a_second_line_with_no_key_reference_is_still_denied`).
+
+```
+$ uv run pytest scripts/train/tests/test_trainer_guard.py -v
+...
+============================== 23 passed in 0.06s ==============================
+```
+
+Full suite: `uv run pytest scripts/train/tests` → 60 passed. `check_record.py` → `record: 0 FAIL`.
+"Live checking comes later with the adversarial trainer run," per the team lead's note — nothing
+further attempted here beyond the direct and subprocess checks above.
