@@ -753,3 +753,4 @@
 2026-09-28T12:03 | self | delegation | r-voice-4 continued: add missing steffahn to voices-chunk-13.md
 2026-09-28T12:04 | agent:r-voice-1 | receipt | voices chunks 00-03: 100 Voices, 80 MEETS, 15 FAILS, 5 UNKNOWN by chunk sums (agent's total said 85); identity tied by profile pages
 2026-09-28T12:04 | agent:r-voice-2 | receipt | voices chunks 04-07: 100 Voices, 74 MEETS, 19 FAILS, 7 UNKNOWN; 2 same-person id pairs found (dominaezzz, jonathan-kelly)
+2026-09-28T12:07 | agent:r-voice-3 | receipt | voices chunks 08-11: 100 Voices, 77 MEETS, 15 FAILS, 8 UNKNOWN by file counts (agent's prose tallies off); one dropped Voice (playfulfence) restored; same-person id pairs: kornel records, nazmul-idris
