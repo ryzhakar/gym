@@ -850,3 +850,6 @@
 2026-09-28T16:01 | agent:t-p56-scripts | receipt | items staged into training/rust/work/<session>/<unit>/<item>/, gitignored; items/ byte-identical after a probe run; 72 tests pass; trainer grants still point at the old unit crate
 2026-09-28T16:01 | self | decision | decided: repoint the trainer's grants, trainer_guard crate and cwd checks, and allowlist.md at the staged work path; practice items the trainer may read are the staged copies only
 2026-09-28T16:01 | self | delegation | t-p56-scripts continued: repoint trainer permissions at the staged work copies
+2026-09-28T16:01 | agent:r-batch2-prep | receipt | batch 2 fetched: 289 rows per team (en 90, zh 162, uk 20, de 17), all in cache; 8 paywalled and 16 unreachable rows replaced by seeded redraws; census gate calibrated; t5-compile.md in four stages with check records; claim, voice and args prompts made batch-specific; bundler still hard-codes batch 1; projection 81 runs, 155 worst
+2026-09-28T16:01 | self | decision | decided: the 16 unreachable-row replacements stand (plan line 111); bundle.py and books.py parametrized by batch, and the short-page floor defers to the cache's validity check
+2026-09-28T16:01 | self | delegation | r-batch2-prep continued: parametrize the bundler by batch, cut batch 2 bundles
