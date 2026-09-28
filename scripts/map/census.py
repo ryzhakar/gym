@@ -10,8 +10,9 @@ reads `yes` with `new_questions` and `claims` both 0. It is flagged when:
 - a read-log line does not parse to the 7 columns of `prompts/t2-extract.md`;
 - it is nothing-new and its extract section has no `### Nothing new` block with
   a `reason-code:` from REASON_CODES and a `reason:` line;
-- its reason sentence uses the opposition vocabulary in FORBIDDEN, which the
-  frozen t2 prompt bans from reasons (rule 6: opposition is never a ground).
+- its reason sentence cites missing opposition or counts Voices (FORBIDDEN),
+  which the frozen t2 prompt bans from reasons (rule 6: opposition is never a
+  ground). Calibrated on batch 1's reasons: batch-2-prep.md § 7.
 
 Writes `census-b<n>.md` (counts, every flagged row) and
 `census-b<n>-population.csv` (team, frame_id, reason_code: the population the
@@ -30,11 +31,14 @@ from pathlib import Path
 
 READLOG_FIELDS = ["frame_id", "url", "read", "locator_span", "new_questions", "claims", "minutes"]
 REASON_CODES = {"off-subject", "no-decision", "no-rust-voice"}
+OPPOSITION = r"(disagreement|disagrees?|debate|dispute|push-?back|counter-?(argument|point|view|position)s?|opposition|dissent|rebuttal|objection)"
 FORBIDDEN = re.compile(
-    r"\b(disagree\w*|agree\w*|oppos\w*|debat\w*|disput\w*|contest\w*|controvers\w*|counter\w*|"
-    r"push(es|ed|ing)?[- ]?back|rebut\w*|dissent\w*|consensus|unanimous\w*|competing|rival\w*|"
-    r"single[- ]voice\w*|one voice|only voice|second voice|other voices?|another (view|voice|position|opinion)|"
-    r"nobody|no[- ]one)\b",
+    r"\b(single[- ]voice\w*|one voice|lone voice|only (one|a single) voice|second voice|other voices?|"
+    r"(another|a competing|competing|an opposing|opposing|a rival|rival|contrary) (view|voice|position|opinion|side|camp)s?|"
+    r"(no|nobody|no[- ]one)\b(\s+\w+){0,3}\s+(disagree\w*|argues? (back|against|otherwise)|objects?|push(es)? back|takes? (a|the other) side|oppos\w+|rebut\w*|dissent\w*)|"
+    r"(no|without|not a|absent)\s+(\w+\s+){0,2}" + OPPOSITION + r"|"
+    r"unopposed|unchallenged|nobody argues|no one argues|"
+    r"against (another|a competing|an opposing|any other|the other) \w+)\b",
     re.IGNORECASE,
 )
 SECTION = re.compile(r"^## .*?\b(f\d{6})\b")
