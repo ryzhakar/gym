@@ -745,3 +745,5 @@
 2026-09-28T11:48 | agent:t5-compile-b1 | receipt | compile v0.1: 401 Questions, 607 Positions, 771 Claims, 399 Voices, 267 Sources, 1447 Concepts; check_map 2364 FAIL, all content gaps: Voice type/track_record, Source fields, 79 non-ISO dates, 9 overlong quotes
 2026-09-28T11:48 | self | decision | decided: Source fields, dates and quotes are transcription from frame and inputs, sent back to the compiler; Voice type and track record stay a declared gap for a Voice-verification pass
 2026-09-28T11:48 | self | delegation | t5-compile-b1 continued: Source fields from frame, ISO dates, quote cuts, rerun check_map
+2026-09-28T11:48 | self | decision | decided: Voice verification on sonnet, not the plan's haiku, since the bar and the type tag are judgment; 399 Voices in 16 chunks of 25, four long-lived agents of four chunks each; prompts/t3-voice.md
+2026-09-28T11:48 | self | delegation | agent:r-voice-1..4, sonnet: Voice verification, chunks 00-03, 04-07, 08-11, 12-15, output verify/voices-<chunk>.md
