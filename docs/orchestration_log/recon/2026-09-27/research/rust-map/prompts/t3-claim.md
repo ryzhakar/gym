@@ -25,3 +25,11 @@ Scope: write only your output files. Never edit MAP/. Never open RECON/team-a/, 
 Tools: Read, Grep, Glob, Bash (cache.py, `gh api`, `curl -s`), WebFetch on cache misses, Write.
 
 After each chunk, notify in one line: chunk, counts per verdict. End with a 3-sentence summary.
+
+## Adjudication (t3-claim-adjudicate)
+
+Four verifiers applied the verdicts unevenly: misquotes, quotes absent from the source and wrong dates were passed as CONFIRMED with a note. Read every RECON/verify/claims-chunk-*.md. Build RECON/verify/claims-final.csv with the header `claim_id,verdict,corrected_locator,corrected_date,corrected_paraphrase,drop_quote,practiced,gap_url,basis`, one row for each id in RECON/verify/claim-chunks/all.txt. Apply the definitions above strictly:
+- A quote that is absent from the source or not verbatim (an ellipsis joining one continuous passage is verbatim) → UNFAITHFUL, drop_quote=yes, and keep the paraphrase if it is faithful.
+- A date differing from the source's own date for that statement → DATE-WRONG, with corrected_date.
+- A locator off while the content is correct → CONFIRMED, with corrected_locator.
+Re-check from the cache every row whose note or correction column is non-empty, plus a script-drawn random 10% of clean rows (seed logged). basis = `file` or `recheck`. Write RECON/verify/claims-adjudication.md with: counts per verdict, rows changed from the chunk files and why, the disagreement rate on the random 10%, and the seed. If the rechecked random rows disagree with the files on more than 2 of them, say so first.
