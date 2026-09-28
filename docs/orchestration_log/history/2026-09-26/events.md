@@ -769,3 +769,5 @@
 2026-09-28T12:32 | self | delegation | r-voice-cal continued: re-check asahi-lina (own Rust GPU driver, talks) and the8472 (team listing)
 2026-09-28T12:32 | owner | receipt | mid-turn in conversation: 'just stop.'; r-voice-cal stopped mid re-check of asahi-lina and the8472; no further calls
 2026-09-28T12:33 | owner | receipt | correction: stop meant the no-op calls, not the agent; r-voice-cal resumed
+2026-09-28T12:36 | agent:r-voice-cal | receipt | calibration final: asahi-lina MEETS (own driver, project blog byline), the8472 MEETS (libs team listing); 111 MEETS, 7 FAILS of 118 re-checked
+2026-09-28T12:36 | self | delegation | t5-compile-b1 continued: apply Voice verification to MAP: fields from chunk files with calibration overriding, FAILS and UNKNOWN Claims gapped, same-person clusters merged, name corrections
