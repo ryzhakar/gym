@@ -763,3 +763,4 @@
 2026-09-28T12:25 | agent:r-voice-cal | receipt | voice calibration: 117 re-checked, 24 MEETS to FAILS (cfallin, fitzgen, saulecabrera, bugadani, felipebalbi among them), 89 hold, 5 FAILS stand; 15 same-person id clusters
 2026-09-28T12:25 | self | discovery | calibration flips re-checked only production and role; cfallin and fitzgen likely meet crate-dependents and talks; flips sent back for all four kinds
 2026-09-28T12:25 | self | delegation | r-voice-cal continued: every MEETS-to-FAILS flip checked on all four kinds live
+2026-09-28T12:26 | agent:r-voice-cal | receipt | calibration additions: skifire13 and the8472 FAILS on role, scottmcm MEETS via compiler team page, steffahn MEETS; name corrections: sam-cutter is Cutler at source; co-presenter D. Hugenroth has no Voice record
