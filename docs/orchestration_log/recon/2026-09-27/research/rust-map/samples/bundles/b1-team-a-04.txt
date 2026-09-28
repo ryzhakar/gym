@@ -1,0 +1,1852 @@
+=== ROW 54 | f002488 | https://forums.swift.org/t/pitch-explicit-specialization/76967 | 2025-01-02 | domain-subframes ===
+[Pitch] Explicit Specialization
+
+Hi Swit Evolution,
+A proposal to formalize an attribute that has existed since fairly early Swift in underscored form, that gives more control over generic performance.
+Explicit Specialization
+Proposal: SE-NNNN
+Authors: Ben Cohen
+Review Manager: TBD
+Implementation: Available in nightly toolchains using the underscored @_specialize
+Status: Awaiting review
+Introduction
+The Swift compiler has the ability to "specialize" a generic function at compile time. This specialization creates a custom implementation of the function, where the generic placeholders are substituted with specific types. This can unlock optimizations of that specialized function that can be dramatically faster than the unspecialized version in some circumstances. The compiler can generate this specialized version and call it when it can see at the call site with what concrete types a function is being called, and the body of the function to specialize.
+In some cases, though, this information is obscured from the compiler. This proposal introduces a new attribute, @specialize, which allows the author of a generic function to generate pre-specialized versions of that function for specific types. When the unspecialized version of the function is called with one of those types, the compiler will generate code that will re-dispatch to those prespecialized versions if available.
+Motivation
+Consider the following generic function that sums an array of any binary integer type:
+extension Sequence where Element: BinaryInteger {
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+If you call this function directly on an array of a specific integer type (e.g. Array<Int>):
+let arrayOfInt: [Int] = // ...
+let result = arrayOfInt.sum()
+in optimized builds, the Swift compiler it will generate a specialized version of sum for that type.
+If you inspect the binary, you will see this specialized version under a symbol _$sST3sumSz7ElementRpzrlEAASdyFSaySiG_Tg5, which demangles to generic specialization <[Swift.Int]> of (extension in example):Swift.Sequence< where A.Element: Swift.BinaryInteger>.sum() -> Swift.Double, alongside the unspecialized version.
+This specialized version of sum will be optimized specifically for Array<Int>. It can move a pointer directly over the the array's buffer, loading the elements into registers directly from memory. On modern hardware, it can make use of dedicated instructions to convert the them to floating point. It can do this because it can see the implementation of sum, and can see the exact types on which it is being called. What exact assembly instructions are generated will differ significantly between e.g. Array<Int8>.sum and Array<UInt64>.sum.
+Here is that Array<Int>-specialized code when compiled to x86-64 with swiftc -Osize:
+_$sST3sumSz7ElementRpzrlEAASdyFSaySiG_Tg5:
+mov     rax, qword ptr [rdi + 16]
+xorpd   xmm0, xmm0
+test    rax, rax
+je      .LBB1_3
+xor     ecx, ecx
+.LBB1_2:
+cvtsi2sd        xmm1, qword ptr [rdi + 8*rcx + 32]
+inc     rcx
+addsd   xmm0, xmm1
+cmp     rax, rcx
+jne     .LBB1_2
+.LBB1_3:
+ret
+Now consider some code that places an optimization barrier between the call site and the concrete type:
+protocol Summable: Sequence where Element: BinaryInteger { }
+extension Array: Summable where Element: BinaryInteger { }
+var summable: any Summable = []
+// later, when summable has been populated with an array of some kind of integer
+let result = summable.sum()
+The compiler now has no way of knowing what type Summable is at the call site – neither the sequence type, nor the element type. So its only option is to execute the fully unspecialized code. Instead of advancing a pointer over a buffer and loading values directly from memory, it must iterate the sequence by first calling makeIterator() and then calling next(), unwrapping optional values until it reaches nil.  And instead of using a single instruction to convert an Int to a Double, it must call the generic initializer on Double that uses methods on the BinaryInteger protocol to convert the value into floating point representation. Unsurprisingly, this code path will be about 2 orders of magnitude slower than the specialized version. This is true even if the actual type being summed ends up being [Int] at runtime.
+A similar situation would occur when sum is a generic function in a binary framework which has not provided an @inlinable implementation. While the Swift compiler might know the types at the call site, it has no ability to generate a specialized version because it cannot see the implementation in order to generate it. So it must call the unspecialized version of sum.
+The best way to avoid this situation is just to avoid type erasure in the first place. This is why concrete types and generics should be preferred whenever practical over existential types for performance-sensitive code. But sometimes type erasure, particularly for heterogenous storage, is necessary.
+Similarly, ABI-stable binary framework authors do not always want to expose their implementations to the caller, as this tends to generate a very large and complex ABI surface that cannot be easily changed later. It also prevents upgrades of binary implementations without recompiling the caller, allowing for e.g. an operating system to fix bugs or security vulnerabilities without an app needing to be recompiled.
+Proposed solution
+A new attribute, @specialize, will allow the author of a function to cause the compiler to generate specializations of that function. In the body of the unspecialized version, the types are first checked to see if they are of one of the specialized types. If they are, the specialized version will be called.
+So in our example above:
+extension Sequence where Element: BinaryInteger {
+@specialize(where Self == [Int])
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+A specialized version of [Int].sum will be generated in the same way as if it had been specialized for a callsite. And inside the unspecialized generic code, the additional check-and-redispatch logic will be inserted at the start of the function.
+Doing this restores the performance of the specialized version of sum (less a check and branch of the calling type) even when using the existential any Summable type.
+Detailed design
+The @specialize attribute can be placed on any generic function. It takes an argument with the same syntax as a where clause for a generic signature.
+The where clause must fully specialize all the generic placeholders of the types in the function signature. In the case of a protocol extension, as seen above, that includes specifying Self.
+As well as protocol extensions, it can also be used on extensions of generic types, on computed properties (note, it must be put on get explicitly, not on the shorthand where it is elided), and on free functions:
+extension Array where Element: BinaryInteger {
+@specialize(where Element == Int)
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+var product: Double {
+@specialize(where Element == Int8)
+get { reduce(1) { $0 * Double($1) } }
+}
+}
+@specialize(where T == Int)
+func sum<T: BinaryInteger>(_ numbers: T...) -> Double {
+numbers.reduce(0) { $0 + Double($1) }
+}
+All placeholders must be fully specified in the where clause even if they do not appear to be used in the function body:
+extension Dictionary where Value: BinaryInteger {
+// error: Too few generic parameters are specified in 'specialize' attribute (got 1, but expected 2)
+// note: Missing equality constraint for 'Key' in 'specialize' attribute
+@specialize(where Value == Int)
+func sum() -> Double {
+values.reduce(0) { $0 + Double($1) }
+}
+}
+Bear in mind that even when not explicitly used in the body, they may be used implicitly. For example, in calculating the location of stored properties. Depending on how Dictionary is laid out, it may be important to know the size of the Key even if key values aren't used. But even if there is absolutely no use of a generic type in the body being specialized, the type must be explicitly specified. This requirement could be loosened in future, see "Partial Specialization" in future directions.
+Where multiple placeholders need to be specified separately, they can be separated by commas, such as in the fix for the above example:
+extension Dictionary where Value: BinaryInteger {
+@specialize(where Value == Int, Key == Int)
+func sum() -> Double {
+values.reduce(0) { $0 + Double($1) }
+}
+}
+Source compatibility
+The addition or removal of explicit specializations has no impact on the caller, and is opt-in. As such it has no source compatability implications.
+ABI compatibility
+This proposal covers only internal specializations, dispatched to from within the implementation of an unspecialized generic function. As such it has no impact on ABI. It can be applied to existing ABI-stable functions in libraries built for distribution, and can be removed later without ABI impact. Generic functions can continue to be inlinable to be specialized by the caller, and the code to dispatch to specialized versions will not appear in the inlinable code emitted into the swift interface file.
+A future direction where explicit specializations are exposed as ABI appears in Future Directions.
+Implications on adoption
+Explicit specializations impose no new runtime requirements on either the caller or the called function, so use of them can be back-deployed to earlier Swift runtimes.
+Future directions
+Partial Specialization
+The need to fully specify every type when using @specialize is somewhat limiting. For example, in the Dictionary example above, no reference is made in the code to the Key type in summing the values. Having to explicitly state the concrete type for Key means you need separate specializations for [String:Int], [Int:Int] and so on.
+Even in cases where dynamic dispatch through the protocol is still required for the unspecialized aspects (such as determining where to find the values in a dictionary's layout), this might not be in the hot part of the function and so partial specialization might be the better trade-off.
+Closely related to partial specialization is the ability to specialize once for all particular type layouts. In the Dictionary.sum example, it might only matter what the size of the key type is in order to efficiently iterate the values.
+Another example of this is Array.append. There is only one single implementation needed for appending an AnyObject-constrained to an array. The append operation needs to retain the object, but does not need any other properties. So two class instances could be appended using the same method irrespective of their actual type. Similar techniques could be used to provide shared specializations for BitwiseCopyable types, possibly with the addition of a supplied size argument to avoid having to use value witness calls.
+Making Specializations Publicly Available
+This proposal keeps expliicit specializations internal only. For ABI-stable frameworks, a useful future direction would be to make these symbols publicly available and listed in the .swiftinterface file, for callers to link to directly.
+Doing this allows ABI-stable framework authors to expose specializations without exposing the full implementation details of a function as inlinable code. While adding a public specialized symbol to a framework is ABI, it is a much more limited ABI surface compared to providing an inlinable implementation, which requires any future changes to a type to consider the previous inlinable code's behavior to ensure it remains compatible forever in older binaries. A specialized entry point could be updated in a framework to fix a bug without recompiling the caller. Specializations in binary frameworks also have the benefit of avoiding duplication of code into the caller.
+Requiring Specialization
+A related feature is the ability to require specialization either at the call site, or on a protocol. Specialization does not always have to happen at the call site even when it could – it remains an optimization (albeit a very aggressively applied one currently). If the specializatino does not happen, it would be useful to force the compiler to override its heuristics, similar to forcing linlining of a long but critical function.
+There are also protocols that are only meant to be used in specialized form in optimized builds. Arguably BinaryInteger is one of them. It may be worth exploring in these cases an annotation to indicate this to the caller, either via a compile-time errror/warning, or a runtime error.
+Tooling Directions
+This proposal only outlines language syntax the developer can use to instruct the compiler to emit a specialized version of a function. Complimentary to this is development of tooling to identify profitable specializations to add, for example by profiling typical usage of an app. It should be noted that specialization is only required in highly performance sensitive code. In many cases, explicit specialization will have little impact on overall performance while increasing binary size.
+The current implementation requires the attribute to be attached directly to the function being specialized. Tooling to produce specializations would benefit from an additional syntax that could be added in a separate file, or even into a separately compiled binary.
+Alternatives considered
+Many alternatives to this proposal – such as whole-program analysis to determine prespecializations automatically – are complimentary to this technique. Even in the presence of better optimizer heroics, there are still benefits to having explicit control over specialization.
+This proposal takes as a given Swift's current dispatch mechanisms. Some alternatives to this proposal tend to end up requiring fundamental changes to Swift's core generics implementation, and are therefore out of scope for this proposal.
+
+---
+
++1 to making this part of the language.
+As a possible future direction, how about specializing to another protocol?
+For example, a function on BinaryInteger might optimize better when the type also conforms to FixedWidthInteger, or a function on Sequence might optimize better when the type also conforms to RandomAccessCollection.
+Something like:
+@specialize(where Element: FixedWidthInteger)
+@specialize(where Self: RandomAccessCollection)
+
+---
+
+One detail worth pinning down: how is the type-check performed? (Treat all of the below as pseudocode.)
+// most restrictive
+if type(of: self) == Foo.self
+// least restrictive, but may involve bridging!
+if let self_ = self as? Foo
+// middle ground that makes sense for classes,
+// but might bug people when it doesn’t work for `any` types
+if type(of: self).isSubclass(of: Foo.self)
+// something else?
+(I’m also curious what the assembly looks like / the code size impact, but that’s less important in these pitch threads than the semantics.)
+
+---
+
+a huge +1 from me. this proposal is a no brainer and bridges a gap in the language that so far has been filled by copious overuse of @inlinable.
+this part is a small drizzle on my parade:
+ben-cohen:
+This proposal keeps expliicit specializations internal only.
+as virtually all real world use cases for @_specialize involve public declarations, since the compiler can already specialize most internal calls. but i understand why an incremental approach is preferred.
+
+---
+
+One nit: @_specialize was added so long ago that we hadn’t yet chosen a consistent grammatical style for attributes. Today it ought to be spelled @specialized.
+
+---
+
+The proposal should probably include an example of declaring multiple distinct specializations of a single function.
+
+---
+
+jrose:
+One detail worth pinning down: how is the type-check performed?
+The code generated is basically your first option:
+lea     rdi, [rip + (demangling cache variable for type metadata for [Swift.Int16])]
+call    __swift_instantiateConcreteTypeFromMangledName
+cmp     rax, rbx
+je      .LBB4_5
+lea     rdi, [rip + (demangling cache variable for type metadata for [Swift.Int8])]
+call    __swift_instantiateConcreteTypeFromMangledName
+cmp     rax, rbx
+je      .LBB4_4
+lea     rdi, [rip + (demangling cache variable for type metadata for [Swift.Int])]
+call    __swift_instantiateConcreteTypeFromMangledName
+cmp     rax, rbx
+je      .LBB4_3
+i.e. it fairly naïvely tests for each exact type in turn. This could be improved in future as it doesn't scale so great if you add a lot of explicit specializations.  @Mike_Ash has been doing some parallel but related work recently on pre-specializing type metadata and building efficient lookup tables for that, with which this might have some interesting intersection.
+
+---
+
+Can this test be elided when the compiler can statically prove the types?
+
+---
+
+If it could do that, it could call the specialized version directly in the first place instead of the unspecialized version.
+The swift optimizer does have an "existential specializer" that does something along these lines when the code is trivial enough to look through the type erasure and see it must be one exact type. Trickier is if there are 8 specializations, but it might only be 2 of them for a particular code path. There are solutions to this too, but the more of these things you layer on, the bigger your code size and longer your compile times.
+
+---
+
+Thanks! This was a semantics question more than a code generation question; it implies that @specialize(where Pointee == NSObject) will not kick in for a Pointee of NSView. Which I think makes sense given the syntax.
+
+---
+
+Yes, I think that's the right behavior. Certainly, invoking bridging or implicit conversion during the check should be ruled out IMO.  I'll update to clarify in the proposal.
+
+---
+
+beccadax:
+Today it ought to be spelled @specialized
+Hrrrmph. I guess that isn't so bad in this case, though the imperative form reads much better.
+What's worse is the consequences of this on a proposal to formalize @inline(__always) (which is next up on my list). I really dislike the idea of calling that @inlined(always).
+
+---
+
+If it were a macro, which is the more likely name? @specialize and @inline seem like instructions to the compiler, whereas attributes on types feel like adjectives.
+
+---
+
+I think the obvious question to ask is, what about entirely alternate implementations for specializations?
+For example, in the example given, maybe I can do much better than the compiler for certain input types, by writing an explicitly-vectorized version myself, or by calling a vDSP API on Apple platforms.
+The proposed syntax doesn't seem to offer a way to do this.
+
+---
+
+OneSadCookie:
+I think the obvious question to ask is, what about entirely alternate implementations for specializations?
+For example, in the example given, maybe I can do much better than the compiler for certain input types, by writing an explicitly-vectorized version myself, or by calling a vDSP API on Apple platforms.
+You can do this with explicit control flow inside of the implementation.
+
+---
+
+Joe_Groff:
+You can do this with explicit control flow inside of the implementation.
+Suggesting
+extension Sequence where Element: BinaryInteger {
+@specialize(where Self == [Int])
+func sum() -> Double {
+if let arrayOfInt = self as? [Int] {
+#if os(macOS)
+return someMacSpecificAPI(arrayOfInt)
+#else
+return someManuallyVectorizedSum(arrayOfInt)
+#endif
+} else {
+return reduce(0) { $0 + Double($1) }
+}
+}
+}
+And the optimizer will sort it all out?
+I don't love the opportunity there for the static check that @specialize inserts, to differ from the runtime check that I have to add, and I'd never be warned about the mismatch — I'd only know by inspecting the binary.
+(It also relies on the optimizer being able to elide as? casts where the types are known to match, which it might — does it?)
+
+---
+
+OneSadCookie:
+I don't love the opportunity there for the static check that @specialize inserts, to differ from the runtime check that I have to add, and I'd never be warned about the mismatch — I'd only know by inspecting the binary.
+Perhaps, like @available and #available, there should be @specialized that I put on the function, and #specialized that I can check for in an if, that accept the same syntax?
+
+---
+
+OneSadCookie:
+I don't love the opportunity there for the static check that @specialize inserts,
+The check that @specialize inserts is dynamic, since it's on the callee's side of the ABI boundary. If static specialization can occur, then the checks would get optimized out (but you also wouldn't need @specialize for those cases).
+OneSadCookie:
+(It also relies on the optimizer being able to elide as? casts where the types are known to match, which it might — does it?)
+Casts and T.self == [Int].self style checks should also get optimized out after static specialization, or after a redundant check has already established the equality, yeah.
+
+---
+
+Joe_Groff:
+Casts and T.self == [Int].self style checks should also get optimized out after static specialization, or after a redundant check has already established the equality, yeah
+It would be nice to be able to guarantee that the check doesn't occur on the non-specialized path as well, so that we're not doing redundant work there. It's statically dead, so it can only ever bloat codesize, but that may not be visible to the optimizer without some work.
+
+---
+
+OneSadCookie:
+I think the obvious question to ask is, what about entirely alternate implementations for specializations?
+This is an interesting area to explore, but it's important to be clear that it's a very different feature.
+The specializations mentioned here are entirely referentially transparent, using Swift's protocol dispatch semantics to ensure the only observable difference (short of shenanigans) is how quickly the code runs.They are just optimizations where dynamic dispatch is replaced by static, code inlined, low-level optimizations applied to that code etc.
+This is distinct from "when it's this type run this code, when it's that type, run that code", where this code and that code might do very different things semantically. You might not mean for them to differ semantically, but they can.
+This is closely related to what is probably Swift's most confusing behavior – that overloads in protocol extensions don't kick in generically unless they are implementations of methods that appear in the protocol (aka customization points).
+Creating a new technique that allows for dispatching to different implementations based on the type would be a competing feature to protocol-based dispatch. It would have benefits over it sometimes, but also weird edge cases (i.e. a function compiled in one module then used from another couldn't "see" the overloads added in another – yet one compiled in the same module could).
+Sugar and idioms and guaranteed optimizations for the "if this type then do this else do that" dispatch that Joe describes are interesting to think about. But they're a different feature to this one.
+
+---
+
+So if I'm getting this right, this pitch is basically monomorphized generics that are limited to:
+Functions and computed properties only. Not classes.
+Specializations are defined with the function, and cannot be added post-hoc.
+Specialization cannot specify an alternative implementation.
+Specializations are not exposed outside the module, even when defined.
+I mean, yeah, I get it. Because C doesn't have generics, and because linkers think the C ABI is the only ABI, neither Rust nor C++ have managed to create monomorphized generics as an ABI. But even if you accept that constraint, this pitch is pretty limiting.
+
+---
+
+SlugFiller:
+Functions and computed properties only. Not classes.
+There is no such thing as specializing a generic class in Swift. Only functions generic over classes (or other types). You can't really talk about specializing "a class", unless what you mean is "always specialize methods you add to this class", which would be sugar for doing that function by function.
+SlugFiller:
+Because C doesn't have generics, and because linkers think the C ABI is the only ABI, neither Rust nor C++ have managed to create monomorphized generics as an ABI.
+The latter does not follow the former. C++ or Rust could have an ABI for monomorphised generics. They just don't. Swift has an ABI for unspecialized generics despite using the same linker, and a future direction in this proposal would allow an ABI for monomorphized generics too, with the same linker.
+
+---
+
+ben-cohen:
+"always specialize methods you add to this class", which would be sugar for doing that function by function
+Kind of, yes.
+Consider:
+@specialize(where Element == Int)
+struct Stack<Element> {
+var items: [Element] = []
+mutating func push(_ item: Element) {
+items.append(item)
+}
+mutating func pop() -> Element {
+return items.removeLast()
+}
+}
+vs
+struct Stack<Element> {
+var items: [Element] = []
+@specialize(where Element == Int)
+mutating func push(_ item: Element) {
+items.append(item)
+}
+@specialize(where Element == Int)
+mutating func pop() -> Element {
+return items.removeLast()
+}
+}
+(Sorry for the toy example. Taken from Swift docs)
+It would imply extension methods on it should be auto-specialized as well.
+extension Stack {
+// No need to specify @specialize here because all of Stack is specialized for Element == Int
+var topItem: Element? {
+return items.isEmpty ? nil : items[items.count - 1]
+}
+}
+ben-cohen:
+C++ or Rust could have an ABI for monomorphised generics. They just don't.
+I'm not sure that's the case. To monomorphise the generic, you basically need to create a copy of all the code, with the places where the generic is used replaced with direct calls to the specified type. This would need to be done in the linker, if the generic itself is part of the ABI. Linkers do not have this functionality. They can only fill in addresses to functions and variables based on a symbol name. They cannot make a full copy of a function, replacing specific lines in the code. That feature simply does not exist in any currently existing linker.
+
+---
+
+Is it too early to think about how this would intersect with @implements? If I recall correctly, the standard library has a couple of instances of methods that use a similarly-named underscored attribute to provide explicit specializations, and maybe even alter the lookup order.
+
+---
+
+SlugFiller:
+It would imply extension methods on it should be auto-specialized as well.
+Yes, that's what I said. Specializing a type would just be sugar for specializing all methods on a type.
+SlugFiller:
+To monomorphise the generic...This would need to be done in the linker, if the generic itself is part of the ABI.
+This is not true and I'm not sure what point you're trying to make. Yes, monomorphizing involves replacing the general implementation with the specific one. To do this you need a representation that lets you reconstruct that information. Some languages do this with bytecode or IR, which you can process in a compiler, or a linker, or by a JIT at runtime. Swift does this by putting the source in a swift interface file and then processing it when compiling the caller. The linker isn't involved in that. It can be done by the linker, but it doesn't have to be.
+
+---
+
+I think the mismatch here is that @SlugFiller is talking about monomorphization on demand (which, yeah, the linker will not do) and @ben-cohen is talking about exporting specific monomorphizations (still as a future direction, though). C++ does have the latter: it's extern template foo<string>(); or whatever. That monomorphization of foo will get a (stable!) symbol name that external clients can call even without having a body for foo. (And the library may or may not have customized the implementation of foo<string>; you can't tell from outside the library.)
+Swift's stable ABI does not currently have a mangling for a similar feature. (Also, there's no way to ask for it in the language, though the compiler will sometimes generate such a monomorphization as an optimization! It just won't export it.) What Swift has that C++ doesn't is its polymorphic generic ABI: any generic function has a single implementation that takes a dispatch table (probably several of them, really) to actually do its work, and that has a stable symbol name. And because of Swift's support for separate compilation, there's no way to monomorphize on demand except when information is revealed to the caller (usually via @inlinable). Which is similar to providing the source of a template in a header file, and is a feature that already exists.
+Ben is saying that we could add a new attribute (or a variant of the proposed @specialize), which would export a specific monomorphization, chosen by the library, under a stable symbol name, which clients would then be able to call directly if (and only if) they statically knew they had a matching type. But this is all still a future direction, just like the ideas for partial specialization or "manual specialization" with an explicitly different implementation.
+Though as discussed "manual specialization" is not super important for functions, because once you're no longer sharing a textual implementation with the generic path, you can just write the check as code (if you want it dynamically chosen) or add an overload (if you only care about static choices) or both (if you want to short-circuit the check when possible but still support it in the opaque case). For types this is still potentially more interesting.
+
+---
+
+ben-cohen:
+Swift does this by putting the source in a swift interface file and then processing it when compiling the caller. The linker isn't involved in that.
+That's not an ABI anymore, though. Quoting your own post:
+ben-cohen:
+It also prevents upgrades of binary implementations without recompiling the caller, allowing for e.g. an operating system to fix bugs or security vulnerabilities without an app needing to be recompiled.
+Processing a monomorphized generic when compiling the caller is basically what C++ does when it includes templates in header instead of code files. And recompiling the caller is the result, if any fix is done to the template code.
+If and when Swift has fully monomorphized generics, they would likely have these same properties.
+As I understand it, Swift currently uses erasure for generics, however. This works as an ABI - Only one version of the function is exposed. The calls to methods on the parameter type are done indirectly, at runtime. The caller does not need to be recompiled when the generic type or function changes, because the "linking" is done at runtime (dynamically, per call).
+jrose:
+C++ does have the latter: it's extern template foo<string>(); or whatever.
+Yes. Exactly. And since it's "future direction", and not part of the pitch, this pitch is even more limiting than this.
+Swift's polymorphic generics allow for true on-demand generics while keeping a stable ABI and avoiding recompilations. But it comes at a performance cost. And without some fundamental change to linkers, this tradeoff is inevitable.
+But there are still a lot of options in between "polymorphic everything" and "recompile everything". It's not a purely binary choice. This pitch, as presented, if I'm reading it correctly, leans very heavily towards the prior.
+
+---
+
+SlugFiller:
+ben-cohen:
+Swift does this by putting the source in a swift interface file and then processing it when compiling the caller. The linker isn't involved in that.
+That's not an ABI anymore, though.
+Ah, here's the point of confusion. Yes, inlinable code in a swift interface file is ABI, as least from Swift's perspective. Swift includes various features, such as resilient and frozen types, and useable-from-inline symbols, that allow for it to publish ABI-stable inlinable code.
+Inlinable code forms a very messy kind of ABI – one where you need to consider things like how changing an implementation will behave when old copies are still hanging around and running against your new framework. But it is ABI.
+The fact that this ABI is potentially emitted into the client, which means it can't be upgraded underneath a compiled binary, doesn't make it not ABI (though, note that there are variants of inlining where this does work, this is what @backDeployed does).
+SlugFiller:
+As I understand it, Swift currently uses erasure for generics, however.
+"Erasure" isn't a rigorously defined enough term, really, but generally speaking no, Swift doesn't use erasure for generics. The type of a value remains fully known at all times, and the value doesn't need to be held at the end of a pointer. Instead, metadata is passed around identifying the type when needed and provides functions that can manipulate the type (make copies, destroy etc).
+SlugFiller:
+And without some fundamental change to linkers, this tradeoff is inevitable.
+I am still not following why you think that doing work "in the linker" is the key to resolving these things.
+
+---
+
+ben-cohen:
+the value doesn't need to be held at the end of a pointer
+This one I'm not following. How could different types be held by the same binary code as anything other than a pointer? For instance, you can't allocate it on the stack if the size might vary.
+Metadata being passed around doesn't make it not erasure. That's just RTTI, and is functionally indistinct from vtables. I would say "erasure" is sufficiently rigorously defined. It's when the actual binary implementation is as if the generic was monomorphically applied to a common ancestor of all possible type parameter values, and usage of the parameter type's method is the same as that for any interface or inheritable class with virtual methods.
+It is distinct from "monomorphized" in the obvious way, and from "reified" in that "reified" adds runtime checks for the type and performs JIT to come closer to monomorphized at run time.
+ben-cohen:
+am still not following why you think that doing work "in the linker" is the key to resolving these things.
+Not saying it's "key", just an inevitability. Compiling produces object files for caller and callee. The linker combines those object files. If the linker cannot represent or process generics, it cannot perform the necessary changes to the caller to account for changes in the callee. The result is a need to recreate the object file. i.e. To recompile.
+Which comes back to the original point: You can't have on-demand monomorphization without recompiling the caller for every change in the callee. If you don't have on-demand monomorphization, then the caller can use a type parameter which would force the callee to operate using RTTI, i.e. indirect calls (assuming no JIT), which carries a performance cost (indirect calls are necessarily slower than direct ones). That's the tradeoff.
+
+---
+
+Just because it’s not mentioned explicitly in the pitch: does applying @specialize multiple times generate multiple distinct specializations like @_specialize does now?
+
+---
+
+SlugFiller:
+For instance, you can't allocate it on the stack if the size might vary.
+That's where you're wrong, because this is exactly what Swift does. The value witness tables include the size of the type in memory, as well as functions required to copy, move or destroy a value. Slava had an excellent presentation on this a while ago:
+
+---
+
+MPLewis:
+does applying @specialize multiple times generate multiple distinct specializations like @_specialize does now?
+yes good point that wasn't explicit in the proposal. yes you can stack as many as you like.
+
+---
+
+ben-cohen:
+There is no such thing as specializing a generic class in Swift. Only functions generic over classes (or other types). You can't really talk about specializing "a class", unless what you mean is "always specialize methods you add to this class", which would be sugar for doing that function by function.
+Couldn't Swift's classes generate a specialized dispatch table per generic specialization? The dispatch table could then be chosen during initialization of an instance of that class. This would eliminate the need to check for each specialization per method call. The nice thing about this is that non-final/overrideable methods/properties already do dynamic dispatch through the dispatch table anyway and could directly dispatch to the specialized version, reducing the overhead per method call/property access to essentially zero (minus additional memory required for the specialized dispatch tables but that should be shared with all instances).
+
+---
+
+I've wanted something that sounds similar to this but I'm not sure if it's actually covered.
+Occasionally, I've wanted to implement my own Encoder/Decoder for a custom serialization format, especially methods like this, where I'm given a generic Encodable-conforming parameter.
+In some of these cases, I've wanted to conditionalize the logic for special types that I know the format handles differently. For example "If I'm encoding an Array<URL>, behave slightly different than an Array<String>, before falling back to the general 'some sort of encodable thing'".
+I've looked into @_specialize before to do this, so I could have a public func on my coders that handle these mostly-the-same-but-slightly-different logic.
+However, I don't think @specialize will handle this, correct?
+Specific Example
+A specific example would be around working with UserDefaults, which has type-specific methods for reading and writing Int versus Double versus Array<String> versus Data, etc.
+I've tried making UserDefaults conform to generic "key-value store" protocols that only deal with simple "codable" values, and in every time I end up having to do things like this:
+@MainActor protocol KeyValueStore {
+func read<Value: Codable>(_ key: String) throws -> Value
+func write<Value: Codable>(_ key: String, _ value: Value?) throws
+}
+extension UserDefaults: KeyValueStore {
+...
+func write<Value>(_ key: String, _ value: Value?) throws where Value : Codable & Equatable {
+guard let unwrapped = value else {
+self.removeObject(forKey: key)
+return
+}
+switch unwrapped {
+case let i as Int: self.set(i, forKey: key)
+case let f as Float: self.set(f, forKey: key)
+case let d as Double: self.set(d, forKey: key)
+case let b as Bool: self.set(b, forKey: key)
+default:
+do {
+let encoded = try PlistEncoder().encode(unwrapped)
+self.set(encoded, forKey: key)
+} catch let error as EncodingError {
+throw KeyValueStoreError.encodingError(error)
+} catch {
+throw KeyValueStoreError.unknown(error)
+}
+}
+}
+}
+I've wanted to provide specializations of the write<T>(_:_:) specifically for Int, Double, Bool etc instead of having to switch on the type in the single implementation above.
+Edited to add: Playground
+protocol Writer {
+func write<E: Encodable>(_ value: E)
+}
+struct ConcreteWriter: Writer {
+// is there anything I can do to make this be used as part of satisfying the `Writer` protocol?
+func write(_ value: String) {
+print("Writing a string")
+}
+func write<E: Encodable>(_ value: E) {
+print("Using fallback writer of type \(E.self)")
+}
+}
+let writer: any Writer = ConcreteWriter()
+writer.write(42)        // Using fallback writer of type Int
+writer.write("hello")   // Using fallback writer of type String ← 😢
+
+---
+
+SlugFiller:
+This one I'm not following. How could different types be held by the same binary code as anything other than a pointer? For instance, you can't allocate it on the stack if the size might vary.
+Sure you can, so long as your metadata table holds the size.
+If you’re familiar with generics from other languages, you’ve probably learned that there are two ways to do them: monomorphization and boxing into a uniform representation (usually some kind of pointer). You are now hitting the point where you realize that Swift has invented a third way.
+
+---
+
+davedelong:
+In some of these cases, I've wanted to conditionalize the logic for special types that I know the format handles differently
+This is a different feature to the one being proposed – see discussion upthread.
+
+---
+
+Ah yes, I missed that. Thanks.
+
+---
+
+I see it uses alloca for the stack allocation. But I also see it receives an opaque pointer for the parameter e.g. void getSecond(opaque *result, opaque *pair, type *T). So, the value is still technically "held at the end of a pointer", even if it is occasionally allocated on stack (using alloca) instead of the heap.
+I will note that passing T as a separate parameter instead of encoding it into the value itself is an interesting difference from classic erasure.
+Comparing to erasure, it doesn't "save" the use of indirect calls. It only saves the memory requirement of keeping a vtable pointer in each instance of the value type. Instead a pointer to the "clean" value can be used as is, while the vtable-equivalent is passed as a separate parameter (which doesn't require per-instance allocation, only per-type), using the fact that the caller knows the type of the parameter it is passing.
+
+---
+
+Perfect, thanks. As a follow-up, is it (or will it be) documented anywhere in what order the types are checked for pre-specialization when calling the unspecialized version of the function? Or is that not behavior that’s being committed to in this proposal?
+
+---
+
+I am wary to specify this, because it's very interlinked with how the re-dispatch is implemented, and that shouldn't be part of the defined semantics of the proposal. Even if it's just "as a rule of thumb, it's better to put common specializations at the top" since in future it may be optimized to work completely differently like a hash table lookup and that advice gets left behind like an oxbow lake that people still follow forever.
+(as it happens, today it is basically a sequence of if statements that appear in the order of the @specialize declarations)
+
+---
+
+ben-cohen:
+as it happens, today it is basically a sequence of if statements that appear in the order of the @specialize declarations
+At the SIL level. The LLVM optimizer and backend are free to do whatever they want to those, as well.
+
+---
+
+Thanks for the feedback so far. I've updated the proposal PR with clarifications from the thread, diff here.
+
+---
+
+How does this interact with some generic parameter types? I believe the current underscored syntax prohibits the use of some in parameter position so you are able to name all type parameters. Is there a way to extend the syntax to allow handling opaque generic parameter types (perhaps only in simple cases like where they are the only parameter)? For example: @specialize(where: T == String) and @specialize(String)
+
+---
+
+j-f1:
+Is there a way to extend the syntax to allow handling opaque generic parameter types (perhaps only in simple cases like where they are the only parameter)? For example: @specialize(where: T == String) and @specialize(String)
+We could special case something like this, but it doesn't seem desirable. If you want to refer to a placeholder in multiple places (whether in the signature, or in an attribute as well), you should give it a name.
+
+---
+
+huge +1!
+Can we manually specify a different implementation for the specialized type?
+Something like this:
+extension Array where Element: BinaryInteger {
+@specialize(where Element == Int)
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+extension [Int] {
+func sum() -> Double { 0 }
+}
+// or, in the form of a customized signature
+extension Array where Element: BinaryInteger {
+@specialize(where Element == Int, superFastImpl)
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+extension [Int] {
+func superFastImpl() -> Double { 0 }
+}
+
+---
+
+CrystDragon:
+Can we manually specify a different implementation for the specialized type?
+That would entail taking all the complexity of Swift overload resolution and building it into the runtime. Just do double dispatch with a new protocol instead. For example see this previous discussion: Protocol extension, generics and dynamic dispatch confusion - #2 by Slava_Pestov
+
+---
+
+Thanks for your reply.
+I understand the overload mechanism in Swift is based on static information in the calling context. But I'm confused why this "internal specialization" feature is related to "overload resolution".
+As Ben illustrated in the pitch, a function marked with @specialize is semantically equal to run-time condition branches, can't we just allow the developer to specify one of the branches?
+This code is modified from the draft text:
+extension Sequence where Element: BinaryInteger {
+@specialize(where Self == [Int])
+@specialize(where Self == [Int8])
+func sum() -> Double {
+if Self.self == [Int].self {
+<execute specialization for [Int].sum()>   // <- for example, this branch can be developer specified
+} else if Self.self == [Int8].self {
+<execute specialization for [Int8].sum()> // <- this branch remains to be provided by the compiler
+} else {
+reduce(0) { $0 + Double($1) }
+}
+}
+}
+
+---
+
+The code you just wrote works today, without @specialize. The only convenience that's missing is that Self will not be [Int] within the <execute specialization for [Int].sum()> block, but that "only" requires some casting. That would be a nice convenience to have, but it's largely orthogonal to this proposal.
+
+---
+
+We actually have this as an underscored standard library function today as _specialize.
+
+---
+
+What is proposed here is only an optimization guide and has no effect on the outward semantics of the function (aside from making it go faster for certain generic argument values). It might be good to make that clear in the proposal up front.
+
+---
+
+What I want right now and seems to be missing (if I've read correctly) is the ability to specialize a function someone else wrote.  Every time my colleague converts an Int64 to an Int32 in his debug builds there is a lazy protocol witness lookup which causes a 300x slowdown in a microbenchmark compared to release builds, which makes Swift look bad(!)  I'd like to be able to say look, just insert this specialization in your code and that will disappear.  I assume(?) a specialization would do that.
+
+---
+
+Yes, you should be able to do this. This is what this part of Future DIrections, that I probably buried in the Tooling section, was getting at:
+The current implementation requires the attribute to be attached directly to the function being specialized. Tooling to produce specializations would benefit from an additional syntax that could be added in a separate file, or even into a separately compiled binary.
+It's definitely a future direction though because it requires a dynamic lookup table of specializations, rather than the current extremely simple static switch emitted into the start of the unspecialized function.
+
+=== ROW 55 | f002554 | https://github.com/bevyengine/bevy/pull/17398 | 2025-01-16 | domain-subframes ===
+Relationships (non-fragmenting, one-to-many)
+
+---
+
+This adds support for one-to-many non-fragmenting relationships (with planned paths for fragmenting and non-fragmenting many-to-many relationships). "Non-fragmenting" means that entities with the same relationship type, but different relationship targets, are not forced into separate tables (which would cause "table fragmentation").
+
+Functionally, this fills a similar niche as the current Parent/Children system. The biggest differences are:
+
+1. Relationships have simpler internals and significantly improved performance and UX. Commands and specialized APIs are no longer necessary to keep everything in sync. Just spawn entities with the relationship components you want and everything "just works".
+2. Relationships are generalized. Bevy can provide additional built in relationships, and users can define their own.
+
+**REQUEST TO REVIEWERS**: _please don't leave top level comments and instead comment on specific lines of code. That way we can take advantage of threaded discussions. Also dont leave comments simply pointing out CI failures as I can read those just fine._
+
+## Built on top of what we have
+
+Relationships are implemented on top of the Bevy ECS features we already have: components, immutability, and hooks. This makes them immediately compatible with all of our existing (and future) APIs for querying, spawning, removing, scenes, reflection, etc. The fewer specialized APIs we need to build, maintain, and teach, the better.
+
+## Why focus on one-to-many non-fragmenting first?
+
+1. This allows us to improve Parent/Children relationships immediately, in a way that is reasonably uncontroversial. Switching our hierarchy to fragmenting relationships would have significant performance implications. ~~Flecs is heavily considering a switch to non-fragmenting relations after careful considerations of the performance tradeoffs.~~ _(Correction from @SanderMertens: Flecs is implementing non-fragmenting storage specialized for asset hierarchies, where asset hierarchies are many instances of small trees that have a well defined structure)_
+2. Adding generalized one-to-many relationships is currently a priority for the [Next Generation Scene / UI effort](https://github.com/bevyengine/bevy/discussions/14437). Specifically, we're interested in building reactions and observers on top. 
+
+## The changes
+
+This PR does the following:
+
+1. Adds a generic one-to-many Relationship system
+3. Ports the existing Parent/Children system to Relationships, which now lives in `bevy_ecs::hierarchy`. The old `bevy_hierarchy` crate has been removed.
+4. Adds on_despawn component hooks
+5. Relationships can opt-in to "despawn descendants" behavior, meaning that the entire relationship hierarchy is despawned when `entity.despawn()` is called. The built in Parent/Children hierarchies enable this behavior, and `entity.despawn_recursive()` has been removed.
+6. `world.spawn` now applies commands after spawning. This ensures that relationship bookkeeping happens immediately and removes the need to manually flush. This is in line with the equivalent behaviors recently added to the other APIs (ex: insert).
+7. Removes the ValidParentCheckPlugin (system-driven / poll based) in favor of a `validate_parent_has_component` hook.
+
+## Using Relationships
+
+The `Relationship` trait looks like this:
+
+```rust
+pub trait Relationship: Component + Sized {
+    type RelationshipTarget: RelationshipTarget<Relationship = Self>;
+    fn get(&self) -> Entity;
+    fn from(entity: Entity) -> Self;
+}
+```
+
+A relationship is a component that:
+
+1. Is a simple wrapper over a "target" Entity.
+2. Has a corresponding `RelationshipTarget` component, which is a simple wrapper over a collection of entities. Every "target entity" targeted by a "source entity" with a `Relationship` has a `RelationshipTarget` component, which contains every "source entity" that targets it.  
+
+For example, the `Parent` component (as it currently exists in Bevy) is the `Relationship` component and the entity containing the Parent is the "source entity". The entity _inside_ the `Parent(Entity)` component is the "target entity". And that target entity has a `Children` component (which implements `RelationshipTarget`).
+
+In practice, the Parent/Children relationship looks like this:
+
+```rust
+#[derive(Relationship)]
+#[relationship(relationship_sources = Children)]
+pub struct Parent(pub Entity);
+
+#[derive(RelationshipTarget)]
+#[relationship_sources(relationship = Parent)]
+pub struct Children(Vec<Entity>);
+```
+
+The Relationship and RelationshipTarget derives automatically implement Component with the relevant configuration (namely, the hooks necessary to keep everything in sync).
+
+The most direct way to add relationships is to spawn entities with relationship components:
+
+```rust
+let a = world.spawn_empty().id();
+let b = world.spawn(Parent(a)).id();
+
+assert_eq!(world.entity(a).get::<Children>().unwrap(), &[b]);
+```
+
+There are also convenience APIs for spawning more than one entity with the same relationship:
+
+```rust
+world.spawn_empty().with_related::<Children>(|s| {
+    s.spawn_empty();
+    s.spawn_empty();
+})
+```
+
+The existing `with_children` API is now a simpler wrapper over `with_related`. This makes this change largely non-breaking for existing spawn patterns.
+
+```rust
+world.spawn_empty().with_children(|s| {
+    s.spawn_empty();
+    s.spawn_empty();
+})
+```
+
+There are also other relationship APIs, such as `add_related` and `despawn_related`.
+
+## Automatic recursive despawn via the new on_despawn hook
+
+`RelationshipTarget` can opt-in to "despawn descendants" behavior, which will despawn all related entities in the relationship hierarchy:
+
+```rust
+#[derive(RelationshipTarget)]
+#[relationship_sources(relationship = Parent, despawn_descendants)]
+pub struct Children(Vec<Entity>);
+```
+
+This means that `entity.despawn_recursive()` is no longer required. Instead, just use `entity.despawn()` and the relevant related entities will also be despawned.
+
+To despawn an entity _without_ despawning its parent/child descendants, you should remove the `Children` component first, which will also remove the related `Parent` components:
+
+```rust
+entity
+    .remove::<Children>()
+    .despawn()
+```
+
+This builds on the on_despawn hook introduced in this PR, which is fired when an entity is despawned (before other hooks).
+
+## Relationships are the source of truth
+
+`Relationship` is the _single_ source of truth component. `RelationshipTarget` is merely a reflection of what all the `Relationship` components say. By embracing this, we are able to significantly improve the performance of the system as a whole. We can rely on component lifecycles to protect us against duplicates, rather than needing to scan at runtime to ensure entities don't already exist (which results in quadratic runtime). A single source of truth gives us constant-time inserts. This does mean that we cannot directly spawn populated `Children` components (or directly add or remove entities from those components). I personally think this is a worthwhile tradeoff, both because it makes the performance much better _and_ because it means theres exactly one way to do things (which is a philosophy we try to employ for Bevy APIs).
+
+As an aside: treating both sides of the relationship as "equivalent source of truth relations" does enable building simple and flexible many-to-many relationships. But this introduces an _inherent_ need to scan (or hash) to protect against duplicates. [`evergreen_relations`](https://github.com/EvergreenNest/evergreen_relations) has a very nice implementation of the "symmetrical many-to-many" approach. Unfortunately I think the performance issues inherent to that approach make it a poor choice for Bevy's default relationship system. 
+
+## Followup Work
+
+* Discuss renaming `Parent` to `ChildOf`. I refrained from doing that in this PR to keep the diff reasonable, but I'm personally biased toward this change (and using that naming pattern generally for relationships).
+* [Improved spawning ergonomics](https://github.com/bevyengine/bevy/discussions/16920)
+* Consider adding relationship observers/triggers for "relationship targets" whenever a source is added or removed. This would replace the current "hierarchy events" system, which is unused upstream but may have existing users downstream. I think triggers are the better fit for this than a buffered event queue, and would prefer not to add that back.
+* Fragmenting relations: My current idea hinges on the introduction of "value components" (aka: components whose type _and_ value determines their ComponentId, via something like Hashing / PartialEq). By labeling a Relationship component such as `ChildOf(Entity)` as a "value component",  `ChildOf(e1)` and `ChildOf(e2)` would be considered "different components". This makes the transition between fragmenting and non-fragmenting a single flag, and everything else continues to work as expected.
+* Many-to-many support
+    * Non-fragmenting: We can expand Relationship to be a list of entities instead of a single entity. I have largely already written the code for this.
+    * Fragmenting: With the "value component" impl mentioned above, we get many-to-many support "for free", as it would allow inserting multiple copies of a Relationship component with different target entities.
+
+Fixes #3742 (If this PR is merged, I think we should open more targeted followup issues for the work above, with a fresh tracking issue free of the large amount of less-directed historical context)
+Fixes #17301
+Fixes #12235 
+Fixes #15299
+Fixes #15308 
+
+## Migration Guide
+
+* Replace `ChildBuilder` with `ChildSpawnerCommands`.
+* Replace calls to `.set_parent(parent_id)` with `.insert(Parent(parent_id))`.
+* Replace calls to `.replace_children()` with `.remove::<Children>()` followed by `.add_children()`. Note that you'll need to manually despawn any children that are not carried over.
+* Replace calls to `.despawn_recursive()` with `.despawn()`.
+* Replace calls to `.despawn_descendants()` with `.despawn_related::<Children>()`.
+* If you have any calls to `.despawn()` which depend on the children being preserved, you'll need to remove the `Children` component first.
+
+
+---
+
+I misrepresented the scope of the Flecs effort to switch to non-fragmenting relations (sorry @SanderMertens!). I've replaced the relevant text in the description with the following text:
+
+> Flecs is implementing non-fragmenting storage specialized for asset hierarchies, where asset hierarchies are many instances of small trees that have a well defined structure
+
+---
+
+Would it be more general to implement the macro like this? This can also work with one way relation from parent to child.
+```rust
+#[derive(Component)]
+#[relationship_sources(relationship = Parent)]
+pub struct Children(#[despawns] Vec<Entity>);
+```
+
+So this means a simple one way relationship
+
+```rust
+#[derive(Component)]
+pub struct Children(#[despawns] Vec<Entity>);
+```
+
+And this removes `Parent` and set the child entities free instead.
+
+```rust
+#[derive(Component)]
+#[relationship_sources(relationship = Parent)]
+pub struct Children(Vec<Entity>);
+```
+
+
+---
+
+# Migration Guide
+
+* Replace `ChildBuilder` with `ChildSpawnerCommands`.
+* Replace calls to `.set_parent(parent_id)` with `.insert(Parent(parent_id))`.
+* Replace calls to `.replace_children()` with `.remove::<Children>()` followed by `.add_children()`. Note that you'll need to manually despawn any children that are not carried over.
+* Replace calls to `.despawn_recursive()` with `.despawn()`.
+* Replace calls to `.despawn_descendants()` with `.despawn_related::<Children>()`.
+* If you have any calls to `.despawn()` which depend on the children being preserved, you'll need to remove the `Children` component first.
+
+---
+
+> Would it be more general to implement the macro like this? This can also work with one way relation from parent to child.
+
+This is an interesting thought. I do like that it lets people tweak the other aspects of the Component (ex: pick the storage). I'm on board!
+
+---
+
+@cart I have no concerns about this at this stage and we have plenty of community review; feel free to merge when you feel it's ready.
+
+
+---
+
+Could we offer users some advice on migrating the removed `HierarchyEvent`?
+
+---
+
+Thank you to everyone involved with the authoring or reviewing of this PR! This work is relatively important and needs release notes! Head over to https://github.com/bevyengine/bevy-website/issues/1981 if you'd like to help out.
+
+=== ROW 56 | f002643 | https://neon.com/blog/how-to-build-github-copilot-extensions | 2025-02-06 | domain-subframes ===
+How to Build GitHub Copilot Extensions - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+How to Build GitHub Copilot Extensions
+At Layer, we built Neon’s Copilot Extension—and we can build yours too
+Andrew Hamilton–Chief Technology Officer at LayerFeb 06, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+As soon as GitHub Copilot burst onto the scene, everyone started asking, “How do we teach Copilot about our platform?” Whether you’re building a managed Postgres service (like Neon) or a specialized set of APIs, it’s no longer enough to rely on devs hunting through documentation. They want AI-driven integrations that bring your endpoints and best practices directly into their coding workflow.
+That’s where Layer comes in. We can help you create a Copilot extension—written in any language—that seamlessly injects your product’s intelligence into GitHub Copilot (and any other AI surface for that matter).
+In this blog post, we’ll walk you through the steps we used to built Neon’s Copilot Extension (and why the idea of a “Copilot extension” isn’t quite what you might expect).
+Install System Prerequisites: Python, Ngrok
+First, make sure that you have the latest versions of Python and Ngrok installed onto your system.
+Webhook Subscriptions: Like Building a Discord Bot
+If you’ve built a Discord bot before, you’re already familiar with this pattern: you set up a server, then point the platform at it so it can deliver events to your endpoint. That’s exactly how GitHub Copilot extensions work under the hood: You create a web server—written in any language you like—and subscribe it to events from GitHub. Whenever Copilot needs to query your extension, it fires an HTTP request to your server.
+This “subscription” approach is powerful for two reasons:
+Language freedom. Because all you need is a server that handles HTTP requests, you’re not locked into Python, Java, Node, or any specific tech stack. If you can spin up a server, you can handle Copilot extension calls—whether you prefer Go, OCaml, or even Ruby.
+Unlimited custom logic. Once the requests arrive, it’s entirely up to you how to process them. Want to authenticate users, pull data from a Postgres database, or call a third-party API? Go for it. The webhook subscription doesn’t dictate how your code runs; it just ensures Copilot knows where to send requests.
+In other words, the only thing you really need to do is let GitHub know where your server lives. Once that’s done, you can implement your Copilot “extension” in the language of your choice, and handle incoming Copilot requests in whatever way best suits your application’s needs.
+Our Server
+So now we get to the interesting stuff—making our copilot server. Here Layer’s starter code:
+import httpx
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import StreamingResponse
+import debugpy
+app = FastAPI()
+debugpy.listen(("0.0.0.0", 8888))
+SYSTEM_MESSAGE = {
+"role": "system",
+"content": """Respond as though you have too much food in your mouth""",
+}
+def prepare_messages(user_messages: list) -> list:
+return user_messages + [SYSTEM_MESSAGE]
+async def get_github_completion(messages: list, auth_token: str):
+async with httpx. AsyncClient() as client:
+response = await client.post(
+"https://api.githubcopilot.com/chat/completions",
+headers={
+"Authorization": f"Bearer {auth_token}",
+"Content-Type": "application/json",
+},
+json={
+"messages": prepare_messages(messages),
+"stream": True,
+},
+timeout=30.0,
+)
+return response
+@app.post("/completion")
+async def completion(request: Request):
+req = await request.json()
+auth_token = request.headers.get("x-github-token")
+messages = req.get("messages", [])
+if not auth_token:
+raise HTTPException(status_code=401, detail="Missing authentication token")
+response = await get_github_completion(messages, auth_token)
+return StreamingResponse(
+response.aiter_bytes(),
+media_type="text/event-stream",
+status_code=response.status_code,
+)
+This code does has two important objectives:
+Create endpoint for Copilot to hit: POST /completion route responds to Copilot requests
+Craft Prompt: The system message is injected into the message history to modify the response given.
+Start the server by running this command:
+uvicorn {FILENAME}:app --reload
+Now that we have created our server, we need to subscribe to it to handle Copilot requests.
+Registering Github App
+Ironically, this is the hardest part of the tutorial (honestly, because Github is a beefy tool). In order to let Copilot know what URL to hit every time the @{YOUR_EXTENSION_NAME} name is used, we create a Github App for the subscription. To do this, navigate to the Github Apps page:
+Here we are going to create a new Github App and fill in some sensible defaults so that we can hit our server.
+Fill out a name: (The name spacing for Github apps is very restrictive, so choose something obscure)
+Fill out Homepage URL: This can be any URL, it’s just required by Github
+Fill out Callback URL: Make this https://github.com.  It will be called when authorizing the usage of a Github app and will redirect them back to Github afterwards.
+Deactivate Webhook: We won’t be using this feature, so nothing to worry about here.
+Enable Account Permissions: This step is REQUIRED, otherwise the Copilot app won’t work. Give Read-Only access to “Copilot Chat” and “Copilot Editor Context”
+Allow Install on Any Account: This allows you to share the extension with anyone.
+Now, hit “Create Github App”.
+Congrats, if you have done all this, you created your first Github App! 🥳
+Now lets navigate to the Copilot tab where it will ask you what “App Type” you want to try to create. Select “Agent”:
+I promise you, the Github config is just about over. Now we are going to use Ngrok to expose your local development server on the internet. It’s a pretty neat service.
+First, let’s expose our local dev server to the internet so that Copilot can hit it! This should be done in a separate terminal from the uvicorn server. Both need to be running simultaneously.
+ngrok http 8000
+Now my VSCode window looks like this, with the left side hosting the Uvicorn server on port 8000 and the Ngrok tunnel on the right terminal with the forwarding port.
+Now, take the forwarding address that I highlighted above and append /completion to the end of it and place it in the URL field of the Agent definition:
+Ok, we are finally done with config! Now let’s install and use it. This can be done super easily. Just type the name of your app into the copilot chat. In my case that looks like this:
+Follow the prompts to connect by authorizing Github to utilize the app, and ta-da! You have your own Neon Copilot extension!
+Want Your Own Extension? Build it With Layer
+Now, this Copilot extension is a way to dip your toes into the world of LLM Extensibility—but going fully production-ready (like we did with Neon) means setting up retrieval-augmented generation (RAG), function calling, message analytics, and more.
+Plus, you’ll have to replicate this logic across all the surfaces you plan to support.
+That’s exactly why we built Layer: a unified platform for managing LLM extensions. We handle Copilot, VS Code, OpenAI GPTs, Anthropic MCP, and beyond—so you can focus on building a great user experience instead of juggling integrations. AI Agents will be writing more and more software in the future—so if you’re a company that wants to make your API easy for AI agents to use, Layer is here to help. Book a demo here if you want to learn more.
+On this page
+Install System Prerequisites: Python, Ngrok
+Webhook Subscriptions: Like Building a Discord Bot
+Our Server
+Registering Github App
+Want Your Own Extension? Build it With Layer
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 57 | f002665 | https://iroh.computer/blog/ffi-updates | 2025-02-12 | domain-subframes ===
+Update On FFI Bindings - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Update On FFI BindingsFebruary 12, 2025 by b5
+We wanted to share an important update about the Kotlin, Python, Swift, and JavaScript FFI bindings for iroh. After a lot of thought, we’ve decided that we won’t be updating these bindings with iroh releases until we can improve the experience of using FFI.
+Why?
+Two reasons:
+Because we don’t think our FFI story is good enough right now. Our promise is to ship “P2P that works”, and we’re not hitting that “just works” experience in languages that aren’t rust.
+We’re concerned about ecosystem fragmentation. If one person writes an iroh protocol but does it in python via FFI bindings, that will only work for Iroh in python. This is likely what will happen in the long run regardless of what we do, but we want to see if we can make things easier.
+What’s the plan?
+We have three possible solutions we’re actively chasing, and will update you as we make progress on which we think will work the best.
+Move language integration up a level: community members are having success with projects like flutter rust bridge & react native UniFFI. We’ll likely lean into this either way, the only question is is this the only FFI solution, or do we need more?
+Ship composable FFI across iroh protocols. This would give tooling to iroh protocol developers for automatically generating FFI APIs that can compose together in the host language. dignifiedquire has been hacking on a prototype, but it doesn’t yet work, and we don’t know if it will. For more information on the current blockers we are facing, take a look at these issues:
+https://github.com/mozilla/uniffi-rs/pull/2423/
+https://github.com/PyO3/maturin/issues/2459
+Ship 1.0, do native implementations of iroh in each language. After 1.0 we will have a proper spec to work from. There’s no way we could pull this off without community support, and we’re not going to ask people to do that until after we ship 1.0, and know that iroh has a solid spec to build on.
+So, You’re just giving up on other languages?
+No! We’re still shipping iroh in browsers. We’re still working on running these plans to ground, all futures for iroh pass through robust support for javascript, kotlin, swift, and python at a minimum, we just want to get it right and don’t want to waste your time until we’re confident our support for each language matches the experience we’re currently providing in rust.
+When can I expect an update?
+Deciding on a path forward is part of our 1.0 roadmap, which is slated to come out in the 2nd half of 2025, you can subscribe for updates here, or keep an eye on the changelog.
+Subscribe
+Want to Keep Using iroh-ffi?
+We know some of you are using the existing FFI bindings, and if you’d like to keep them updated, we’d love to see community contributions! If you’re interested, you’re more than welcome to submit pull requests:
+Current iroh-ffi repository: https://github.com/n0-computer/iroh-ffi
+If you’d rather build your own FFI bindings and focus only on the parts you need, here are a couple of great resources to help you get started:
+UniFFI (for Rust-to-FFI generation): https://mozilla.github.io/uniffi-rs/latest/
+NAPI (for Node.js FFI): https://napi.rs/
+We really appreciate all of your support, and we’re excited for what’s ahead! If you have any thoughts or ideas, feel free to share them with us on GitHub or join us on discord.
+Thanks for being part of the journey!
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 58 | f002685 | https://github.com/slint-ui/slint/issues/7657 | 2025-02-18 | domain-subframes ===
+javascript event loop becomes extremly slow in wayland 
+
+---
+
+Updates below this is not related to the workaround pr
+
+### Bug Description
+
+I wrote this pr https://github.com/slint-ui/slint/pull/7550 to workaround https://github.com/slint-ui/slint/issues/5780
+
+It appeared to work, but I just noticed that it have a subtle but a critical bug, it makes the node  (or deno) event loop extremely slow
+
+
+
+### Reproducible Code (if applicable)
+
+
+src/main.js
+
+```ts
+import * as slint from "slint-ui";
+import Fastify from "fastify";
+
+// Create fastify instance
+const fastify = Fastify({
+  logger: false,
+  disableRequestLogging: true,
+});
+
+// Define route
+fastify.get("/", async (request, reply) => {
+  return "Hello World";
+});
+
+// Start server first
+try {
+  await fastify.listen({ port: 8383, host: "localhost" });
+  console.log("Server running at http://localhost:8383/");
+} catch (err) {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+}
+
+// Load and run Slint UI
+let ui = slint.loadFile("ui/app-window.slint");
+let window = new ui.AppWindow();
+
+window.request_increase_value = function () {
+  window.counter = window.counter + 1;
+};
+
+// Cleanup on process termination
+process.on("SIGINT", async () => {
+  await fastify.close();
+  process.exit();
+});
+
+await window.run();
+```
+
+package.json
+```json
+{
+    "name": "counter",
+    "version": "1.0.0",
+    "main": "src/main.js",
+    "type": "module",
+    "dependencies": {
+        "fastify": "^5.2.1",
+        "slint-ui": "1.10.0-nightly.2025021719"
+    },
+    "scripts": {
+        "start": "node ."
+    }
+}
+```
+
+ui/app-window.slint
+```slint
+import { Button, VerticalBox } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    in-out property<int> counter: 42;
+    callback request-increase-value();
+    VerticalBox { 
+        Text {
+            text: "Counter: \{root.counter}";
+        }
+        Button {
+            text: "Increase value";
+            clicked => { 
+                root.request-increase-value();
+            }
+        }
+     }
+}
+```
+
+run in wayland: `node src/main.js`
+test with: `oha http://localhost:8383`
+result: oha bearly makes any request
+
+run in xorg: `WAYLAND_DISPLAY="" node src/main.js`
+test with: `oha http://localhost:8383`
+result: oha makes request normally
+
+
+### Environment Details
+
+https://github.com/user-attachments/assets/b51a7de3-c828-4bf3-bfb6-23eaa631dea3
+
+- Slint Version: 1.10.0-nightly.2025021719
+- Platform/OS: linux fedora 41 
+- Programming Language: node
+- Backend/Renderer: default
+
+
+### Product Impact
+
+I propose to remove the workaround until there is a more correct solution, the workaround does more harm:
+- the event loop gets extremely slow
+- the issue is not noticeable immediately , at least the original cpu issue is mostly noticeable
+
+---
+
+Thanks for letting us know
+
+So you suggest to revert the PR 7550?
+
+I used the github interface to revert the PR in https://github.com/slint-ui/slint/pull/7658
+
+---
+
+Yes that works thanks
+
+---
+
+wait I just noticed that even the original version have the same slowness
+
+---
+
+Sorry for the confusion, but I retested 1.9.2, 
+I thought it takes 100 % cpu but  at least it doesn't throttle the event loop
+Turns out no, the event loop is also slow and oha can't send requests
+
+It seems like this is a new issue I found, node + wayland makes the js event loop extremely slow, 
+
+The workaround then is still useful, at least it removes the 100% cpu usage
+
+TLDR: 
+- node  + wayland makes the event loop ex termly slow
+- the workaround removes the 100%cpu usage, its useful, its not the cause of the slowness
+
+I suggest to keep the workaround, and to debug this new issue
+
+---
+
+@ogoffart I have a new breakthrough, in case of wayland napi `process_events` is **not** polled automaticly, it only gets polled if there are mouse input or keyboard input
+
+https://github.com/user-attachments/assets/ac032b9e-2ebc-4624-b703-775784fd649d
+
+
+Xorg in the other hand polls events continuously independent of mouse /keyboard events
+
+---
+
+What I'm suspecting is that internally wayland blocks if there are no mouse/keyboards events, it blocks waiting
+
+---
+
+I traced the blocking call to https://github.com/smol-rs/polling/blob/3cc19cc1387ab80b582961765260aa473a347d67/src/epoll.rs#L214
+timeout_ms = -1 its -1 because timer_fd is Some(fd) so its relying on timer_fd to wake up but its not happening
+
+---
+
+Ok I found how to fix it, removing this continue, makes the app works completly normal, it doesn't block and the event loop work at normal speed  https://github.com/rust-windowing/winit/blob/f6e66a71f8b486564c30d38491b2ebca13f29c89/src/platform_impl/linux/wayland/event_loop/mod.rs#L269
+
+---
+
+I feel like the commit message might have a clue https://github.com/rust-windowing/winit/commit/cad3277550089e97cd9b92c8bfc836e12fc6f264
+
+---
+
+By removing that continue even the workaround I did is not needed anymore, it works pretty well without any other modifications
+
+---
+
+My conclusion is:
+- Currently slint uses `ControlFlow::Wait` with winit wayland
+- When there are no events the code is blocking at https://github.com/rust-windowing/winit/blob/f6e66a71f8b486564c30d38491b2ebca13f29c89/src/platform_impl/linux/wayland/event_loop/mod.rs#L214
+- Js is single threaded so its event loop is also stuck
+
+Changing this https://github.com/slint-ui/slint/blob/c71e2f3c964154bd0bbb6776c1eafb5107c42e2a/internal/backends/winit/event_loop.rs#L589 or https://github.com/slint-ui/slint/blob/c71e2f3c964154bd0bbb6776c1eafb5107c42e2a/internal/backends/winit/event_loop.rs#L606 to be `ControlFlow::Poll` make the application work normally
+
+I saw that there is a workaround for wasm32 for something similar, can we also special case javascript + winit so that it uses `ControlFlow::Poll` ?
+
+---
+
+> When there are no events the code is blocking
+
+Perhaps this is a bug in winit, as we're calling `pump_events` with `Some(Duration::ZERO)` and that should return instead of block:
+
+> Passing a timeout of Some(Duration::ZERO) would ensure your external event loop is never blocked but you would likely need to consider how to throttle your own external loop.
+(from https://docs.rs/winit/latest/winit/platform/pump_events/trait.EventLoopExtPumpEvents.html#tymethod.pump_events )
+
+
+
+---
+
+@tronical I did some tests with winit, here is what I found, winit 0.30.9
+```rs
+fn main() -> std::process::ExitCode {
+    use std::process::ExitCode;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use winit::application::ApplicationHandler;
+    use winit::event::WindowEvent;
+    use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+    use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+    use winit::window::{Window, WindowId};
+
+    #[derive(Default)]
+    struct PumpDemo {
+        window: Option<Window>,
+    }
+
+    impl ApplicationHandler for PumpDemo {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            let window_attributes = Window::default_attributes().with_title("A fantastic window!");
+            self.window = Some(event_loop.create_window(window_attributes).unwrap());
+        }
+
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            _window_id: WindowId,
+            event: WindowEvent,
+        ) {
+            println!("{event:?}");
+
+            let window = match self.window.as_ref() {
+                Some(window) => window,
+                None => return,
+            };
+
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::RedrawRequested => {
+                    // XXX: If I uncomment this the event loop will continue working regardless of ControlFlow
+                    // window.request_redraw();
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let mut event_loop = EventLoop::new().unwrap();
+    // XXX With Wait the event loop gets blocked unless I uncomment window redraw
+   // If I change it to Poll the event loop never gets blocked even without redraw requests
+   // In X11 even with Wait and no redraw requests, the event loop does not get blocked
+    event_loop.set_control_flow(ControlFlow::Wait);
+
+    let mut app = PumpDemo::default();
+
+    loop {
+        let timeout = Some(Duration::ZERO);
+        // XXX: the block happen here
+        let status = event_loop.pump_app_events(timeout, &mut app);
+
+        if let PumpStatus::Exit(exit_code) = status {
+            break ExitCode::from(exit_code as u8);
+        }
+
+        println!("Update()");
+        sleep(Duration::from_millis(16));
+    }
+}
+```
+I added 3 XXX comments explaining my findings, what do you think should I ask winit devs ?
+
+---
+
+> what do you think should I ask winit devs ?
+
+It seems to me that winit should ignore the control flow when using `pump_events`, but since it isn't we can work around that by using `Poll` instead, but only when the loop is driven by `pump_events`. Would you feel comfortable attempting to do that?
+
+I think this also means that https://github.com/slint-ui/slint/pull/7658 can be merged, right?
+
+---
+
+Yes I agree the revert PR should be merged because when this issue is fixed it won't be needed 
+
+I'm not really confortable making this PR it would be great if someone familiar with this tales over from here , thanks
+
+---
+
+> Yes I agree the revert PR should be merged because when this issue is fixed it won't be needed
+
+Done.
+ 
+> I'm not really confortable making this PR it would be great if someone familiar with this tales over from here , thanks
+
+That's ok :). Would you be available to try a patch? I've made one at https://gist.github.com/tronical/583afe01be8a4b8743544c4cbf258265 but I don't know if this solves the problem.
+
+
+---
+
+Hopefully I can test it tomorrow 
+
+---
+
+@tronical your patch work indeed
+
+one question should this be special cased for Duration::Zero , I fell like any duration as long that its Some, should make the controlflow Poll
+
+---
+
+I'm testing like this btw
+```ts
+import * as slint from "npm:slint-ui@1.7.1";
+const ui = await slint.loadSource(
+  "export component Window { }",
+  "main.js",
+);
+
+Deno.serve(() => new Response("hello world"));
+new ui.Window().run();
+```
+and running `oha -n 9999999 http://localhost:8000`
+
+Obviously I have to use deno vendor and cargo vendor and patch dependencies
+
+---
+
+> [@tronical](https://github.com/tronical) your patch work indeed
+> 
+> one question should this be special cased for Duration::Zero , I fell like any duration as long that its Some, should make the controlflow Poll
+
+Right, that probably makes sense. Well spotted :)
+
+---
+
+I thought a bit more about it and I'll do this workaround only for `Zero`. It doesn't make sense to return `Wait` when Some(2s)` was specified. Instead, I'll leave it to the winit implementation to handle that correctly, and just work around the `Some(0)` case.
+
+=== ROW 59 | f002865 | https://github.com/embassy-rs/embassy/pull/4035 | 2025-04-01 | domain-subframes ===
+[embassy-executor]: Upstream "Earliest Deadline First" Scheduler
+
+---
+
+~This PR builds on top of #4033, and shouldn't be merged until that PR is.~
+
+~This PR also requires https://github.com/hawkw/mycelium/pull/520 to be merged and released before this PR can be merged~.
+
+This PR adds the ~"Deadline Rank Scheduler"~ "Earliest Deadline First Scheduler", a cooperative (non-preemptive) scheduling algorithm that takes into account the deadline of a task when deciding which tasks in the WAITING state to poll first.
+
+This PR also re-implements the `run_queue_atomics` implementation to use the `cordyceps::TransferStack` instead of the previously home-rolled atomic linked list/stack, in order to reduce the duplicated code.
+
+---
+
+CC @hawkw for thoughts
+
+---
+
+https://crates.io/crates/cordyceps/0.3.3 is now published, I'll get this PR updated to use the published crate tomorrow.
+
+---
+
+Updated with released `cordyceps`, this should now be reviewable and mergable.
+
+---
+
+Some concerns:
+
+- Deadline scheduling is not implemented in the critical-section run queue, only in the atomics one.
+- I don't think we should add `cordyceps` as a dep, I'd prefer to keep the data structures self-contained for something as foundational as the executor. Having it all in-tree means we can make changes as needed without having to coordinate across repos, and less abstraction means it's clearer what's going on in this case IMO. (Intrusive data structures aren't easy to abstract in Rust...)
+- `dequeue_all` is transferring all tasks to a sorted list, then walking that. Another way to do it would be to walk the runqueue itself to find the earliest deadline, pop it, poll it, repeat. Both are O(n^2) but the latter is simpler maybe, because it doesn't require `SortedList` which might alleviate the need for `cordyceps`? 
+- Where does the "Deadline Rank Sorted" terminology come from? Only hit on Google is literally this PR. Seems the most common term is "Earliest Deadline First" (EDF) scheduling, maybe we should call it that. Or maybe just "deadline scheduler" as Linux does.
+
+
+---
+
+Appreciate the reviews!
+
+> Deadline scheduling is not implemented in the critical-section run queue, only in the atomics one.
+
+Yep, this could be addressed in a future PR, right now we've only been using this on targets with atomics. How we do this might depend on what we decide to do with Cordyceps.
+
+> I don't think we should add cordyceps as a dep, I'd prefer to keep the data structures self-contained for something as foundational as the executor. Having it all in-tree means we can make changes as needed without having to coordinate across repos, and less abstraction means it's clearer what's going on in this case IMO.
+
+I'd like to try and make the case for keeping the cordyceps dependency! In it's favor:
+
+* Cordyceps is fairly exhaustively tested, with both `miri` and `loom`, which helps to avoid regressions potentially caused by changes.
+* Cordyceps is also used by the `maitake` executor, which is certainly less active than embassy, but it does mean that any regressions caught or improvements made are shared. The data structures used, particularly the `TransferStack` and `Stack` structures, are exactly designed for the use case embassy's atomic RunQueue had before, meaning that this changeover was basically a drop-in change.
+* Cordyceps does have correct + tested user APIs, for example for dequeuing or iterating over items, meaning that it's less unsafe surface area that anyone making changes in embassy-executor has less unsafe surface area to work on.
+
+We certainly COULD "hard-fork" cordyceps, but by the time that we've brought over the datastructures and tests, we will have essentially vendored a significant part of the crate.
+
+I could also narrowly "backport" the changes needed for DRS on top of the hand-rolled impl that embassy used, but that would be disappointing, IMO, for the testing and shared usage reasons mentioned above.
+
+> Intrusive data structures aren't easy to abstract in Rust...
+
+I'd definitely look at the [Linked](https://docs.rs/cordyceps/latest/cordyceps/trait.Linked.html) trait used in cordyceps, IMO it is still a bit of an unsafe API, but DOES do a good job of being the basics you need to abstract over intrusive structures. This commonality allowed TaskHeaders to be moved between `TransferStack`, `Stack`, and `SortedList`, as they all had a common singly linked list abstraction.
+
+> `dequeue_all` is transferring all tasks to a sorted list, then walking that. Another way to do it would be to walk the runqueue itself to find the earliest deadline, pop it, poll it, repeat. Both are O(n^2) but the latter is simpler maybe, because it doesn't require SortedList which might alleviate the need for cordyceps?
+
+The reason that it is done that way is that the TransferStack is atomically shared (with interrupts!), while the local `Stack` is not. This allows us to do one atomic `dequeue_all`, then not require a mutex/critical section for either the sorting/insertion operation, or the subsequent pop operations.
+
+It's maybe possible to do "search and extract" without a mutex, but it would definitely be "spicier" to reason about. Especially without miri and loom testing.
+
+> Where does the "Deadline Rank Sorted" terminology come from? Only hit on Google is literally this PR. Seems the most common term is "Earliest Deadline First" (EDF) scheduling, maybe we should call it that. Or maybe just "deadline scheduler" as Linux does.
+
+It comes from an internal proposal document, though I don't think there's any attachment to the name. We could rename it if you prefer. There's a chance for confusion if we name it something that doesn't work exactly the same, but I'm not too stressed about it. I'll ask internally if there's prior art for the chosen name.
+
+Either way, I'll resolve the merge conflict so it's clean!
+
+---
+
+Rebased the PR, and changed the name to "Earliest Deadline First" scheduler.
+
+I also added an example using the scheduler and `Deadline` interface. I decided to add another example project, since I didn't want to affect any existing examples, and (I think) there isn't really a good way to have required features (for embassy-executor) on a per-bin basis.
+
+Happy to update if there's a better way though!
+
+---
+
+The current basic demo gives this as output, by the way:
+
+```
+Spinning up load tasks...
+Starting UNPRIORITIZED worker trials
+
+Starting unprioritized worker
+Trial complete, theoretical ticks: 9900, actual ticks: 19094
+Took 192.86868% of ideal time
+
+Starting unprioritized worker
+Trial complete, theoretical ticks: 9900, actual ticks: 19105
+Took 192.9798% of ideal time
+
+Starting unprioritized worker
+Trial complete, theoretical ticks: 9900, actual ticks: 19105
+Took 192.9798% of ideal time
+Starting PRIORITIZED worker trials
+
+Starting prioritized worker
+Trial complete, theoretical ticks: 9900, actual ticks: 10063
+Took 101.64646% of ideal time
+
+Starting prioritized worker
+Trial complete, theoretical ticks: 9900, actual ticks: 10064
+Took 101.65657% of ideal time
+
+Starting prioritized worker
+Trial complete, theoretical ticks: 9900, actual ticks: 10064
+Took 101.65657% of ideal time
+
+Trials Complete.
+```
+
+---
+
+@lulf do you have any thoughts on how to turn the example I added in https://github.com/embassy-rs/embassy/pull/4035/commits/6665b723249f4838703df98f9c5074cdd447a939 into a CI-able test?
+
+I see theres some infra for enabling "features" for targets, but i'm not sure if I could make a test that enables a totally separate embassy-executor feature for testing?
+
+---
+
+> @lulf do you have any thoughts on how to turn the example I added in [6665b72](https://github.com/embassy-rs/embassy/commit/6665b723249f4838703df98f9c5074cdd447a939) into a CI-able test?
+> 
+
+I'm not sure I understand the end goal, is it to test that the example works, or that the EDF works on nrf? For the latter, I think adding a test in tests/nrf/ with the appropriate `// required-features` header should be fine. OTOH, is there a need to make a hardware-specific test of it?
+
+> I see theres some infra for enabling "features" for targets, but i'm not sure if I could make a test that enables a totally separate embassy-executor feature for testing?
+
+This should work I think, you add a feature in tests/nrf/Cargo.toml named 'edf' which enables it on the embassy-executor dep, and add the `// required-features: edf` in the test.
+
+As for the other comments on the PR, I'm fine with the cordyceps deps, and actually think it's good to not roll our own (To me, it seems even better to reuse something outside for the additional 'hardening' you get, you can reduce risk by pinning the version). 
+
+
+---
+
+> is there a need to make a hardware-specific test of it
+
+Hmm, probably not, mostly just ensuring there is some basic regression testing for the feature, in case something happens in future refactoring. I'll think about it a bit and do a follow-up PR if it makes sense.
+
+> As for the other comments on the PR, I'm fine with the cordyceps deps, and actually think it's good to not roll our own (To me, it seems even better to reuse something outside for the additional 'hardening' you get, you can reduce risk by pinning the version).
+
+Agreed :) I'd like to get an ok (at at least a "meh, whatever") from @Dirbaio since he raised objections before I actually hit merge tho.
+
+---
+
+> Yep, this could be addressed in a future PR, right now we've only been using this on targets with atomics
+
+I would prefer everything to land together. Reasons:
+- To ensure it doesn't stay unimplemented forever.
+- It'll force us to find a design that doesn't duplicate the scheduler code. As I mentioned on Matrix a few weeks ago, you're strongly coupling the scheduler with the queue. This means if we have N schedulers and M queues, we'll end up with O(N*M) code, while ideally it should be O(N+M).
+
+re cordyceps: it's not about its quality (it's great), it's about the complexity and amount of code embassy-executor contributors and maintainers have to deal with. Status quo is a straightforward implementation of a transfer stack with two atomic ops.
+Cordyceps brings in the `Linked` trait which is somewhat nontrivial, and a whole set of containers with its own API surface and docs that you have to get familiar with, and a much larger implementation underneath because it supports more ops beyond what the executor needs.
+
+Also, using cordyceps won't magically make the executor correct. For example, one key requirement is you mustn't enqueue tasks that are already enqueued. This is ensured by `State` with all the different task states and atomic orderings, which is somewhat nontrivial and *has had bugs in the past*. Cordyceps would prevent bugs in the queue itself, but *we've never had bugs in the queue itself* because it's so simple. 
+
+If we want to catch these bugs we'd have to add Loom testing to the whole executor, and if we do that then the fact that Cordyceps has loom testing of the data structures in isolation doesn't help that much.
+
+We already do have miri testing btw.
+
+> The reason that it is done that way is that the TransferStack is atomically shared (with interrupts!), while the local Stack is not. This allows us to do one atomic dequeue_all, then not require a mutex/critical section for either the sorting/insertion operation, or the subsequent pop operations.
+> 
+> It's maybe possible to do "search and extract" without a mutex, but it would definitely be "spicier" to reason about. Especially without miri and loom testing.
+
+This is a very good point. It should be doable though. When a task is enqueued it's "exclusively owned" by the executor thread until the RUN_QUEUED bit is cleared, so it should be fine to iterate and pop. You only have to worry about contention in the queue head I think.
+
+The reason I think "iterate queue to choose which task to poll" is better is because it makes it easier to decouple the scheduler from the runqueue. A "scheduler" could be a thing that gets to iterate the runqueue and emits a verdict of which task to poll next. The default scheduler would decide to poll the first task its sees, the deadline scheduler would iterate to find the earliest deadline and decide to poll that.
+
+---
+
+> you're strongly coupling the scheduler with the queue
+
+This was why I re-implemented the existing atomic runqueue on top of the TransferStack, which is how I originally interpreted your request to de-duplicate. We're would be in the same state if this PR is merged as we are today, there are two runqueues, one atomic, and one non-atomic.
+
+The current code is (I believe) a proof of concept we are already at the point where you can implement different schedulers with the same runqueue - both "regular" and "edf" atomic variants share the same data structure, constructor, and enqueue method, only the dequeue method is different.
+
+> This is a very good point. It should be doable though. When a task is enqueued it's "exclusively owned" by the executor thread until the RUN_QUEUED bit is cleared, so it should be fine to iterate and pop. You only have to worry about contention in the queue head I think.
+>
+> The reason I think "iterate queue to choose which task to poll" is better is because it makes it easier to decouple the scheduler from the runqueue. A "scheduler" could be a thing that gets to iterate the runqueue and emits a verdict of which task to poll next. The default scheduler would decide to poll the first task its sees, the deadline scheduler would iterate to find the earliest deadline and decide to poll that.
+
+Performance wise, I think they will be equivalent, pop sort pop (cordyceps) is basically `O(1) + O(n*m) + O(1)`, while search pop (your proposal) is `O(n*m) + O(1)`. That being said, it could be possible to [mitigate the `O(n*m)` cost](https://github.com/hawkw/mycelium/issues/521#issuecomment-2813428543) using SortedList, as we might be able to "zipper merge" the two lists, only paying the more expensive cost on the "new" items.
+
+I worry about edge cases and complexity when it comes to the search + pop. We'd need to:
+
+* Make an `Option<NonNull<TaskHeader>>` for the PARENT of the chosen task to pop
+* If head is none, return
+* If head->next is none, CAS the `head` we loaded against the head ptr to swap it to None, to see if something new has been inserted
+    * if no: return head since we popped it
+    * if yes: we need to walk the list from top to figure out how to remove what used to be head, but now should we start over because there are new items to consider?
+* Start at the head, scan through the entire list, checking if cursor.next is what we want, if so, store cursor as the desired parent
+* once cursor.next is null, we need to store off cursor.next, set cursor.next to cursor.next.next, and return the stored off cursor.next
+
+Basically, we would need to reimplement this code:
+
+https://github.com/hawkw/mycelium/blob/9ec5c3350a7f6102d627185977a5f225af1f8b4c/cordyceps/src/sorted_list.rs#L168-L283
+
+With the added complexity that those two initial head special cases are ALSO now CAS loops instead of just regular pointer ops, and we might have to start over or do a more complicated removal if HEAD was moved at all while we do the first two steps.
+
+In general: I think trying to search in-place is going to be MUCH more complex for little gain, performance or API clarity wise. I'd probably push back on this request for the EDF scheduler.
+
+Regarding the "one true waitqueue", would you be interested in a CS-capable version of `cordyceps::TransferStack`? This would allow us to actually *eliminate* the separate runqueues that exist today (from the perspective of embassy-executor code), while keeping the same API for both, and would be minimally invasive to the current code structure.
+
+If not, there are two alternatives I can think of:
+
+The first would be to "inline" the functionality in embassy-executor, keeping two separate runqueues, and inventing a new api, essentially identical to cordyceps' TransferQueue, to allow abstraction of the single runqueue for different scheduler implementations.
+
+The second would be to rework the `raw` module somewhat significantly, primarly making `dequeue_all` *return* the detached runqueue parts, allowing the caller to choose the scheduling algorithm for polling the detached linked list. **However**, this would negatively impact the edf impl, which doesn't process a whole batch of tasks before it goes to detach more, which means that if a high-prio task shows up JUST after we detach a batch, we don't need to process the whole batch, only the first task that was scheduled.
+
+So, overall:
+
+* I don't think it would be a good idea to pursue "search then pop", for the complexity reasons mentioned above, which would also apply to ALL schedulers, not just the EDF scheduler.
+* Regarding Run Queues, I think there are two choices:
+    1. Replace the critical-section runqueue with a cs-capable TransferStack, use that for all runqueues
+    2. Reimplement SortedList functionality inside of embassy-executor, remove the cordyceps dependency
+
+I'm more than happy to implement a CS-based version of cordyceps::TransferStack to allow for the simplification of the RunQueue interface, if having cordyceps isn't a hard no from you. Otherwise I'll pursue re-implementing SortedList manually to match the previous atomic runqueue.
+
+---
+
+bender run
+
+---
+
+bender run
+
+---
+
+@Dirbaio this is no longer blocked by https://github.com/hawkw/mycelium/pull/537.
+
+---
+
+Noting that @Dirbaio pointed out that there is a perf hit currently for non-CAS targets using the Mutex'd List. Repro case is here: https://github.com/embassy-rs/embassy/pull/4374
+
+Results:
+
+```
+cycles per poll
+              rp2040    nrf52832
+master         152        80
+edf            230        77
+edf enabled    252        91
+```
+
+IMO the largest impact of this is that using the `mutex` crate's `CriticalSectionRawMutex` doesn't "collaborate" with other existing critical sections taken by the executor using raw CS tokens. This leads to taking and releasing duplicate nested critical sections, which is sound, but wastes a couple dozen cycles per instance, leading to the excess of 80 cycles per self-wake.
+
+I'll take a look at this shortly, it may be possible to refactor the code to rely on the provided CS token, and removing the use of the `mutex` crate, eliminating the duplicate CS cycles.
+
+---
+
+RP2040 on this branch w/o edf enabled:
+
+```
+ INFO  teleprobe::run                                       > run_from_ram: true
+ INFO  teleprobe::run                                       > flashing program...
+ INFO  teleprobe::run                                       > flashing done!
+ INFO  device                                               > Hello World!
+ INFO  device                                               > Test OK, count=96421, cycles=17399
+ INFO  teleprobe::run                                       >   R0: 00000001   R1: 200200f8   R2: 00000000   R3: 20020261
+ INFO  teleprobe::run                                       >   R4: 000178a5   R5: 00000004   R6: 00000000   R7: 2003ff48
+ INFO  teleprobe::run                                       >   R8: ffffffff   R9: ffffffff  R10: ffffffff  R11: ffffffff
+ INFO  teleprobe::run                                       >  R12: ffffffff   SP: 2003ff40   LR: 200002bf   PC: 200010c4
+ INFO  teleprobe::run                                       > XPSR: 6100000f
+```
+
+RP2040 on this branch w/ EDF feature enabled
+
+```
+ INFO  teleprobe::run                                       > run_from_ram: true
+ INFO  teleprobe::run                                       > flashing program...
+ INFO  teleprobe::run                                       > flashing done!
+ INFO  device                                               > Hello World!
+ INFO  device                                               > Test OK, count=86929, cycles=19299
+ INFO  teleprobe::run                                       >   R0: 00000001   R1: 20020100   R2: 00000000   R3: 20020269
+ INFO  teleprobe::run                                       >   R4: 00015391   R5: 00000004   R6: 00000000   R7: 2003ff50
+ INFO  teleprobe::run                                       >   R8: ffffffff   R9: ffffffff  R10: ffffffff  R11: ffffffff
+ INFO  teleprobe::run                                       >  R12: ffffffff   SP: 2003ff48   LR: 2000032b   PC: 20001158
+ INFO  teleprobe::run                                       > XPSR: 6100000f
+```
+
+This updates the perf numbers to:
+
+```
+cycles per poll
+              rp2040    nrf52832
+master         152        80
+edf            174        77
+edf enabled    193        91
+```
+
+Therefore https://github.com/embassy-rs/embassy/pull/4035/commits/c2f61e46e764ce71e5c8c9f0d43213ff91f2def7 reduces the baseline overhead from +78 cycles to +22 cycles.
+
+I'm guessing these extra +22 cycles are due to my use of a `RefCell`. It's possible that the RefCell is not necessary (and we could use an UnsafeCell instead), but I'd probablt want a second pair of eyes before I make that optimization, as I'm less sure of whether embassy guarantees exclusive access when `RunQueue::enqueue` or `RunQueue::dequeue_all` are called. We should probably note this in the function signatures for future reference.
+
+---
+
+fwiw with `UnsafeCell` (instead of `RefCell`) the perf numbers are:
+
+```
+cycles per poll
+              rp2040    nrf52832
+master         152        80
+edf            158        77
+edf enabled    178        91
+```
+
+I'm not certain that is a sound change tho.
+
+---
+
+https://github.com/embassy-rs/embassy/pull/4035/commits/9feeca5dc00ec15dcc75bff2b6d6b2cbdc4ac907 makes the change from RefCell to UnsafeCell described above, and also adds SAFETY comments that explain why this is sound.
+
+These interfaces require a critical section, which guarantees freedom from concurrent access, and the fact that these methods only provide "interior" access and do not recurse, means that there is no possibility of re-entrant access. Therefore, with a critical section mutex and the current API, the requirements for exclusive access and creation of an &mut reference to the contained stack is sound in my belief.
+
+This means that the net perf impact to this is only 6 additional cycles in the bench case.
+
+---
+
+@Dirbaio Did you give any thoughts on how to proceed with regards to Cordyceps? I can perform the work when you give your preference.
+
+---
+
+#4608
+
+=== ROW 60 | f002883 | https://github.com/wasm-bindgen/wasm-bindgen/pull/4472 | 2025-04-06 | domain-subframes ===
+Workaround for a TextDecoder bug in Safari causing a RangeError to be thrown
+
+---
+
+`TextDecoder` in Safari has a limitation that causes it to throw `RangeError` after decoding more than 2GiB of data. This causes long running wasm programs that need to use `TextDecoder` to crash and start throwing `RuntimeError` with the message "Out of bounds memory access".
+
+We work around the issue by tracking how much data has been decoded by any given `TextDecoder`, and replace it when it comes close to 2GiB, deducting a small margin of 1MiB which has been empirically shown to reduce the likelihood of miscounting (for unknown reasons) causing a `RangeError` to be thrown.
+
+This commit also adds stricter handling of the kind of declaration used for TextDecoder and TextEncoder - TextDecoder always uses let because it needs to be mutable, and TextEncoder always uses const because it doesn't need to be mutable.
+
+Fixes https://github.com/rustwasm/wasm-bindgen/issues/4471
+
+---
+
+Some unrelated clippy lints are failing, has CI rustc been updated without updating the code?
+
+---
+
+There don't seem to be any tests (generated .js-files) that use the non-browser path of `getText` 🤔 
+
+---
+
+> Some unrelated clippy lints are failing, has CI rustc been updated without updating the code?
+
+@daxpedda do you have any input on these? The PR works around a critical bug on Safari and would be very useful for many people!
+
+---
+
+@bes I opened an issue (#4482) as even `main` does not compile any more in CI.
+
+---
+
+> @bes I opened an issue (#4482) as even `main` does not compile any more in CI.
+
+Thanks
+
+
+---
+
+We've been running this fix in production for a week now, and the results are encouraging. Screenshots from Sentry.
+
+Ignore the first column, it's low because of a quirk in how Sentry does data cutoff...
+
+<img width="1139" alt="range_error" src="https://github.com/user-attachments/assets/7356adc4-1be0-460d-98ce-b5003301ba07" />
+
+<img width="1142" alt="safari_by_version" src="https://github.com/user-attachments/assets/a637de66-2071-4243-840b-91da192bf1a4" />
+
+
+Can you guess which day the fix went out?
+
+---
+
+@bes the CI has been fixed in latest main commit, could you rebase your PR please? That should help it getting merged, now that there are more active maintainers (see #4533) ;-)
+
+---
+
+> I'm a tiny bit concerned about the 1MiB margin. This [comment](https://bugs.webkit.org/show_bug.cgi?id=280593#c2) shows that it fails at 2,147,483,600 bytes and succeeds at 2,147,483,500 bytes. So the margin should be between 148 and 47 bytes.
+> 
+> Considering how reproducable this test looks like, it would be nice to find out the exact number it fails at. The precise number is actually not that important, it would just be nice to once and for all establish that it actually fails at a certain number and that its not flaky or anything.
+> 
+> In any case, until somebody finds the time to actually try this out we will leave it at the current 1MiB margin considering that there is real-world data behind it.
+
+I tried a small margin at first but could not get it to work on my machine, so I grabbed a margin which I thought was large enough to avoid problems but small enough to not have any significance (1 MiB is 0.049% of 2GiB)
+
+---
+
+> I tried a small margin at first but could not get it to work on my machine, so I grabbed a margin which I thought was large enough to avoid problems but small enough to not have any significance (1 MiB is 0.049% of 2GiB)
+
+If you can actually try it, could you do the following:
+```js
+const decoder = new TextDecoder()
+const buffer1 = new ArrayBuffer(100)
+
+for (let i = 0; i < 21474836; i++) {
+    decoder.decode(buffer1)
+}
+
+const buffer2 = new ArrayBuffer(1)
+let i = 2147483601
+
+try {
+    for (; i <= 2147483648; i++) {
+        decoder.decode(buffer2)
+    }
+} catch {
+    console.err(`failed at ${i} number of bytes`)
+}
+```
+And check if it fails consistently at the same number of bytes.
+
+---
+
+Added a line in the changelog.
+
+> If you can actually try it, could you do the following:
+
+I'm on vacation right now, supposed to go on a day trip, so pushing these change kinda in between packing. I would appreciate if we can skip this for now :)
+
+---
+
+@bes thank you so much for your work!
+
+@daxpedda thank you for merging! Any plan for making a release soon? This fix would be very useful to us!
+
+---
+
+I not yet back to maintaining `wasm-bindgen` so my time is quite limited right now, I'll leave this to the other maintainers to decide.
+
+My 2¢: making a release is relatively low cost so I favor making one as soon as requested.
+
+---
+
+> My 2¢: making a release is relatively low cost so I favor making one as soon as requested.
+
+Is there an ideal way to make such a request? Should I open a new issue for that, or do other maintainers read closed PR?
+
+---
+
+You asking for it here was the request.
+But please open a tracking issue so it doesn't get lost!
+

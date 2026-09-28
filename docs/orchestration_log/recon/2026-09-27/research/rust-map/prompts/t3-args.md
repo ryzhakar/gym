@@ -1,8 +1,10 @@
 # t3 arguments — instructions
 
+Frozen for batch 2 (2026-09-28). Only file names changed from batch 1, so that batch n's files never overwrite batch 1's. Change log: RECON/batch-2-prep.md.
+
 Read RECON/prompts/common.md first; it binds you. Directive variant: Tier 3 — read only the Sources the Question's Claims cite; never search for another.
 
-Your prompt names one chunk file under RECON/args/chunks/, one Question id per line. Do the work yourself; spawn no subagents. Write output after every 8 Questions so a crash loses little.
+Your prompt names one chunk file under RECON/args/chunks/, named `b{n}-NN` from batch 2 on, one Question id per line. Do the work yourself; spawn no subagents. Write output after every 8 Questions so a crash loses little.
 
 Per Question:
 1. Read MAP/questions/<id>.yaml, every MAP/positions/<id>--*.yaml, and every MAP/claims/*.yaml whose position is one of them (grep). Skip Claims whose `gap` contains `voice-below-bar`; read the rest.

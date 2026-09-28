@@ -1,0 +1,1566 @@
+=== ROW 23 | f001398 | https://forums.swift.org/t/se-0430-second-review-sendable-parameter-and-result-values/71685 | 2024-05-07 | domain-subframes ===
+SE-0430 (second review): `sendable` parameter and result values
+
+@beccadax · 2024-05-07T23:55:29.603Z:
+Hello Swift community,
+The second review of "sendable parameter and result values" (formerly "transferring isolation regions of parameter and result values") begins now and runs through May 13, 2024. The proposal is available here:
+https://github.com/apple/swift-evolution/blob/main/proposals/0430-transferring-parameters-and-results.md
+This proposal builds upon SE-0414 Region-based Isolation, which was accepted in February 2024. After the first review in March, the Language Steering Group accepted the proposal's design but asked the authors to select a keyword which better aligns with its role in concurrency.
+Therefore, the scope of this second review is limited to the newly-chosen sendable keyword and potential alternative keywords. Given its limited scope, the review period will be relatively brief.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to the review manager by email. When emailing the review manager directly, please include "SE-0430" in the subject line.
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at
+swift-evolution/process.md at main · swiftlang/swift-evolution · GitHub
+Happy reviewing,
+—Becca Royal-Gordon
+SE-0430 Review Manager
+
+---
+
+@filip-sakel · 2024-05-08T00:44:45.279Z:
+I think the name spendable perhaps limits this feature to just concurrency when there are broader use-cases related to ownership. From my understanding, most (if not all) of types we’d consider non Sendable have reference semantics. Thus, when we send a value across isolation domains, what we want to know is that the value in the new isolation won’t interact with any piece of data from the isolation domain we came from and thus race. With value semantics it’s guaranteed not to, so we have nothing else to check. For types with reference semantics, we basically have to guarantee that the instance on hand is unique (i.e. is only referenced once). While the other use cases for this feature are niche and likely limited, I can think of types that might need to take ownership of an object to fully manage it (perhaps even circumventing reference counting if they don’t reference it more that once).
+So I guess my suggestion would be for something like noSideEffects or uniquelyReferenced.
+Edit: I see that Rust has Unique<T> which is pretty similar. This feature could be implemented with the compiler automatically injecting that type:
+// Definition
+@propertyWrapper
+struct Unique<T: ~Copyable>: ~Copyable {
+private let value: T
+init(_ make: @autoclosure () -> T) {
+self.value = make()
+}
+var wrappedValue: T { … }
+}
+extension Unique: Sendable & Copyable where T: Sendable {}
+// Usage
+func acceptsUnique(@Unique x: some Any) {}
+func sendUnique() {
+// The compiler could automatically add @Unique
+@Unique let x = NonSendable()
+// The compiler could automatically add the underscore
+acceptsUnique(_x)
+print(x) // Error: Wrapper _x already consumed
+}
+
+---
+
+@Jumhyn · 2024-05-08T00:46:03.607Z:
+I feel pretty strongly that sendable doesn't quite fit here. I think it invokes a lot of the right stuff, i.e., that this modifier is 'concurrency-y', but I don't think it maps closely enough onto Sendable to make the overloading elucidating rather than confusing. I think it will be difficult to explain to those encountering Swift concurrency for the first time exactly what the difference is between sendable and Sendable.
+I can tell myself a story that is perfectly coherent: a type which conforms to Sendable is one that is inherently 'sendable' in a broader sense, but individual values can still be sendable in this broader sense (namely, by being in a disconnected region). So we can mark a function parameter of a non-Sendable type T as sendable T to indicate that the particular value must be sendable by virtue of being in a disconnected region.
+But this is subtle and I really don't like having keywords which mean different things based on capitalization. About the only exception is self vs. Self, which is interesting in that it makes the same value vs. type distinction, but there self really is a value of type Self. We would not have that property here: sendable is a modifier attached to a parameter type which nonetheless indicates something about the particular value which callees are allowed to pass.
+I think if we choose sendable for this keyword it will make Swift's concurrency story harder to explain and talk about for no real benefit (over other available alternatives).
+The proposal's rationale for sendable rather than sending (which remains my preferred spelling) is as follows:
+It was also suggested that perhaps instead of renaming transferring to sendable , it should have been renamed to sending . This was rejected by the authors since it runs into the same problem as transferring namely that it is suggesting that the value is actively being moved to another isolation domain, when we are expressing a latent capability of the value.
+But this doesn't strike me as particularly convincing. It is a higher bar than what we have generally held other parts of the function signature to. A throws isn't a function which always throws, it is a function which is permitted to throw. An async function doesn't necessarily suspend, yet nonetheless we mark the potential suspension point with await as though it always will. Externally, we treat the call as the suspension point even though the suspension may not occur precisely at the point of entry to the called function.
+I view sending similarly. It is a description of the interface a function presents, which external clients must view as a single step. The function purports that it will be transferring the value across isolation domains, and indeed is permitted to, so external clients must act as though it always does, and moreover act as if the actual 'send' occurs at the point of the call. That the 'real' transfer may occur later (or not at all) is an implementation detail, immaterial to the caller.
+
+---
+
+@beccadax · 2024-05-08T01:36:56.977Z:
+filip-sakel:
+For types with reference semantics, we basically have to guarantee that the instance on hand is unique (i.e. is only referenced once).
+That isn't quite what’s happening here. (If it was, we wouldn’t need a separate feature for this—noncopyable types already model unique ownership.)
+Swift is basically enforcing that:
+The current function has the only external references to anything in the object graph.
+Any references into the object graph within the current function are never used after you “send” it somewhere else.
+But the current function can have multiple references into that object graph—it’s just that when any of them are sent, all of them can’t be used anymore (so the function they sent it to knows that it now has the only external references). And there can also be references from one part of the object graph to another.
+
+---
+
+@KeithBauerANZ · 2024-05-08T03:12:54.926Z:
++1 on disliking sendable here. Sendable is already a "see an error I don't understand, but it mentions Sendable so I add : Sendable and it goes away" kind of a feature, which is concerning enough. Now we'd have sendable and Sendable, which mean different things, but sometimes you can use either to silence an error, and sometimes you can't?
+I also don't think sendable helps me understand what happens when I add the modifier. SE-0414 already blurs what Sendable means (in that non-Sendable types can in fact end up being "sent"), and this sendable keyword just blurs the line further. It's extremely unintuitive to me that a non-Sendable type could be sent to a sendable parameter (and in fact, that's the point of the keyword), rather than that a sendable parameter could only accept Sendable types.
+(and if you had trouble reading that paragraph, that's part of the point I'm trying to make!)
+Whilst obviously this PR is necessary to make SE-0414 useful, and given the ship has sailed on SE-0414 I'm on board with the general concept of this one, I think what's really missing is a coherent story about what Sendable means now (given that it no longer means what it did when the name was chosen; perhaps we would choose UnconditionallySendable if we were starting over), and what it means to "send" something that's "not sendable" — that'll give us a name for the concept here (and probably make SE-0414 more understandable too)
+
+---
+
+@xwu · 2024-05-08T04:42:27.386Z:
+We obviously need better documentation and other resources to teach these concepts.
+But the relationship between the feature we're reviewing here and Sendable is actually pretty well captured exactly by what you mention here.
+When a type conforms to a Fooable protocol, it's a guarantee that every value of that type can be fooed, but it isn't to the exclusion of other values (of non-conforming types) that may also be fooed. For a recent example, not every bitwise copyable value is of a type that conforms to BitwiseCopyable; but every value of a BitwiseCopyable type is bitwise copyable.
+And so likewise, while every value of a Sendable type can be sent, also "non-Sendable types values can in fact end up being 'sent' ... (and in fact, that's the point of the keyword)." In fact we just adopted this feature in a mutex API proposed in SE-0433 precisely because transferring sendable was an appropriate relaxation of the originally proposed Sendable requirement.
+We aren't confused by what SignedInteger is just because some values of floating-point types are also integers (which are signed), nor are we confused by what RandomAccessCollection is just because some string values can also support efficient random access (e.g., ASCII strings).
+I'm not particularly married to sendable as the spelling for this feature, as opposed to (say) sending or sent, but I do vastly prefer something of that ilk, because it is precisely the point that we are describing the sending of a value across isolation regions.
+The terminology we use to describe what the Fooable protocol guarantees to every value of a conforming type should be called "foo(-ing, -ed, -able)"; it doesn't make sense that for region isolation specifically we have to cast about for an alternative word so that Fooable guarantees that all values are "florpable" simply because non-Fooable values might be "florpable" too.
+
+---
+
+@filip-sakel · 2024-05-08T04:59:44.110Z:
+Thank you for your prompt reply!
+beccadax:
+it was, we wouldn’t need a separate feature for this—noncopyable types already model unique ownership
+That was kind of my point except there’s no current built-in Ownership feature that does what Unique<T> does.
+beccadax:
+The current function has the only external references to anything in the object graph
+Could you expand on what « external references » are and perhaps give an example?
+beccadax:
+Any references into the object graph within the current function are never used after you “send” it somewhere else.
+Thank you for pointing this out, I hadn’t really thought about that. But is there a use case where having this is essential or even useful as compared to @Unique arguments as I showed above?
+
+---
+
+@KeithBauerANZ · 2024-05-08T05:13:50.404Z:
+Stepping away from Sendable for the moment and using the example above of BitwiseCopyable, suppose we were making a new API to make a bitwise copy, we might start with:
+func bitwiseCopy<T: BitwiseCopyable>(_ value: T) -> T { ... }
+Now we do what this proposal does, and say that we want to extend this function to take values that the compiler can prove are bitwise copyable in that moment, as well. What syntax should we choose?
+This proposal suggests,
+func bitwiseCopy<T>(_ value: bitwiseCopyable T) -> T { ... }
+Which, I guess makes perfect sense  — BitwiseCopyable refers to a type which always has the property, bitwiseCopyable refers to a value that currently has the property. I have to say, I'm not sure why I feel more strongly that sendable is bad, than that bitwiseCopyable would be.
+An earlier commenter mentioned that Self and self have kind of a similar relationship, so it's not entirely unprecedented to have two keywords that differ only in case.
+Still, please consider those of us trying to explain Swift concurrency over a video call or in a conference presentation! The difference between these is not easily pronounceable.
+
+---
+
+@beccadax · 2024-05-08T05:35:59.508Z:
+filip-sakel:
+But is there a use case where having this is essential or even useful as compared to @Unique arguments as I showed above?
+Absolutely. If you're familiar with Rust (I'm guessing you are, since you cited it), you're probably also familiar with the trouble its ownership model has with arbitrary object graphs where two objects can both point to each other; you often have to restructure your data to avoid doing that. This feature handles those situations a lot better.
+Imagine you have an actor which loads some data from the network and constructs a bunch of objects from it, with all of those objects pointing to each other:
+class CurrencyData {
+var currencies: [String: Currency] = [:]
+class Currency: Hashable {
+let root: CurrencyData
+let code: String
+var rates: [Currency: DecimalNumber] = [:]
+}
+}
+actor CurrencyDataLoader {
+func fetchCurrencyRates() async throws -> sendable CurrencyData {
+let rawData: [String: [String: DecimalNumber]] = try await fetchJSONData()
+let data = CurrencyData()
+// First pass: Create all currencies
+for (code, _) in rawData {
+data.currencies[code] = CurrencyData.Currency(root: data, code: code)
+}
+// Second pass: Populate rates
+for (thisCode, rateTable) in rawData {
+guard let thisCurrency = data.currencies[thisCode] else { ... }
+for (otherCode, rate) in rateTable {
+guard let otherCurrency = data.currencies[otherCode] else { ... }
+thisCurrency.rates[otherCurrency] = rate
+}
+}
+return data
+}
+}
+CurrencyData and CurrencyData.Currency are classes with unsynchronized shared mutable state, so they can't safely be made Sendable. And the data variable in fetchCurrencyRates() is not a unique reference—every single Currency has a reference to the exact same instance. But reading this code, we can easily see that only one outside reference to the CurrencyData object or any of its related Currency objects escapes the function—via the return value—and that therefore it really ought to be safe to let the CurrencyData be passed to a different concurrency domain.
+SE-0414 and SE-0430 together make it possible for the compiler to prove that fact and allow this code to be compiled. You activate that by (in this case) marking the result type of fetchCurrencyRates() as sendable; this tells the compiler that the CurrencyData you return needs to be one that has this property of being provably reachable only by the caller of the method once it returns.
+(If you'd like to know more about the details of the analysis, I strongly suggest you look at SE-0414 and the discussion around it; fully explaining it would get pretty far into the weeds for this review thread.)
+Unique ownership is also a super useful feature in many scenarios, including some concurrency scenarios; that's why the ownership model (noncopyable types and related features) has gotten so much attention over the last couple years. But it isn't good at handling the cases that this feature handles, which is why we have both.
+
+---
+
+@benlings · 2024-05-08T06:07:23.759Z:
+Jumhyn:
+I think if we choose sendable for this keyword it will make Swift's concurrency story harder to explain and talk about for no real benefit (over other available alternatives).
+I came to say the same thing, but realised while reading the comments that actually sendable is the fundamental concept and making a type Sendable or a function @Sendable is just one way to do this. If these concepts were being explained from scratch, you would probably start with sendable and then go on to explain the Sendable protocol.
+However, from the proposal:
+The "sending parameter" behavior of actor initializers is a generally useful concept
+This concept is introduced as ‘sending parameter’, so maybe that is a better name?
+Jumhyn:
+A throws isn't a function which always throws, it is a function which is permitted to throw
+Or, would sends be a suitable alternative, along these lines? Just as a throws function doesn’t have to throw, it just has the option to do so, a sends parameter/ return value has the option to be sent?
+
+---
+
+@MPLewis · 2024-05-08T06:15:56.500Z:
+Just going to make another pitch for reisolating as the keyword - I think it adequately conveys the meaning of what the modifier does, we’re already having to teach users about “isolation”, and it’s a case-insensitively unused name which will aid in searchability.
+
+---
+
+@Nickolas_Pohilets · 2024-05-08T10:32:28.268Z:
+Proposal text seems to not cover how sendable keyword interacts with types known to be Sendable (or have I missed it?).
+struct S: Sendable {}
+func foo(_ x: sendable S) {} // ok, error or warning?
+func bar<T>(_ x: sendable T) {}
+bar(S()) // ok, error or warning?
+
+---
+
+@vns · 2024-05-08T13:18:50.699Z:
++1 on vote against the sendable keyword. The possible confusion with Sendable protocol is too much here, and examples from the proposal IMO only support that it is complicated. The particular one that catches attention there is one of the most obvious uses:
+func getNonSendable() -> sendable NonSendable {
+return NonSendable() // okay
+}
+Reads more like "make it Sendable", rather then moves it out of the region. Paired with region isolation it even more confusing:
+func getNonSendable() -> sendable NonSendable {
+let ns = NonSendable() // initially sendable
+someActor.consume(ns)
+return ns // not okay
+}
+If you understand every part of that, it makes sense, but when you are trying to catch up with sendability in general it starts to fall apart. Because type that conforms to Sendable won’t produce an error in the example above, but sendable type does.
+benlings:
+I came to say the same thing, but realised while reading the comments that actually sendable is the fundamental concept
+It’s too fundamental I’d say. Just mentioning all of that together in a conversation adds so much overload and friction to distinguish.
+I would favour disconnected suggested in previous thread, as it makes a lot of sense in connection with regions, overall behaviour and zero conflict in naming with existing concepts before region based isolation. If not that one, transferring or any variation of it seemed OK too.
+
+---
+
+@vns · 2024-05-08T13:22:49.654Z:
+Under first edit at least it was stating that Sendable types are transferring (using previous terminology) as well, as marked with the new keyword. I think at most there might be a warning that this keyword is redundant in that case.
+
+---
+
+@cal · 2024-05-08T13:34:49.837Z:
+I like the new sendable name:
+The motivation under "Alternatives Considered" is strong.
+I find the sample code easier to read and more intuitive since it reuses familiar concepts.
+I like that it avoids introducing new terminology, especially complex terminology derived from region-based isolation (which is very advanced and beyond what I hope most Swift engineers will need to understand deeply).
+
+---
+
+@grynspan · 2024-05-08T13:56:03.005Z:
+This feature, however it is spelled, will be a useful addition to the language that smooths over some of the rough edges of isolation domains.
+I think, for someone new to Swift, having @Sendable, Sendable, and sendable in the language is confusing. "Why is it," a novice might ask, "that a closure/function argument uses @Sendable but any other type uses sendable?"
+Keeping my novice hat on for a bit longer… I see this discussion of sendable vs. consuming:
+When a call passes an argument to a sendable parameter, the caller cannot use the argument value again after the callee returns. [...] Unlike consuming parameters, sendable parameters do not have no-implicit-copying semantics.
+And I wonder whether the distinction between sendable and consuming is semantically important at the source level? I (hat off for a second here) understand it affects codegen, at least as implemented today, but from an external developer's perspective, would it make sense to just use consuming here?
+I'm unsure under what conditions I would want borrowing sendable. An example would be helpful.
+sendable inout (but not inout sendable?) could also use some more explanation. I would assume that it means the value is transferred into the callee's domain for computation, then transferred back, but how would that differ from the normal semantics of inout? Could sendable simply be inferred here, or are there dangers in doing so?
+
+---
+
+@Gero · 2024-05-08T15:09:58.475Z:
+I think the usefulness of the proposal is not in doubt at all so far (by anybody), but the disagreement of using sendable as a keyword in this way is strong. I am also someone that dislikes this much, as sendable NonSendable always seems to be in conflict.
+Please also consider the mentioned issues about explaining this to novices. While there exist other, comparable contradictions in naming things in pretty much every language, including Swift, concurrency is a hard concept already and I think we should take care to try to alleviate any further complications in learning it.
+Yes, even if you consider "learning" to be a one-time investment people have to do (which is debatable, too).
+I tried looking at this from a more "general human language" perspective and I believe part of what irks us critics here is simply the fact we lack the needed abstracts in any regular pair of words. Sendable as protocol (and excuse me if I just toss its counterpart @Sendable in the same bucket) fits to "things being sendable" in the sense that we pass a "thing" over from one "place" (in this the languages isolation context) to another. The problems arise that in the real world, this usually means you can't do anything once you have sent it. Not so in our programming world, where it's normal that you can do stuff with things you have a reference to, whether they were also sent somewhere else or not. I wouldn't even say that was an oversight when choosing Sendable as a fitting protocol name, btw. The emphasis was simply on the sending aspect of this... process, not so much the "consequence" the word implies.
+Now sendable refers to the same process, but this time the emphasis is basically put on "having lost the ability to work with it further".
+I can see why the proposal does not want to use transferring as a keyword because it is not an action you apply to the parameter at the callsite, it is an adjective that tells that we must only use a reference that is sendable in the sense that we indeed no longer use it afterwards. Which is, agreed, an aspect of something that can be sent, but still: We have all learned that Sendable does specifically not mean that necessarily...
+All that is to say: I don't believe having send in the keyword is nice. sending implies we actively do something with the parameter, which we don't, sendable gives huge friction to  Sendable.
+Since we kind of want to communicate that we "can give up on this parameter", what about relentable?
+
+---
+
+@xwu · 2024-05-08T15:20:15.176Z:
+Gero:
+I am also someone that dislikes this much, as sendable NonSendable always seems to be in conflict.
+That would indeed be in conflict. Fortunately, there is no type or protocol named NonSendable, and I would trust that no one would create such a type because, with region isolation, values of that type can indeed be sent. If someone does, then the fault lies with them.
+
+---
+
+@Gero · 2024-05-08T15:30:34.862Z:
+I did not not mean to imply NonSendable as a real protocol or type name, I was using it in the same way others have before, i.e. a type that is not conforming to Sendable (explicitly or implicitly). That's a little less terrible, but still not good imo.
+
+---
+
+@xwu · 2024-05-08T15:43:29.193Z:
+It might be helpful to see how you feel with a concrete example and plausible (or real) API. For example, sketch out what it would be like to use the (actual) mutex API I mentioned above.
+
+---
+
+@wadetregaskis · 2024-05-08T15:45:47.646Z:
+vns:
+The particular one that catches attention there is one of the most obvious uses:
+func getNonSendable() -> sendable NonSendable {
+return NonSendable() // okay
+}
+This feels similar to ~Copyable.  The absence of Sendable conformance (in this case) doesn't actually mean anything specific - it just means the type is not categorically sendable.  Specific instances of it could be.  Calling a type NonSendable is just wrong unless there truly is some categorical reason why instances of that type can never be sent (in which case, it's a rather good name for it since it'll pre-empt the compiler errors that will otherwise result from trying to send a non-sendable thing).  I'm not actually sure if that's possible.
+While I still prefer sending over sendable because it's more consistent with other parameter modifiers, I think either will work in practice; they are explicable.  I think the syntactic aspects are not going to be big problems in reality - it's not that hard to simply explain the difference between a whole type being categorically sendable (by conforming to Sendable) vs individual instances being sendable (by virtue of their usage patterns).  It's the whole concept of "sending" and isolation in general that are the actual hard parts.
+What I don't really like is that it's technically the wrong direction.  The existing parameter modifiers are either neutral (e.g. inout) or from the callee's point of view (e.g. consuming).  sending (the word) is from the caller's point of view.  I worry that it will create some subtle confusion (even if only subconsciously).  sendable does side-step that by being technically neutral in direction.
+Can you have a sendable inout T parameter?
+
+---
+
+@sliemeobn · 2024-05-08T16:06:35.211Z:
+To provide some counter-balance to the thread: I like the sendable spelling.
+I think the reasoning provided in the proposal is spot on, and in general this wording/way of thinking about what is expressed makes the a lot of sense in my mind.
+Also, to me no other keyword that is floating around is really "clearly better" in terms of helping a newcomer explain what is going on.
+If anything, one could argue the potential "confusion" around Sendable, sendable, and @Sendable is a feature. You should be confused, and you should be motivated to understand all these options when you are first confronted with the isolation/sendability/concurrency domain. No matter what the keyword is, you will need to learn about it anyway to be effective.
+As a little side-rant:
+I find the narrative - I am paraphrasing here - "but what about a novice that just want's compiler warnings to go away, they now will be confused which random keywords to throw a the code" a bit odd. I am all for progressive disclosure, but this ain't it. if you need to deal with isolation control, you will need to understand the language tools for it. No oh-so-cleverly named keyword will be able to take the inherent complexities of the domain off your shoulders.
+
+---
+
+@James_Dempsey · 2024-05-08T16:06:58.998Z:
+I wanted to confirm that I understand correctly.
+These parameters / return values will accept both:
+A value of a type that conforms to ’Sendable’
+A value that is in a disconnected isolation region
+Is that correct?
+
+---
+
+@taylorswift · 2024-05-08T16:16:11.123Z:
+xwu:
+It might be helpful to see how you feel with a concrete example and plausible (or real) API. For example, sketch out what it would be like to use the (actual) mutex API I mentioned above.
+i think what @Gero is getting at is that there are certain types in which the "non sendable" aspect is a major part of the education for how to use the type correctly. for example, Mongo.Session has documentation that relentlessly hammers the point that you cannot safely share it between concurrency domains. so when you see such a type, you're supposed to think "oh, that's some NonSendable thing".
+i think between sendable and sending, the latter is a little less confusing.
+
+---
+
+@Jumhyn · 2024-05-08T16:17:59.584Z:
+sliemeobn:
+If anything, one could argue the potential "confusion" around Sendable, sendable, and @Sendable is a feature. You should be confused, and you should be motivated to understand all these options when you are first confronted with the isolation/sendability/concurrency domain
+I don't find this compelling. I think there's a good reason that Sendable was one of the first parts of the model that got put in place and that sendable hasn't been addressed until now. You can get quite far in your handling of concurrency issues dealing only with Sendable, and never worrying about sendable--in many cases region-based isolation will make things 'just work' and users can be blissfully unaware of the concept of isolation regions, which IMO are massively more complex to reason about than types. I really don't think we should want or expect users to have to encounter or learn about these concepts 'all at once'
+sliemeobn:
+No oh-so-cleverly named keyword will be able to take the inherent complexities of the domain off your shoulders.
+Yeah, I don't think we're ever going to converge here on a pithy keyword that instantly makes it clear to a reader what's going on, and I don't think that should be our north star here. However, I also think that reusing sendable makes it more difficult for someone who is interested in understanding what's going on at a deeper level. Even just a search for 'sendable swift' would turn up many results which undoubtedly address the 'wrong kind' of 'sendable', without any indication to the user (other than the case of the first letter) that they're really reading about a different concept. At the very least, even if 'sending swift' turns up identical results, there would be a strong indication that they're not addressing the user's question head-on: it's a totally different word!
+
+---
+
+@Jumhyn · 2024-05-08T16:21:29.096Z:
+wadetregaskis:
+Can you have a sendable inout T parameter?
+sendable inout parameters
+A sendable parameter can also be marked as inout, meaning that the argument value must be in a disconnected region when passed to the function, and the parameter value must be in a disconnected region when the function returns. Inside the function, the sendable inout parameter can be merged with actor-isolated callees or further sent as long as the parameter is re-assigned a value in a disconnected region upon function exit.
+
+---
+
+@sliemeobn · 2024-05-08T16:32:20.413Z:
+Jumhyn:
+You can get quite far in your handling of concurrency issues dealing only with Sendable, and never worrying about sendable--in many cases region-based isolation will make things 'just work' and users can be blissfully unaware of the concept of isolation regions, which IMO are massively more complex to reason about than types. I really don't think we should want or expect users to have to encounter or learn about these concepts 'all at once'
+I get your point, absolutely.
+However, on this specifically, I believe that it might do more "harm" than good: having developers plow through "blissfully unaware" - applying Sendable, actor, and global actor annotations on everything that moves - will ultimately result in a a lot of "bad code".
+A first-class surfacing of non-sendable values flowing through isolation domains is in my opinion under-represented at the moment. Sure, if you don't know the screwdriver exists you end up not needing it - you'll be hammering in a lot of screws with the one hammer you have though.
+
+---
+
+@Michael_Gottesman · 2024-05-08T16:35:40.018Z:
+grynspan:
+Keeping my novice hat on for a bit longer… I see this discussion of sendable vs. consuming:
+When a call passes an argument to a sendable parameter, the caller cannot use the argument value again after the callee returns. [...] Unlike consuming parameters, sendable parameters do not have no-implicit-copying semantics.
+And I wonder whether the distinction between sendable and consuming is semantically important at the source level? I (hat off for a second here) understand it affects codegen, at least as implemented today, but from an external developer's perspective, would it make sense to just use consuming here?
+With consuming one gets a var like argument + no implicit copy diagnostics, while with sendable one just gets a var like argument. From a codegen perspective they are actually the same. The only difference is the additional diagnostic.
+The reason why it is separated is that conceptually one may not want sendable to imply no implicit copy. One can always achieve that by marking the parameter consuming sendable.
+I'm unsure under what conditions I would want borrowing sendable. An example would be helpful.
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+sendable inout (but not inout sendable?) could also use some more explanation. I would assume that it means the value is transferred into the callee's domain for computation, then transferred back, but how would that differ from the normal semantics of inout? Could sendable simply be inferred here, or are there dangers in doing so?
+It will actually be inout sendable. That is just a typo in the proposal.
+The difference is that an inout parameter only provides guarantees around the actual memory usage of the var. It doesn't provide any guarantees around concurrency. Consider the following:
+class MyKlass {
+}
+@MainActor func sendToMain<T>(_ t: T) async { ... }
+func f(_ x: inout MyKlass) async {
+await sendToMain(x)
+}
+func g() {
+var x = MyKlass()
+f(&x)
+print(x)
+}
+There is nothing in the current semantics of inout that would prevent this code from being written and we would have a race in between print(x) and whatever occurs in sendToMain(x).
+The interesting use case here can be seen in the mutex proposal where it is used: [Pitch] Synchronous Mutual Exclusion Lock.
+
+---
+
+@xwu · 2024-05-08T16:36:46.890Z:
+Jumhyn:
+Yeah, I don't think we're ever going to converge here on a pithy keyword that instantly makes it clear to a reader what's going on, and I don't think that should be our north star here. However, I also think that reusing sendable makes it more difficult for someone who is interested in understanding what's going on at a deeper level. Even just a search for 'sendable swift' would turn up many results which undoubtedly address the 'wrong kind' of 'sendable', without any indication to the user (other than the case of the first letter) that they're really reading about a different concept. At the very least, even if 'sending swift' turns up identical results, there would be a strong indication that they're not addressing the user's question head-on: it's a totally different word!
+That is a good point. I was also reflecting after my prior post that if we call this feature sendable, then the uppercase protocol might be more describing "sendable-able-ness."
+In that case, and building on your argument that throws doesn't mean something always throws, I think it'd be fine not to be super fussy about parts-of-speech here and just spell this send T — as in:
+// Actual line of code from mutex PR:
+public init(_ initialValue: send consuming Value) { ... }
+[Addendum: I think from the perspective of the analogy it is fine to say that something is "sent" here. It is correct to say that you have "sent" a letter when you drop it in the mailbox, when in truth until the postal carrier picks it up it hasn't gone anywhere at all. You wouldn't correct someone and tell them that they've "isolated" their letter in the mailbox and made it "sendable."]
+
+---
+
+@Michael_Gottesman · 2024-05-08T16:36:59.746Z:
+This is correct. One can always pass a Sendable typed value to a sendable parameter. I am imagining a diagnostic that in the case of concrete Sendable typed things or generic typed things that are constrained to be Sendable would get a diagnostic saying that sendable is redundant.
+
+---
+
+@Michael_Gottesman · 2024-05-08T16:38:59.469Z:
+James_Dempsey:
+I wanted to confirm that I understand correctly.
+These parameters / return values will accept both:
+A value of a type that conforms to ’Sendable’
+A value that is in a disconnected isolation region
+Is that correct?
+Yes.
+
+---
+
+@vns · 2024-05-08T16:40:08.989Z:
+wadetregaskis:
+This feels similar to ~Copyable. The absence of Sendable conformance (in this case) doesn't actually mean anything specific - it just means the type is not categorically sendable. Specific instances of it could be. Calling a type NonSendable is just wrong unless there truly is some categorical reason why
+I don’t disagree with overall behaviour. Yet the case of non-copyable generics I believe has made a point of the concept being hard to tackle. Here we have additional complexity of sendability concept, and to understand that keyword and type conformance with difference in one capital S has different impact and range of it, together with a bit of implicit behaviour of when instance is treated as sendable, and when it becomes not to, is a quite hard task, especially when you are new to all of that.
+It is also not about naming of a type itself, but code snippet is expressive in how you can understand code.
+And in terms of region based isolation, Sendable type and with this proposal now sendable type are in disconnected regions, which categorically I’d say express state in less ambiguous way.
+
+---
+
+@Gero · 2024-05-08T16:44:40.330Z:
+I actually read the mutex proposal, but before transferring was changed to sendable (at least in 0433 itself), so I did not notice it then. I actually thought it to be very reasonable and useful (even though I personally have no use-case for it atm), but did not feel confident enough in actually voting.
+But I can gladly provide a small example, pretending to be a novice and not knowing what I know from this entire discussion: Let's assume I have some very simple reference type I want to protect with a mutex:
+class PleaseProtecc: ~Copyable {
+// let's for a moment ignore that a novice probably won't get ~Copyable either...
+var maybeARawFileHandle: Int32
+}
+Let's assume I am already using this elsewhere in my app and the strict concurrency diagnostics successfully prevented me from passing this around isolation regions because it does not conform Sendable. Perhaps I, although I am a novice, even know that whatever I do with it (let's say some socket I/O) is not "thread-safe", but I don't know exactly how I could make it thread-safe (because low-level C, buffers, whatever). I come across the Mutex API precisely because I am looking for something to protect my instance with.
+But then, with autocompletion, I see:
+public init(_ state: sendable consuming State)
+Even if I just complete the snippet and do
+let myMutex = Mutex(myPleaseProteccInstance)
+and it doesn't show me an error or warning, I am most likely very hesitant that this is okay.
+I might be under the impression that the sendable tells me that whatever I pass must conform to the Sendable protocol, which I tried to avoid having to conform to in the first place.
+Now, taking the novice hat off, I know that this cannot be what is meant, as a required protocol conformance would be expressed via generics in the Mutex definition (which just requires State to be ~Copyable and not explicitly Sendable), but that's beside the point.
+All in all, I am not completely against it, but a difference between this point of friction and others, language-wise, is that with Sendable we have taught people that the emphasis is explicitly not on the "you can't use stuff you have sent away", but sendable is precisely that.
+That's different from, e.g. "not adopting BitwiseCopyable does not imply NotBitwiseCopyable problem. Here we're relying on two different aspects of the original (English) semantic of the word "sendable".
+@taylorswift: Yes, that was one of my major issues.
+And @sliemeobn: You are right, I am also not a fan of "over-protecting" any newcomers, complex things are complex and falling flat on your face with those once is actually often better in the long run, but in this case we should also not not regard it. We are using the same word.
+I try to rephrase it better: "Sendable" in an English meaning would imply two things at once: A thing that can be "put from one place to another" (a form of sharing) AND, once that actually happens, "you cannot use it at the first place anymore" (relenting control).
+Sendable focuses on the first part (we can still use a Sendable reference in the isolation region we "sent" it from), sendable on the second (we cannot).
+
+---
+
+@xwu · 2024-05-08T16:55:18.576Z:
+Gero:
+I try to rephrase it better: "Sendable" in an English meaning would imply two things at once: A thing that can be "put from one place to another" (a form of sharing) AND, once that actually happens, "you cannot use it at the first place anymore" (relenting control).
+Sendable focuses on the first part (we can still use a Sendable reference in the isolation region we "sent" it from), sendable on the second (we cannot).
+When you "send" a letter, you no longer have the original—but when you "send" an email, you very much have the original. Both letters and emails are small-s sendable; the action you take when you exercise that ability is called sending, and yet you relinquish only one but not the other. There is not a mountain of daily confusion about this, though, is there?
+
+---
+
+@Gero · 2024-05-08T17:05:38.772Z:
+I could be cheeky here and point out that there's a lot of people who are very confused by email indeed, but just in jest...
+Granted, perhaps I am overthinking this, but in our case we're not comparing two things quite as different as emails and letters, right? It's instances of types in both cases, and in both cases they're passed as parameters to a function. You'd be very surprised if you put two letters in two mailboxes, one of which has a "sendable letters" label and one just a "letters" label, and to your surprise, after putting them in, you'd still have a copy left in your hand of the one you put into the "letters" mailbox (yes, I kind of turned the example around here).
+Oh, and since I am not sure: I hope it's clear I am all tongue-in-cheek here and not at all fighting for this to the teeth! I'd consider myself a small voice in this community and by far I am not of the opinion to be as qualified as many others in here!
+To my surprise I also find myself much less conflicted about just using send (or sending), like in your edited post above. The problems with searching @Jumhyn mentioned would be addressed with this and are probably more important than my (non-native speaker) feel for the English language...
+
+---
+
+@xwu · 2024-05-08T17:47:22.456Z:
+No, of course! This is key feedback and your voice is very important. We want to make sure that how we name things doesn’t make an advanced concept artificially more difficult to understand. It’s good to see how far we can push explanations and analogies for clarity to get a sense of how this stuff is best to be documented and taught.
+
+---
+
+@wadetregaskis · 2024-05-08T19:05:39.779Z:
+xwu:
+In that case, and building on your argument that throws doesn't mean something always throws, I think it'd be fine not to be super fussy about parts-of-speech here and just spell this send T — as in:
+// Actual line of code from mutex PR:
+public init(_ initialValue: send consuming Value) { ... }
+I think that's workable too, but sending still seems better as it's more in line with convention (similar parameter modifiers end with ing already).  Ironically for people not fluent in English they probably don't care, whereas pedantic buggers like myself will  be mentally tripping over the inconsistent tense forever.
+I think it's a good point that if you search for sending you'll almost certainly get results for Sendable, because current search engines are stupid, but if you're paying any real attention you'll quickly realise that you're not getting exactly what you asked for.  Yet, what you are getting is probably going to be helpful anyway - whether because you didn't know about Sendable (but you should, if you're using sending, because they're merely different mechanisms for working on the same concept) or because the results talk about sending holistically, covering sending and Sendable and all the rest.
+And, there's always quoting the search terms (or using a better search engine) to enforce a literal match.  That's already something experienced programmers know to do anyway, because a lot of programming terms get mangled by default by popular search engines.
+xwu:
+When you "send" a letter, you no longer have the original—but when you "send" an email, you very much have the original. Both letters and emails are small-s sendable; the action you take when you exercise that ability is called sending, and yet you relinquish only one but not the other. There is not a mountain of daily confusion about this, though, is there?
+Hah, well, my grandparents would print emails before sending them in order to keep a copy for themselves, so…
+But, I concur that while presuming 'sending' unilaterally has reference semantics (basically) is not an implausible mistake for a learner to make, it's also not a big deal nor hard to correct.  For better or worse Swift already has a complicated and sometimes obtuse system for value vs reference types, and I don't think anything in this proposal or naming discussion materially changes that.
+
+---
+
+@wadetregaskis · 2024-05-08T19:19:00.419Z:
+To elaborate, I like the subtle clarity from careful use of language:
+Passive attributes are adjectives.  e.g. the "able"s.  Sendable, Codable, etc.  Things that can have specific things done to them, or perform specific things, but don't imply anything about when those things occur - because that's up to how they're used, by other code (at least technically, and usually conceptually too).
+Present progressive tense for parameters.  e.g. "ing"s.  Consuming, borrowing, sending.  Things that apply only when the function in question is called (or property in question accessed, similarly).
+Seemingly these could have been past-tense just as easily, and arguably that would be easier to explain too - "when this function is called, this argument is sent and this one is borrowed" - but that ship has sailed.
+There are exceptions today, like "inout", which is a bit more adjectivy, but off the top of my head they're all not real words, which gives them some leeway.  An alternative for "inout" would arguably be something like "mutating", or "replacing", or "returning" (whole other bike-shed there, not the point to discuss it here ).
+I can't think of an existing example of a past-tense keyword like these.  I think past tense is likely to confuse since (a) it's different for no reason and (b) it could be interpreted as being a prerequisite for the parameter, not something that happens to it upon the call.  e.g. "sent T" means some T that was previously sent [somewhere].  I dunno if that sounds convincing or contrived, but I think for "beginners" - which is most people using Swift today, in this context - we should be sympathetic to them misunderstanding these things.
+
+---
+
+@wes1 · 2024-05-08T19:47:56.003Z:
+As for alternatives, adopting was the conventional term in early C++ to indicate that the callee was keeping instead of copying the value.
+Semantically, adopting takes the callee's perspective and has the requisite overtones of transfer, finality, and completeness (reachability).  The implicit "parent/caretaker" is a bit weaker than "owner" but related in establishing a kind of context (like isolated), reinforcing its role in this ownership/async feature family.
+But I might add that the perspectivism breaks down for me (for all proposed terms) when annotating not a parameter but the result.
+Others have suggested evaluating this both from the perspective of experts and newbies.  But I think the key perspective is how these kinds of features transit "Monkey see, monkey do": developers basically copy them and see how they work in practice, likely investigating fully only when it doesn't work as expected, after they've already invested in it.
+The fault model there is establishing the wrong expectations; people get angry at being wrong.  It's hard to change how you think about something, and you may feel mislead and become mistrustful.
+To me the proximity of sendable and Sendable is likely to set the wrong expectation.  Things that are close in meaning need distinctive terms to maintain separation.  (E.g., imagine if internal and private were called invisible and hidden)
+I appreciate Becca's emphasis on reachability in the object graph, which leads me in this case to focus on graph-completeness over sendability, and to prefer adopting.
+
+---
+
+@wadetregaskis · 2024-05-08T20:02:45.289Z:
+I like adopting, although it feels more appropriate for reference types than value types.  Usually when you adopt a child that means taking the specific child in question, not cloning them.
+
+---
+
+@KeithBauerANZ · 2024-05-08T22:46:41.986Z:
+I think with adopting it's clear that we'd need a second keyword for the return position, eg.
+func f(x: adopting T) -> orphaning T { ... }
+Which, I mean, I think that improves clarity. I get the argument about "use the same word for the same concept", but I'm unconvinced that I'll be thinking about this as "the same" as Sendable in practice — more likely I'll be thinking about it in terms of "avoiding Sendable".
+IDK, I think I've arrived right back at transferring being the right spelling
+I'm also unconvinced that the keyword should go on the type in argument position, it seems more like it should go on the argument (there is some precedent for this in result builders):
+func f(sendable x: T) -> sendable T { ... }
+(which is even better if you choose other keywords too)
+
+---
+
+@dnadoba · 2024-05-08T22:49:31.685Z:
+Michael_Gottesman:
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+Can we at least make Continuation.yield(with:) consuming by keeping the old ABI name around with the old implementation and introduce a new method with the same API name but a different ABI name though @_silgen_name or similar?
+
+---
+
+@taylorswift · 2024-05-08T22:59:15.286Z:
+dnadoba:
+Can we at least make Continuation.yield(with:) consuming by keeping the old ABI name around with the old implementation and introduce a new method with the same API name but a different ABI name though @_silgen_name or similar?
+isn’t it already allowed to overload on consuming?
+
+---
+
+@dnadoba · 2024-05-08T23:08:33.439Z:
+Yes, but it will become ambiguous at the call side.
+
+---
+
+@Karl · 2024-05-09T15:17:49.936Z:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+If so, I worry that it may be quite a fine line. It might be difficult to teach.
+
+---
+
+@FranzBusch · 2024-05-09T16:01:07.793Z:
+I am not sure how I feel about the proposed sendable  spelling. Taking the following extreme example:
+func foo<A: Sendable, B>(_ operation: @Sendable (A) -> sendable B)
+I know this isn't what one would write regularly but just trying to explain what this method does and what each different Sendable/@Sendable/sendable annotation seems hard.
+I am not saying transferring or any other suggestion here is better but I just wanted to spell out an extreme example that we have to be able to teach people.
+
+---
+
+@beccadax · 2024-05-09T16:42:21.791Z:
+[Review manager hat off for this post.]
+Karl:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+FranzBusch:
+I am not sure how I feel about the proposed sendable spelling. Taking the following extreme example:
+func foo<A: Sendable, B>(_ operation: @Sendable (A) -> sendable B)
+I know this isn't what one would write regularly but just trying to explain what this method does and what each different Sendable/@Sendable/sendable annotation seems hard.
+Yeah, I’m worried about this too. I think we might want to step back from using precisely sendable and instead use some other variant of “send”. I’m not super-fussed about exactly which of those words we use, but sent might read a little better on e.g. property types (which might allow this keyword in the future) than many of the alternatives.
+
+---
+
+@Michael_Gottesman · 2024-05-09T17:47:45.594Z:
+Just to add to what you said here Becca, this is what the various options look like graphically on properties (just for the purpose of helping to visualize during the review, I am not taking a specific perspective):
+struct S {
+var x1: transferring MyKlass { ... }
+var x2: sendable MyKlass { ... }
+var x3: sending MyKlass { ... }
+var x4: send MyKlass { ... }
+var x5: sent MyKlass { ... }
+}
+
+---
+
+@Jumhyn · 2024-05-09T17:59:15.084Z:
+Michael_Gottesman:
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+I believe in the prior review the possibility was raised of giving borrowing senable a different meaning than this; namely, a borrowing sendable value would also 'borrow' the isolation region and return it to the caller undisturbed (rather than merging the region into the callee). Is the intent to rule that out as a future direction? If not, could we provide the 'preserve ABI but still merge the region' functionality via a private underscored modifier/attribute and give borrowing sendable the alternative meaning? Or, if the intent is to affirmatively rule out that direction, why was that decided?
+
+---
+
+@Michael_Gottesman · 2024-05-09T18:02:51.700Z:
+Jumhyn:
+Michael_Gottesman:
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+I believe in the prior review the possibility was raised of giving borrowing senable a different meaning than this; namely, a borrowing sendable value would also 'borrow' the isolation region and return it to the caller undisturbed (rather than merging the region into the callee). Is the intent to rule that out as a future direction? If not, could we provide the 'preserve ABI but still merge the region' functionality via a private underscored modifier/attribute and give borrowing sendable the alternative meaning? Or, if the intent is to affirmatively rule out that direction, why was that decided?
+No, this is something that has not been ruled out. We were thinking of perhaps calling it 'preserved' (don't take the word used seriously) instead of 'borrowing'. Borrowing is an ownership concept so we do not want to overload it with meaning based off of context here.
+
+---
+
+@John_McCall · 2024-05-09T18:06:04.794Z:
+Karl:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+They're two different points on the same spectrum, yes.  A @Sendable function has a sendable type, which means it must be innately thread-safe: it can be sent around and used concurrently (i.e. called from multiple threads at once).  A sendable function is a sendable value, which means it does not have to be innately thread-safe, just separable from the current context: it can sent around to new concurrent contexts but can only be used by one context at a time.[1]
+As we've gotten more experience with the impact of region-based isolation, we've come to realize that it's a much more fundamental part of the concurrency design toolbox than we initially understood.  For better or worse, the sendable naming and this concept of sendable values vs. sendable types is an attempt to come to terms with that.
+As a practical example of this, in Swift 5.10, the Task initializer takes a @Sendable function.  That seems to make sense because calling the function on a new task that will run concurrently with the current context is a send, right?  But it's actually overly-strict: the task function is not called concurrently (in fact, it's only called once).  So the right model is that it's a sendable function, and it's okay for it to capture non-Sendable state as long as that state is only used from the new task.
+For function values specifically, sendability is mostly a restriction on the captures. A @Sendable function must either not capture anything non-Sendable or be isolated to an actor (in which case such values are merged into the actor's region).  A sendable function can capture non-Sendable values, but they must be disconnected from everything else.  There are some future directions here that could allow those values to then be transferred again when the closure is called. ↩︎
+
+---
+
+@Jumhyn · 2024-05-09T18:17:34.157Z:
+Just to pull on this thread a little bit, since this proposal as written would rule out the borrowing sendable naming, at the very least. In the previous review borrowing sendable was called "almost useless" as-proposed. If we were to use the 'preserved' terminology, is consuming preserved something that would make sense, or would that also be almost useless? While sendable and preserved aren't strictly about ownership, they are also not entirely unrelated: there is a reason that sendable also implies consuming.
+ETA: I don't think this has to be resolved or justified as part of SE-0430, necessarily. But I'm wary of 'burning' the borrowing sendable syntax solely in the name of an ABI compatibility kludge that could also be accomplished with an underscored modifier. Unless there's a high degree of confidence that borrowing sendable is really, truly the wrong way to spell this, I'd rather make it an error for now and leave it open to future design work.
+
+---
+
+@FranzBusch · 2024-05-09T18:25:20.020Z:
+John_McCall:
+As a practical example of this, in Swift 5.10, the Task initializer takes a @Sendable function. That seems to make sense because calling the function on a new task that will run concurrently with the current context is a send, right? But it's actually overly-strict: the task function is not called concurrently (in fact, it's only called once). So the right model is that it's a sendable function, and it's okay for it to capture non-Sendable state as long as that state is only used from the new task.
+Just to emphasise this. I have recently spent some time looking over all of our Sendable and @Sendable annotations in NIO and came to the realisation that a lot all of them can be replaced with sendable/transferring instead. We often don't have to concurrently access the value but we just need to make sure it is transferred from the callers isolation domain.
+
+---
+
+@Karl · 2024-05-09T18:35:19.089Z:
+I also recall there being some debate as to whether swift-system's FileDescriptor should be Sendable. There are compelling arguments on either side.
+The ability to transfer values across regions (and values of non-sendable types became more usable as a result) could mean it is better to keep non-Sendable.
+
+---
+
+@Jumhyn · 2024-05-09T18:54:35.654Z:
+John_McCall:
+For better or worse, the sendable naming and this concept of sendable values vs. sendable types is an attempt to come to terms with that.
+Yeah, I don't actually begrudge the discussion of sendable values vs. sendable types: I think that's a really great way to think, talk, and teach about the concurrency model. But I don't think that sendable as a modifier attached to a parameter type, does basically anything to evoke that distinction. Explaining that a type written as sendable T doesn't actually describe a type T that is 'sendable' feels quite silly to me. IOW, to the extent we're trying to illustrate this spectrum:
+John_McCall:
+They're two different points on the same spectrum, yes.
+I don't think a single capital/lowercase letter of difference does us any good. OTOH if we keep Sendable as a concept which exclusively applies at the type level, while still talking about 'sending' more broadly, I think it more naturally raises the right questions: e.g., "This parameter type is marked sending/sent/send, but the type isn't Sendable—so how can a non-Sendable type be sent?"; "Well, the compiler needs to be able to prove something about the specific argument values which ends up being passed here at the call sites in order to be certain that each usage won't introduce data races."
+Perhaps I'm over-narrativizing, but the more I think about it the more I prefer the story I can tell if we don't reuse sendable for this purpose.
+
+---
+
+@Michael_Gottesman · 2024-05-09T19:02:41.820Z:
+Jumhyn:
+Just to pull on this thread a little bit, since this proposal as written would rule out the borrowing sendable naming, at the very least. In the previous review borrowing sendable was called "almost useless" as-proposed. If we were to use the 'preserved' terminology, is consuming preserved something that would make sense, or would that also be almost useless? While sendable and preserved aren't strictly about ownership, they are also not entirely unrelated: there is a reason that sendable also implies consuming.
+ETA: I don't think this has to be resolved or justified as part of SE-0430, necessarily. But I'm wary of 'burning' the borrowing sendable syntax solely in the name of an ABI compatibility kludge that could also be accomplished with an underscored modifier. Unless there's a high degree of confidence that borrowing sendable is really, truly the wrong way to spell this, I'd rather make it an error for now and leave it open to future design work.
+It isn't just an ABI compatibility kludge. That is just a nice side-effect of the actual ownership semantics. More importantly it provides no implicit copy semantics like consuming does. I view it as an orthogonal semantic to region based isolation.
+That being said, I would argue that it would be actively harmful to make borrowing imply anything about the region something belongs to. It is mixing the ownership layers and the region layers of the language, effectively adding a special case to borrowing. In my opinion, we should avoid more special cases unless it is really necessary and this misses the mark for me. Someone should be able to work with ownership outside of concurrency and with ownership in concurrency and know semantically that borrowing has the same effect.
+Just to add to this, would borrowing without transferring when one crosses an isolation boundary mean preserving as well? If we were to use borrowing this way, we would effectively burn that part of the API design space. Example:
+actor MyActor {
+var myData: MyNonSendableData
+var otherDataFromNonSendableData: OtherData
+// I am doing something performant here and I want to ensure that the copies introduces
+// are known and explicit.
+func doSomethingPerformant(_ x: borrowing MyNonSendableData) async {
+// ... do stuff ensuring that no copy is performed ...
+// If borrowing means preserving, I can't do this.
+myData = copy x // One copy.
+// Or this:
+otherDataFromNonSendableData = x
+}
+}
+func f() async {
+let a = MyActor()
+let x = MyNonSendableData()
+a.doSomethingPerformant(x)
+}
+
+---
+
+@Jumhyn · 2024-05-09T19:06:50.860Z:
+Michael_Gottesman:
+It isn't just an ABI compatibility kludge. That is just a nice side-effect of the actual ownership semantics. More importantly it provides no implicit copy semantics like consuming does.
+Sure, but that would already be available as consuming sendable no?
+Michael_Gottesman:
+Someone should be able to work with ownership outside of concurrency and with ownership in concurrency and know semantically that borrowing has the same effect.
+It seems to me like the design in this proposal is what makes borrowing sendable 'different'. Normally, borrowing values are returned back to the callee for continued use after a call completes. But a borrowing sendable value is merged into the isolation region of the callee, preventing further use. IMO borrowing sendable which allows use after the call is more expected.
+
+---
+
+@Michael_Gottesman · 2024-05-09T19:08:16.607Z:
+Jumhyn:
+Michael_Gottesman:
+It isn't just an ABI compatibility kludge. That is just a nice side-effect of the actual ownership semantics. More importantly it provides no implicit copy semantics like consuming does.
+Sure, but that would already be available as consuming sendable no?
+No because consuming implies a +1 parameter. I realize that you posted before my edit above where I actively use the +0-ness (my apologies).
+Michael_Gottesman:
+Someone should be able to work with ownership outside of concurrency and with ownership in concurrency and know semantically that borrowing has the same effect.
+It seems to me like the design in this proposal is what makes borrowing sendable 'different'. Normally, borrowing values are returned back to the callee for continued use after a call completes. But a borrowing sendable value is merged into the isolation region of the callee, preventing further use. IMO borrowing sendable which allows use after the call is more expected.
+To me that isn't what borrowing means. Borrowing to me means that from an ownership perspective, the value will not be destroyed by the callee. It doesn't state anything about how you can use it in the caller afterwards. The fact that you can do it normally is not a result of borrowing itself. The transferring rule here to me is overlaid on top of that borrowing rule.
+
+---
+
+@wadetregaskis · 2024-05-09T19:09:40.250Z:
+Karl:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+If so, I worry that it may be quite a fine line. It might be difficult to teach.
+My gut instinct is that sendable will be the most common, by a significant-enough margin to kind of become the default.  I suspect that a genuine desire for @Sendable in this position will be rare; it might be used more often because the compiler [seemingly] demands it.
+Which leads to the question of cargo-culting susceptibility - if people habitually write sendable and the compiler says a specific use isn't sendable, are they going to understand that probably they should reconsider how the value is used after the call (i.e. try not to use it after the call, or anything it's connected to, so that it can just be implicitly sendable) or are they going to dogmatically try to slap @Sendable / Sendable (the protocol) on things until the compiler stops complaining?
+Beyond that, I think that their relationship is conceptually pretty simple and clean - "sendable" is essentially a superset of Sendable / @Sendable types.  Logic 101; all Sendables are sendable but only some sendables are Sendable.  This is already a very common bit of logic in Swift (and most popular languages), e.g. type inheritance, Any vs AnyObject, etc.
+
+---
+
+@Jumhyn · 2024-05-09T19:10:23.854Z:
+Michael_Gottesman:
+// I am doing something performant here and I want to ensure that the copies introduces
+// are known and explicit.
+func doSomethingPerformant(_ x: borrowing MyNonSendableData) async {
+// ... do stuff ensuring that no copy is performed ...
+// If borrowing means preserving, I can't do this.
+myData = copy x // One copy.
+// Or this:
+otherDataFromNonSendableData = x
+}
+Oh, perhaps we are talking past each other? I am not suggesting that borrowing should imply preserving/sendable, just that borrowing sendable be given the meaning of preserving (or borrowing preserving).
+
+---
+
+@Michael_Gottesman · 2024-05-09T19:18:19.140Z:
+Jumhyn:
+Michael_Gottesman:
+// I am doing something performant here and I want to ensure that the copies introduces
+// are known and explicit.
+func doSomethingPerformant(_ x: borrowing MyNonSendableData) async {
+// ... do stuff ensuring that no copy is performed ...
+// If borrowing means preserving, I can't do this.
+myData = copy x // One copy.
+// Or this:
+otherDataFromNonSendableData = x
+}
+Oh, perhaps we are talking past each other? I am not suggesting that borrowing should imply preserving/sendable, just that borrowing sendable be given the meaning of preserving (or borrowing preserving).
+I am trying to illustrate why making borrowing sendable mean preserving is an active special case that expands the language rules around borrowing.
+If borrowing sendable (e.g. where we are being explicit about sendable) implies preserving... when sendable behavior is implicit... shouldn't borrowing also imply preserving? With my naive programmer hat on, I would expect that borrowing should work the same around any type of "transferring" semantics.
+In a sense we are saying that borrowing when transferring occurs is just a normal ownership semantic (with normal transferring semantics) unless it is paired with sendable in which case there is a different rule (where we preserve).
+
+---
+
+@Jumhyn · 2024-05-09T19:43:52.994Z:
+Okay, I think I have a better understanding of where you're coming from now, thanks! I can definitely see what you're saying, and might be able to be convinced that it's the right way to go with a bit more thought/discussion, but I'm not totally convinced. The fact that sending implies consuming already illustrates that there's some sort of conceptual linkage here, IMO. Just as you're wary of introducing a special case to borrowing, I'm wary of introducing a separate preserved concept which could be modeled as the composition of existing concepts: e.g. borrowing sendable composed explicitly borrows the value, but also 'borrows' the value's region.
+So that's why I'd prefer to punt on this question and leave the meaning of borrowing sending as a future direction. If I've misunderstood and borrowing sending is not almost useless as previously described, i.e., we'd be missing out on some major piece of functionality if we didn't include it in this proposal, then I'd be much more amenable to revising my opinion here. But I'm not hearing any urgency to support borrowing sending except as a compatibility thing: in the example you posted borrowing sending doesn't appear in source (even though the region transfer semantics do).
+
+---
+
+@brendon · 2024-05-09T21:16:06.393Z:
+I think sending would be a better choice than sendable, both given that it is distinct from @Sendable and Sendable in function and meaning, and that it is more consistent with borrowing/consuming. Plus func eat(_ banana: sending Banana) {} reads better than sendable would, IMO.
+
+---
+
+@nkbelov · 2024-05-11T05:33:47.661Z:
+FWIW, as someone who's initially supported sending in the first review too, my intuition wasn't really based on aligning the keyword with borrowing/consuming, but more on the superficial flair of "what the function does" — it sends a value which is suitable for being sent to a different isolation region. It just reads well to me: I understand foo(sending bar: Bar) as a function that takes bar and "sends it somewhere else". Arguably, this is exactly the same thing that the original transferring conveyed, the only difference being that it still relates to the existing S/send* family of keywords.
+I'm trying to underline this because when reading code, my bet is that people do not necessarily think of such -ing parameter annotations as type modifiers, but as "actions": while an @escaping closure is, strictly speaking, a subtype, I'm more convinced that, on average, people think that "the closure does something / there's somethig being done to the closure" (it escapes) than "it's a closure which is allowed to escape" — @escapable would have conveyed the latter better.
+All in all, the precedent for specifically sending is in my eyes twofold:
+send* is the only relevant and already established "concurrency-y" wordstem in Swift to date, and
+-ing, by precedent, works the best as the suffix for conveying both "being done to by the accepting function" and "is able to be passed to the accepting function".
+While I understand that the precise motivation against sending was in conveying that a value has to be innately sendable (a property), I'm again more convinced that, in context, programmers will be benefitting much more from the "action being done to" perspective (an action enabled by the property).
+
+---
+
+@nkbelov · 2024-05-11T05:42:09.235Z:
+I'll perhaps also repeat my other readability/intuition argument: for a value to be "sent", it either has to be:
+innately Sendable/@Sendable, or
+be explicitly sent by a function that does so.
+The first one is clearly a property (expressed by protocol conformance), while the latter is an action. Of course, the action can only be done to values that permit this, but here it's the function that declares this requirement (read as "I will be sending/escaping this parameter, so you better conform") rather than the value.
+
+---
+
+@beccadax · 2024-05-14T22:31:31.978Z:
+Thank you all for your highly constructive feedback during this review! The Language Steering Group has decided to accept with the following modifications:
+The sendable keyword is changed to sending.
+The proposed borrowing sending feature has been removed; this combination of keywords will instead be rejected by the compiler unless a future proposal assigns a meaning to it.
+For more details or to discuss this outcome, please see the announcement thread.
+
+=== ROW 28 | f001609 | https://iroh.computer/blog/healing-connections | 2024-06-17 | domain-subframes ===
+Healing Connections After Network Migration - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Healing Connections After Network MigrationJune 17, 2024 by ramfox
+We've put a lot of effort into ensuring that iroh connections "just work" in most situations. To achieve this, iroh’s networking stack does a lot of clever things. It allows you to dial by NodeID, using certain discovery mechanisms. It allows you to communicate with another machine, even if your computer and the other computer are each behind a NAT, using hole punching.
+But did you know that iroh can maintain connections even if your network changes? Switch Wi-Fi networks, jump on a mobile hotspot, or turn on your VPN, and your connections stay intact. This works because connections correlate with your Node ID, not your IP address.
+Healing Connections when you have a relay
+Iroh uses relay servers to coordinate hole-punching efforts and to heal connections when your network configuration changes. This process involves a few steps:
+detecting network interface changes,
+sending probes,
+using discovery messages to communicate those changes to your node.
+The process completes when new addresses are added to our node’s address book.
+Detecting Network Configuration Changes
+When you create an iroh Endpoint, you also start a network monitoring service that periodically checks the network interfaces and the routing table of your own computer. This is very finicky work—each OS has a different way of maintaining its routing table. We've supported Windows, Linux, and macOS ever since launching hole punching in iroh, and recently added support for FreeBSD, NetBSD, and OpenBSD.
+If your network changes, like turning off mobile data to rely solely on Wi-Fi, these changes will show in the available interfaces. The network monitoring service will alert the iroh Endpoint to re-launch the next step: netcheck.
+Netcheck
+Once we know the interfaces, we must determine what the outside world sees as our IP address and router configuration details. We do this by launching our netcheck probe, which sends STUN and ICMP probes to known relay servers to learn the node's public addresses and latency to the server.
+Once the probes finish, we have a list of addresses we can potentially be dialed on.
+Even if the public addresses change, we're still connected to any known relay nodes, maintaining a relayed connection. This allows us to send and receive data from the remote peer, albeit with potentially lower throughput and higher latency.
+Sending DISCOvery messages
+With new addresses in hand, we use the hole-punching protocol to migrate the connection. We send a disco message through the relay server to the remote node, encrypted with your node’s private key and the remote node’s Node ID.
+We send a particular type of disco message here: a CallMeMaybe message, which contains a list of all the addresses the remote node can use to try and contact your node, including the new ones discovered by netcheck.
+The Remote Node Decodes Your Message
+The disco message can only be opened using the remote node’s private key and your Node ID, ensuring a secure correlation of addresses to your Node ID. Once the remote node updates its address book with the new addresses, the connection may be healed, associating data from your new IP addresses with your Node ID.
+If the remote node is behind a NAT, healing the connection requires the full hole-punching dance, which is a topic for another blog post. While this hole-punching dance progresses, we are still able to send data back and forth over the relay connection, so data never stops flowing. Once hole punching is completed, the connection has been migrated successfully.
+Healing connections, when you don’t have a relay
+Consider this: if you have a direct connection to a remote node and your network changes, can you still heal the connection without any relay nodes?
+The answer is likely yes, depending on key factors. The connection can be healed if you have a direct connection and one or both nodes have a public IP address.
+If your node's configuration changes, such as moving behind a router, but the remote node still has a public address, you can dial that node without the help of a relay server for hole punching. However, the connection will close if both nodes end up behind NATs.
+Let’s focus on the scenario where your node’s address changes, but the remote node’s address remains public. How can we heal the connection without a relay server?
+Discovering Network Changes
+This step is the same: detect changes through the network monitoring service.
+Netcheck
+Without a relay server, we cannot send STUN, ICMP, or HTTPS probes and won't have a list of contactable addresses. This step is skipped.
+Send DISCOvery message?
+Without a relay, we don't send CallMeMaybe messages.
+But CallMeMaybe messages are not the only kind of disco message we send. We also send disco::Ping messages. These ping messages are encoded with your private key and the remote’s Node ID, the same as the CallMeMaybe message, with one additional piece of information. Since they can arrive over a direct address, the remote node can associate the IP address that sends the message to the Node ID of the message.
+We regularly send pings, especially to connections that we deem “active” to ensure that the connection won’t close unexpectedly. Every 5 seconds we check if we need to send pings, so if there are any network interface changes, your node will communicate those changes to any active connections within about 5 seconds.
+The Remote Node Decodes Your Message
+Once the remote node receives your disco message, it can associate your Node ID with the new IP address, healing the connection.
+Use Iroh for connection resilience
+Iroh’s networking stack effectively maintains connections across network changes, whether or not a relay server is involved. By using mechanisms like hole punching and disco messages, iroh ensures communication remains intact by correlating connections with Node IDs. This adaptability provides a stable and reliable solution for diverse network environments, keeping connections steady even through network transitions and complex NAT configurations.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 33 | f001890 | https://iroh.computer/blog/iroh-0-23-welcoming-nodejs-to-the-family | 2024-08-21 | domain-subframes ===
+iroh 0.23.0 - Welcoming Node.js to the family! - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.23.0 - Welcoming Node.js to the family!August 21, 2024 by ramfox
+Welcome to a new release of iroh, the open-source distributed systems toolkit with tools for direct connections, moving data, and syncing state.
+We have exciting news! Iroh is now available for node.js. We’ll walk through how you can get started using iroh in your node projects, as well as talking about a few major api changes in the iroh library and CLI.
+🐢 Node.js
+Starting with iroh in node.js is as simple as adding @number0/iroh as a dependency. We also have started to update our docs on iroh.computer to add examples written in javascript.
+We’ve released our package through npm. If you want to take a look at how we use napi to generate our  node.js bindings, head over to our iroh-ffi repo, specifically the iroh-js section.
+☎️  The internal address book, why we changed connections to remotes
+The API methods and structs that were previously called connection and ConnectionInfo have been changed to remote and RemoteInfo.
+Why? Well, it turns out we were lying to you a bit, sorry!
+The information returned in a ConnectionInfo, was not necessarily information on nodes that we have ever connected to. And when you, as a user, call an API named connections...you are probably expecting just that. But it turns out that we have information on nodes that we are not currently connected to, nodes we’ve connected to before, nodes that we’ve discovered addresses for but have never tried to connect to, etc.
+So instead, that information is now called a RemoteInfo, ie, information about a remote node. In the future, as our internal address book gets more sophisticated, we will bring you tools to more easily filter out nodes that you are currently communicating with. For now, you can take a look at the RemoteInfo and see what conn_type: ConnectionType you currently have with that node.
+Checkout PR#2610 for more details.
+🖥️ Letting net stand on its own
+Beyond the connection / remote rename, we’ve also restructured things a bit on our API and CLI, specifically around how you access the networking methods using an iroh node.
+Previously, the net methods were grouped with the node methods. We’ve pulled this part.
+// lets say you want to get the addresses of our iroh node:
+let node = iroh::node::Node::memory().spawn().await?;
+// previously you would do:
+// let node_id = node.node().node_addr().await?;
+// now:
+let addr = node.net().node_addr().await?;
+CopyCopied!
+The status, stats, and shutdown methods have been moved “up a level” and are now directly accessible on the iroh::node::Node.
+This is reflected in the CLI as well, with iroh status, iroh stats, and iroh shutdown now top level commands:
+Usage: iroh [OPTIONS] <COMMAND>
+Commands:
+start     Start an iroh node
+console   Open the iroh console
+docs      Manage documents
+authors   Manage document authors
+blobs     Manage blobs
+net       Manage the iroh network
+gossip    Manage gossip
+tags      Manage tags
+stats     Get statistics and metrics from the running node
+status    Get status of the running node
+shutdown  Shutdown the running node
+doctor    Diagnostic commands for the relay protocol
+CopyCopied!
+The commands that used to be nested under iroh node are now nested under iroh net:
+Usage: iroh net [OPTIONS] <COMMAND>
+Commands:
+remote-list    Get information about the different remote nodes
+remote         Get information about a particular remote node
+node-addr      Get the node addr of this node
+add-node-addr  Add this node addr to the known nodes
+home-relay     Get the relay server we are connected to
+CopyCopied!
+Take a look at PR#2642 for more details.
+🍪 Baking up a new batch of blob APIs
+Batch
+For complex update operations, there is a batch API that allows you to add multiple blobs in a single logical batch.
+Operations in a batch return temporary tags that protect the added data from garbage collection as long as the batch is alive.
+To store the data permanently, a temp tag needs to be upgraded to a permanent tag using persist or persist_to.
+Check out PR#2545 for more details.
+Events
+We have a iroh_blobs::provider::CustomEventSender trait that, when implemented, allows you to listen for events that happen on the provider. This gives you insight and allows you to react when a client has connected to the provider, a blob transfer has begun, finished, etc.
+However, when using iroh (rather than iroh-blobs directly), you previously had no way to add a CustomEventSender.
+Now you do! Using the iroh::node::Builder::blob_events method, pass down an EventSender that contains your CustomEventSender , and you can track and react to the events down in the provider!
+Check out PR#2583 for more details.
+⚠️ Breaking Changes
+Protocol Changes
+API Changes
+iroh
+No more deref of iroh::net::Client to iroh::client::node::Node
+iroh::client::node -> iroh::client::net
+iroh::client::node::Node::shutdown -> iroh::client::Client::shutdown
+iroh::client::blobs::BlobStatus has a new case NotFound
+iroh::client::blobs::BlobStatus::Partial: size is now a BaoBlobSize instead of a u64
+V0 and V1 of the iroh_blobs store are deprecated. Ensure data that is imported as iroh_blobs::store::fs::Store::import_flat_store is migrated before future versions, which won't support this.
+client::node::Client::connection_info -> client::node::Client::remote_info
+client::node::Client::connections -> client::node::Client::remote_info_iter
+iroh-cli
+--metrics-port flag on the iroh cli is now --metrics-addr, eg: specify 127.0.0.1:9090 instead of 9090
+node connection-info -> node remote-info
+node connections -> node remote-list
+iroh-blobs
+Modifies Event enum:
+removes CustomGetRequestReceived
+adds TransferProgress
+send_blob now takes an EventSender
+trait EventSender has been renamed CustomEventSender
+the concrete (boxed) event sender is now called just EventSender
+FlumeProgressSender is now AsyncChannelProgressSender
+iroh_blobs::store::fs::Store::import_flat_store is deprecated. Ensure all data is migrated before future versions, which won't support this.
+iroh_blobs::store::fs::FlatStorePaths is deprecated. Ensure all data is migrated before future versions, which won't support this.
+iroh-blobs::provider::transfer_collection has been removed.
+iroh-net
+LocalSwarmDiscovery is not longer UnwindSafe
+endpoint::ConnectionInfo -> endpoint::RemoteInfo
+endpoint::ConnectionInfo::id is removed since it's internal information.
+endpoint::ConnectionInfo::last_alive_relay is deprecated. Use .relay_url.last_alive
+endpoint::Endpoint::connection_info -> endpoint::Endpoint::remote_info
+endpoint::Endpoint::connection_infos -> endpoint::Endpoint::remote_info_iter
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.23.0.
+If you want to know what is coming up, check out the 0.24.0 milestone, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 34 | f001953 | https://github.com/zed-industries/zed/issues/17100 | 2024-08-29 | domain-subframes ===
+Compare (diff) two files
+
+---
+
+@krstp · 2024-08-29T16:47:11Z:
+### Check for existing issues
+
+- [X] Completed
+
+### Describe the feature
+
+I would like to have an ability to compare/diff two files side by side. I see plenty of requests for `git diff` but I do not see regular diff request anwhere.
+
+### If applicable, add mockups / screenshots to help present your vision of the feature
+
+
+Side by side two files diff ability.
+
+---
+
+@Moshyfawn · 2024-08-30T18:23:48Z:
+I think #4523 was originally what you were suggesting here, but it got "commented into being a `git diff view`", so I'll leave this one open.
+
+---
+
+@Joride · 2025-02-19T12:12:11Z:
+Any update on this (or https://github.com/zed-industries/zed/issues/4523)? 
+
+Currently I need to switch to a different editor to view side-by-side the change I made before committing. This is quite the nuisance (especially since Zed's creates new files with "~filename", which sometimes causes me to edit a file I was not even aware of existed and is the wrong one :) . In short: would be great to have a diff view in Zed. (Much more important to me then any 'AI' feature, honestly).
+
+---
+
+@raul-gherman · 2025-04-15T04:08:48Z:
+jumping back to any other editor to diff 2 arbitrary files is breaking my back
+
+would love to have it here -- basic features should be in place before `fancy` ones -- and this is somehow basic
+
+---
+
+@raul-gherman · 2025-04-15T04:10:01Z:
+> Any update on this (or [#4523](https://github.com/zed-industries/zed/issues/4523))?
+> 
+> Currently I need to switch to a different editor to view side-by-side the change I made before committing. This is quite the nuisance (especially since Zed's creates new files with "~filename", which sometimes causes me to edit a file I was not even aware of existed and is the wrong one :) . In short: would be great to have a diff view in Zed. (Much more important to me then any 'AI' feature, honestly).
+
+last update 1 month ago
+
+---
+
+@krstp · 2025-04-15T11:12:19Z:
+I've recently found myself needing diffing features, which has led me to return to Sublime Text as it excels in this area.
+
+Several useful features are currently missing in Zed:
+
+* Ability to diff two files in open tabs/buffers without requiring users to save the files first
+* Full git diff functionality between independent commits/branches - while there appears to be some git diff implementation, it only shows current changes rather than providing comprehensive diff functionality
+* Support for shell piping, allowing Zed to be used within command pipelines
+
+Sublime Text handles all these capabilities flawlessly, particularly the ability to pipe `git diff` output directly to the editor for visualization.
+
+---
+
+@alex-milanovic-lvh · 2025-05-20T09:50:56Z:
+Any update on this? This is one of the main reasons I'm not fully switching from PyCharm
+
+---
+
+@ivanglushko · 2025-05-21T20:03:44Z:
+would love that for now gotta use external stuff
+
+---
+
+@ralgozino · 2025-05-22T07:31:23Z:
+Folks, please stop commenting "me too" on this closed issue. If you take a moment to read you'll see that it has been closed as a duplicate of #4523, so go at put a 👍 over there.
+
+I'm sure the Zed team already understood the request and they'll work on it when they can.
+
+---
+
+@bpresles · 2025-07-25T08:22:21Z:
+Reopen this issue or #4523 as what was implemented is git diff, not diff between two arbitrary files. Diff between arbitrary files means comparing files even when they don't differ from what's on the git repository remote branch.
+
+---
+
+@ralgozino · 2025-07-25T12:47:40Z:
+@bpresles in May 14th #4523 was reopened saying exactly the same as you are saying.
+
+Then on June 18th it was closed because the feature to see the diff between two arbitrary files was merged in the linked PR #32922
+
+You can diff two files with Zed with the following command in the terminal:
+
+```bash
+zed --diff file1 file2
+```
+
+I don't know if there's a way of doing it directly from the UI.
+
+
+---
+
+@krstp · 2025-07-25T13:48:51Z:
+"zed diff" is no different that regular "diff", I mean what is the benefit of having a feature and running it from the command line? ¯\_(ツ)_/¯ 
+
+The core request is to be able to compare two open tabs against each other, so driven from UI as Zed is an UI.
+
+So yes, I vote for reopening as well.
+
+---
+
+@ralgozino · 2025-07-25T14:05:01Z:
+> "zed diff" is no different that regular "diff", I mean what is the benefit of having a feature and running it from the command line? ¯_(ツ)_/¯
+> 
+> The core request is to be able to compare two open tabs against each other, so driven from UI as Zed is an UI.
+> 
+> So yes, I vote for reopening as well.
+
+Have you tested it? the command opens Zed and shows the diff using Zed's UI. It is not like regular "diff".
+
+I agree that it would be nice(r) to have a menu to select the files from the file explorer or choosing open tabs. But in the meantime you can do that with the command.
+
+---
+
+@bpresles · 2025-07-25T15:27:00Z:
+OK I'll reopen a new feature request specifying clearly it's about using UI for both selecting files and diff
+
+---
+
+@mrsarm · 2025-07-31T18:12:40Z:
+There is no way to compare side by side 2 files in Zed, just support to open "diff" content like a ".diff" file, or see changes against the git repo as a diff content, so this issue does not duplicate the other ticket where what is requested here was not implemented in anyway.
+
+---
+
+@krstp · 2025-08-01T02:36:01Z:
+@JosephTLyons Any chance we can reopen this ticket? Thank you for the attention and making Zed great the way it is.
+
+---
+
+@krstp · 2025-09-24T17:17:06Z:
+@JosephTLyons  Nudging again here as there does not seem to be resolution to it yet and https://github.com/zed-industries/zed/pull/35255 does not solve the core request described here.
+
+Running now on latest preview: `Zed Preview 0.206.0` and the functionality is not here.
+
+I hope we can reopen and provide the requested functionality. Thanks.
+
+---
+
+@krstp · 2025-09-24T17:24:01Z:
+Well correction. Now we have `Compare marked files`, but it requires usage of UI, and there is not way compare tab-to-tab option. Also the keyboard shortcut `Option+D` is not working. Great to see this feature in place!
+
+---
+
+@robert-zaremba · 2025-09-25T18:47:51Z:
+Let's reopen this issue. There is not a proper mode to make a diff of 2 file and merge them.
+NOTE:  this is not the same as git diff / git merge.
+A great, powerful example of such mode is Emacs' Ediff. See this [video](https://www.youtube.com/watch?v=pSvsAutseO0) how powerful it is. Check also [Kompare](https://apps.kde.org/kompare/) (from KDE suite) for a good example. Given that Zed already has git diff interface, this should be fairly simple.
+This is one of the few features that makes me constantly moving to Emacs.
+
+---
+
+@techdad · 2025-11-07T19:38:34Z:
+This is a blocker for me to use Zed.
+I use the compare files feature in VScode (that are NOT in git) as well as the compare open to saved on a daily basis.
+Pity. Zed looked so promising in all other ways
+
+
+---
+
+@Van0SS · 2025-11-26T22:49:48Z:
+Upvoting on this one, meanwhile going back to vscode
+
+---
+
+@SomeoneToIgnore · 2025-11-26T22:58:08Z:
+<img width="1728" height="1083" alt="Image" src="https://github.com/user-attachments/assets/42eeac41-0e84-43b8-811f-b69a4b6ce005" />
+
+This seems to be implemented?
+
+---
+
+@Van0SS · 2025-11-26T23:25:57Z:
+Nice! But I guess was looking at similar to vscode "Compare active file with clipboard" functionality, when I don't have permanent files, just some copy paste in my clipboard
+
+---
+
+@SomeoneToIgnore · 2025-11-26T23:29:47Z:
+<img width="1728" height="285" alt="Image" src="https://github.com/user-attachments/assets/75f40518-5b00-4d43-9a80-b5120a460a37" />
+
+We really miss the docs on all these, as those were added as external contributions in different time...
+That would be a nice PR do create.
+
+---
+
+@Van0SS · 2025-11-26T23:44:58Z:
+Wow! You found it! Thanks!
+
+Now I need side by side comparison haha, but I guess I need upvote here:
+https://github.com/zed-industries/zed/discussions/26770
+
+Also would be nice to have highlighted different words, not just whole line/paragraph, but not even sure how to formulate it -_-
+
+zed:
+<img width="429" height="89" alt="Image" src="https://github.com/user-attachments/assets/8e8a9f4b-a2c1-4fc3-9212-4a59e545d0bd" />
+
+vscode:
+<img width="1040" height="61" alt="Image" src="https://github.com/user-attachments/assets/58f9ab13-b203-42fc-a15a-b356e6ad7c39" />
+
+---
+
+@krstp · 2025-11-26T23:50:56Z:
+One thing should be said, what appears to me is Zed having some issue with temporary/ephemeral/not-saved buffers. I say it based of:
+- lack of feature even by means of command panel to compare two tabs with not-saved buffers;
+- lack of formatting/prettying of JSONs unless it is saved.
+- ruff formatting on unsaved buffers also seems to be an issue: https://github.com/zed-industries/zed/issues/17098#issuecomment-3571844243
+
+Hard for me to say now if non-saved buffers are the exact issue, but based on above use cases not implemented yet, that seems the obvious candidate.
+
+Second fold is... the same issue/request coming back in the GH issues every now and then, so this is somewhat telling. Either VS or Sublime or other editors seem to have this feature, hence people returning here with the same request as current implementation as much as it is useful it is not necessarily intuitive based on other market available products.
+
+Either way, great to have Zed as it is right now!
+
+---
+
+@Sillocan · 2026-05-04T17:25:46Z:
+Ahhh I kept searching for "Compare" and kept finding no reults. Thanks For posting a screenshot: "diff" is the magic phrase!
+
+=== ROW 36 | f001990 | https://neon.com/blog/easy-embeddings-indexing-pipelines-with-redpanda-and-neon | 2024-09-06 | domain-subframes ===
+Easy Embeddings Indexing Pipelines with Redpanda and Neon - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+Easy Embeddings Indexing Pipelines with Redpanda and Neon
+Take a stream of data, compute embeddings of each message, and store them in Postgres on Neon
+Tyler Rockwood–Software Engineer @ RedpandaSep 06, 2024
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Building high throughput, scalable embeddings indexing pipelines can be a daunting task, often requiring stitching together systems with code that needs to scale, handle failures and ensure delivery guarantees. However, with powerful tools like Redpanda and Neon, this process can be significantly simplified.
+In this blog post, we walk through how to set up an embeddings indexing pipeline using these technologies, without the need for any code. This streamlined approach leverages Redpanda for data ingestion and Neon for efficient indexing and querying all in a managed environment. Neon is a scalable, serverless postgres database with support for vector similarity search using pgvector. Combined with Redpanda, a unified streaming data platform that is blazing fast and simple to manage, we can create an embedding indexing pipeline that checks all the boxes without needing to write any code.
+Setting up an embeddings indexing pipeline
+Prerequisites:
+Latest version of Redpanda Connect
+Redpanda Serverless Cluster
+Neon Postgres Database
+As a warm up, you can check out Neon’s blog post on building a Retrieval-Augmented Generation (RAG) applications with Neon and pgvector. In this post, we’ll demonstrate a way to create a high throughput, scalable embeddings indexing pipeline for RAG applications using Redpanda Connect.
+Step 1. Understand our data
+The data we have for the pipeline will be invoices from an ecommerce application. We want to index what the customer bought so that they can search their past purchases using natural language. The data has the following form:
+{
+"InvoiceNo": 536368,
+"Country": "United Kingdom",
+"CustomerID": 13047,
+"Date": "12/1/2010 8:34",
+"Items": [
+{
+"StockCode": 22960,
+"Description": "JAM MAKING SET WITH JARS",
+"Quantity": 6,
+"UnitPrice": 4.25
+},
+{
+"StockCode": 22913,
+"Description": "RED COAT RACK PARIS FASHION",
+"Quantity": 3,
+"UnitPrice": 4.95
+},
+{
+"StockCode": 22914,
+"Description": "BLUE COAT RACK PARIS FASHION",
+"Quantity": 3,
+"UnitPrice": 4.95
+}
+]
+}
+We’ll be using Redpanda as our intermediate buffer between producers and the computation of embeddings for Neon. Redpanda’s compatibility with the Apache Kafka® protocol means you can produce language easily with a client library in your favorite programming language, and easily absorb spikes in traffic or any pauses in the downstream processing.
+Step 2. Read data from Redpanda
+Reading this data in Redpanda brokers using Redpanda Connect is a matter of defining the connection in YAML:
+input:
+kafka:
+addresses: ["${RP_CLUSTER}.any.us-east-1.mpx.prd.cloud.redpanda.com:9092"]
+topics: ["invoices"]
+consumer_group: "connect-embeddings-index-pipeline"
+tls: {enabled: true}
+sasl:
+mechanism: SCRAM-SHA-256
+user: ${RP_USER}
+password: ${RP_PASS}
+Step 3. Compute embeddings using Ollama
+Next we need to actually set up our data processors within Redpanda Connect, we will do some small transformations of the data using bloblang, compute the embeddings locally using Ollama, then flatten the array into many messages using unarchive.
+pipeline:
+processors:
+- label: compute_embeddings
+branch:
+request_map: |-
+let Description = this. Items.map_each(item -> "%d of %s".format(item.Quantity, item. Description)).join(", ")
+root = "search_document: The order contained %s".format($Description)
+processors:
+- ollama_embeddings:
+model: nomic-embed-text
+result_map: |-
+root.embeddings = this
+- label: flatten_items
+mapping:
+root = this. Items.map_each(item -> item.merge(this.without("Items")))
+- label: seperate_items
+unarchive:
+format: json_array
+Step 4. Write output into Neon
+Finally we can insert the data into Neon and make it queryable:
+pipeline:
+processors:
+- label: compute_embeddings
+branch:
+request_map: |-
+let Description = this. Items.map_each(item -> "%d of %s".format(item.Quantity, item. Description)).join(", ")
+root = "search_document: The order contained %s".format($Description)
+processors:
+- ollama_embeddings:
+model: nomic-embed-text
+result_map: |-
+root.embeddings = this
+- label: flatten_items
+mapping:
+root = this. Items.map_each(item -> item.merge(this.without("Items")))
+- label: seperate_items
+unarchive:
+format: json_array
+Now in a few dozen lines of configuration we have a full production-ready indexing pipeline using a Redpanda Cloud Serverless cluster and a Neon database.
+Say hello to streamlined data processing workflows
+With Redpanda and Neon, setting up a high throughput, scalable embeddings indexing pipeline has never been easier. In this post, we showed how to create a robust pipeline using these tools without writing any code. Redpanda’s Kafka compatibility ensures smooth data ingestion and handling, while Neon’s serverless Postgres architecture and pg_vector extension provide efficient storage and querying of embeddings.
+This setup simplifies the process of building indexing pipelines, making them scalable and high-performing. Whether you’re indexing e-commerce transactions, customer reviews, or any other data type, this solution can handle large volumes and support your vector search query needs.
+To give it a try in your own projects, sign up for Redpanda Serverless and get a free Neon Postgres account and start building!
+On this page
+Setting up an embeddings indexing pipeline
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 43 | f002233 | https://iroh.computer/blog/iroh-0-27-0-Squashing-Bugs-And-Taking-Names | 2024-10-24 | domain-subframes ===
+iroh 0.27.0 - Squashing Bugs and Taking Names - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.27.0 - Squashing Bugs and Taking NamesOctober 24, 2024 by ramfox
+Welcome to a new release of iroh, a library for building on direct connections between devices, putting more control in the hands of your users.
+We’ve fixed some bugs, including a yucky one that only showed up on long running nodes (thank you fishfolk for making us aware!), adjusted some config options that made it too easy to point production code to our staging relays, and streamlined adding Discovery services to the iroh_net::Endpoint.
+☎️ Stay connected plz
+An integral part of our hole punching work includes maintaining a connection to one of our relay servers. If our connection to the relay server ever fails, the next time we go to send information to the relay server, we run the connect process over again to ensure we have a connection.
+This is great if you are on the sending side of a connection, since if anything fails, you immediately attempt to re-connect to the server the next time you send bytes, but if you are on the receiving end, and something fails…you never attempt to re-connect!
+We’ve refactored this code path to attempt to reconnect when there is a connection failure, and to not wait for the node to need to send data before attempting to reconnect.
+💡 Sensible config options can go a looooong way
+We had a bug that did not select the proper relay server (production vs staging) when building our binaries. So we decided to simplify the logic that does the selection!
+This resulted in some minor but breaking changes to the existing API.
+iroh-net now exposes a new function named force_staging_infra in iroh-net/src/relay.rs which abstracts the selection logic.
+We’ve also removed the TEST_DNS_NODE_ORIGIN and refactored any tests that require a DNS Discovery service to either spin up their own node to publish to or run against already existing infrastructure.
+We no longer rely on the test-utils feature or the #[cfg(test)] annotations for determining whether code runs against production or staging infrastructure, but only on the IROH_FORCE_STAGING_RELAYS environment variable being set to a non empty value
+For end users this should have no real effect, but if you do rely on any of these, setting the IROH_FORCE_STAGING_RELAYS environment variable when running in CI or running tests will result in the same behaviour as before!
+🪄 Easier Discovery
+We’ve streamlined adding the “default” Discovery services, when you use the iroh-net crate directly.
+Before, in order to enable the different default Discovery services on the iroh_net::Endpoint,  you needed to do the following:
+let secret_key = SecretKey::generate();
+let discovery = ConcurrentDiscovery::from_services(vec![
+Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+Box::new(DnsDiscovery::n0_dns()),
+Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
+]);
+let ep = iroh_net::Endpoint::builder()
+.secret_key(secret_key)
+.discovery(Box::new(discovery))
+.alpns(vec![EXAMPLE_ALPN.to_vec()])
+.bind()
+.await
+CopyCopied!
+Now, that’s simplified to:
+let ep = iroh_net::Endpoint::builder()
+.discovery_n0()
+.alpns(vec![EXAMPLE_ALPN.to_vec()])
+.bind()
+.await
+CopyCopied!
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.27.0.
+If you want to know what is coming up, check out the 0.27.0 , and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 44 | f002301 | https://github.com/bevyengine/bevy/pull/16340 | 2024-11-11 | domain-subframes ===
+Add `unregister_system` command
+
+---
+
+@grind086 · 2024-11-11T01:36:40Z:
+# Objective
+
+Fixes #16266 
+
+## Solution
+
+Added an `UnregisterSystem` command struct and `Commands::unregister_system`. Also renamed `World::remove_system` and `World::remove_system_cached` to `World::unregister_*`
+
+## Testing
+
+It's a fairly simple change, but I tested locally to ensure it actually works.
+
+---
+
+@github-actions[bot] · 2024-11-11T01:36:53Z:
+**Welcome**, new contributor!
+
+  Please make sure you've read our [contributing guide](https://bevyengine.org/learn/contribute/introduction) and we look forward to reviewing your pull request shortly ✨
+
+---
+
+@BenjaminBrienen · 2024-11-11T01:49:25Z:
+Can you add a unit test?
+
+---
+
+@grind086 · 2024-11-11T02:28:22Z:
+Are there any existing tests to use as an example? I couldn't find any for the related commands other than one doctest example for `Commands::run_system`, but I could just be missing them if they're somewhere other than `system::commands::tests` or `system::system_registry::tests`. If not I can come up with something.
+
+---
+
+@BenjaminBrienen · 2024-11-11T02:32:42Z:
+If there aren't any tests for `register_system`, don't worry about it. We can open a separate issue for adding tests there. (Unless you feel like doing it here)
+
+---
+
+@hymm · 2024-11-11T04:00:44Z:
+I feel like this shouldn't be called remove_system. That name feels like the opposite of `add_systems`, so I would expect it to work with Schedules.
+
+---
+
+@grind086 · 2024-11-11T18:00:15Z:
+I could change it to `unregister_system` like the original issue suggested if that's preferable. I went with the current name because it's consistent with `World::remove_system`, which is the non-command equivalent.
+
+---
+
+@alice-i-cecile · 2024-11-12T14:12:42Z:
+Both this and the method it calls should be named `unregister_system`. Once that's done, I'm happy to approve and merge.
+
+---
+
+@grind086 · 2024-11-12T21:59:28Z:
+I think that's everything, assuming checks pass.
+
+---
+
+@alice-i-cecile · 2024-11-12T22:49:26Z:
+Squeezing into 0.15 because it avoids us shipping the bad `remove_system` method name. Thanks for tackling this and responding to feedback :)
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:53:54Z:
+```suggestion
+    pub fn unregister_system<I, O>(&mut self, system_id: SystemId<I, O>)
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:54:12Z:
+```suggestion
+    /// See [`World::unregister_system`] for more information.
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:54:41Z:
+```suggestion
+        self.queue(UnregisterSystem::new(system_id));
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:55:16Z:
+```suggestion
+pub struct UnregisterSystem<I: SystemInput + 'static, O: 'static> {
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:55:54Z:
+```suggestion
+/// The [`Command`] type for unregistering one-shot systems from [`Commands`](crate::system::Commands).
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:56:20Z:
+```suggestion
+impl<I, O> UnregisterSystem<I, O>
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:56:40Z:
+```suggestion
+impl<I, O> Command for UnregisterSystem<I, O>
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:57:01Z:
+```suggestion
+        let _ = world.unregister_system(self.system_id);
+```
+
+---
+
+@BenjaminBrienen · 2024-11-12T14:57:50Z:
+```suggestion
+    Deferred, IntoObserverSystem, IntoSystem, RegisterSystem, UnregisterSystem, Resource,
+```
+
+---
+
+@alice-i-cecile · 2024-11-12T15:58:04Z:
+This will fail formatting because it's not alphabetized :)
+

@@ -1,0 +1,2761 @@
+=== ROW 144 | f008237 | https://ideas.reify.ing/en/blog/complete-guide-to-wasip2-for-rust-python-programmers | 2025-01-01T00:00:00 | individual-blogs;twir-links ===
+A Complete Guide to WASIp2 for Rust and Python Programmers | Ideas Reifying
+Ideas Reifying
+AI
+Apple
+AR
+CHI
+LLM
+metadata
+misc
+OpenAI
+Patent
+Product Dev
+Random Thoughts
+Rust
+Scientific Computing
+Vision Pro
+WASI
+Web
+WebAssembly> 中文
+#Rust #WebAssembly #WASI
+A Complete Guide to WASIp2 for Rust and Python Programmers
+A guide to a true universal runtime
+Since long time ago, programmers have dreamed of a universal runtime that unifies all the languages and platforms. Any programs targeting this runtime can be run on any platform without any modification. One (virtual) machine to run them all. For me, the first “universal runtime” that comes to mind is Java Virtual Machine (JVM). If you come from different backgrounds, you might think of .NET Runtime, Beam VM, or even Javascript runtimes. Yes, they are successful and widely used, but they are still not that universal. For example, JVM is primarily designed for Java, so a garbage collector is built in, but not all languages need it. My favorite Rust does not need it either, while my another favorite, Python, does garbage collection a bit differently from Java. As web browsers and web technologies are everywhere, how about just writing JS programs? That would be possible (take a look at Electron and Node.js), but we all know JS is a bit slow compared to compiled languages like C/C++/Rust. But the direction is roughly right, so we have a new and yet another solution: WebAssembly (WASM).
+WASM is only part of the story of this blog. Here I am going to introduce WebAssembly System Interface Preview 2 (WASIp2). As the name suggests, WASIp2 is about the interface of WASM. In this guide, I will show you how to compile Rust and Python programs to WASIp2 components (special WASM modules), compose them into a more powerful component, and how to run these components in Rust, Python and Wasmtime (the standard WASM runtime). For the code in this guide, you can find the complete code in wasi_mindmap repository.
+Copyrights and References
+Before we start, first and foremost, I want to make it clear that this guide is the combination of official documents and my experiences when stumbling through the tutorials in the official documents and various GitHub issues. In contrast to the official documents, I want to make this guide self-contained from concepts to implementations but I don’t want make crappy summaries of some well-written documents, so I will just copy and paste some content from the official documents. When I copy and paste, I will end the very paragraphs with symbol ↪ to link the reference, avoiding excessive reading distraction. When I want to highlight some quotes, I will just use quote marks and quote sections.
+Here are the references:
+Mostly from The WebAssembly Component Model documentation (hereafter “WACMDoc” for short), licensed under CC-BY-4.0.
+README and documentation of wit-bindgen, licensed under Apache-2.0 and MIT.
+Documentation of Wasmtime, licensed under Apache-2.0.
+Related GitHub issues: I will link them explicitly in-situ.
+This guide is also licensed under CC BY-SA 4.0 which is compatible with the licenses of the references.
+WASM
+Before we dive into WASIp2, let’s first take a look at WASM.
+Quoting from Wikipedia:
+WebAssembly (Wasm) defines a portable binary-code format and a corresponding text format for executable programs as well as software interfaces for facilitating communication between such programs and their host environment.
+The main goal of WebAssembly is to facilitate high-performance applications on web pages, but it is also designed to be usable in non-web environments. It is an open standard intended to support any language on any operating system, and in practice many of the most popular languages already have at least some level of support.
+The very last sentence in the quote block is the key for us. WASM does not only support languages like C/C++/Rust, but also supports languages like Python, JavaScript, etc. Programs can be compiled as WASM modules and run in any environment that supports WASM.
+Just to summarize, the key points are:
+“Any language” can be compiled to WASM.
+WASM modules can be run in any environment that supports WASM.
+If you are interested in various use cases of WASM and why WASM is getting momentum, WASM in the Wild series is a good starting point.
+Concept: WASIp2
+OK, now that we have “the one” virtual machine, is it the end of the story? Not quite.
+For a simple program, it is often enough to just compile it as a WASM module and run it on a WASM runtime. By “simple”, I mean a program that can be written in a single language, say Rust, C or Python. But more complexity arises from a curious and practical question: Since these programs are compiled to a common assembly language as modules, can we compose them into a more powerful program?
+If you come from compiled languages, you might know something about linking/linker and application binary interfaces (ABIs), which do roughly the same, except that the common assembly is something specific to processors, for example, x86 assembly.
+To do the composition of WASM modules, we need to define a standard for the interfaces of WASM modules. This is where WASIp2 comes in.
+WASM module + WASIp2 interface specs ≈ WASIp2 component
+For brevity, in the following sections, I will just call:
+WASM module ⇒ module
+WASIp2 component ⇒ component
+A visualized analogy is Lego blocks. Below we have three blocks (i.e., components) and each block has a different shape. Consider that the shape of a block/component is defined by its WASIp2 interface specs. The core logic of a component is still inside a module, though.
+Component A has an export that is compatible with Component B’s import. Component C requires an import satisified by Component B’s export.
+Zooming in, Component A has a module as its core.
+Basics
+There are 5 basic concepts in WASIp2: components, interfaces, worlds, WIT and packages.
+Components, as we know, are building blocks. Logically, components are containers for modules or other components, which express their interfaces and dependencies via WIT. Conceptually, components are self-describing units of code that interact only through interfaces. “self-describing” means components have interface descriptions inside. Physically, a component is a specially-formatted WebAssembly file. Internally, the component could include multiple traditional (“core”) WebAssembly modules, and sub-components, composed via their imports and exports. So, for instance, the composed file of Component A, B and C is also a component. ↪
+An interface describes a single-focus, composable contract, through which components can interact with each other and with hosts. Interfaces describe the types and functions used to carry out that interaction. ↪
+A WIT world is a higher-level contract that describes a component’s capabilities and needs. On one hand, a world describes the shape of a component - it says which interfaces the component exposes for other code to call (its exports), and which interfaces the component depends on (its imports). A world only defines the surface of a component, not the internal behaviour. On the other hand though, a world defines a hosting environment for components. An environment supports a world by providing implementations for all of the imports and by optionally invoking one or more of the exports. ↪
+The WIT (Wasm Interface Type) language is used to define interfaces and worlds. A WIT spec, or “WASIp2 interface specs” as we informally call earlier, is stored in a .wit file. For details of WIT language, please see the related section of WACMDoc.
+A WIT package is a set of one or more WIT (Wasm Interface Type) files containing a related set of interfaces and worlds. ↪
+OK, enough talking. Let’s take a look at the simplest example of WIT files:// interfaced-adder.wit
+package wasi-mindmap:interfaced-adder;
+interface add {
+add: func(a: s32, b: s32) -> s32;
+}
+world adder {
+export add;
+}
+wasi-mindmap is the namespace for this package, interfaced-adder the name of this package. When we refer to a package, we usually refer it with its package ID, wasi-mindmap:interfaced-adder in our case. A package ID can optionally include a semver-compliant version, wasi-mindmap:interfaced-adder@0.0.1 for example.
+In this package, we define a world adder for adder implementations. This world exports only one interface named add. The interface defines only one item, a function named add. Of course, in a world, we can import and export more interfaces. And an interface can define more items like data types, resources and/or functions.
+Since this is just a tutorial, not a book, we won’t dig into the WIT specification, but later we will have a more complex WIT file and corresponding component, I promise.
+More Code
+For the purpose of demonstration, I will write programs in Python and Rust. These two are my favorite, so please bear with me. As WASM is “universal”, you can try to compile code in your favorite languages into components. This section of WACMDoc shows more examples in more languages.
+Adder Components
+When I previously said “the simplest example”, it’s partially correct and partially wrong. There is a simpler WIT file than interfaced-adder.wit. The name, of course, is adder.wit:package wasi-mindmap:adder;
+world adder {
+export add: func(a: s32, b: s32) -> s32;
+}
+The adder world in adder.wit directly exports a function add rather than exposing it via interface add. This is technically allowed but also a bit unusual. We will come back to the reason when we talk about compositions. For now, we use adder.wit for demonstrating how an adder component can be implemented.
+For Rust implementation, you need nothing more than the wasm-wasip2 target of rustc.
+To install the wasm-wasip2 target, run rustup target add wasm32-wasip2
+The cargo project is simple as below:├── Cargo.toml
+├── src
+│   └── lib.rs
+└── wit
+└── adder.wit
+The dependencies are minimum:# Cargo.toml
+[package]
+name = "guest-adder-rs"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+wit-bindgen = "0.62.0"
+With the magical wit_bindgen::generate macro, we don’t have to write boilerplate glue code. Even better, all implementation code is statically checked by our beloved rustc.// Use a procedural macro to generate bindings for the world we specified in
+// `wit/adder.wit`
+wit_bindgen::generate!({
+// the name of the world in the `*.wit-files` input file
+world: "adder",
+});
+// Define a custom type and implement the generated `Guest` trait for it which
+// represents implementing all the necessary exported interfaces for this
+// component.
+struct Adder;
+impl Guest for Adder {
+fn add(a: i32, b: i32) -> i32 {
+a + b
+}
+}
+// export! defines that the `Adder` struct defined below is going to define
+// the exports of the `world`
+export!(Adder);
+With dozens of lines in total, you can then simply run cargo build --target wasm32-wasip2 and get a freshly-baked component guest_adder_rs.wasm in target/wasm32-wasip2/debug.
+To inspect .wasm files and more, you can install wasm-tools by cargo install --locked wasm-tools, or refer to the repo for more instructions.
+To see guest_adder_rs.wasm component is indeed self-describing:$ wasm-tools component wit guest_adder_rs.wasm
+package root:component;
+world root {
+export add: func(a: s32, b: s32) -> s32;
+}
+guest_adder_rs.wasm itself includes all necessary descriptions of its import and export interfaces.
+Adder in Python
+Python doesn’t have native support for WASIp2, so we need to install componentize-py:pip3 install "componentize-py==0.21.0"
+For a Python program to implement the exports of world adder, we can generate bindings by:componentize-py --wit-path adder.wit --world adder bindings ./adder
+The output directory adder contains the generated wit_world Python package, which provides the abstract class to inherit from.# in guest-adder.py, place it in ./adder
+# wit_world is generated in ./adder
+from wit_world import WitWorld
+# the class MUST be named `WitWorld`, same as the abstract class
+class WitWorld(WitWorld):
+def add(self, a: int, b: int) -> int:
+return a + b
+Then you need to componentize this Python program:componentize-py --wit-path adder.wit --world adder componentize guest-adder -o guest_adder_py.wasm
+What is the difference between guest_adder_py.wasm and guest_adder_rs.wasm?
+I was surprised to see that guest_adder_py.wasm sizes much bigger than guest_adder_rs.wasm, which we will come back later.
+Guests and Hosts
+Now we have compiled adder components from programs in Rust and Python, what then? As the adder components export one function, we should be able to call that function in our programs, like with libraries. In contrast to the notion of “caller” and “callee”, we use “guest” and “host”, because a host may need the offer from a guest (i.e., the exports of the component) while it may also provide capabilities a guest relies on (i.e., the imports of the component).
+There are two ways to read the following content:
+you can read it sequentially, as it starts from basic examples to more involved ones.
+or, you can skip ahead by looking up the following table.
+Host/GuestRust Adder ↪Python Adder ↪Rust KVDatabase
+Rust Host ↪✅✅✅ ↪
+Python Host ↪✅🛠️🛠️
+Command Component (from Rust)✅↪📌📌
+✅: Currently supported
+🛠️: Not supported for now, under development of wasmtime-py
+📌: TODO and welcome contributions
+Rust Host
+The implementation of a host is a bit complicated, so let’s take a look at the full code in Rust and then break it down.
+We need latest wasmtime >= 49.0, which is the crate of the reference WASM runtime, and wasmtime-wasi >= 49.0, which provides utilities for running WASIp1 modules and WASIp2 components:# in host-rs/Cargo.toml
+[package]
+name = "host-rs"
+version = "0.5.2"
+edition = "2024"
+[dependencies]
+wasmtime = "49.0"
+wasmtime-wasi = "49.0"
+Before diving into the main logics, we need some utilities:// in host-rs/src/utils.rs
+use wasmtime::error::Context;
+use wasmtime::component::{Component, Linker, ResourceTable};
+use wasmtime::{Engine, Result, Store};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+// reference: https://docs.rs/wasmtime/latest/wasmtime/component/bindgen_examples/_0_hello_world/index.html
+// reference: https://docs.wasmtime.dev/examples-rust-wasi.html
+pub(crate) struct ComponentRunStates {
+// These two are required basically as a standard way to enable the impl of WasiView
+pub wasi_ctx: WasiCtx,
+pub resource_table: ResourceTable,
+}
+impl WasiView for ComponentRunStates {
+fn ctx(&mut self) -> WasiCtxView<'_> {
+WasiCtxView {
+ctx: &mut self.wasi_ctx,
+table: &mut self.resource_table,
+}
+}
+}
+impl ComponentRunStates {
+pub fn new() -> Self {
+ComponentRunStates {
+wasi_ctx: WasiCtxBuilder::new().build(),
+resource_table: ResourceTable::new(),
+}
+}
+}
+pub fn bind_interfaces_needed_by_guest_rust_std<T: WasiView>(l: &mut Linker<T>, r#async: bool) {
+if r#async {
+wasmtime_wasi::p2::add_to_linker_async(l).unwrap();
+} else {
+wasmtime_wasi::p2::add_to_linker_sync(l).unwrap();
+}
+}
+pub fn get_component_linker_store(
+engine: &Engine,
+path: &'static str,
+alt_path: &'static str,
+) -> Result<(
+Component,
+Linker<ComponentRunStates>,
+Store<ComponentRunStates>,
+)> {
+let component = Component::from_file(engine, path)
+.or_else(|_| Component::from_file(engine, alt_path))
+.with_context(|| format!("Cannot find component from path: {path} or {alt_path}"))?;
+let linker = Linker::new(engine);
+let state = ComponentRunStates::new();
+let store = Store::new(engine, state);
+Ok((component, linker, store))
+}
+get_component_linker_store is the helper function we need, which creates a Component, a Linker<ComponentRunStates> and a Store<ComponentRunStates> all at once for us.
+The bind_interfaces_needed_by_guest_rust_std helper registers the WASI imports required by a guest’s Rust standard library, including the debug builds used here.
+Component represents a compiled component that is ready to be instantiated while Linker is used to instantiate Components, linking components together as well as supplying host functionality to components. Store is conceptually a bit complicated. A Store is a collection of WebAssembly instances and host-defined state. All WebAssembly instances and items will be attached to and refer to a Store. For example instances, functions, globals, and tables are all attached to a Store. Instances are created by instantiating a WASM module (that resides in a component) within a Store.
+For more details, see the documentations about Component, Linker and Store.
+As for ComponentRunStates, it contains necessary fields to implement WasiView trait, which is essential for interacting with the functionalities provided by wasmtime_wasi.
+If the above is a lot to take in, fear not. All you need to know for now is that all the code in src/utils.rs except my little helper function is basically standard to get started. You can take your time later to dig into the details of the wasmtime runtime.
+With these utilities, we are ready to host a component. To synchronously call the add function of an adder component, we just need a few lines of code:// in host-rs/src/main.rs
+use crate::utils::{bind_interfaces_needed_by_guest_rust_std, get_component_linker_store};
+use wasmtime::component::bindgen;
+use wasmtime::{Engine, Result};
+mod utils;
+bindgen!({
+path: "../wit-files/adder.wit",
+world: "adder",
+});
+fn main() -> Result<()> {
+let engine = Engine::default();
+let (component, mut linker, mut store) = get_component_linker_store(
+&engine,
+"./target/wasm32-wasip2/debug/guest_adder_rs.wasm",
+"./target/wasm32-wasip2/release/guest_adder_rs.wasm",
+)?;
+bind_interfaces_needed_by_guest_rust_std(&mut linker, false);
+let adder_bindings: Adder = Adder::instantiate(&mut store, &component, &linker)?;
+let a = 1;
+let b = 2;
+let result = adder_bindings.call_add(&mut store, a, b)?;
+assert_eq!(result, 3);
+Ok(())
+}
+That’s it! The magic lies in wasmtime::component::bindgen macro, which generates bindings according to adder.wit at compile time.
+You can run cargo expand -p host-rs --bin host-rs to see the generated code by bindgen, which is sometimes necessary for debugging.
+Note that bindgen can generate asynchronous bindings as well, which is useful when a component internally performs IOs like networking. Please refer to the async examples in wasi_mindmap.
+Python Host
+Hosting a component in Python is not well-supported yet, so we can run a small subset of components that don’t use any WASIp2 Resources. This for now also means we cannot run any components compiled from Python programs.
+Follow this issue for updates.
+Notwithstanding, we can still run simple components compiled from Rust programs.
+First we will need to install wasmtime-py:pip install "wasmtime==38.0.0"
+If you haven’t done so, compile the Rust adder component as mentioned in Adder Component.
+With the Rust adder component, we need to generate Python bindings:# replace guest_adder_rs.wasm with the path to your Rust adder component
+python -m wasmtime.bindgen guest_adder_rs.wasm --out-dir adder_rs_bindings
+This will create a Python package named adder_rs_bindings in the current directory.
+To run the component, we can simply do the similar thing as in the Rust host:# in run_guest_adder_rs.py
+from wasmtime import Store
+from adder_rs_bindings import Root
+def run_adder_rs_guest():
+store = Store()
+adder_component_instance = Root(store)
+result = adder_component_instance.add(store, 1, 2)
+assert result == 3
+print(f"{__name__}: 1 + 2 = {result}")
+run_adder_rs_guest()
+Or, with such a simple component, there’s a magic loader from wasmtime-py to load the component without manually generating bindings and run the component:# in run_guest_adder_rs_magic_loader.py
+from wasmtime import Store
+# The magic, refer to https://github.com/bytecodealliance/wasmtime-py?tab=readme-ov-file#usage
+import wasmtime.loader
+from guest_adder_rs import Root
+def run_adder_rs_guest():
+store = Store()
+adder_component_instance = Root(store)
+result = adder_component_instance.add(store, 1, 2)
+print(f"{__name__}: 1 + 2 = {result}")
+assert result == 3
+run_adder_rs_guest()
+Complications
+So far so good. The above examples are simple and straightforward, except that we have a few points that were glossed over:
+Why can’t this Python host run the Python component we built?
+Why does a Python component size much bigger than a Rust component?
+Why did we have a interfaced_adder.wit which is different from adder.wit?
+Before diving into these, please read through the Overview of WIT from WACMDoc, which is prerequisite for understanding the following sections.
+OK, welcome back!
+Standard Libraries
+Let’s dive right into the first 2 questions.
+According to the issue, wasmtime-py does not currently support running components build with componentize-py, because wasmtime-py does not yet support resources, which components built with componentize-py always use, as componentize-py unconditionally imports most of the wasi:cli world. ↪
+The explanation is simple, but why does componentize-py unconditionally import most of the wasi:cli world in the first place?
+We need to zoom more into the compiled component.
+In the case of guest_adder_py.wasm, as we don’t need 3rd party libraries, the only logical parts in the module inside the component are Python’s std libs and our add logic. Because of the needs from Python’s std libs (e.g., handling crashes, reading env vars to modify the behavior of std libs), the compiled Python component imports most of the wasi:cli world.
+The batteries-included std libs of Python are huge, so the component size is much bigger than a Rust component, even though much of the std libs are not used in our adder example.
+Therefore, the compiled component may be bloated by std libs:
+in terms of logics:
+std libs may include unused code in the component.
+std libs may also include useful code that we don’t explicitly require, like error handling.
+in terms of interfaces:
+std libs may include interfaces that we don’t need anyway
+std libs may require interfaces that we indirectly need, for example, stderr interface when a crash happens and error messages are printed.
+A leaner language like Rust is no exception. For those who are interested, you can take a look at this issue in Rust repository, filed by me :) A brief summary of the issue is that when a simple functionality from Rust std is used, say the format! macro, the Rust compiler will include the whole wasi:cli world that includes some interfaces that are useless in this case, like wasi:cli/env for accessing environment variables.
+Command Component from Rust and Compositions
+We have tried running a component on a Rust and a Python host, but can we run a component on a WASM host? Yes and No.
+We cannot run an adder component, say guest_interfaced_adder_rs.wasm, with wasmtime in command line, but we can run a command component with wasmtime in command line, for example:wasmtime run command_component_hosting_adder.wasm
+A command component is (just special) one that exports the wasi:cli/run interface, and imports only interfaces listed in the wasi:cli/command world, which allows it to be executed directly by wasmtime (or other wasi:cli hosts). ↪
+For the purpose of demonstration, we will create a command component in Rust, which hosts an interfaced-adder component.
+We can create a command component as a regular Rust binary project:# create a new command component called `host-command-component`
+cargo new host-command-component
+Inside the host-command-component project, you need to add the following content to Cargo.toml:# other content omitted..........
+[dependencies]
+wit-bindgen = "0.62.0"
+In host-command-component/wit, you need to add a WIT file for this command component, specifying its world:// host-command-component/wit/host.wit
+package wasi-mindmap:host;
+world host {
+import wasi-mindmap:interfaced-adder/add;
+}
+The wit_bindgen::generate! macro generates bindings for the imported adder interface at compile time. The main function of this command component is simple:mod bindings {
+wit_bindgen::generate!({
+// Load the imported package before the world that uses it.
+path: ["../guest-interfaced-adder-rs/wit", "wit"],
+world: "wasi-mindmap:host/host",
+generate_all,
+});
+}
+use bindings::wasi_mindmap::interfaced_adder::add::add;
+fn main() {
+let result = add(1, 2);
+println!("result: {}", result);
+}
+To compile this command component, run cargo build --target wasm32-wasip2 from host-command-component. You will find the compiled component in target/wasm32-wasip2/debug/host-command-component.wasm.
+This command component imports the add interface from interfaced-adder component and the interfaces from wasi:cli/command world, and then calls the add function. For main(), it exports the wasi:cli/run interface. Therefore, you cannot run this command component with wasmtime in command line yet, because wasmtime does not have the add interface implemented.
+What we can do is composition. We compose the interfaced-adder component with the host-command-component to form a new component, which imports only the wasi:cli/command interfaces and exports only the wasi:cli/run interface.
+The “shapes” of individual components and the composed component.
+The composed component is run by wasmtime in command line.
+The composition can be done programmatically or visually with wasmbuilder.app. For the purpose of demonstration, we will use the visual way.
+Please refer to Compose with WAC if you are interested in the programmatic way.
+Compose with wasmbuilder.app
+The steps are straightforward:
+Add components by uploading them.
+Drag them onto the canvas.
+Link the exported add interface to the imported add interface.
+Check the box to set host-command-component as the main component.
+Download the composed component with a name, say composed-component.wasm.
+Then finally, you can run the composed component with wasmtime in command line:$ wasmtime run composed-component.wasm
+result: 3
+You can do such compositions with any compatible components, not just for a command component and a trivial adder component. This is where WASIp2 really shines. Imagine you have a Python component, a Go component and a C# component, as long as they have compatible import and export interfaces, you can compose them together to form a new component. This is a great relief if you have struggled with gluing programs via C ABIs.
+Back to the question: Why did we have a interfaced_adder.wit which is different from adder.wit?
+The composability of components is at the interface level. What we match against when composing components are the interfaces exported and imported by components, not the imported or exported functions. So, even though functions can be imported or exported at the top level of a world, they are not the unit of composition.
+Host: Importing Interfaces at Runtime
+In the Rust host example, we know that the magical bindgen macro generates bindings for the interfaces of a component at compile time. But what if we want to import interfaces dynamically at runtime? For example, fuzzing any components that have arbitrary interfaces.
+wasmtime crate provides APIs to look up exports and inspect their types at runtime, but the user experience is intentionally not good to discourage users from doing so. But, anyway, here’s a simple example:// in host-rs/src/main.rs
+use crate::utils::{bind_interfaces_needed_by_guest_rust_std, get_component_linker_store};
+use wasmtime::{Engine, Result};
+pub fn run_adder_dynamic(engine: &Engine) -> Result<()> {
+let (component, mut linker, mut store) = get_component_linker_store(
+engine,
+"./target/wasm32-wasip2/debug/guest_interfaced_adder_rs.wasm",
+"./target/wasm32-wasip2/release/guest_interfaced_adder_rs.wasm",
+)?;
+bind_interfaces_needed_by_guest_rust_std(&mut linker, false);
+let instance = linker.instantiate(&mut store, &component)?;
+let interface_name = "wasi-mindmap:interfaced-adder/add";
+let (_, interface_idx) = instance
+.get_export(&mut store, None, interface_name)
+.unwrap();
+let parent_export_idx = Some(&interface_idx);
+let func_name = "add";
+let (_, func_idx) = instance
+.get_export(&mut store, parent_export_idx, func_name)
+.unwrap();
+let func = instance.get_func(&mut store, func_idx).unwrap();
+// Reference:
+// * https://github.com/WebAssembly/wasi-cli/blob/main/wit/run.wit
+// * Documentation for [Func::typed](https://docs.rs/wasmtime/latest/wasmtime/component/struct.Func.html) and [ComponentNamedList](https://docs.rs/wasmtime/latest/wasmtime/component/trait.ComponentNamedList.html)
+let ty = func.ty(&store);
+// If you don't know the types of arguments and return values of the function at compile time
+// iterate over the types of arguments at run time
+for (i, p) in ty.params().enumerate() {
+println!("Type of {i}th param: {p:?}");
+}
+// iterate over the types of return values at run time
+for (i, r) in ty.results().enumerate() {
+println!("Type of {i}th result: {r:?}");
+}
+// If you know the types of arguments and return values of the function at compile time
+let typed_func = func.typed::<(i32, i32), (i32,)>(&store)?;
+let (result,) = typed_func.call(&mut store, (1, 2))?;
+assert_eq!(result, 3);
+Ok(())
+}
+fn main() -> Result<()> {
+let engine = Engine::default();
+run_adder_dynamic(&engine)
+}
+You need to recursively get a handle (i.e., wasmtime::component::ComponentExportIndex) to an exported item (e.g., an interface, a function, a resource, etc.) get_export returns an item’s description and its handle, a wasmtime::component::ComponentExportIndex. Use the interface’s handle as the parent when looking up its add function. For a function object (i.e., wasmtime::component::Func) that you get with a handle, you can iterate over the types of arguments and return values. If you know the types of arguments and return values at compile time, you can use Func::typed to get a TypedFunc object, which can be used to call the function with the types checked.
+Conclusion
+We have explored various axes of WASIp2 concepts and APIs:
+Implementations of hosts and guests
+Languages: Rust, Python
+Async and sync APIs: We’ve seen sync APIs in the examples while async examples are in the wasi_mindmap repository.
+Compile-time and runtime interface imports: We’ve seen compile-time interface imports using bindgen and touched on runtime interface imports.
+Standalone components and compositions
+Application complexity: We’ve seen simple adder examples while I leave a more complex example in the Appendix
+With these, I hope this guide is more than a good start for WASIp2. Have fun hacking with WASIp2!
+Issues and Contribute
+Along my way stumbling through the WASIp2 tutorials, documentations and examples, I found a few issues and missing pieces, some resolved, some not:
+Resolved ones by me, just FYI:
+Missing examples for using bindgen! async, imports and resource in host
+Bindgen improvement: Remove the use of async_trait
+Documentation: Wrong doc about Config::wasm_component_model
+Renovate host example with latest wasmtime and wasmtime_wasi
+Renovate the WASI example
+Unresolved ones, for those who may be interested in contributing:
+Compiled wasm32-wasip2 component from simple code requires excessive WASI interfaces
+Bindgen! gives weird name to an interface well-named in WIT file
+As WASIp2 technologies are rather young, if you find WASIp2 is interesting, please consider contributing code and/or documentation to the related WASIp2 projects, like wasmtime and WebAssembly Component Model Documentation.
+Finally, my code is also open sourced:
+wasi_mindmap: A collection of examples and tutorials about WASIp2.
+ideas reifying: The source of this blog site.
+Contributions to my repos are also welcome!
+Personal Notes and Beyond WASIp2
+My motivation for using WASIp2 is to make modern software interops for large language models (LLMs) and autonomous agents. LLMs and agents can now solve difficult coding problems, and they will be much more capable very soon, but today’s softwares are very fragmented. The foundation of software interops is still legacy C ABIs, which are not only fragile but also dangerous. I can’t imagine how these (soon-to-be) super intelligence will be able to solve real-world software problems with today’s software interops, since we humans also suffer from the same problem.
+Besides LLMs which may or may not end humanity, I also see some interesting explorations by us humans:
+Making WebAssembly and Wasmtime More Portable: This will enable wasmtime to run on more platforms, including mobile and edge devices.
+In the use case of robotics, with WASIp2, we can run components (written in different languages) on a robot and/or MCUs of body parts of it while keeping them interoperable. This may be more powerful and flexible than Robot Operating System (ROS).
+k23: This is a OS kernel reimagined with WebAssembly. It leverages the built-in sandboxing of WebAssembly to provide a secure environment for running untrusted code. With WASIp2, programs (including the kernel) can be written in any languages with max interoperability and flexibility.
+Appendix: More Examples
+Here we have a more complex example - KV store.package wasi-mindmap:kv-store;
+interface kvdb {
+resource connection {
+constructor();
+get: func(key: string) -> option<string>;
+set: func(key: string, value: string);
+remove: func(key: string) -> option<string>;
+clear: func();
+}
+}
+world kv-database {
+import kvdb;
+import log: func(msg: string);
+export replace-value: func(key: string, value: string) -> option<string>;
+}
+As we don’t want to pass the entire KV store by value, we need to use resources. In this world, we need the interface kvdb to get a connection resource, and then use the connection resource to get/set/remove/clear values. The log function is also needed to log errors. The exported replace-value function is used to replace the value of a key, returning the old value if the key exists.
+The implementation of the guest component in Rust is simple:// guest-kv-store-rs/src/lib.rs
+wit_bindgen::generate!({
+// the name of the world in the `*.wit` input file
+world: "kv-database",
+});
+struct KVStore;
+use crate::wasi_mindmap::kv_store::kvdb::Connection;
+use std::sync::LazyLock;
+static KV_CONNECTION: LazyLock<Connection> = LazyLock::new(Connection::new);
+impl Guest for KVStore {
+fn replace_value(key: String, value: String) -> Option<String> {
+// replace
+let old = KV_CONNECTION.get(&key);
+KV_CONNECTION.set(&key, &value);
+old
+}
+}
+export!(KVStore);
+LazyLock keeps the connection alive between calls on the same component instance, so replacing a key can return its previous value.
+The host providing the kvdb interface and the log function is more complicated:// in host-rs/src/main.rs
+use crate::utils::get_component_linker_store;
+use crate::utils::{bind_interfaces_needed_by_guest_rust_std, ComponentRunStates};
+use std::collections::HashMap;
+use wasmtime::component::bindgen;
+use wasmtime::component::{HasSelf, Resource};
+use wasmtime::{Engine, Result};
+bindgen!({
+path: "../wit-files/kv-store.wit",
+world: "kv-database",
+with: {
+"wasi-mindmap:kv-store/kvdb.connection": Connection
+},
+// Interactions with `ResourceTable` can possibly trap so enable the ability
+// to return traps from generated functions.
+imports: { default: trappable },
+});
+pub struct Connection {
+// use a hashmap to store key-value pairs
+pub storage: HashMap<String, String>,
+}
+impl KvDatabaseImports for ComponentRunStates {
+fn log(&mut self, msg: String) -> Result<(), wasmtime::Error> {
+println!("Log: {}", msg);
+Ok(())
+}
+}
+impl wasi_mindmap::kv_store::kvdb::Host for ComponentRunStates {}
+impl wasi_mindmap::kv_store::kvdb::HostConnection for ComponentRunStates {
+fn new(&mut self) -> Result<Resource<Connection>, wasmtime::Error> {
+Ok(self.resource_table.push(Connection {
+storage: HashMap::new(),
+})?)
+}
+fn get(
+&mut self,
+resource: Resource<Connection>,
+key: String,
+) -> Result<Option<String>, wasmtime::Error> {
+let connection = self.resource_table.get(&resource)?;
+Ok(connection.storage.get(&key).map(String::clone))
+}
+fn set(&mut self, resource: Resource<Connection>, key: String, value: String) -> Result<()> {
+let connection = self.resource_table.get_mut(&resource)?;
+connection.storage.insert(key, value);
+Ok(())
+}
+fn remove(&mut self, resource: Resource<Connection>, key: String) -> Result<Option<String>> {
+let connection = self.resource_table.get_mut(&resource)?;
+Ok(connection.storage.remove(&key))
+}
+fn clear(&mut self, resource: Resource<Connection>) -> Result<(), wasmtime::Error> {
+let large_string = self.resource_table.get_mut(&resource)?;
+large_string.storage.clear();
+Ok(())
+}
+fn drop(&mut self, resource: Resource<Connection>) -> Result<()> {
+let _ = self.resource_table.delete(resource)?;
+Ok(())
+}
+}
+pub fn run_kv_store_sync(engine: &Engine) -> Result<()> {
+let (component, mut linker, mut store) = get_component_linker_store(
+engine,
+"./target/wasm32-wasip2/debug/guest_kv_store_rs.wasm",
+"./target/wasm32-wasip2/release/guest_kv_store_rs.wasm",
+)?;
+KvDatabase::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)?;
+bind_interfaces_needed_by_guest_rust_std(&mut linker, false);
+let bindings = KvDatabase::instantiate(&mut store, &component, &linker)?;
+let result = bindings.call_replace_value(store, "hello", "world")?;
+assert_eq!(result, None);
+Ok(())
+}
+fn main() -> Result<()> {
+let engine_sync = Engine::default();
+run_kv_store_sync(&engine_sync)?;
+Ok(())
+}
+This code example should give you a sense of how to implement a host and a guest with resources.
+Metadata
+Version: 0.3.0
+Date: 2026.09.22
+License: CC BY-SA 4.0
+Changelog
+2025.01.08: Updated tracking issues
+2025.03.03: Updated to wasmtime >= 30.0 and fixed typos
+2025.11.14: Updated to use latest code
+2025.11.21: Updated to use latest wasmtime 39
+2026.09.22: Updated Rust examples to wasmtime 49.0, wasmtime-wasi 49.0, and wit-bindgen 0.62.0, including host API fixes. Fixed KV connection persistence and switched command-component builds to ordinary Cargo targeting wasm32-wasip2. Clarified Python bindings and pinned componentize-py to 0.21.0; Python Wasmtime remains at 38.0.0.
+Theme by Float
+
+=== ROW 145 | f008241 | https://gregstoll.wordpress.com/2025/01/08/floating-point-to-hex-converter-now-supports-16-bit-floats-plus-i-rewrote-it-in-rust-and-webassembly | 2025-01-08T00:00:00 | individual-blogs;twir-links ===
+Floating point to hex converter – now supports 16-bit floats, plus I rewrote it in Rust and WebAssembly! – Greg's Blog
+Skip to content
+Greg's Blog
+Menu
+Home
+Greg’s homepage
+Mobile apps
+Pictures
+Mastodon
+Goodreads
+LinkedIn
+Floating point to hex converter – now supports 16-bit floats, plus I rewrote it in Rust and WebAssembly!
+Here it is!
+(this post linked to by This Week in Rust!)
+This is a pretty small project, but it’s by far the most popular page on my website, so it’s a bit overdue for some sprucing up.
+One of the ideas on my “potential projects” list was to add support for 16-bit float types, like half-precision floating point and Google bfloat. It had languished on the list because it sounded pretty esoteric, but after reading about LLM quantization it seemed like it might be more useful!
+Doing it in C
+The converter backend was written in Python, which called a Python module built with C. When I originally implemented this in 2006(!), this was a fun experiment, and I thought it might be something I would do more often in the future since I was very into Python at the time.
+So I did some research into C support for those types, and to my mild surprise, both of the types are in C++23, and gcc 13 supposedly supports them. Unfortunately, the gcc on my Linux system is a bit older, and to upgrade it would require pulling in some packages from a newer Ubuntu version (possible but probably painful), or upgrading my Ubuntu version. I’ve been meaning to upgrade Ubuntu for a while now, but I want to set aside a chunk of time for it to deal with the inevitable random breakages.
+So I resigned myself to putting the project on hold until I did the upgrade.
+Maybe…Rust?
+A few days later I had the obvious-in-retrospect idea to see if Rust had support for these types. I’ve rewritten some larger projects in Rust like my baseball stats parser and Clue solver, and it’s been a while since I’ve had a chance to write some Rust code, so it seemed like a good match!
+Rust does have support for half-precision floating point as f16, but unfortunately only in Nightly compilers, which I wasn’t thrilled about needing, and there was no support for Google bfloat anyway. But I quickly found the half crate which supports both of these and had the simple functionality I needed!
+Looking back, I didn’t even think about looking for a C/C++ library that supports these types, although some surely exist. I think this is an example of why having a good builtin package manager matters; even if I had found a C/C++ one I would have had to copy its source into my project or something. (since I wanted to develop mostly on Windows but deploy it to Linux) But just running cargo add half is so easy!
+Step 1: Rewriting it in Rust
+Anyway, the first step was writing a Rust CGI script with the same functionality as the existing one. That was pretty straightforward – here’s a git diff of the changes. Major props to myself from two years ago for writing tests and keeping the test cases in a nice JSON file!
+One major annoyance was that for some reason the Rust Language Service in Visual Studio Code wasn’t working in the integration test file, which meant no type hints or autocomplete. This was painful because I haven’t written any Rust in a while so I badly needed those type hints! I never did figure out why this was happening, but I muddled through.
+I did ask Claude (my LLM of choice for programming questions) a few things – one was about what to use these days instead of lazy_static! to store a bunch of test cases in a static variable that needed to be loaded once (I ended up using the builtin std::sync::OnceLock<Vec<TestCase>>), and the other was about slicing off the first n elements of a slice. (it’s &s[..s.len().min(n)], I was sort of hoping for a builtin method but this is fine)
+After it was done and working, I decided to do an incredibly rough benchmark of the script’s performance versus Python by using Firefox’s DevTools Timing section and seeing how long the request was in the Waiting state; this was reasonably consistent over a local network. The Python script took 42-48ms, while the Rust version took 3-10ms, for something like a 7x speedup! This isn’t too surprising because the operation is very fast, so the time taken is mostly the overhead of starting the CGI executable, and of course since Rust compiles to a native executable that’s going to be faster than starting the Python interpreter.
+Step 2: Adding 16-bit float support
+After getting to parity, adding support for the two new types was pretty straightforward – here’s the GitHub diff for this part. This also involved changing the frontend (written in React) to add sections for the two new types. Happily, the existing HexConverter class I had written to show the breakdown between sign/exponent/mantissa worked for these new types; all I had to do was set up the new parameters and instantiate two new HexConverters! Hooray for reusable classes!
+I also took the opportunity to make the page look a little nicer, to the best of my meager abilities. (I did need to ask Claude how to use CSS to make a div only as wide as its contents: the answer is width: fit-content which I honestly should have been able to figure out!)
+One other tiny Rust thing was to make the query parsing use a std::borrow::Cow<&str> instead of a String (here’s the commit). Cow is a clone-on-write string that, in the optimal case, avoids an allocation. I really like how obvious Rust makes it when you’re doing allocations and that makes me want to avoid them, even when the performance impact is minuscule.
+At this point I was done with what I had wanted to accomplish…but there was one more thing!
+Step 3: Rust + WebAssembly!
+I’ve been interested in WebAssembly for a while, and several times I’ve started a Rust project with the intention of compiling it to WebAssembly but run out of steam by the end. But this project is small enough that I still had a bit of energy to investigate it!
+These days, WebAssembly is supported by all major browsers, so that’s one concern down. I was worried that the half crate used unsafe code (it does), and that would prevent me compiling to WebAssembly. (it doesn’t!)
+So I read a bit of the wasm-bindgen and wasm-pack books, and it was surprisingly straightforward! Here are the commits, and it’s all working great; you can verify this by seeing that no network requests are done when you convert a float.
+The .wasm file itself is bigger than I would have expected (100 KB). At first I thought this might be because I kept the exact same API as the CGI script, so it just takes a single string and parses it, but even if I take that out it only drops to ~95 KB.
+I did a quick benchmark with performance.now() , and the WebAssembly call is too fast to measure – it shows up as 0.00ms 🙂
+One of the reasons I felt intimidated by using WebAssembly from Javascript is that I kept reading about how there’s just a linear chunk of memory that gets shared, and I wasn’t sure how more complicated data types got passed between them. For example, the main function hexfloatcgi() returns a Result<String, String>, and I wasn’t sure what that even meant in Javascript. Well, I took a look at the generated bindgen code (in pkg/floattohexlib_bindgen.js) and the function returns an array of four numbers. The first two numbers are the (offset, length) of the returned string, and the bindgen code handles all of that so the JS side just gets a string back, yay! The second two numbers are if the Result is an Err, and if that’s the case, the bindgen code creates the string and then throws it. Which makes a lot of sense!
+A few last notes
+Although I was very happy that my existing React component worked for the new float types without needing any changes, I would still prefer to not use frameworks when I don’t need them; the fewer external dependencies I need, the better! I’d like to use something like Web Components instead; unfortunately, my last experience using Web Components didn’t leave me feeling very confident in doing this. Maybe I’ll have more energy to try this in the future.
+As this is the most popular page on my website, I considered adding some sort of advertising to make a bit of money. I would love to use something like Ethical Ads which specifically targets developers and doesn’t require a cookie banner or anything. Unfortunately, they’re looking for sites that get 50K+ monthly visits, and this page gets around 20K visits a month.
+Of course, I could just use Google/AdMob, like I do on my mobile apps. But assuming the CPM is comparable (is it? I have no idea!) I’d be getting around $1.50 CPM, which would mean around $30 a month. And while I’m not against ads per se, I’m not going to muck up my website for so little benefit.
+Thanks for reading! If you enjoyed this you might enjoy some of my favorite writings, or writeups of projects I’ve worked on.
+Share this:
+Share on Bluesky (Opens in new window)
+Bluesky
+Share on Mastodon (Opens in new window)
+Mastodon
+Share on Facebook (Opens in new window)
+Facebook
+Share on Reddit (Opens in new window)
+Reddit
+Share on LinkedIn (Opens in new window)
+LinkedIn
+Like Loading...
+Author  gregstollPosted on January 8, 2025January 9, 2025Tags essay, programming, projects, rust
+3 thoughts on “Floating point to hex converter – now supports 16-bit floats, plus I rewrote it in Rust and WebAssembly!”
+David says:
+February 26, 2025 at 3:59 pm
+10/10, use on the daily
+LikeLike
+Reply
+Pingback: Wa-tor simulation – watch the sharks eat the fish! – Greg's Blog
+Pingback: my 2025 in review – Greg's Blog
+Leave a comment Cancel reply
+Δ
+Post navigation
+Previous Previous post: AI Snake Oil review – a clear-eyed look at what AI can and can’t do
+Next Next post: linked list saturday: carbon removal, the hundred page idea, unoptimized charity
+Search
+Search for:
+Search
+Goodreads
+Social Media
+Mastodon
+Goodreads
+LinkedIn
+Home
+Greg’s homepage
+Mobile apps
+Pictures
+Mastodon
+Goodreads
+LinkedIn
+Greg's Blog
+Blog at WordPress.com.
+Comment
+Reblog
+Subscribe
+Subscribed
+Greg's Blog
+Join 111 other subscribers
+Sign me up
+Have a WordPress.com account? Log in now.
+Greg's Blog
+Copy shortlinkView post in Reader
+Manage subscriptionsSign upLog in
+Report this content
+Collapse this bar
+%d
+
+=== ROW 146 | f008381 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-42 | 2025-04-02T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #42
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #42
+The Embedded Rustacean Issue #42
+Mar 28, 2025
+In partnership with
+Get 10% off with Code (details below)
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag @theembeddedrust on Twitter/X or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+📢
+Book Update Announcement
+Simplified Embedded Rust has been updated!
+Here’s what’s new:
+🔹 no-std edition: esp-hal v1.0 crate updates.
+🔹 std edition: esp-idf-svc v0.51 crate updates.
+🔹 Development container support introduced.
+🔹 Streamlined repositories.
+🔹 Various typo, code, and reference fixes across both editions.
+The latest update is already available for print versions on Amazon.
+If you already purchased the ebook version, download the latest copy here.
+Click here for more information about the Standard Edition.
+Click here for more information about the Core Edition.
+🚨
+Issue Highlights
+📋 2025 Edge AI Report is Out
+🔼 Rust Update Merged into GCC
+♾ Arduino Getting into SVDs
+🦀 Rust 1.85.1 Release Announced
+💪 ARM Announces Intro to AI MOOC
+🎁 Ferrous Donates Rust Spec to Rust Foundation
+🪁 Rust on Zephyr Talk Upcoming
+📷 OpenMV Announces AI Cameras for the Edge
+💰 Softbank Acquiring Ampere
+💬
+Quote of the Issue
+❝
+Software comes from heaven when you have good hardware.
+Ken Olsen
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+Zephyr Tech Talk Announcement: Rust on Zephyr ⭐
+Solid Sands and HighTec partner to qualify Rust libraries for automotive
+Rust News 🗞🦀
+Ferrous Systems Donates Ferrocene Language Specification to Rust Project ⭐
+Big Rust Update Merged For GCC 15 ⭐
+Announcing MCPR 0.2.2: The a Template Generator for Anthropic's Model Context Protocol in Rust
+Highlights from Git 2.49
+Asahi Linux loses another prominent dev as GPU guru calls it quits
+New Linux Kernel Rust Module Unveiled to Detect Rootkits
+Announcing Rust 1.85.1 ⭐
+March 2025 Leadership Council Update
+Hiring for Rust program management
+General Embedded News/Trends 📈
+The 2025 Edge AI Technology Report ⭐
+SoftBank to acquire semiconductor designer Ampere in $6.5B all-cash deal ⭐
+New platform lets anyone rapidly prototype large, sturdy interactive structures ⭐
+Arduino Gets Into Software-Defined Vehicles
+Renesas announces BLE SoC for automotive applications
+Report: Pathways to Cybersecurity Best Practices in Open Source
+Microchip Launches the Dual-Core Lockstep AVR SD Family, for Functionally Safe Devices
+Infineon Gives PSoC Edge MCUs an Edge AI Upgrade With Nvidia TAO Support
+Green Hills Software and NXP collaborate on integrated solutions for S32K5 microcontroller family
+BB's QNX Partners Advantech to Fuel Innovation in Embedded Systems
+Researcher Hacks Embedded Devices to Uncover Firmware Secrets
+ARM Education introduces introduction to AI MOOC ⭐
+rpi-image-gen build system creates custom images for Raspberry Pi boards
+Qualcomm’s Software Acquisitions May Finally Overcome Edge Friction
+Comparisons with other Languages 🔍
+Choosing the Right Programming Language for Your Embedded Linux Device
+GPU Monte Carlo Simulations in Python and Rust
+Cost of C++ Abstractions in C++ Embedded Systems
+Why Rust is Winning in Backend Systems: A Startup Must-Know
+Microsoft TypeScript Devs Explain Why They Chose Go Over Rust, C#
+TrapC: Memory Safe C Programming with No UB
+Hardware 🛠
+OpenMV N6 & AE3 - Low Power, Python Programmable AI Cameras ⭐
+SparkFun IoT RedBoard – Raspberry Pi RP2350 or ESP32 WiFi & Bluetooth boards with Arduino UNO R4 form factor
+Introducing the FRDM i.MX 91 Development Board
+Synaptics Astra SR series Arm Cortex-M55 MCUs feature Arm Ethos-U55 NPU
+XIAO Logger HAT - A tiny temperature, humidity and light add-on module for XIAO with RTC and battery voltage monitoring
+Waveshare CM5-NANO-B is a compact Raspberry Pi CM5 carrier board
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+Making STM32WL55 work with Rust
+Nine Pico PIO Wats with Rust (Part 2)
+Visualizing Rust Code Coverage in VS Code
+A Simple Guide to Read Rust Source Code Effectively
+Mastering Error Handling in Rust: Beyond Result and Option
+Insights, Tools, & Case Studies 📑
+Embedded Platform Choice Guide
+Repository-level Code Translation Benchmark Targeting Rust
+Can Rust Work for Safety-Critical Embedded Systems?
+Rust Learning Resources 2025
+How we built our 2025 Embedded World Demos
+Crabtime: Zig's Comptime in Rust
+Datafix - A New Rust Serialization Framework
+Rust Concurrency: A Beginner’s Exploration
+Rust Async Programming: Future Executors and Task Scheduling
+Inside the ESP32-P4: USB, GUI, and Rust Support
+Getting Rust ready for aerospace and defence
+Enabling seamless interop between Rust and other languages
+Fast Tokenizers: How Rust is Turbocharging NLP
+General Embedded 📟
+Build The Smallest ESP32 Drone (ESP-FLY) ⭐
+ESP32 WiFi Superstitions
+Low-Code Platforms: A Revolution for Edge Computing
+Environmental sound recognition on embedded devices using deep learning: a review
+Generating AutoML-based models for Zephyr platforms in Kenning
+Getting Started with Android Studio and Edge Impulse
+Containers on Embedded: Bundling your App with Torizon
+Robust OTA Updates For Linux Devices, the Easy Way
+AI Is Coming to the Edge, but It Will Look Different
+Why choose C++ and Slint for your next embedded project?
+Behind the scenes of debugging the Thingy:91 X for launch with Memfault
+An Early Quitting Time Means Big Efficiency Gains for TinyML Models Running on Smart Sensors
+PicoSysLog Makes Remote Logging of Espressif ESP8266, ESP32 Projects a Breeze
+Edge AI and TinyML
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Rust for System Programmers
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+zerocopy v0.8.24
+semihosting v0.1.20
+w5500 v0.6.0
+jh71xx-hal v0.7.2
+Upcoming Events & Deadlines 🎭
+Rust on Zephyr - State of the Union  - April 2, 2025, Online
+Rust Konf Türkiye - April 20, 2025, Istanbul, Turkey
+Embedded Online Conference - May 12-16, 2025, Online
+RustWeek by RustNL - May 13-17, 2025, Utrect, The Netherlands
+Open Hardware Summit - May 30 & 31st, 2025, Edinburgh, Scotland
+Rust Summit -- Call For Proposals Open - June 7, 2025, Belgrade, Serbia
+Rust Forge - Call For Sponsors Open - August 2025, Wellington, New Zealand
+RustConf - September 2-5, 2025, Seattle, USA
+Oxidize - September 16-18, 2025, Berlin, Germany
+NDC Techtown - Call for Papers Open - September 22-25, Kongsberg, Norway
+EuroRust - October 9-10, 2025, Paris, France
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (NEW) Rust Developer (Junior to Senior) - wallPen, Wissen, Germany
+🦀 Embedded Linux Developer - Distran, Zurich
+🦀 Rust Developer/Promoter - Collabora, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🦀 Embedded Linux Software Engineer - Canonical, Global, Hybrid
+🦀 Doctoral Thesis: Functional Software Generation - Infineon, Munich, Germany
+North America-Based Jobs 🌎
+🦀 Rust Software Engineer, Vehicle Simulation - Tesla, Palo Alto, CA
+🦀 Open Source Robotics Engineer - rerun.io, Remote
+🦀 Sr. Embedded Software Engineer, Customer Hardware (Starlink) - SpaceX, Bastrop, TX
+🦀 Rust embedded Software Engineer - General Dynamics, Dedham, MA
+🦀 Sr. Embedded Software Engineer, Energy Products - Tesla, Palo Alto, SF
+🦀 Flight Software in Rust - NASA, USA
+🦀 Sr Embedded Systems Engineer (Gateway Experience) - Lynq, Boulder, CO
+🦀 Satellite Flight Software Engineer (Rust), Senior - Lynk, Falls Church, VA
+🦀 Rust Software Engineer - K2 Space, Los Angeles, CA
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🦀 Embedded Linux Software Engineer - Canonical, Global, Hybrid
+🦀 Various Rust-Oriented Positions - MIT Lincoln Laboratory, Lexington, MA
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Poststation is a tool from James Munns for connecting embedded devices with applications running on a PC, laptop, or embedded linux system. It works with any device speaking the postcard-rpc protocol. See more and download at poststation.rs, and if you like it, purchase a license with discount code ERNEWSLTR5 for 10% off to support the Embedded Rustacean Newsletter!
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 148 | f008455 | https://rustunit.com/blog/2025/05-18-bevy-ios-deep-linking | 2025-05-28T00:00:00 | individual-blogs;twir-links ===
+rustunit
+HOME
+APPS
+PROJECTS
+BEVY MEETUP
+BLOG
+CONTACT
+2025-05-18
+iOS Deep-Linking with Bevy
+Until very recently Bevy iOS apps had a hard time reading deep linking information. Bevy uses winit by default for its platform integrations like window lifecycle management. On iOS winit used to implement and register its own AppDelegate to receive app life cycle hooks/calls.
+Users of Bevy therefore had only one inconvenient option to receive these hooks: Ditch winit and roll this themselves.
+As of winit 0.30.10 (see release) we can now do much better.
+What is the use case?
+"Deep linking" means that a link leads to our app being opened or foregrounded and the app knowing that and what url triggered it. The iOS jargon for this is URL Scheme. Some example use cases for this are:
+Sharing specific content inside the app (imagine a user sharing their game profile with a friend)
+File-Sharing (more on that later)
+Advertisement attribution tracking (not covered here)
+You might wonder why this is relevant for File-Sharing on iOS. It turns out that the code that triggers your app to open after sharing a file with it is actually just using such a URL scheme to do that.
+High level steps
+Configure your url schema in xcode
+Add a handler for the application:(_:open:options:) call. (see docs)
+Handle deep link properly
+Configure your url schema
+For iOS to open your app on a click on a specifically crafted URL we have to adapt our Info.plist file like so:
+...
+<key>CFBundleURLTypes</key>
+<array>
+<dict>
+<key>CFBundleURLName</key>
+<string>com.rustunit.tinytakeoff</string>
+<key>CFBundleURLSchemes</key>
+<array>
+<string>tinytakeoff</string>
+</array>
+</dict>
+</array>
+With this our game tinytakeoff will be opened when clicking on URL looking this: tinytakeoff://fooobar?param=value
+Alternatively you can also make that change via the XCode UI, see the docs to register your URL scheme.
+So far these steps were possible already before and lead to your app being opened or foregrounded based on a click on such a URL.
+What was not possible was step 2 and 3 to actually make use of that information inside your Bevy app.
+Receive app open options
+Thanks to the objc2 crate we can use native objc APIs without having to write objc but pure rust instead. The underlying code looks like magic and uses a bunch of macros to accomplish this. The result is that we can abstract this away into a conventient rust only crate: bevy_ios_app_delegate.
+Using this crate hooking into this open url life cycle call of the AppDelegate becomes as easy as this snippet of bevy setup code:
+pub fn plugin(app: &mut App) {
+// bevy setup skipped here...
+// register our crates plugin (this is a noop on non ios platforms)
+app.add_plugins(IosAppDelegatePlugin);
+// register observer that triggers if open url app delegate was called (either by app opening or foregrounding after a click on a URL scheme)
+app.add_observer(|trigger: Trigger<AppDelegateCall>| {
+info!("app delegate call: {:?}", trigger.event());
+});
+}
+Handle deep link
+This is of course very application dependant. Here are a few example of what to do:
+Link actionApp behaviour
+game user profile linkApp opens the user profile of the user that created the link
+a player's new record game runThe app shows this player's replay after clicking their link
+file sharingA ShareExtension receives a file that it wants to share with your app and opens your app using a URL schema and the app can identify what file to open using the deep linking context
+Further steps
+universal links
+Aside from the custom URL schema we described above, a regular web domain can be associated with your app and trigger opening it, this is called universal linking (see apple docs) and requires yet another AppDelegate call implementation.
+push notification token
+Being able to make a custom AppDelegate implementation has more advantage than just for deep linking. We can now vastly simplify also the way we currently receive a push notification token in the bevy_ios_notifications crate. Receiving this token also happens via AppDelegate call and will be provided via the new bevy_ios_app_delegate crate soon.
+Exciting times to build iOS apps using Bevy.
+Do you need support building your Bevy or Rust project? Our team of experts can support you! Contact us.
+Copyright © 2026 Rustunit
+
+=== ROW 149 | f008566 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-52 | 2025-08-20T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #52
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #52
+The Embedded Rustacean Issue #52
+Aug 15, 2025
+In partnership with
+Get 10% off with Code (details below)
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag @theembeddedrust on Twitter/X or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+🦀 Rust 1.89.0 is out
+❤️ Rust is the most admired language, again
+💼 Tenstorrent posts a Rust job
+🤝 Ferrous part of SOAFEE
+🔍 Vector Publishes Industry Insights on Rust in SDVs
+🔐 Ripple’s Rust crypto shakeup
+📀 Microsoft Launches Rust-based Wassette
+🧑‍💻 FreeCodeCamp publishes embedded Swift course
+♾ Arduino Updates Zephyr-based Cores
+🍓 RasPi Steps Hardware to Fix Errors
+💬
+Quote of the Issue
+❝
+Clean code always looks like it was written by someone who cares.
+Robert C. Martin
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+Ferrous Systems joins SOAFEE to bring Rust’s safety and performance to software-defined vehicles ⭐
+Rust News 🗞🦀
+gccrs July 2025 Monthly report
+XRP Ledger Shake-Up? Ripple Eyes Modular Rebuild ⭐
+FerrisKey v0.1.0 – An open-source IAM in Rust
+Microsoft Launches Wassette: Open-Source Rust-Wasm for Secure AI Agents ⭐
+Debian GNU/Hurd 2025 released with Rust, 64-bit support, and more
+Rust Project goals update — July 2025
+Announcing Rust 1.89.0 ⭐
+Program management update — July 2025
+Rust Foundations 2025 Technology Report
+2025 Stack Overflow Developer Survey ⭐
+General Embedded News/Trends 📈
+Arduino's Move to a Zephyr RTOS-Based Firmware Makes New Strides with Core v0.3.2
+ARM Announces Developer Labs Program
+Updated Arduino cores with ZephyrOS ⭐
+Introducing ESP RainMaker MCP Server
+Renesas Intros 64-bit MPU Aimed at AI-Centric High-Performance HMI Designs
+ANAVI Aims to Boost Raspberry Pi Project Security with a Simple Drop-In Trusted Platform Module 2.0
+In Search of Riches, Hackers Plant 4G-Enabled Raspberry Pi In Bank Network
+RP2350 RISC-V Support added to Nuttx
+Raspberry Pi Squashes Security Bugs, Fixes E9 Erratum with the RP2350 A4 Stepping ⭐
+Alif Unveil the Ensemble E4, E6, and E8 AI Controllers
+Comparisons with other Languages 🔍
+2x Performance, $300k Savings: A Case Study in Rewriting a Critical Service in Rust
+Rust, Python, and TypeScript: the new trifecta
+Rust and C++ Interop
+Stack vs Heap Memory: A Deep Dive into C/C++, BASIC, and Pascal
+Unleashing the Power of Rust in GIS Development
+A Rusty Web? An Excursion of a Perl Guy into Rust Land
+Hardware 🛠
+ALPON X5 AI: First Industrial Edge AI Computer Built on Raspberry Pi
+XIAOML Kit complements a free Machine Learning Systems book ⭐
+CM5 MINIMA R3: A Compact, Open-Source Powerhouse for Raspberry Pi CM5
+Tonybot Educational Humanoid Robot
+New XIAO nRF54L15
+Pico2-ice FPGA Dev Board
+RP3A0 Pico Is a Reverse-Engineered Raspberry Pi Zero 2 W
+WAVEGO Pro 12-DOF Bionic Robot Dog
+Rockchip RK3688: The Future of ARM-Based Development and Programming
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+Rust on the Lilygo T-Deck
+Using the Qt Logger in Rust with CXX-Qt
+Insights, Tools, & Case Studies 📑
+Renault Group’s software-defined vehicles built on Google Cloud
+Rust on the Lilygo T-Deck
+Invariants In Rust, The Secret to Bulletproof Code
+How Rust powers Proton Authenticator
+Rust in Automotive - New Potential for SDVs? ⭐
+The Deep Dive: Why and How Projects Use Multiple Programming Languages
+Rust is best explained with F#
+Hyper-Efficient Memory Management via Adaptive Granularity in Rust Embedded Systems
+Quetty: A terminal Azure Service Bus manager in Rust with ARM support
+Rust for billions of MCUs
+Unlocking Android SDK Features in Rust with JNI: Pros and Cons
+Introducing yap - A friendlier serial terminal
+An Easy Problem Made Hard: Rust & Binary Trees
+ESP32 Bus Pirate 0.5 – A hardware hacking tool that speaks every protocol
+rustframe: A lightweight dataframe & math toolkit for Rust
+Memory Mapped Register Tool in Rust
+Embedded Systems in Medical Devices: Compliance, Design, and Safety
+Rust Iterators : DeSugarified
+Memory-safe car engines and a consultancy acquisition
+Rust DataFrame Alternatives to Polars: Meet Elusion v4.0.0
+TinyML Market: The Next Frontier in Edge AI for Smart Cities and IoT
+General Embedded 📟
+Embedded Swift: A Modern Approach to Low-Level Programming ⭐
+Edge Machine Learning Systems Engineering Course
+Free ROS 2 Tutorials
+Formal methods are the future of embedded software
+Milliwatt-sized Machine Learning on Microcontrollers (FOSDEM 2025)
+Raspberry Pi-Based FPGA Test System Part One
+Building the Linux Kernel for Embedded Devices vs. Standard PCs: Key Differences Explained
+Why WebAssembly Runs Slower on Embedded Devices — And How Hardware Acceleration Achieved a 142 Speedup
+Agentic TinyML for Intent-aware Handover in 6G Wireless Networks
+Safe and Efficient C++ For Embedded Systems Training Course
+MicroZed Chronicles: MathWorks Deep Learning Processor
+Designing Object Detection Models for TinyML
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Rust for System Programmers
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+edge-net v0.11.1
+embassy-stm32 v0.3.0
+embassy-sync v0.7.1
+embedded-test v0.6.2
+stm32-hal2 v2.1.3
+embassy-boot v0.6.0
+embassy-rp v0.7.0
+embassy-nrf v0.6.0
+Upcoming Events & Deadlines 🎭
+Rust Forge - August 2025, Wellington, New Zealand
+RustConf - September 2-5, 2025, Seattle, USA
+Oxidize - September 16-18, 2025, Berlin, Germany
+NDC Techtown - September 22-25, Kongsberg, Norway
+EuroRust - October 9-10, 2025, Paris, France
+Espressif DevCon 2025 - November 5-6, 2025
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (New) Middle/Senior Rust Developer with C experience (IoT) - Sigma Software, Mutliple Locations, Europe
+🦀 (New) Software Development Engineer - Embedded Development - Amazon, London, Cambridge, UK
+🦀 Firmware Engineer - IoT Biodiversity Sensors - Hula, Munich, Germany
+🦀 Embedded Rust (Medical) - Freelance, Munich, Germany
+🦀 Rust Developer/Promoter - Collabora, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+North America-Based Jobs 🌎
+🦀 (New) Sr. Rust Developer, Systems Engineering - Tenstorrent, Portland, US & Toronto, CA
+🦀 (New) Staff Software Engineer - OTA - Rivian-VW - Palo Alto, CA, Vancouver, Toronto, Canada
+🦀 (New) Embedded Software Engineer - Rust - Viasat, Carlsbad, CA, Marlborough, MA
+🦀 (New) Software Engineer, Platform - Impulse, San Fransisco, CA
+🦀 (New) Rust Embedded Software Engineer - Geologics, Taunton, MA
+🦀 Embedded Firmware Engineer, Embedded Firmware Developer, and Embedded Rust/C++ Firmware Developer - Chemelex, Edmonton, Canada
+🦀 Principal Embedded Systems Engineer – Avionics / GNC - Orb Aerospace, Lowell, MI
+🦀 Embedded Systems Software Consultant (Rust / RTOS) - Seamgen, Remote
+🦀 Firmware Engineer - Mach Industries, Huntington Beach, CA
+🦀 Sr. Embedded Firmware Engineer (Rust and C) - Nanobiosym, Cambridge, MA
+🦀 Rust Software Engineer - K2Space, Los Angeles, CA
+🦀 Embedded Software Engineering Manager - Span, San Francisco, CA
+🦀 Embedded Software Engineer (Bare Metal), Intelligence Systems - Anduril, Reston, VA
+🦀 Open Source Robotics Engineer - rerun.io, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Poststation is a tool from James Munns for connecting embedded devices with applications running on a PC, laptop, or embedded linux system. It works with any device speaking the postcard-rpc protocol. See more and download at poststation.rs, and if you like it, purchase a license with discount code ERNEWSLTR5 for 10% off to support the Embedded Rustacean Newsletter!
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 153 | f008777 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-63 | 2026-01-21T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #63
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #63
+The Embedded Rustacean Issue #63
+Jan 16, 2026
+In partnership with
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag us on LinkedIn or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+⏪ Rust Foundation Review of 2025
+🧑‍💻 Rue is a Language Built with Rust & AI
+♾ Arduino Updates Its Open Source Ecosystem
+🤖 NXP Announces AI Development Tools
+📢 Espressif Announces New Devices & Tri-Band WiFi
+💬
+Quote of the Issue
+❝
+Debugging time increases as a square of the program’s size.
+Chris Wenham
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+Fjall 3.0 Released
+Rust News 🗞🦀
+Rust Foundation 2025 in Review ⭐
+Brickstorm analysis update with new Rust-based variants
+gccrs December 2025 Monthly report
+AI-built Rue language pairs Rust memory safety with ease of use ⭐
+Project goals update — December 2025
+What does it take to ship Rust in safety-critical?
+This Development-cycle in Cargo: 1.93
+What is maintenance, anyway?
+Infrastructure Team 2025 Q4 Recap and Q1 2026 Plan
+General Embedded News/Trends 📈
+NXP Ushers Agentic AI to the Edge with New AI Development Tools ⭐
+A 30B Qwen model walks into a Raspberry Pi and runs in real time
+GCC 16 Integrates Picolibc for Efficient Embedded Systems Development
+Raspberry Pi and mini PC home lab prices hit parity as DRAM costs skyrocket
+2026 Tech Predictions
+New Espressif Microcontrollers: ESP32-E22 and ESP32-H21 ⭐
+NXP Introduces A Central Compute Platform for Smart Vehicles
+Morse Micro Announces General Availability of HaLowLink 2
+Hubble Network Collaborates With Texas Instruments on Bluetooth Connectivity
+Celebrating a Decade of Zephyr—and the Journey Ahead
+Infineon, HL Klemove Partner on SDVs
+Arduino Open-Source Ecosystem Gets a Fresh GitHub Push ⭐
+Explore the latest: Arduino’s growing open source ecosystem
+Infineon and HL Klemove partner on SDV technology
+Infineon Introduces the Wi-Fi 7 IoT 20 MHz tri-radio Device Optimized for IoT
+Bring the World’s Largest Watch Face Catalog to Your RTOS Smartwatch
+SRC Awarded AF Contract to Develop Next-Gen Embedded Computing Capabilities
+Comparisons with Other Languages 🔍
+Rust Trait Runtime Polymorphism in C++
+Rust's Downfall: From Rising Star to Rejected by Major Projects
+6.5 GB/S JSON Parsing in Mojo – Beating Rust and C++ on Apple Silicon
+Rust (and Haskell) Win!
+How long until Rust overtakes C and C++?
+Hardware 🛠
+Aiden Chostner's Pico2DVI Is a Do-It-Yourself Graphics Card Powered by a Raspberry Pi RP2350
+Seeed Studio's ePaper Kits Go Big with a 13.3" E Ink Spectra 6 Six-Color Panel
+Quectel SRG091X and SRG093X NXP i.MX 9 industrial AIoT modules
+$1 ESP32 Dev Board with Screen
+Pikoo Shrinks the Raspberry Pi Pico Without Sacrificing GPIO
+WeAct CAN485
+Looking at a Real Fake Raspberry Pi RP2040 Board
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+Building an ML Library from Scratch
+Writing an eigenvalue solver in Rust for WebAssembly
+Fast and Safe Image Decoding in Rust
+ere: Compiling Regular Expressions at Build-Time
+How to Build a Local-First CLI Financial Tracker with Rust
+Interactive Newton's Cradle
+Dev Containers: Rust Quick Start
+Insights, Tools, & Case Studies 📑
+Favorite Rust Crates of 2025
+Rust At Scale: Scaleway's Big Bet To Become THE European Hyperscaler
+Octopii - Turn any Rust struct into a replicated, fault-tolerant cluster
+Rust Lifetimes explained like you are 12
+AI Engineers are Openly Choosing Rust Over Everything Else
+1160 PRs to improve Rust in 2025
+Rust in Robotics and Computer Vision: The New Frontier
+Comprehensive Testing of Embedded Software
+Rust's WASI Targets: What's Changing?
+Omnisor – High-Level Rust SSH Client for Network Devices 🦀
+How Safe is the Rust Ecosystem? A Deep Dive into crates.io
+Rust in Production: How Radar replaced Elasticsearch/MongoDB with a single Rust service
+Rust slow to compile? Here’s how to speed it up
+IBM Quantum: Rust is Real, but Quantum Advantage is Not (Yet)
+Embedded Rust in Production - Ulf Lilleengen - NDC TechTown 2025
+Extending MicroPython with Rust: Two Worlds Collide - Jan Matějek - NDC TechTown 2025
+Deploy to Raspberry Pi in One Command: Building a Rust-based Deployment Tool
+Rust Macros System
+General Embedded 📟
+Agentic Pipelines in Embedded Software Engineering: Emerging Practices and Challenges
+WARD: Efficient Memory Protection for WebAssembly on Tiny Embedded Systems
+Farewell to Portable Assembly: I've Been Running Swift on MCUs for Seven Years
+Building a virtio-serial FPGA device: Writing the RISC-V firmware
+Hidden costs for inference with deep network on embedded system devices
+2026 Embedded Systems Trends
+Practical AI Learning with Raspberry Pi : Neural XOR
+From experiment to production, AI settles into embedded software development
+Master Embedded SystemsThe Modern Way
+A UI-Focused Display Library For The ESP32
+A Review of Embedded Software Architectures for Multi-Sensor Wearable Devices
+Arduino TFT Simulator for Desktop Testing
+RT-Spark STM32 IoT-Based Real-Time Wearable Activity Tracker
+Face Expression Recognition Robot with Arduino UNO Q | DigiKey
+ESP32 WiFi Security Explained for Beginners
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Harvard CS249 Introduction to Machine Learning Systems
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+burn v0.20.0
+semihosting v0.1.24
+stm32f1-hal v0.12.3
+riscv-rt v0.17.1
+edge-nal-embassy v0.8.1
+embassy-net v0.8.0
+embassy-stm32 v0.5.0
+edge-nal v0.6.0
+Upcoming Events & Deadlines 🎭
+Rust Nation UK - February 18th & 19th, 2026 - London, UK
+Rust In Paris - March 27th, 2026 - CFP Open: Submission Link, Deadline: December 31st, 2025 - Paris, France
+RustMeet - March, 2026 (Projected) - Gliwice, Poland
+Rustikon - 19 & 20 March, 2026 - Warsaw, Poland
+Rust Asia - March, 2026 (Projected) - Hong Kong
+TokioConf 2026 - April 20th, 2026 - Portland, Oregon, USA
+RustWeek - May 18-23, 2026 - CFP Open: Submission Link, Deadline: January 15th, 2026 - Utrecht, Netherlands
+RustForge - August, 2026 (Projected) - Wellington, New Zealand
+RustConf - September 8-11, 2026 - CFP Open: Submission Link, Deadline: February 16th, 2026 - Montreal, Canada
+Oxidize - September 14-16, 2026 - Berlin, Germany
+EuroRust - October 14-17, 2026 - Barcelona, Spain
+RustLab - November, 2026 (Projected) - Florence, Italy
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (New) Systems Software Engineer (Rust) - ai-coustics, Berlin, Germany
+🦀 Embedded Rust (Medical) - Freelance, Munich, Germany
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+North America-Based Jobs 🌎
+🦀 Software Engineer, Flight Software - Heart Aerospace, Los Angeles, USA
+🦀 Rust Software Developer - PMES, Sr Specialist, RUST Software Developer, Sr. Specialist Software Engineer, Lead Rust Software Developer - LMES, &  Scientist, Software Engineer - Rust Expert - L3Harris, New Jersey & Virginia, USA
+🦀 Rust Embedded Engineer - Swarm Biotactics, San Diego, CA, USA
+🦀 Embedded Systems Engineer - Oxide, Remote, USA
+🦀 Embedded Software Engineer - Rivian/VW,  Palo Alto, CA, and Vancouver, Canada
+🦀 Principal Embedded Systems Engineer – Avionics / GNC - Orb Aerospace, Lowell, MI
+🦀 Embedded Systems Software Consultant (Rust / RTOS) - Seamgen, Remote
+🦀 Firmware Engineer - Mach Industries, Huntington Beach, CA
+🦀 Sr. Embedded Firmware Engineer (Rust and C) - Nanobiosym, Cambridge, MA
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Introducing the first AI-native CRM
+Connect your email, and you’ll instantly get a CRM with enriched customer insights and a platform that grows with your business.
+With AI at the core, Attio lets you:
+Prospect and route leads with research agents
+Get real-time insights during customer calls
+Build powerful automations for your complex workflows
+Join industry leaders like Granola, Taskrabbit, Flatfile and more.
+👉 Try Attio Pro for free
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 155 | f008940 | https://scientificcomputing.rs/monthly/2026-05 | 2026-05-27T00:00:00 | individual-blogs;twir-links ===
+Scientific Computing in Rust
+Scientific Computing in Rust
+Home
+Annual workshop
+Monthly newsletter
+All issues
+Latest issue
+Subscribe
+Scientific Computing in Rust Monthly #18
+Welcome to this month's issue of Scientific Computing in Rust Monthly.
+Scientific Computing in Rust Monthly can be viewed online at scientificcomputing.rs/monthly,
+you can sign up to receive an email copy at mailinglist.scientificcomputing.rs,
+or you can subscribe using the RSS feed at scientificcomputing.rs/monthly/rss.xml.
+Items can be added to the next issue of the newsletter by opening a pull request to the
+Scientific Computing in Rust Monthly repository on GitHub.
+You can find more information about adding items
+here.
+Crate of the month: hotpath
+crates.io ~ docs.rs ~ source ~ www
+Hotpath-rs is an easy-to-configure Rust performance profiler.
+It shows exactly where your code spends time, burns CPU, and allocates memory.
+Hotpath-rs helps you distinguish between functions that are slow
+because they wait on I/O and those that are CPU-intensive.
+Trying hotpath-rs out in self-profiling mode is as easy as typing
+ssh demo.hotpath.rs.
+New releases
+burn v0.21.0
+After five pre-releases over the last three months, burn v0.21.0
+was recently released.
+The gains span distributed workflows for training large models
+all the way down to small-model inference,
+where the reduced framework overhead becomes especially noticeable.
+Full release notes can be found
+on the GitHub release page.
+cuda-oxide v0.1.0
+Cuda-oxide is an experimental rustc backend
+for compiling CUDA GPU kernels written in pure Rust to PTX.
+It supports single-source Rust GPU programs where host
+and device code live together and are built through cargo oxide.
+delaunay v0.7.8
+Delaunay v0.7.8 provides D-dimensional
+Delaunay triangulations
+and convex hulls
+(2D through 5D explicitly tested)
+with PL-manifold (default)
+or pseudomanifold guarantees
+on finite point sets with Euclidean and toroidal global topologies.
+It uses exact predicates, Simulation of Simplicity,
+and Hilbert curves
+for robust degeneracy handling,
+deterministic insertion ordering, and efficient spatial indexing.
+It provides a 4-level validation hierarchy covering elements, data structure validity,
+manifold topology, and Delaunay adherence.
+It supports Pachner moves
+up to D=5 via bistellar flips, vertex insertion/deletion,
+and bounded flip/rebuild conversion of non-Delaunay triangulations.
+Auxiliary data may be stored in vertices and simplices,
+with external secondary maps for algorithm use,
+and the data structure is serializable/deserializable.
+Written in safe Rust with no unsafe code,
+it is inspired by CGAL
+and Spade
+and aims to be a lightweight,
+rigorous Rust-native option for workflows needing explicit topology settings,
+validation levels, deterministic construction controls, and repair behavior.
+numra v0.1.4
+numra is the umbrella crate of the Numra workspace,
+which consists of twenty native-Rust crates such as
+differential equations, optimization, sensitivity analysis,
+uncertainty quantification, linear algebra, and more.
+Dense linear algebra builds on faer;
+the rest is native Rust with no FFI to C or FORTRAN.
+pluot v0.1.0
+Pluot is a crate intended to facilitate the development of visualizations
+that can be rendered from multiple programming languages.
+This currently includes Rust, Python, and JavaScript.
+Further, Pluot aims to support both static and interactive use cases.
+For some demonstrations, see also the pluot website.
+rayon v1.12.0
+This new version of rayon contains a bug fix in parallel Range<char>
+and added a new method ParallelSlice::par_array_windows.
+Details can be found
+in the release notes.
+Events
+Scientific Computing in Rust, 8-10 July 2026, held virutally
+This year's scientific computing in Rust workshop is taking place on 8-10 July. The deadline for talk submissions
+is Friday 5 June: you can submit your talk at scientificcomputing.rs/2026/submit-talk.
+Publications
+Keller Mark S. and Gehlenborg Nils, Pluot: Towards 'write once, run everywhere' visualization software, arXiv 2605.14118
+This manuscript describes Pluot, a crate to facilitate write-once,
+render in many places visualizations.
+Pastel Arthur, 5× faster fast_blur in image-rs
+An interesting algorithm discussion on a new fast_blur implementation in image-rs.
+The article discusses the algorithm itself, profiling of the previous implementation,
+as well as the design choices in the new version.
+Especially interesting is the analysis and discussion of how fast various CPU instructions
+are in comparison with each other.
+
+=== ROW 157 | f009074 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-79 | 2026-09-02T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #79
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #79
+The Embedded Rustacean Issue #79
+Aug 28, 2026
+In Partnership with
+Copyright ©️ 2026 JetBrains s.r.o. JetBrains and the JetBrains logo are trademarks of JetBrains s.r.o.
+Want something mentioned? email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+🐧 Linux Support on ESPs
+🧠 Neuromorphic AI is Here
+🍍 PINE64 Halts SBC Hardware
+📡 Turning any Controller to an IoT Device
+♾ Arduino Ventuno Q is Here
+🤖 Google’s AI-assisted C/C++ Rewrites
+💻 Ubuntu’s Rust Strategy
+📜
+Table of Contents
+News & Article Roundup
+Educational Resources
+Updates, Events, & Announcements
+Jobs & Adoption
+🦀 🌱
+Oxidize XIAO Community Program
+Subscriber September Monthly Draw 📆
+Answer the monthly question at the bottom of the newsletter to enter the draw.
+August Winner Announced Below!
+Subscriber Quarterly Draw 🌓
+Submit your XIAO projects here to enter the draw for the big prize!
+Community Program Details
+Subscribe to Newsletter
+💬
+Quote of the Issue
+❝
+It’s hardware that makes a machine fast. It’s software that makes a fast machine slow.
+Craig Bruce
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Back to Top
+Embedded Rust News 📰
+Rivet: An Open-Source Real-Time OS Written in Rust
+Rust News 🗞️🦀
+Built with Rust: Processing Foundation
+JetBrains Partners with the Rust Foundation for an AI Livestream Series
+Congratulations to the First Round of Rust Project Maintainers in Residence
+June 2026 Project Director Update
+Rust Team Health Summit: September 8 in Montréal
+Experiment in reducing target directory size on nightly
+Leadership Council September 2026 Representative Selections
+1.98.0 pre-release testing
+Announcing Rust 1.97.1
+Announcing Rust 1.98.0 ⭐
+Supply chain attack on arrayref
+Enabling the next-generation trait solver on nightly
+Announcing our first Maintainers in Residence
+Rust Function Overloading - Call for Experimentation
+Embedded AI/ML News 🤖
+Why Air-Gapped Matters: Rethinking AI Infrastructure for Defense, Aerospace, and Regulated Industries
+Agentic AI Is Coming for Your CPUs
+Harness Engineering: You Can’t Prompt Your Way to Reliable AI
+The BrainBoard1500 Brings Neuromorphic AI to Embedded Systems ⭐
+Tuning Zephyr Kconfig with AI: Stop Guessing at Build Options
+Vector Brings Natural-Language AI Automation to CANoe
+Claude Sonnet Takes the Wheel in Doom
+General Embedded News/Trends 📈
+Completing the Audit Trail: Why Embedded Teams Need Runtime Observability
+Google Chrome is now available for Arm Linux. We tested it on a Raspberry Pi 5
+PicoCamera: An Arduino-compatible camera library for the RP2040 / RP2350
+Will Embedded Software Remain an Afterthought?
+yocto-kiss: updated to the Wrynose Yocto LTS release
+Why Sensor Fusion Matters for Drone Navigation and Detection
+Arduino Cloud Gains Multi-Page Dashboards, Device Locking, and App Lab Integration
+Why are people suddenly adding Apple Lightning cables to Raspberry Pi Pico 2 boards?
+Espressif Systems releases a Linux BSP developer preview for ESP32-S31 RISC-V microprocessor ⭐
+Is it Good or Bad That Comcast Added Motion-Sensing to Your Xfinity Router?
+PINE64 Calls Time on the Linux Hardware Market, Ceases Production Until the AI Bubble Bursts ⭐
+Comparisons with Other Languages ⚖️
+Scaling Memory Safety: AI-Assisted Rewrites of C/C++ Dependencies to Rust ⭐
+From Go to Rust
+Experimenting with Function Overloading in Rust: Why It Matters
+Better Batteries
+RISC-V: They should have known better
+Hardware 🛠️
+Arduino Ventuno Q is Here ⭐
+The age of Physical AI is here, and it runs on the Arduino® VENTUNO™ Q board
+NVIDIA Announces End of Life for the Jetson AGX Xavier, Xavier NX Families
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Back to Top
+Tutorials & Walkthroughs 📫
+Embedded Rust BSPs with µFerris & Xiao: Intro to BSPs
+Embedded Rust BSP with µFerris & XIAO: Getting started with µferris-bsp
+Running Neural Networks on a Jetson with Nothing but Rust
+Insights, Tools, & Case Studies 📑
+Why do we even test?
+Building Tyr in Rust, part 3: Managing GPU memory
+GPU Offload in Rust: Portable, Safe, and Fast
+How Ubuntu Is Using Rust to Rebuild Core System Tools ⭐
+Protecting the Rust standard library from accidental breakage
+Advice to Young Developers
+From peripherals to processors: rethinking communication inside the Crazyflie
+Rusty Flying Robots: Learning a Full Robotics Stack with Real-Time Operation on an STM32 Microcontroller
+Zephyr is the DOS-to-Linux moment for embedded
+Rust Foundation Trusted Training Spotlight: Mainmatter
+General Embedded 📟️
+ESP-BIST in Action: A Self-Testing HMI using ESP32-P4
+ESP32 Bit Pirate: a multi-protocol workbench built on the ESP32-S3
+Creating an Arduino Demo With No Coding Experience Using AI
+Security challenges of neuromorphic intelligence on embedded systems
+Automating IoT firmware update orchestration with an AI agent on AWS
+Turn Any Microcontroller Into an IoT Device ⭐
+Reinforcement Learning for Robotics Part 3: Deploy AI Agent to Real Robot (Sim-to-Real)
+Reinforcement Learning for Robotics Part 4: Domain Randomization
+RISC-V Extension Landscape
+Scanning for Lifesigns with ESP32 and Raspberry Pi
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Back to Top
+Notable Device and/or Framework Crate Updates 🚨
+esp-hal v1.2.0-rc.0
+esp-rtos v0.4.0
+esp-storage v0.10.0
+smoltcp v0.14.0
+esp-println v0.18.0
+esp-backtrace v0.20.0
+Upcoming Events & Deadlines 🎭
+RustConf - September 8-11, 2026 - Montreal, Canada
+Oxidize - September 14-16, 2026 - Berlin, Germany
+C-to-Rust Migrations – AMA (Luca P. & Jonas K.) - October 1st, 2026 - Virtual
+EuroRust - October 14-17, 2026 - Barcelona, Spain
+RustLab - November 1-3, 2026 - Bologna, Italy
+Rust Nation UK 2027 – Call for Papers open (closes soon) - London, UK
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+Back to Top
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (New) Systems Software Engineer (Rust, Security) — NXP, Bucharest, Romania
+🦀 Senior Software Engineer, Backend (Rust) — Amo, Paris, France
+🦀 Embedded Rust Engineer — Anori Tech, Hamburg/Hybrid, Germany
+🦀 Software Engineer - Autonomous Air System V&V — Helsing, Berlin/Munich, Germany
+🦀 Software Engineer - Autonomous Air Systems — Helsing, Berlin/Munich, Germany
+🦀 Software Engineer - Airborne Mission Systems — Helsing, Berlin/Munich, Germany
+North America-Based Jobs 🌎
+🦀 Rust Software Engineer, Air Vehicle Autonomy — Anduril Industries, Costa Mesa / Seattle / Washington DC, USA
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 158 | f009090 | https://blog.implrust.com/posts/2026/09/swd-protocol-programmer-embedded-rust | 2026-09-16T00:00:00 | individual-blogs;twir-links ===
+Can You Use ESP32 as SWD Programmer for STM32 with Rust? • impl Blog for RustSkip to content
+impl Blog for Rust
+projects
+tags
+Can You Use ESP32 as SWD Programmer for STM32 with Rust? implFerris
+6th Sep 2026
+•13 min read
+•Tags:
+embedded-rust,
+esp32,
+swd,
+debug-probe,
+stm32,
+stm32f103,
+debugging,
+swd-programmer
+Updated on 16th Sep 2026
+Build a simple SWD debug probe with an ESP32 and Rust. Learn how the ARM Serial Wire Debug protocol works, communicate with an STM32 Blue Pill, and read the target's Debug Port IDCODE.ESP32 connected to the STM32 SWD pins (ignore the logic analyzer)
+INFO
+Yes. You can use an ESP32 as an SWD programmer for an STM32. In this tutorial, we implement the SWD protocol in Rust and use an ESP32 to communicate with an STM32F103C8T6 Blue Pill and read its DP IDCODE. In my next post, I will use it to actually program the STM32F103.
+I was browsing Reddit and came across someone asking how to program the STM32F103C8T6 without an ST-Link V2. They were asking whether it was possible to use an STM32F401RCT6 (Black Pill) board as an SWD programmer for an STM32F103C8T6 (Blue Pill).
+That post made me curious about how the SWD protocol works. Is it possible to build one myself?
+I did not have two STM32 boards at the time (I had broken my Black Pill in a different experiment). I had an ESP32 DevKit and a Blue Pill, along with other boards like the Pico. But I usually use a debug probe or another programmer with those boards. The ESP32 DevKit is the one where I can make fewer connections (since it does not require a debug probe), so I chose it for this experiment.
+SWD
+SWD stands for Serial Wire Debug. It is a debug protocol developed by Arm Limited for communicating with and debugging Arm microcontrollers.
+Before SWD, JTAG was commonly used for debugging and programming microcontrollers. Compared to JTAG, SWD uses only two pins: Clock (SWCLK) and Data (SWDIO).
+Hardware Setup
+We will use an ESP32 DevKit as the SWD programmer and an STM32F103C8T6 Blue Pill as the target.
+The ESP32 and Blue Pill are powered separately through their USB connections. We only need to connect the SWD signals and ground between them.
+ESP32WireSTM32
+GPIO18
+SWCLK (PA14)
+GPIO19
+SWDIO (PA13)
+GND
+GND
+How Does SWD Work?
+SWD uses two signals: SWCLK and SWDIO. The host, which in our case is the ESP32, drives the SWCLK signal and uses the bidirectional SWDIO line to communicate with the target STM32.Simplified SWD debug architecture
+NOTE: A target can have multiple Access Ports (APs). This diagram shows a single AP for simplicity.
+The SWD interface connects to the Debug Port (DP). The DP handles communication with the host and provides access to one or more Access Ports (APs). An AP provides access to different parts of the target system.
+Understanding the SWD Protocol
+A high level on SWDIO represents a logical 1, while a low level represents a logical 0. The host and target sample the SWDIO signal on the rising edge of SWCLK when receiving data.SWD clock and data signals
+SWD transfers data one bit at a time, with bits transmitted least significant bit (LSB) first.
+Implementing the SWD Signals in Rust
+Now that we understand the basic SWD signals, we can implement them in Rust. We will start with the basic operations needed to read and write bits over the SWD interface.
+Generating the SWD Clock
+The SWCLK signal provides the timing for SWD communication. We can generate one clock cycle by driving SWCLK low and then high, with a short delay between each transition.fn clock(&mut self) {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+self.swclk.set_high();
+self.delay.delay_micros(1);
+}
+Each call to clock() generates one SWCLK cycle.
+Switching SWDIO Direction
+Since SWDIO is a bidirectional signal, we will create the SWDIO pin as a Flex. This allows us to switch the pin between input and output.let swdio = Flex::new(peripherals.GPIO19);
+To switch the pin between input and output, we will create two helper functions:fn swdio_output(&mut self) {
+self.swdio.set_input_enable(false);
+self.swdio.set_output_enable(true);
+}
+fn swdio_input(&mut self) {
+self.swdio.set_output_enable(false);
+self.swdio.set_input_enable(true);
+}
+Writing a Bit
+To send a bit to the target, we first set SWDIO to the required logical level and then generate one clock cycle.fn write_bit(&mut self, bit: bool) {
+if bit {
+self.swdio.set_high();
+} else {
+self.swdio.set_low();
+}
+self.swclk.set_low();
+self.delay.delay_micros(1);
+self.swclk.set_high();
+self.delay.delay_micros(1);
+}
+Reading a Bit
+As we learnt, the SWDIO level is sampled on the rising edge of SWCLK. We read the value just before driving SWCLK high so that we capture the bit for that clock cycle.
+So, we first drive SWCLK low. We then read the SWDIO level. Finally, we drive SWCLK high.fn read_bit(&mut self) -> bool {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+let bit = self.swdio.is_high();
+self.swclk.set_high();
+self.delay.delay_micros(1);
+bit
+}
+Reading and Writing Multiple Bits
+Most of the time, we will need to read or write multiple bits as a whole, even though they are sent or received one by one. We will create convenient functions to handle reading and writing multiple bits.
+Because SWD transmits bits least significant bit (LSB) first, write_bits() sends the least significant bit first and shifts the value right after each bit.fn write_bits(&mut self, mut value: u32, count: usize) {
+for _ in 0..count {
+self.write_bit((value & 1) != 0);
+value >>= 1;
+}
+}
+For reading, the first bit received becomes bit 0 of the returned value, the next bit becomes bit 1, and so on.fn read_bits(&mut self, count: usize) -> u32 {
+let mut value = 0;
+for bit in 0..count {
+if self.read_bit() {
+value |= 1 << bit;
+}
+}
+value
+}
+Switching from JTAG to SWD
+Before we can communicate with the target using SWD, we need to switch the debug interface from JTAG to SWD. The ARM specification defines three steps for this:
+Send at least 50 clock cycles with SWDIO held HIGH.
+Send the 16-bit JTAG-to-SWD select sequence. This means sending 0xE79E as bits.
+Send at least 50 clock cycles with SWDIO held HIGH again.Switching from JTAG to SWD operation
+Once this is done, our SWD interface is ready for communication.
+Implementation code for Switching from JTAG to SWD
+First, we will create a helper function for the line reset:fn line_reset(&mut self) {
+self.swdio.set_high();
+for _ in 0..52 {
+self.clock();
+}
+}
+We send 52 clock cycles instead of the required 50 to provide a small margin.
+Now we can implement the JTAG-to-SWD switch:fn switch_to_swd(&mut self) {
+// 1. Put the interface into reset state.
+self.swdio_output();
+self.line_reset();
+// 2. JTAG -> SWD selection sequence.
+// SWD transmits bits LSB first.
+self.write_bits(0xE79E, 16);
+// 3. Put the SWD interface into line reset state.
+self.line_reset();
+self.swdio.set_low();
+// SWD requires at least 2 idle cycles
+for _ in 0..4 {
+self.clock();
+}
+}
+The first line_reset() sends the required clock cycles with SWDIO held HIGH. We then send the JTAG-to-SWD select sequence using 0xE79E.
+After the select sequence, we send another line reset. Finally, we keep SWDIO LOW and generate four clock cycles to leave the interface in the idle state.
+SWD Transaction
+A typical SWD transaction has three phases:
+The host sends an 8-bit request.
+The target responds with a 3-bit acknowledgment.
+A data phase follows. For a read request, the target sends the data to the host. For a write request, the host sends the data to the target.SWD successful read operation - From the ARM specification
+Because SWDIO is bidirectional, the host and target must take turns driving it. A one-cycle turnaround is inserted when control of SWDIO changes. During the turnaround cycle, neither side drives SWDIO.
+In our case, we will read the STM32’s DP IDCODE. The IDCODE is a register in the Debug Port (DP) that contains identification information for the debug port. The host first sends a request to read the register. The target responds with an acknowledgment. The target then sends the 32-bit IDCODE followed by a parity bit.
+SWD Request Packet
+An SWD request is an 8-bit packet sent by the host. It tells the target whether the host wants to access the Debug Port (DP) or an Access Port (AP), whether the operation is a read or write, and which register is being accessed.
+The request packet contains the following fields:SWD request packet and its transfer order.
+Some of the fields are constant in the request. I will explain only the bits that we can change.
+APnDP
+This bit selects which port the request is sent to. A value of 0 selects the Debug Port (DP), while a value of 1 selects an Access Port (AP). The DP provides access to the debug interface itself, while an AP provides access to resources such as the target’s memory system.
+RnW
+This bit selects the type of operation. A value of 0 selects a write, while a value of 1 selects a read.
+Address Bits
+The A2 and A3 bits are used to select the register address. The two lower address bits, A1 and A0, are not included in the request and are always 0. Together, A3 and A2 select one of four possible register offsets:
+A3A2AddressDP register
+000x00IDCODE on read, ABORT on write
+010x04CTRL/STAT
+100x08RESEND on read, SELECT on write
+110x0CRDBUFF on read
+Since we will be reading the IDCODE register, we use address 0x00.
+Parity
+The Parity bit is used to detect errors in the request. It is calculated from the APnDP, RnW, A2, and A3 bits. SWD uses even parity, which means the total number of 1 bits across these five bits must be even.
+For our IDCODE read request, APnDP will be 0 because we are accessing the DP, RnW will be 1 because we are performing a read, and the address will be 0x00, which is the address we saw earlier for IDCODE.APnDP = 0
+RnW   = 1
+A2    = 0
+A3    = 0
+As it is obvious, the number of 1 bits here is odd (only one). So, we have to set the Parity bit to 1 to make the total number of 1 bits even.
+With the Parity bit calculated, the complete request is transferred as follows:Request to Read the IDCODE
+SWD ACK
+After the host sends the request, the target responds with a 3-bit ACK. The ACK tells the host whether the operation was successful.
+There are three possible ACK responses:
+ACKResponseMeaning
+0b001OKThe read or write operation was successful
+0b010WAITThe target is not ready to complete the read or write operation
+0b100FAULTThe target detected a fault during the read or write operation
+If you saw the ACK table in the ARM specification, the values are reversed. For example, the specification shows 0b100 for OK. This is because it is showing the ACK[0:2] field in transfer order, with bit 0 first. Our program reads the bits in the order they arrive and constructs an integer value, so OK becomes 0b001.
+Implementing an SWD Transaction
+We have now seen what an SWD transaction looks like. Let’s implement it step by step, starting with the request packet.
+Building the SWD Request
+First, we need to construct the 8-bit request packet that will be sent by the host.const START_BIT: u8 = 0b1;
+const PARK_BIT: u8 = 0b1 << 7;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Port {
+Dp,
+Ap,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+Read,
+Write,
+}
+fn make_request(port: Port, access: Access, address: u8) -> u8 {
+let ap = u8::from(port == Port::Ap);
+let read = u8::from(access == Access::Read);
+let a2 = (address >> 2) & 1;
+let a3 = (address >> 3) & 1;
+let parity = ap ^ read ^ a2 ^ a3;
+START_BIT | (ap << 1) | (read << 2) | (a2 << 3) | (a3 << 4) | (parity << 5) | PARK_BIT
+}
+Reading the ACK
+After sending the request, the target responds with a 3-bit ACK. We can create a helper function to read and interpret this response.const ACK_OK: u8 = 0b001;
+const ACK_WAIT: u8 = 0b010;
+const ACK_FAULT: u8 = 0b100;
+fn read_ack(&mut self) -> Result<(), SwdError> {
+match self.read_bits(3) as u8 {
+ACK_OK => Ok(()),
+ACK_WAIT => Err(SwdError::Wait),
+ACK_FAULT => Err(SwdError::Fault),
+ack => Err(SwdError::InvalidAck(ack)),
+}
+}
+Reading a Register
+Before reading the register, we need a small helper to put SWDIO into the idle state:fn idle_cycle(&mut self) {
+self.swdio_output();
+self.swdio.set_low();
+for _ in 0..2 {
+self.clock();
+}
+}
+We can now implement the function to read a register. Once we have that, we can create a small wrapper function specifically for reading the DP IDCODE.const DP_IDCODE: u8 = 0x00;
+fn read_register(&mut self, port: Port, address: u8) -> Result<u32, SwdError> {
+let request = Self::make_request(port, Access::Read, address);
+self.swdio_output();
+// Request.
+self.write_bits(request as u32, 8);
+// Turnaround.
+self.swdio_input();
+self.clock();
+// ACK.
+self.read_ack()?;
+// Data.
+let value = self.read_bits(32);
+// Parity.
+let parity = self.read_bit();
+let expected_parity = (value.count_ones() & 1) != 0;
+if parity != expected_parity {
+return Err(SwdError::ParityError);
+}
+// Target -> host turnaround.
+self.swdio_input();
+self.clock();
+// Host now owns SWDIO.
+self.swdio_output();
+self.idle_cycle();
+Ok(value)
+}
+pub fn read_dp_idcode(&mut self) -> Result<u32, SwdError> {
+self.read_register(Port::Dp, DP_IDCODE)
+}
+We first call the make_request function with the port set to Dp, the access type set to Read, and the address of the IDCODE register, which is 0x00.
+As you noticed, the make_request function does not send the request. It gives us the value that needs to be sent. We then put the SWDIO pin in output mode and write those bits.
+After sending the request, we switch the SWDIO pin to input mode. Then we wait for one clock cycle to give control to the target. The target will now send the acknowledgment bits followed by the data bits.
+So, we first read the 3 acknowledgment bits. Then we read the next 32 bits as the IDCODE. Finally, we read the parity bit.
+We then calculate the expected parity from the received IDCODE and compare it with the parity bit we received. If they are different, it means the parity check failed, so we return a ParityError. If they match, we can return the received IDCODE.
+Putting It All Together
+In the main function, we can now call the functions we created. The flow is simple: we switch the target to SWD and then read the DP IDCODE.
+I have created Swd as a struct to keep all the SWD-related functionality together. You can check out the full code for the Swd struct.swd.switch_to_swd();
+esp_println::println!("Reading DP IDCODE...");
+match swd.read_dp_idcode() {
+Ok(idcode) => {
+esp_println::println!("SWD connected!");
+esp_println::println!("DP IDCODE = {:#010x}", idcode);
+}
+Err(error) => {
+defmt::error!("SWD error: {}", error);
+}
+}
+Verifying with a Logic Analyzer
+If you have a logic analyzer, we can use it to see the SWD communication on the wire. You can check out my blog post on using a logic analyzer. PulseView also has an SWD decoder that you can use to decode the captured communication.
+The capture below shows the complete sequence:SWD communication captured with PulseView
+The clock does not look perfectly symmetric in the capture, but an exact 50% duty cycle is not required for SWD. What matters here is that the data is sampled on the rising edge of SWCLK.
+Final Thoughts
+It Ain’t Much, But It’s Honest Work.
+I have not achieved the end goal yet: flashing the STM32 board with an ESP32. But this is the groundwork, and I believe I am on the right track. I am able to successfully communicate with the STM32 over SWD and read its IDCODE.
+You can find the complete project on GitHub.
+My next experiment is to flash the STM32. If I am successful and can fit everything into a blog post, you can read about it in my next blog post.
+Full Code#![no_std]
+#![no_main]
+#![deny(
+clippy::mem_forget,
+reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
+holding buffers for the duration of a data transfer."
+)]
+#![deny(clippy::large_stack_frames)]
+use defmt::error;
+use esp_hal::clock::CpuClock;
+use esp_hal::delay::Delay;
+use esp_hal::gpio::{Flex, Level, Output, OutputConfig};
+use esp_hal::main;
+use esp_println as _;
+#[panic_handler]
+fn panic(panic_info: &core::panic::PanicInfo) -> ! {
+error!("{}", panic_info);
+loop {}
+}
+esp_bootloader_esp_idf::esp_app_desc!();
+const ACK_OK: u8 = 0b001;
+const ACK_WAIT: u8 = 0b010;
+const ACK_FAULT: u8 = 0b100;
+const START_BIT: u8 = 0b1;
+const PARK_BIT: u8 = 0b1 << 7;
+const DP_IDCODE: u8 = 0x00;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Port {
+Dp,
+Ap,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+Read,
+#[allow(dead_code)]
+Write, // Will use later
+}
+struct Swd<'d> {
+swclk: Output<'d>,
+swdio: Flex<'d>,
+delay: Delay,
+}
+#[derive(defmt::Format)]
+enum SwdError {
+Wait,
+Fault,
+InvalidAck(u8),
+ParityError,
+}
+impl<'d> Swd<'d> {
+fn new(swclk: Output<'d>, mut swdio: Flex<'d>, delay: Delay) -> Self {
+swdio.set_input_enable(false);
+swdio.set_output_enable(true);
+swdio.set_low();
+Self {
+swclk,
+swdio,
+delay,
+}
+}
+fn clock(&mut self) {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+self.swclk.set_high();
+self.delay.delay_micros(1);
+}
+fn read_bit(&mut self) -> bool {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+let bit = self.swdio.is_high();
+self.swclk.set_high();
+self.delay.delay_micros(1);
+bit
+}
+fn read_bits(&mut self, count: usize) -> u32 {
+let mut value = 0;
+for bit in 0..count {
+if self.read_bit() {
+value |= 1 << bit;
+}
+}
+value
+}
+fn write_bit(&mut self, bit: bool) {
+if bit {
+self.swdio.set_high();
+} else {
+self.swdio.set_low();
+}
+self.clock();
+}
+fn write_bits(&mut self, mut value: u32, count: usize) {
+for _ in 0..count {
+self.write_bit((value & 1) != 0);
+value >>= 1;
+}
+}
+fn swdio_output(&mut self) {
+self.swdio.set_input_enable(false);
+self.swdio.set_output_enable(true);
+}
+fn swdio_input(&mut self) {
+self.swdio.set_output_enable(false);
+self.swdio.set_input_enable(true);
+}
+fn line_reset(&mut self) {
+self.swdio.set_high();
+for _ in 0..52 {
+self.clock();
+}
+}
+fn switch_to_swd(&mut self) {
+// 1. Put the interface into reset state.
+self.swdio_output();
+self.line_reset();
+// 2. JTAG -> SWD selection sequence.
+// SWD transmits bits LSB first.
+self.write_bits(0xE79E, 16);
+// 3. Put the SWD interface into line reset state.
+self.line_reset();
+self.swdio.set_low();
+// SWD requires at least 2 idle cycles
+for _ in 0..4 {
+self.clock();
+}
+}
+fn make_request(port: Port, access: Access, address: u8) -> u8 {
+let ap = u8::from(port == Port::Ap);
+let read = u8::from(access == Access::Read);
+let a2 = (address >> 2) & 1;
+let a3 = (address >> 3) & 1;
+let parity = ap ^ read ^ a2 ^ a3;
+START_BIT | (ap << 1) | (read << 2) | (a2 << 3) | (a3 << 4) | (parity << 5) | PARK_BIT
+}
+fn read_ack(&mut self) -> Result<(), SwdError> {
+match self.read_bits(3) as u8 {
+ACK_OK => Ok(()),
+ACK_WAIT => Err(SwdError::Wait),
+ACK_FAULT => Err(SwdError::Fault),
+ack => Err(SwdError::InvalidAck(ack)),
+}
+}
+fn idle_cycle(&mut self) {
+self.swdio_output();
+self.swdio.set_low();
+for _ in 0..2 {
+self.clock();
+}
+}
+fn read_register(&mut self, port: Port, address: u8) -> Result<u32, SwdError> {
+let request = Self::make_request(port, Access::Read, address);
+self.swdio_output();
+// Request.
+self.write_bits(request as u32, 8);
+// Turnaround.
+self.swdio_input();
+self.clock();
+// ACK.
+self.read_ack()?;
+// Data.
+let value = self.read_bits(32);
+// Parity.
+let parity = self.read_bit();
+let expected_parity = (value.count_ones() & 1) != 0;
+if parity != expected_parity {
+return Err(SwdError::ParityError);
+}
+// Target -> host turnaround.
+self.swdio_input();
+self.clock();
+// Host now owns SWDIO.
+self.swdio_output();
+self.idle_cycle();
+Ok(value)
+}
+pub fn read_dp_idcode(&mut self) -> Result<u32, SwdError> {
+self.read_register(Port::Dp, DP_IDCODE)
+}
+}
+#[allow(
+clippy::large_stack_frames,
+reason = "it's not unusual to allocate larger buffers etc. in main"
+)]
+#[main]
+fn main() -> ! {
+let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+let peripherals = esp_hal::init(config);
+let delay = Delay::new();
+let swclk = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
+let swdio = Flex::new(peripherals.GPIO19);
+let mut swd = Swd::new(swclk, swdio, delay);
+swd.switch_to_swd();
+esp_println::println!("Reading DP IDCODE...");
+match swd.read_dp_idcode() {
+Ok(idcode) => {
+esp_println::println!("SWD connected!");
+esp_println::println!("DP IDCODE = {:#010x}", idcode);
+}
+Err(error) => {
+defmt::error!("SWD error: {}", error);
+}
+}
+loop {
+core::hint::spin_loop();
+}
+}
+Reference
+Arm Debug Interface Architecture Specification
+Making my own Programmer/Debugger using ARM SWD.
+Programming Internal Flash Over the Serial Wire Debug Interface
+SWD
+Hardware Setup
+How Does SWD Work?
+Understanding the SWD Protocol
+Implementing the SWD Signals in Rust
+Generating the SWD Clock
+Switching SWDIO Direction
+Writing a Bit
+Reading a Bit
+Reading and Writing Multiple Bits
+Switching from JTAG to SWD
+Implementation code for Switching from JTAG to SWD
+SWD Transaction
+SWD Request Packet
+Parity
+SWD ACK
+Implementing an SWD Transaction
+Building the SWD Request
+Reading the ACK
+Reading a Register
+Putting It All Together
+Verifying with a Logic Analyzer
+Final Thoughts
+Full Code
+Reference     Copied!  Copy code to clipboard
+© 2026 ImplRust.com. All rights reserved.
+Search
+No results $NUMBER result $NUMBER results $NUMBER results $NUMBER results
+
+=== ROW 165 | f009632 | https://blog.rust-lang.org/2024/11/06/trademark-update | 2024-11-06 | project-blog ===
+Next Steps on the Rust Trademark Policy | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Next Steps on the Rust Trademark Policy
+Nov. 6, 2024 · the Leadership Council
+As many of you know, the Rust language trademark policy has been the subject of
+an extended revision process dating back to 2022. In 2023, the Rust Foundation
+released an updated draft of the policy for input following an initial survey
+about community trademark priorities from the previous year along with review
+by other key stakeholders, such as the Project Directors. Many members of our
+community were concerned about this initial draft and shared their thoughts
+through the feedback form. Since then, the Rust Foundation has continued to
+engage with the Project Directors, the Leadership Council, and the wider Rust
+project (primarily via all@) for guidance on how to best incorporate as much
+feedback as possible.
+After extensive discussion, we are happy to circulate an updated draft with the
+wider community today for final feedback. An effective trademark policy for an
+open source community should reflect our collective priorities while remaining
+legally sound. While the revised trademark policy cannot perfectly address
+every individual perspective on this important topic, its goal is to establish
+a framework to help guide appropriate use of the Rust trademark and reflect as
+many common values and interests as possible. In short, this policy is designed
+to steer our community toward a shared objective: to maintain and protect the
+integrity of the Rust programming language.
+The Leadership Council is confident that this updated version of the policy has
+addressed the prevailing concerns about the initial draft and honors the
+variety of voices that have contributed to its development. Thank you to those
+who took the time to submit well-considered feedback for the initial draft last
+year or who otherwise participated in this long-running process to update our
+policy to continue to satisfy our goals.
+Please review the updated Rust trademark policy here, and share
+any critical concerns you might have via this form by November 20, 2024.
+The Foundation has also published a blog post which goes into more
+detail on the changes made so far. The Leadership Council and Project Directors
+look forward to reviewing concerns raised and approving any final revisions
+prior to an official update of the policy later this year.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 167 | f009704 | https://blog.rust-lang.org/2025/08/19/demoting-x86-64-apple-darwin-to-tier-2-with-host-tools | 2025-08-19 | project-blog;twir-links ===
+Demoting x86_64-apple-darwin to Tier 2 with host tools | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Demoting x86_64-apple-darwin to Tier 2 with host tools
+Aug. 19, 2025 · Jake Goulding
+on behalf of the Infrastructure team
+In Rust 1.90.0, the target x86_64-apple-darwin will be demoted to Tier 2 with host tools.
+The standard library and the compiler will continue to be built and distributed,
+but automated tests of these components are no longer guaranteed to be run.
+Background
+Rust has supported macOS for a long time,
+with some amount of support dating back to Rust 0.1 and likely before that.
+During that time period,
+Apple has changed CPU architectures from x86 to x86_64 and now to Apple silicon,
+ultimately announcing the end of support for the x86_64 architecture.
+Similarly,
+GitHub has announced that they will no longer provide free macOS x86_64 runners for public repositories.
+The Rust Project uses these runners to execute automated tests for the x86_64-apple-darwin target.
+Since the target tier policy requires that Tier 1 platforms must run tests in CI,
+the x86_64-apple-darwin target must be demoted to Tier 2.
+What changes?
+Starting with Rust 1.90.0, x86_64-apple-darwin will be Tier 2 with host tools.
+For users,
+nothing will change immediately;
+builds of both the standard library and the compiler will still be distributed by the Rust Project for use via rustup or alternative installation methods.
+Over time,
+this target will likely accumulate bugs faster due to reduced testing.
+Future
+If the x86_64-apple-darwin target causes concrete problems,
+it may be demoted further.
+No plans for further demotion have been made yet.
+For more details on the motivation of the demotion, see RFC 3841.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 168 | f009751 | https://blog.rust-lang.org/2026/08/26/announcing-our-first-maintainers-in-residence | 2026-08-26 | project-blog;twir-links ===
+Announcing our first Maintainers in Residence | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Announcing our first Maintainers in Residence
+Aug. 26, 2026 · Lori Lorusso, Jakub Beránek
+on behalf of the Funding team
+We are very happy to announce the Rust Project's first round of Maintainers in Residence:
+Gen Li (@rami3l), Chris Denton (@ChrisDenton), Alejandra González (@blyxyas), León Liehr (@fmease), and Maintainer Grant recipients: Jason Newcomb (@Jarcho) and Jonas Böttiger (@joboet). These contributors will be funded for their rust-lang maintenance activities for (at least) the following 12 months!
+The funding of the Maintainer in Residence (MiR) and Maintainer Grantee roles is possible thanks to generous donations to the Rust Foundation Maintainers Fund (RFMF) from Google, AWS, OpenAI, the Rust Project Leadership Council and also individual sponsors. We also want to thank the people who advocated for maintainer funding within their companies; Tyler Mandry from Google, Niko Matsakis and Jess Izen from AWS and Predrag Gruevski from OpenAI, and also the whole Rust Leadership Council and our funding advisors. If you would like to help us support even more Rust contributors, consider donating to RFMF.
+The Rust Foundation has published a press release and a blog post, where you can learn more about the sponsors and the supported contributors.
+Read more below to learn about the MiR program, how we chose the funded contributors, and of course who they are!
+Background
+The Maintainer in Residence program, established in RFC 3931, is designed to provide stable financial support for Rust contributors, so that they can truly focus on crucial maintenance activities. Currently, there are three categories of support that we offer:
+Full-time MiR: funded for 5 days/week of Rust Project work
+Half-time MiR: funded for ~2.5 days/week of Rust Project work
+Maintainer Grant: funded for ~1 day/week of Rust Project work
+Funding for this program comes from the Rust Foundation Maintainers Fund, which was launched recently, and the whole program is managed by the Rust Funding team.
+When deciding who to fund, we took a systematic approach. First, we looked at Rust teams to understand their maintenance baseline (the smallest number of maintainers they need to ensure a healthy long-term status of the given project or repository), and how far they currently are from that baseline. From there, we identified and prioritized Rust teams who were both critically underfunded, and have a high impact on the language and its users. These teams (in no particular order) were rustdoc, rustup, cargo, compiler, libs, clippy, rustfmt, rust analyzer and mods.
+The next step was pairing these teams with maintainers looking for funding. And it turns out that finding such maintainers for some teams turned out to be much more difficult than we originally assumed! For example, some maintainers are already employed, some do not want to be funded, and while we did our best to promote our funding efforts, not everyone looking for funding actually asked us for it. We also realized that some teams on our list have essentially no active members, which makes it tricky to onboard new contributors, even if they would like to help out.
+In the end, we decided to start by supporting six contributors, who will help maintain several critical Rust projects and teams and who could start immediately. However, we are not stopping there. Our funding efforts are ongoing, so stay tuned for more MiR announcements in the near future! If you would like to learn more about our process, check out our recent post.
+And now, without further ado, let's meet our newly funded maintainers!
+Gen Li (@rami3l)
+Gen Li (@rami3l) is a full-time MiR focusing on Rustup.
+He has been a Rustup team member since 2023 and its lead since 2025. He deeply cares about the facets of Rust that many might have taken for granted, and embodies all attributes we were looking for in a MiR: he wants to take on complex issues, continue mentoring, and work on important Rustup features, among many other things.
+Turning volunteering into an actual job has really been an empowering experience so far! I finally have the bandwidth to take a careful look at my inbox and can actually read each message without the fear of missing crucial details while rushing prompt replies, which has really helped me retain the essential compassion as a maintainer. I also get to interact with regular contributors a lot more often. Finally, I can't wait to see what I can come up with in terms of Project Goals :)
+Chris Denton (@ChrisDenton)
+Chris Denton (@ChrisDenton) is a half-time MiR focusing on the standard library, compiler, Rustup and anything Windows-related.
+For the past five years Chris has been bringing his deep knowledge of Windows to help Rust sustain and improve its great cross-platform support. He will be unblocking other contributors in various Windows use cases, performing refactoring and code reviews and implementing new features across several areas of the Project.
+Even though it is still early days, I'm feeling pretty optimistic about the health of the Rust Project going forward, thanks to the recent funding efforts.
+Alejandra González (@blyxyas)
+Alejandra González (@blyxyas) is a half-time MiR focusing on Clippy.
+She is a Clippy team member always keen on improving performance and helping new contributors. She will focus on making Clippy faster and also reviewing its pull requests, to help get the ~300 pull request backlog down. Additionally, she is excited to mentor people from the Rust for Linux project to work on Clippy, and fine tune the open peer review system that Clippy started using earlier this year.
+Funding is the system that helps me pour my heart into a project without worrying about making ends meet. Having those needs met is a game-changer and boosts my productivity. One of the areas where I want to focus my efforts is mentoring new contributors. If new people coming is the lifeblood of a project, I want to be the cardiologist!
+León Liehr (@fmease)
+León Liehr (@fmease) is a half-time MiR focusing on rustdoc and the compiler.
+He is a member of the rustdoc and compiler teams, who is usually working on the Rust type system or issues related to parsing. He will continue working on complex features that he started a few years ago, and also focus on general maintenance, code reviews, refactoring and mentoring.
+Being funded to work on Rust means I can sustainably focus my time and energy on a project I call a passion of mine.
+Jonas Böttiger (@joboet)
+Jonas Böttiger (@joboet) is a maintainer grantee focusing on the standard library.
+He is a musicology student from Germany. When he is not playing the Cello or reading about Fanny Hensel, he applies his research skills to ensure that programs written in Rust run quickly and soundly on all platforms, no matter how quirky the operating system may be. He loves helping contributors write excellent code that they can be proud of; and considers it to be just as much fun as writing it himself.
+Getting funding for my work is a dream come true. It will allow me to continue doing the thing I love instead of worrying about whether I should rather invest all that time in a money-earning job with much less positive impact on the world around me.
+Jason Newcomb (@Jarcho)
+Jason Newcomb (@Jarcho) is a maintainer grantee focusing on Clippy.
+He is primarily working on fixing bugs and making it easier to develop and contribute to Clippy. He is also focusing on making the review process as smooth as possible.
+Being funded allows me to work on something I care about and want to work on instead of what will get me paid. I'm looking forward to seeing how this will impact Clippy and the Rust project in general.
+Conclusion
+The contributors presented above will be funded for the next 12 months, though of course we hope that we will be able to extend their support going further, as this program is designed to be for long-term stable maintenance funding. We are very excited about them; each one of them has been with the Project for years, and we are very glad that we can support their maintenance work! All of them have already signed their contracts, so they are already being funded as we speak.
+While there are many other Rust contributors who are doing awesome work, and who would also deserve to get proper funding for it, we think that this is a great start. We hope that the awesome work done by the funded maintainers will allow us to promote this program, so that we can fund even more Rust contributors!
+We would like to once again sincerely thank everyone who made this possible, especially our sponsors. If you would like to help us fund more maintainers, consider donating to RFMF. You can also sponsor individual Rust contributors directly.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 182 | f011484 | https://github.com/rust-lang/rfcs/labels/final-comment-period | 2023-09-27T00:00:00 | twir-links ===
+RFCs for changes to Rust
+
+# Rust RFCs - [RFC Book](https://rust-lang.github.io/rfcs/) - [Active RFC List](https://rfcbot.rs/)
+
+[Rust RFCs]: #rust-rfcs
+
+The "RFC" (request for comments) process is intended to provide a consistent
+and controlled path for changes to Rust (such as new features) so that all
+stakeholders can be confident about the direction of the project.
+
+Many changes, including bug fixes and documentation improvements can be
+implemented and reviewed via the normal GitHub pull request workflow.
+
+Some changes though are "substantial", and we ask that these be put through a
+bit of a design process and produce a consensus among the Rust community and
+the [sub-team]s.
+
+## Table of Contents
+[Table of Contents]: #table-of-contents
+
+  - [Opening](#rust-rfcs)
+  - [Table of Contents]
+  - [When you need to follow this process]
+  - [Sub-team specific guidelines]
+  - [Before creating an RFC]
+  - [What the process is]
+  - [The RFC life-cycle]
+  - [Reviewing RFCs]
+  - [Implementing an RFC]
+  - [RFC Postponement]
+  - [Help this is all too informal!]
+  - [License]
+  - [Contributions]
+
+
+## When you need to follow this process
+[When you need to follow this process]: #when-you-need-to-follow-this-process
+
+You need to follow this process if you intend to make "substantial" changes to
+Rust, Cargo, Crates.io, or the RFC process itself. What constitutes a
+"substantial" change is evolving based on community norms and varies depending
+on what part of the ecosystem you are proposing to change, but may include the
+following.
+
+  - Any semantic or syntactic change to the language that is not a bugfix.
+  - Removing language features, including those that are feature-gated.
+  - Large additions to `std`.
+
+Some changes do not require an RFC:
+
+  - Rephrasing, reorganizing, refactoring, or otherwise "changing shape does
+    not change meaning".
+  - Additions that strictly improve objective, numerical quality criteria
+    (warning removal, speedup, better platform coverage, more parallelism, trap
+    more errors, etc.)
+  - Additions only likely to be _noticed by_ other developers-of-rust,
+    invisible to users-of-rust.
+  - Minor additions to `std`: these only require an [ACP](https://std-dev-guide.rust-lang.org/development/feature-lifecycle.html).
+
+If you submit a pull request to implement a new feature without going through
+the RFC process, it may be closed with a polite request to submit an RFC first.
+
+
+### Sub-team specific guidelines
+[Sub-team specific guidelines]: #sub-team-specific-guidelines
+
+For more details on when an RFC is required for the following areas, please see
+the Rust community's [sub-team] specific guidelines for:
+
+  - [language changes](lang_changes.md),
+  - [library changes](libs_changes.md),
+  - [compiler changes](compiler_changes.md).
+
+
+## Before creating an RFC
+[Before creating an RFC]: #before-creating-an-rfc
+
+A hastily-proposed RFC can hurt its chances of acceptance. Low quality
+proposals, proposals for previously-rejected features, or those that don't fit
+into the near-term roadmap, may be quickly rejected, which can be demotivating
+for the unprepared contributor. Laying some groundwork ahead of the RFC can
+make the process smoother.
+
+Although there is no single way to prepare for submitting an RFC, it is
+generally a good idea to pursue feedback from other project developers
+beforehand, to ascertain that the RFC may be desirable; having a consistent
+impact on the project requires concerted effort toward consensus-building.
+
+The most common preparations for writing and submitting an RFC include talking
+the idea over on our [official Zulip server], discussing the topic on our
+[developer discussion forum], and occasionally posting "pre-RFCs" on the
+developer forum. You may file issues on this repo for discussion, but these are
+not actively looked at by the teams.
+
+As a rule of thumb, receiving encouraging feedback from long-standing project
+developers, and particularly members of the relevant [sub-team] is a good
+indication that the RFC is worth pursuing.
+
+
+## What the process is
+[What the process is]: #what-the-process-is
+
+In short, to get a major feature added to Rust, one must first get the RFC
+merged into the RFC repository as a markdown file. At that point the RFC is
+"active" and may be implemented with the goal of eventual inclusion into Rust.
+
+  - Fork the RFC repo [RFC repository]
+  - Copy `0000-template.md` to `text/0000-my-feature.md` (where "my-feature" is
+    descriptive). Don't assign an RFC number yet; This is going to be the PR
+    number and we'll rename the file accordingly if the RFC is accepted.
+  - Fill in the RFC. Put care into the details: RFCs that do not present
+    convincing motivation, demonstrate lack of understanding of the design's
+    impact, or are disingenuous about the drawbacks or alternatives tend to
+    be poorly-received.
+  - Submit a pull request. As a pull request the RFC will receive design
+    feedback from the larger community, and the author should be prepared to
+    revise it in response.
+  - Now that your RFC has an open pull request, use the issue number of the PR
+    to rename the file: update your `0000-` prefix to that number. Also
+    update the "RFC PR" link at the top of the file.
+  - Each pull request will be labeled with the most relevant [sub-team], which
+    will lead to its being triaged by that team in a future meeting and assigned
+    to a member of the subteam.
+  - Build consensus and integrate feedback. RFCs that have broad support are
+    much more likely to make progress than those that don't receive any
+    comments. Feel free to reach out to the RFC assignee in particular to get
+    help identifying stakeholders and obstacles.
+  - The sub-team will discuss the RFC pull request, as much as possible in the
+    comment thread of the pull request itself. Offline discussion will be
+    summarized on the pull request comment thread.
+  - RFCs rarely go through this process unchanged, especially as alternatives
+    and drawbacks are shown. You can make edits, big and small, to the RFC to
+    clarify or change the design, but make changes as new commits to the pull
+    request, and leave a comment on the pull request explaining your changes.
+    **Specifically, do not squash or rebase commits after they are visible on
+    the pull request.**
+  - At some point, a member of the subteam will propose a "motion for final
+    comment period" (FCP), along with a *disposition* for the RFC (merge, close,
+    or postpone).
+    - This step is taken when enough of the tradeoffs have been discussed that
+      the subteam is in a position to make a decision. That does not require
+      consensus amongst all participants in the RFC thread (which is usually
+      impossible). However, the argument supporting the disposition on the RFC
+      needs to have already been clearly articulated, and there should not be a
+      strong consensus *against* that position outside of the subteam. Subteam
+      members use their best judgment in taking this step, and the FCP itself
+      ensures there is ample time and notification for stakeholders to push
+      back if it is made prematurely.
+    - For RFCs with lengthy discussion, the motion to FCP is usually preceded by
+      a *summary comment* trying to lay out the current state of the discussion
+      and major tradeoffs/points of disagreement.
+    - Before actually entering FCP, *all* members of the subteam must sign off;
+      this is often the point at which many subteam members first review the
+      RFC in full depth.
+  - The FCP lasts ten calendar days, so that it is open for at least 5 business
+    days. It is also advertised widely,
+    e.g. in [This Week in Rust](https://this-week-in-rust.org/). This way all
+    stakeholders have a chance to lodge any final objections before a decision
+    is reached.
+  - In most cases, the FCP period is quiet, and the RFC is either merged or
+    closed. However, sometimes substantial new arguments or ideas are raised,
+    the FCP is canceled, and the RFC goes back into development mode.
+
+## The RFC life-cycle
+[The RFC life-cycle]: #the-rfc-life-cycle
+
+Once an RFC becomes "active" then authors may implement it and submit the
+feature as a pull request to the Rust repo. Being "active" is not a rubber
+stamp, and in particular still does not mean the feature will ultimately be
+merged; it does mean that in principle all the major stakeholders have agreed
+to the feature and are amenable to merging it.
+
+Furthermore, the fact that a given RFC has been accepted and is "active"
+implies nothing about what priority is assigned to its implementation, nor does
+it imply anything about whether a Rust developer has been assigned the task of
+implementing the feature. While it is not *necessary* that the author of the
+RFC also write the implementation, it is by far the most effective way to see
+an RFC through to completion: authors should not expect that other project
+developers will take on responsibility for implementing their accepted feature.
+
+Modifications to "active" RFCs can be done in follow-up pull requests. We
+strive to write each RFC in a manner that it will reflect the final design of
+the feature; but the nature of the process means that we cannot expect every
+merged RFC to actually reflect what the end result will be at the time of the
+next major release.
+
+In general, once accepted, RFCs should not be substantially changed. Only very
+minor changes should be submitted as amendments. More substantial changes
+should be new RFCs, with a note added to the original RFC. Exactly what counts
+as a "very minor change" is up to the sub-team to decide; check
+[Sub-team specific guidelines] for more details.
+
+
+## Reviewing RFCs
+[Reviewing RFCs]: #reviewing-rfcs
+
+While the RFC pull request is up, the sub-team may schedule meetings with the
+author and/or relevant stakeholders to discuss the issues in greater detail,
+and in some cases the topic may be discussed at a sub-team meeting. In either
+case a summary from the meeting will be posted back to the RFC pull request.
+
+A sub-team makes final decisions about RFCs after the benefits and drawbacks
+are well understood. These decisions can be made at any time, but the sub-team
+will regularly issue decisions. When a decision is made, the RFC pull request
+will either be merged or closed. In either case, if the reasoning is not clear
+from the discussion in thread, the sub-team will add a comment describing the
+rationale for the decision.
+
+
+## Implementing an RFC
+[Implementing an RFC]: #implementing-an-rfc
+
+Some accepted RFCs represent vital features that need to be implemented right
+away. Other accepted RFCs can represent features that can wait until some
+arbitrary developer feels like doing the work. Every accepted RFC has an
+associated issue tracking its implementation in the Rust repository; thus that
+associated issue can be assigned a priority via the triage process that the
+team uses for all issues in the Rust repository.
+
+The author of an RFC is not obligated to implement it. Of course, the RFC
+author (like any other developer) is welcome to post an implementation for
+review after the RFC has been accepted.
+
+If you are interested in working on the implementation for an "active" RFC, but
+cannot determine if someone else is already working on it, feel free to ask
+(e.g. by leaving a comment on the associated issue).
+
+
+## RFC Postponement
+[RFC Postponement]: #rfc-postponement
+
+Some RFC pull requests are tagged with the "postponed" label when they are
+closed (as part of the rejection process). An RFC closed with "postponed" is
+marked as such because we want neither to think about evaluating the proposal
+nor about implementing the described feature until some time in the future, and
+we believe that we can afford to wait until then to do so. Historically,
+"postponed" was used to postpone features until after 1.0. Postponed pull
+requests may be re-opened when the time is right. We don't have any formal
+process for that, you should ask members of the relevant sub-team.
+
+Usually an RFC pull request marked as "postponed" has already passed an
+informal first round of evaluation, namely the round of "do we think we would
+ever possibly consider making this change, as outlined in the RFC pull request,
+or some semi-obvious variation of it." (When the answer to the latter question
+is "no", then the appropriate response is to close the RFC, not postpone it.)
+
+
+### Help this is all too informal!
+[Help this is all too informal!]: #help-this-is-all-too-informal
+
+The process is intended to be as lightweight as reasonable for the present
+circumstances. As usual, we are trying to let the process be driven by
+consensus and community norms, not impose more structure than necessary.
+
+
+## License
+[License]: #license
+
+This repository is currently in the process of being licensed under either of:
+
+* Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or https://www.apache.org/licenses/LICENSE-2.0)
+* MIT license ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
+
+at your option. Some parts of the repository are already licensed according to those terms. For more see [RFC 2044](https://github.com/rust-lang/rfcs/pull/2044) and its [tracking issue](https://github.com/rust-lang/rust/issues/43461).
+
+
+### Contributions
+[Contributions]: #contributions
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+
+[official Zulip server]: https://rust-lang.zulipchat.com/
+[developer discussion forum]: https://internals.rust-lang.org/
+[RFC repository]: https://github.com/rust-lang/rfcs
+[sub-team]: https://www.rust-lang.org/team.html
+
+
+=== ROW 184 | f011614 | https://bupt-os.github.io/website/news/2023_12_9/satellite_launch | 2023-12-20T00:00:00 | twir-links ===
+The Tianyi-33 Satellite Equipped with RROS Successfully Entered Orbit. | RROS
+RROS
+RROS
+Docs
+News
+Zulip
+GitHub
+Search
+Search
+Cancel
+Loading search index…
+No recent searches
+No results for "Query here"
+to select
+to navigate
+to close
+Search by FlexSearch
+The Tianyi-33 Satellite Equipped with RROS Successfully Entered Orbit.
+At 7:39 AM on December 9th, the Zhuque-2 YAO-3 launch vehicle was successfully launched from the Jiuquan Satellite Launch Center in China. It successfully placed the Honghu Satellite, Tianyi-33 Satellite, and Honghu-2 Satellite into their designated orbits. The launch mission was a complete success.
+The Zhuque-2 YAO-3 launch vehicle was launched from China’s Jiuquan Satellite Launch Center(Image Source: Xinhua News Agency)
+The Tianyi-33 satellite is a 50kg class space science experimental satellite equipped with an operating system independently developed by Beijing University of Posts and Telecommunications—the Rust-based dual-kernel real-time operating system RROS. RROS will carry out general tasks represented by tensorflow/k8s and real-time tasks represented by real-time file systems and real-time network transmission on the satellite. It will ensure the normal execution of upper-layer applications and scientific research tasks, such as time-delay measurement between satellite and ground, live video broadcasting, onboard web chat services, pseudo-SSH experiments, etc. This marks the world’s first official application of a Rust-written dual-kernel operating system in a satellite scenario.
+The Tianyi-33 satellite
+Last updated on December 10, 2023
+Edit this page on GitHub
+PrevRROS is presented in Open Source Operating System Annual Technical Conference 2024
+NextRROS is presented in Xenomai Workshop 2023
+Privacy Policy
+Powered by Hyas
+

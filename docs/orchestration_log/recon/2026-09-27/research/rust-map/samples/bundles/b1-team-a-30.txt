@@ -1,0 +1,714 @@
+=== ROW 198 | f013276 | https://users.rust-lang.org/t/abstract-factory-trait-with-generic-method/122066 | 2024-12-05 | users-forum ===
+Abstract Factory - Trait with generic method
+
+@spigaz · 2024-12-05T04:47:16.685Z:
+I'm trying to implement the Abstract Factory pattern
+pub trait EventStore: Debug {
+fn create_stream<T: Codable>(&self, name: String) -> Result<Box<dyn EventStream<T>>, EventStoreError>;
+}
+The event stream receives events, serializes them and deserializes them using their type information:
+#[async_trait(?Send)]
+pub trait EventStream<T>: Debug + 'static {
+async fn append(&mut self, events: &[T]) -> Result<(), EventStreamError>;
+async fn events<'a>(&'a mut self) -> Result<&'a [T], EventStreamError>
+where
+T: 'a;
+}
+A current sample usage is:
+pub struct Test<T: Codable> {
+stream: Box<dyn EventStream<T>>,
+}
+impl<T: Codable> Test<T> {
+pub fn new<E: EventStore>(event_store: E) -> Self {
+Self { stream: event_store.create_stream::<T>("test".to_string()).unwrap() }
+}
+pub async fn has_events(&mut self) -> bool {
+if let Ok(events) = self.stream.events().await {
+events.len() > 0
+} else {
+false
+}
+}
+}
+And it works pretty well, as long as I use it that way, the problem is if I try to use it as an Rc:
+pub fn new(event_store: Rc<dyn EventStore>) -> Self {
+Self { stream: event_store.create_stream::<T>("test".to_string()).unwrap() }
+}
+error[E0038]: the trait `EventStore` cannot be made into an object
+I think I understood well enough why this approach isn't supported, but I still believe there should be a smarter way to implement this in rust.
+The implementations of the Trait are dependency inject as they are supposed to be, so those enum dispatch strategies variants, I can't use.
+I have tried several approaches using impl dyn, but I ended always loosing the type that I need in the concrete implementation to create the proper EventStream.
+I appreciate all the help I can get, because for sure I'm missing something.
+Thank you!
+
+---
+
+@sirius-cc-wu · 2024-12-05T05:27:45.369Z:
+What do you mean with 'try to use it as Rc'? Have you an example?
+
+---
+
+@Fancyflame · 2024-12-05T05:27:53.786Z:
+The information is too little, it's better if I know what you are going to do with dyn EventStream<T> or the content of EventStream<T>.
+spigaz:
+but I ended always loosing the type that I need in the concrete implementation to create the proper EventStream.
+If you want to convert a type to a trait object, the count of the implementations is fixed, which means you cannot make more implementations dependent on the type.
+If the type doesn't affect the implementation, just return a concrete type (without generic) then convert to Box<dyn EventStream<T>> later.
+If you need to know some certain information of the type (even functions), just input them and return a concrete type.
+
+---
+
+@spigaz · 2024-12-05T14:12:52.834Z:
+Hi, thank you for the heads up!
+I already improved my post to make it clear using your feedback and added a concrete same usage:
+pub fn new(event_store: Rc<dyn EventStore>) -> Self {
+Self { stream: event_store.create_stream::<T>("test".to_string()).unwrap() }
+}
+error[E0038]: the trait `EventStore` cannot be made into an object
+Thank you!
+
+---
+
+@spigaz · 2024-12-05T14:27:16.009Z:
+Hi, thank you, I already improved my post to clarify it.
+The type does affect the implementation, as its information is used to serialize and deserialize the events that are passed to the event stream.
+But you are right, there are the functions that are called, but they depend on the Codec, for instance, for Json, Serde Serialize and Deserialize are used.
+Although there are already other codecs, so for now at least 4 functions would have to be passed.
+Even if that approach would work, it would make the implementation more complex and less clear.
+Thank you!
+
+---
+
+@quinedot · 2024-12-05T19:01:17.935Z:
+The problem is trying to create a dyn EventStore generally, not Rc<dyn EventStore> specifically.
+If you want EventStore to be dyn-capable, you need to make T a parameter of EventStore instead of a generic on create_stream, or remove the method from the trait, or find a way to type-erase T.  (You haven't shared Codable, so it's hard to say if dyn Codable is an option.  It's sounds like you believe type erasing T isn't an option anyway.)
+
+---
+
+@spigaz · 2024-12-05T19:38:40.360Z:
+Yes, you are correct, its more general, but it was just to provide a more concrete context.
+Like you need regarding Codable, that is just a trait that extends the Serde traits and some other.
+I can't make T a parameter of EventStore because each stream serializes different type of events.
+Type Erasing prevents me from creating the proper event stream that requires the type, so that its able to deserialize back the events, I tried several strategies around this.
+I even got as far as implementing the method only for Self : Sized, and impl the method for dyn EventStore, but I couldn't find a way to dispatch to the concrete type.
+Thank you!
+
+---
+
+@quinedot · 2024-12-05T20:09:57.322Z:
+spigaz:
+Like you need regarding Codable, that is just a trait that extends the Serde traits and some other.
+Okay, and serde isn't dyn-capable either.  I don't know if it will help your use case or not, but you may be interested in the erased_serde crate, which provides some dyn-capable versions of serde traits.
+
+---
+
+@jumpnbrownweasel · 2024-12-05T20:32:11.619Z:
+spigaz:
+And it works pretty well, as long as I use it that way, the problem is if I try to use it as an Rc:
+pub fn new(event_store: Rc<dyn EventStore>) -> Self {
+Self { stream: event_store.create_stream::<T>("test".to_string()).unwrap() }
+}
+Just to be clear, you can use it as an Rc, but not with dyn EventStore:
+impl<T: Codable> Test<T> {
+pub fn new<E: EventStore>(event_store: Rc<E>) -> Self {
+Self {
+stream: event_store.create_stream::<T>("test".to_string()).unwrap(),
+}
+}
+I'm trying to implement the Abstract Factory pattern
+I suggest trying to use generic types like Rc<E> above, if possible. Factories are rarely used in Rust.
+BTW, why are you erasing EventStore? Is this for mocking in tests?
+
+---
+
+@spigaz · 2024-12-05T20:56:24.503Z:
+I wasn't aware of that crate, thank you!
+My objective is to simplify the API, and that crate or the strategy it follows doesn't seem to help in that sense. And if it did, it would imply refactoring all the implementation and codecs.
+But I'm giving it a look, just in case...
+Thank you!
+
+---
+
+@spigaz · 2024-12-05T21:06:35.669Z:
+Yes, I already use it as a generic type and in that situation I can use the Rc if I want to, but the problem is to abstract that.
+The default design pattern is for a MemoryEventStore that I use for testing, but it also allows to use different EventStore implementations and decorators.
+For instance, to replicate the streams to different cloud providers, or storage solutions, or to store them in different formats.
+Thank you!
+
+---
+
+@jumpnbrownweasel · 2024-12-05T22:41:05.581Z:
+spigaz:
+Yes, I already use it as a generic type and in that situation I can use the Rc if I want to, but the problem is to abstract that.
+This abstraction doesn't seem possible with trait objects, as they're not nearly as capable as generics and you're pushing them over their limits. Abstraction in Rust is better supported with generics. Using generics unfortunately will require lots of type params in many places, but that seems unavoidable in this case.
+
+---
+
+@parasyte · 2024-12-05T23:20:50.930Z:
+I would really like to be able to see these complex designs in context when they come up. I know there is motivation for it, but it's all so invisible without a legitimate repo to see the architecture.
+spigaz:
+Yes, I already use it as a generic type and in that situation I can use the Rc if I want to, but the problem is to abstract that.
+?
+It's already abstract through the E: EventStore generic parameter. Type erasure often hurts more than it helps, but there must be some other motivation for it than making the code "more abstract".
+You go on to list a number of different implementations you might want to use, but I'm having some difficulty finding where type erasure is needed for any of those specifically. Are you putting these varying implementations into a heterogenous collection?
+
+---
+
+@spigaz · 2024-12-05T23:36:13.097Z:
+So far yes, thats precisely what ends up happening and what I wanted to avoid, because I end up having to propagate the generic parameter till where the dependency injection happens.
+
+---
+
+@spigaz · 2024-12-06T00:50:42.394Z:
+parasyte:
+I would really like to be able to see these complex designs in context when they come up. I know there is motivation for it, but it's all so invisible without a legitimate repo to see the architecture.
+They come up is the context of dependency injection in Clean Architecture, DDD, Onion Architecture, Hexagonal Architecture or in a more general way as ports and adapters.
+In this regard, the point is pretty much the same, to define an abstract interface / api / port, then implement concrete types that actually implement the functionality for a given context, the adapter if you want.
+An example is UsersRepository and then a PostresRepository and a MySqlRepository, but in theory you should apply this to all external dependencies.
+Then in the application configuration you have to pass as argument all those concrete types or adapters to instantiate the application.
+That's the way I end up in the situation that @jumpnbrownweasel mentioned, even using type alias whenever I can, I ended up in one particular situation to have a type declaration that spanned 2 lines.
+To minimize this, I use local configurations that allow me to simplify the final application configuration.
+parasyte:
+It's already abstract through the E: EventStore generic parameter.
+Correct, what I want to abstract is to have it work like impl, if you want, as in, you can receive the concrete type that implements the trait, and its stays contained, but for know only dyn is supported in a field struct.
+Just to make it clear the ideal would be something like:
+pub struct State {
+store: Box<impl EventStore>,
+}
+But I'm trying to compromise, by aiming at:
+pub struct State {
+Store: Box<dyn EventStore>,
+}
+Instead of doing:
+pub struct State<E: EventStore> {
+Store: E,
+}
+This fragment belongs to a router Actor State that handles incoming requests and has to create streams for the handlers.
+In practice most code complexity of that actor ends up being from generic types.
+parasyte:
+You go on to list a number of different implementations you might want to use, but I'm having some difficulty finding where type erasure is needed for any of those specifically. Are you putting these varying implementations into a heterogenous collection?
+I experimented many different strategies from different sources for the same kind of problem, type erasure is just one that pops up a lot, but I wasn't able to get any to work, some I got close enough, but they always seemed to be a dead end.
+parasyte:
+Type erasure often hurts more than it helps
+parasyte:
+I'm having some difficulty finding where type erasure is needed for any of those specifically.
+Regarding type erasures, I completely agree with you.
+Thanks!
+
+---
+
+@quinedot · 2024-12-06T01:21:37.914Z:
+spigaz:
+Correct, what I want to abstract is to have it work like impl, if you want, as in, you can receive the concrete type that implements the trait, and its stays contained, but for know only dyn is supported in a field struct.
+Just to make it clear the ideal would be something like:
+impl Trait does not work like that (or what I think you mean anyway).  dyn is the closest thing that Rust has that works something sortof like that, but as I believe you understand, it's not really the same thing.
+There are[1] two distinct impl Trait concepts.  One is an opaque type alias that's the output of some other (perhaps parameterized) construct -- so far methods and functions.[2]
+// Here, for every "input" `T`, the `impl Trait` is an opaque type for
+// some concrete type that implement `Trait + Sized` (and perhaps some
+// auto-traits).
+fn rpit_example<T>(foo: T) -> impl Trait {
+// ...
+}
+If this was supported in the context of State,[3] this would mean that you really have a Box<OneSingleConcreteType>, which isn't what you want.
+The other impl Trait concept is in argument position, where it's actually just a poor[4] alternative to generics.
+fn apit_example(foo: impl Trait) {}
+// Mostly the same as
+fn example<Foo: Trait>(foo: Foo) {}
+// (but less capable in various ways due to removing the name of the generic)
+So if this was supported in the context of State, it would just mean this:[5]
+// n.b. this is also non-ideal because one doesn't usually put trait bounds
+// on type generics at the definition site unless necessary
+pub struct State<E: EventStore> {
+store: Box<E>,
+}
+This also isn't what you want.  Or maybe it is, syntactically, and you've rejected generics on something along aesthetic grounds; I'm not completely sure.  It wouldn't remove any actual complexity.  It would probably add actual complexity (or remove actual capability) by removing the ability to name the generics (which is why impl Trait is inferior in argument position).
+Maybe in some future Rust will have support for
+pub trait EventStore<T: Codable>: Debug {
+fn create_stream(&self, name: String) -> Result<Box<dyn EventStream<T>>, EventStoreError>;
+}
+// Hypothetical conditional higher-ranked bound over types
+//                   vvvvvvvvvvvvvvv
+fn example_bound<ES: for<T: Codable> EventStore<T>>(es: ES) { }
+But we're talking years and years, if ever; probably the dyn equivalent isn't plausible.
+unfortunately ↩︎
+eventually also type aliases ↩︎
+where the impl Trait is the output of the non-parameterized struct definition ↩︎
+aside from aesthetics in simple cases ↩︎
+without the ability to name the generic ↩︎
+
+---
+
+@spigaz · 2024-12-06T03:54:33.802Z:
+I revised my reply, because there is no point in explaining what I was trying to say with impl, when the behaviour I want I already have with generics.
+So I didn't rejected it, I embraced it, at a cost of a lot of cognitive load and that's what I was trying to reduce by trying to avoid the type propagation up the tree.
+That is, what I wanted was just to "hide" the generic parameters of the types from the outside, to make it cleaner, easier to understand.
+As I can't use type alias everywhere to solve that problem.
+That's why I tried dyn, knowing that I was trading for a cost in performance.
+Probably the best approach is to hide them with macros.
+Thanks!
+
+---
+
+@parasyte · 2024-12-06T04:21:54.051Z:
+Long reply to obsolete conversation...
+spigaz:
+They come up is the context of dependency injection in Clean Architecture, DDD, Onion Architecture, Hexagonal Architecture or in a more general way as ports and adapters.
+If you are referring to type erasure here, and implying that it's the only way to provide dependency injection, I disagree. Generic type parameters can be used for dependency injection, too.
+I'll skip a few paragraphs, because type parameters fit those use cases without need for further elaboration.
+spigaz:
+That's the way I end up in the situation that @jumpnbrownweasel mentioned, even using type alias whenever I can, I ended up in one particular situation to have a type declaration that spanned 2 lines.
+This is perhaps a minor inconvenience. Type aliases go a long way to reduce the noise. It's minor in the sense that the code might be ugly, but that's the only downside. At least it will compile and not crash in the middle of the night. It will still be robust. That has to count for something.
+spigaz:
+Instead of doing:
+pub struct State<E: EventStore> {
+Store: E,
+}
+This fragment belongs to a router Actor State that handles incoming requests and has to create streams for the handlers.
+In practice most code complexity of that actor ends up being from generic types.
+Requirement unclear. All you have to do to use this struct is name the E. What prevents that? "2 lines of code" doesn't prevent that. Rejecting 2 lines of code on subjective grounds might, but that's self-imposed.
+spigaz:
+The problem arises because MemoryEventStore and ConcreteEventStore aren't probably of the same size and there is no way to address that, that's why mentioned as a Box, that way the problem of the size goes away, like it would with a reference.
+Do you mean to use indirection to make the size of State small, regardless of the inner type? That can be:
+struct State<E> {
+store: Box<E>,
+}
+Or Rc<E>, or Arc<E>.
+spigaz:
+I believe that generics works pretty much the same way, in this context, but imposes the generic argument, as they are of different sizes potentially, and in practice are different types, like they would be with impl.
+The sizes being different is a side effect of the types being different, and that difference is only material when you intend to mix these different types within a heterogenous collection. For everything else you can either expose the type parameter all the way up the type hierarchy or hide it in an enum.
+I still haven't found the showstopper for doing either of these things.
+spigaz:
+Of course you can solve the problem with enums, if you drop the dependency injection and depend on anything that can be used.
+I'm not sure why this is confused, but maybe it deserves to be stated clearly:
+enum can be used for dependency injection. enum is a form of dynamic dispatch with static (known at compile time) types.
+Generic type parameters can also be used for dependency injection. Generics are purely static dispatch.
+dyn Trait can also be used for dependency injection. It's pure dynamic dispatch, of course. But the benefits for its use are extremely narrow, and it comes with more downsides than the one thing it has going for it.
+Perhaps we should briefly return to the original motivating example:
+spigaz:
+A current sample usage is:
+pub struct Test<T: Codable> {
+stream: Box<dyn EventStream<T>>,
+}
+impl<T: Codable> Test<T> {
+pub fn new<E: EventStore>(event_store: E) -> Self {
+Self { stream: event_store.create_stream::<T>("test".to_string()).unwrap() }
+}
+pub async fn has_events(&mut self) -> bool {
+if let Ok(events) = self.stream.events().await {
+events.len() > 0
+} else {
+false
+}
+}
+}
+And it works pretty well, as long as I use it that way
+I'm with you here, so far. All looks good!
+spigaz:
+the problem is if I try to use it as an Rc:
+pub fn new(event_store: Rc<dyn EventStore>) -> Self {
+Self { stream: event_store.create_stream::<T>("test".to_string()).unwrap() }
+}
+error[E0038]: the trait `EventStore` cannot be made into an object
+But now I'm complete lost! Why did you have to change the method signature? Rc<E> can implement EventStore if you add an implementation for it:
+impl<E: EventStore> EventStore for Rc<E> {
+fn create_stream<T: Codable>(&self, name: String) -> Result<Box<dyn EventStream<T>>, EventStoreError> {
+(&**self).create_stream(name)
+}
+}
+You'll also need an impl for the other reference types, as well: &E, &mut E, Arc<E> and Box<E>. This will make the original method signature accept your type no matter how you choose to reference it.
+Could this whole type erasure/dyn Trait runaround be an XY problem?
+Well, now that that has been fully derailed...
+I think your conclusion is nearly the right one. Don't worry about naming your types. Usually you won't have to: just expose the generic type parameter everywhere and you'll mostly be fine. There are a few gotchas that you will hit from time to time... Nothing's really perfect. It's tradeoffs all the way down.
+I am guilty of using a macro to hide type complexity. All I can say is, good luck debugging any panics or typeck errors! I am eagerly looking forward to removing my own macro because it's such a pain that is not at all in any universe worth it.
+
+---
+
+@jumpnbrownweasel · 2024-12-06T04:50:29.407Z:
+spigaz:
+That is, what I wanted was just to "hide" the generic parameters of the types from the outside, to make it cleaner, easier to understand.
+In general, let's say you have a working design with generic types, as you said. Without changing it radically, there are ways to get rid of some generic type params in special cases. Even getting rid of one or two type params will reduce complexity noticeably. This is not a clean, general solution, it is only practical.
+I have used trait objects to reduce the number of generic params. But because they are limited and a little slower, I have to be very selective about where they are applied. For example, perhaps you can use the erased_serde crate that @quinedot suggested.
+You might be able to remove a type param for testing by using conditional statements (#[cfg(test)] and #[cfg(not(test))]) to define a type alias, or to define the actual production/test types if they are given the same name. This is not as clean as one might like, but it works.
+
+---
+
+@spigaz · 2024-12-06T04:54:58.106Z:
+parasyte:
+But now I'm complete lost! Why did you have to change the method signature?
+As you have probably understood by now, I was trying to hide the generic parameter, to keep it internal, at the cost of performance.
+Now I understand that you also call that type erasure, I was mistaken by thinking that you were always mentioning removing it from the trait's method.
+parasyte:
+Could this whole type erasure/dyn Trait runaround be an XY problem?
+My problem was / is in using dyn EventStore as an object, not in using Rc with the concrete type.
+parasyte:
+impl<E: EventStore> EventStore for Rc<E> {
+fn create_stream<T: Codable>(&self, name: String) -> Result<Box<dyn EventStream<T>>, EventStoreError> {
+(&**self).create_stream(name)
+}
+}
+At some point, I already tried a variations of this, including one for dyn EventStore, but they didn't helped.
+parasyte:
+Usually you won't have to: just expose the generic type parameter everywhere and you'll mostly be fine.
+When they are expanded in errors, it gets really messy and makes it hard to understand what's going on. I used to have multiple lines to declare a type.
+I used some tricks to hide them, like local configurations and others I was able to use dyn, either Box or Rc and that already helped a lot.
+From a technical perspective its easy to argue that it was a lot better, but it was a lot harder to understand or change anything, while the actual code was pretty simple and straight forward.
+parasyte:
+I am guilty of using a macro to hide type complexity.
+I know the limitations of macros, but if they are able to reduce the cognitive load, it enables you to understand the problem faster, sometimes the solution is more strict macros.
+
+---
+
+@spigaz · 2024-12-06T05:05:01.239Z:
+jumpnbrownweasel:
+Even getting rid of one or two type params will reduce complexity noticeably.
+I completely agree.
+jumpnbrownweasel:
+I have used trait objects to reduce the number of generic params. But because they are limited and a little slower, I have to be very selective about where they are applied.
+Yes, I already did that where I was able to use dyn (trait as object) and some local configurations that aggregate multiple concrete types in a concrete implementation.
+jumpnbrownweasel:
+At the higher levels, you can might be able to remove a type param for testing by using conditional statements (#[cfg(test)] and #[cfg(not(test))]) to define a type alias, or to define the actual production/test types if they are given the same name.
+I'm aware of this technique and I use it for other kind of situations, because I target native and wasm in some projects, and that imposes some degree of complexity, that I don't see as helpful in this context.
+But I do understand what you mean.
+Thanks!
+
+---
+
+@parasyte · 2024-12-06T05:54:27.164Z:
+spigaz:
+Now I understand that you also call that type erasure, I was mistaken by thinking that you were always mentioning removing it from the trait's method.
+Yes, sorry, sometimes "type erasure" is used synonymously with dyn Trait: Sectional introduction - Learning Rust
+Rust's type-erasing dyn Trait offers ...
+dyn Trait of course does a lot more than just removing the need for a type parameter from the source code. It erases all type information, semantically. This is why you are required to downcast to get the concrete type back. That's a "neat trick" but it comes at a cost that is often too hard to pay.
+I've had my fair share of debugging deeply nested types. (Looking at you, axum.) My take here is that if you can read the docs, you can find your way through any typeck mess. It won't be fast, mind you, and it won't be easy. Then again, we don't get paid to do easy things, do we?
+It would be awesome to have an extra tool that could analyze the error with great detail. But this is the realm of the trait resolver, which as I understand it, is kind of rough around the edges. (The next-gen trait solver has been underway since 2015.) I'm optimistic that errors could get better in the future. I am pessimistic on the outlook of dyn Trait, though. The rules are too constraining and I don't know if it's possible to lift many of them.
+
+---
+
+@spigaz · 2024-12-06T15:32:18.323Z:
+To be honest, most cases where I use dyn are cases where I really wanted was just to use a generic type and hide that information from the client code.
+As most are dependency injection and not polymorphism.
+But there is another perspective, while defining my macros' parse tree, I started using dyn, to allow defining the concepts outside the core, but the added complexity wasn't worth it, so I decided to use enum types till I was forced to use dyn,
+This leads me to the powerful warning, if all you have is an hammer, everything looks like a nail.
+In both problems, I just followed the criteria of reducing the cognitive load.
+But both make me wonder if I'm using the right abstractions, if I'm not making nails because I don't have a screwdriver.
+parasyte:
+I've had my fair share of debugging deeply nested types. (Looking at you, axum.)
+I feel your pain, I also had a lot of issues with axum, and the errors only helped to search or ask for the solution, not to guide or allow me to understand what was going on.
+Thanks!
+
+---
+
+@steffahn · 2024-12-06T16:13:31.196Z:
+If you’re still interested in exploring more options for EventStream in particular, I think it would help if you were able to share the Codable trait.
+spigaz:
+regarding Codable, that is just a trait that extends the Serde traits and some other.
+@quinedot already mentioned erased_serde
+spigaz:
+My objective is to simplify the API, and that crate or the strategy it follows doesn't seem to help in that sense. And if it did, it would imply refactoring all the implementation and codecs.
+the whole point of erased_serde is to be a seamless drop-in, it’s designed to work with ordinary Serialize and Deserialize types and implementations, it’s not unlikely that you would not have to change any of the Codable trait nor its implementors at all, but it’s hard to intuit without any idea what that trait actually looks like
+
+---
+
+@spigaz · 2024-12-06T18:30:41.568Z:
+I already explained this before, but the Codable trait is:
+pub trait Codable: Serialize + for<'a> Deserialize<'a> + Clone + Debug + Encode + Decode + PartialEq + 'static {}
+That approach would imply me to use the erased_serde and probably do something similar to Encode and Decode, and I'm not sure if the added complexity does in fact help.
+I would have to replace one generic parameter with four functions that receive or return any or a common object that encapsulates that.
+And then in the client code I would have to add a as_any or a downcast, to get them back, or hide that in an object.
+There are many components that use the current interface either as clients and as implementations, and I'm not sure the added complexity is a good idea.
+The generic versions are in fact, the proper why to go, I just wanted to cancel the generic parameter propagation up the tree, that does yield very complex types.
+Thanks!
+
+---
+
+@spigaz · 2024-12-07T05:43:30.075Z:
+I was going over the Rust Survey, in the context of unimplemented or nightly features they asked about Type Alias Impl Trait (TAIT)
+This code popups up:
+trait Trait {}
+type Baz = impl Trait;
+impl Trait for u8 {}
+fn foo() -> Baz {
+let x: u8;
+// ...
+x
+}
+fn bar(x: Baz, y: Baz) {
+// ...
+}
+struct Foo {
+a: Baz,
+b: (Baz, Baz),
+}
+I tried
+pub type EventStoreImpl = impl EventStore;
+But it seems not luck
+`EventStoreImpl` must be used in combination with a concrete type within the same module
+I'm not sure if its a limitation of the current implementation or some limitation I missed in the documentation.
+
+---
+
+@parasyte · 2024-12-07T05:54:09.034Z:
+spigaz:
+Type Alias Impl Trait (TAIT)
+It isn't stable. See the tracking issue linked in the RFC: Tracking issue for RFC 2515, "Permit impl Trait in type aliases" · Issue #63063 · rust-lang/rust · GitHub
+
+---
+
+@spigaz · 2024-12-07T16:47:10.616Z:
+parasyte:
+It isn't stable.
+I know, but I have used unstable features for a while with great success, to be honest I don't remember having any major issues with any of them, while allowing me significant code complexity improvements.
+parasyte:
+See the tracking issue linked in the RFC: Tracking issue for RFC 2515, "Permit impl Trait in type aliases" · Issue #63063 · rust-lang/rust · GitHub
+I already did and subscribed to their notifications, but to be honest I didn't found it useful to understand the status of my particular use case support.
+
+---
+
+@parasyte · 2024-12-07T19:23:47.747Z:
+I'm not sure it is what you want. The example from the RFC has this sentence directly following:
+In this example, the concrete type referred to by Baz is guaranteed to be the same wherever Baz occurs.
+Which suggests it is the opposite of what you want. This gives you only a single concrete type, but you want to be able to use many concrete types with the same name (IIUC).
+And in fact, this fails with an error that makes it clear this is intentional:
+#![feature(type_alias_impl_trait)]
+trait Trait {}
+type Baz = impl Trait;
+impl Trait for u8 {}
+impl Trait for i32 {}
+fn foo() -> Baz {
+42_u8
+}
+fn bar() -> Baz {
+42_i32
+}
+error: concrete type differs from previous defining opaque type use
+--> src/lib.rs:15:5
+|
+15 |     42_i32
+|     ^^^^^^ expected `u8`, got `i32`
+|
+note: previous use here
+--> src/lib.rs:11:5
+|
+11 |     42_u8
+|     ^^^^^
+
+---
+
+@quinedot · 2024-12-07T20:37:43.889Z:
+spigaz:
+I'm not sure if its a limitation of the current implementation or some limitation I missed in the documentation.
+parasyte:
+This gives you only a single concrete type, but you want to be able to use many concrete types with the same name (IIUC).
+Or in terms of what I wrote before, TAIT is like -> impl Trait (RPIT): given any generic inputs,[1] there is one concrete type behind the opaque type.  The name itself is a clue here: type alias impl Trait.   Just like type Foo<T> = Vec<T> has to resolve to the same type for every Foo<ConcreteType>, so does type Foo<T> = impl Trait.[2]
+All impl Trait except for those in function parameters (APIT) work like that,[3] including TAIT and all other unstable variants that I'm aware of.  As far as I know the only related thing that may be in the works are for<T>-like bounds.[4]
+your EventStoreImpl has none ↩︎
+You also have to supply a defining use. ↩︎
+one of a few reasons why some, myself included, feel that APIT was a mistake (at a minimum in terms of sharing the same syntax) ↩︎
+And I'm not sure to what extent they'll be surfaced much less on what timeline; I've just seen some related PRs go by. ↩︎
+
+---
+
+@spigaz · 2024-12-07T21:14:10.452Z:
+parasyte:
+I'm not sure it is what you want. The example from the RFC has this sentence directly following:
+In this example, the concrete type referred to by Baz is guaranteed to be the same wherever Baz occurs.
+Which suggests it is the opposite of what you want. This gives you only a single concrete type, but you want to be able to use many concrete types with the same name (IIUC).
+You are probably right, I'm afraid.
+When I read that, my interpretation was different, because in my use case, in fact that still applies.
+When the code is compile in fact, only one concrete type is in practice used, only one backend is used, so that sill applies.
+But your interpretation is probably the correct one, although the error is on usage and not on declaration.
+Thanks!
+
+---
+
+@spigaz · 2024-12-07T21:30:04.939Z:
+I don't know, but in the RFC, they present very good arguments that also apply to my use cases, so I wouldn't be surprised if sooner or latter they might consider it.
+Even if we go down the path of discussing that it could resolve to different concrete implementations, that doesn't mean that it would be ambiguous in any way to the compiler.
+As the problem only could arise if you try to use them interchangeably, which doesn't happen in my use cases, but even so, you could use strategies similar to how you handle traits.
+And from a code perspective, this would be simple to define and to understand, while allowing to remove code complexity and cognitive load.
+In practice, I suspect that all the underlying mechanisms required are already supported using generics and what's missing is just a way to hide that from the coders / client code.
+
+---
+
+@Fancyflame · 2024-12-08T08:23:12.475Z:
+spigaz:
+Although there are already other codecs, so for now at least 4 functions would have to be passed.
+Even if that approach would work, it would make the implementation more complex and less clear.
+I believe they are static functions so you can find a way to pack them up into a virtual table (automatically done by trait-object) so that you can pass only one thing.
+If you need then tell me which 4 functions you're going to use and where they come from so I can give some suggestions.
+The key is packing up the specified needed part of type information into virtual table, then passing the virtual table. The difficulty is you have to know which informations is that you need and how to pick them. Passing all type information is unpractical (which requires infinite vtable size), which I mean you can give up the idea of bringing generics into trait object.
+
+---
+
+@steffahn · 2024-12-08T16:22:26.798Z:
+I agree that you’re probably right about
+spigaz:
+The generic versions are in fact, the proper why to go
+especially if they seem workable to you.
+Just one more detail I would be interested in: You mention existing code using various aspects of the “current interface” already
+spigaz:
+My objective is to simplify the API, and that crate or the strategy it follows doesn't seem to help in that sense. And if it did, it would imply refactoring all the implementation and codecs.
+spigaz:
+There are many components that use the current interface either as clients and as implementations, and I'm not sure the added complexity is a good idea.
+I would be interested what parts of the interface you’re referring to. I.e.
+is there much code already using the Codable trait?
+are you also referring to much existing code using the EvenStream trait?
+does this “many components that use the current interface” also refer to the EventStore trait?
+I’m asking only because a refactor to allow type-erased users would likely work well without changing anything about Codable or its implementors or users, similar to how erased-serde does for the serde-traits. But, as you notice yourself already, then the fact that the method
+fn create_stream<T: Codable>(&self, name: String) -> Result<Box<dyn EventStream<T>>, EventStoreError>
+only takes the information of what type T is in the form of a type argument means that at least the EventStore trait (and then all of its implementors) would require some form of refactoring.
+The final direction to look would be “up”. I.e. instead of looking down through the details of the EventStream and Codable and eliminate the need for generic parameters, instead your use case of things like your State struct can be looked at. Even though the API of EventStream isn’t, the API of State itself might end up being completely compatible with object safety again.
+This would in particular be possible if your intended use-case
+pub struct State {
+Store: Box<dyn EventStore>, // <- of course this doesn’t work
+}
+doesn’t make any use of the EventStore at full generality. This is in particular the case if State itself has no API with a generic T: Codable parameter because it’s only the person that defines and implements the details of the State struct that decides which concrete T: Codable types end up being used.
+mod state {
+use crate::EventStore;
+pub struct State {
+store: Box<dyn EventStoreInState>, // instead of `dyn EventStore`
+extra: ExtraFields,
+}
+struct ExtraFields(/* … */);
+// intended API:
+/*
+impl State {
+pub fn new(e: impl EventStore) -> Self {
+todo!();
+}
+pub fn foo(&self) {
+// want to do stuff, while using `store` as an actual `EventStore`
+todo!();
+}
+pub fn bar(&mut self) {
+// want to do stuff, while using `store` as an actual `EventStore`
+todo!();
+}
+}
+*/
+// How to actually do it
+// private trait, as implementation detail of `State`:
+trait EventStoreInState {
+// mirror (relevant subset of) `State` API signatures,
+// pass view of extra fields of `State` if necessary
+// these need to be dyn-compatible (e.g. no generics)
+// but if they are, it’s really straightforward what follows next
+fn foo(&self, extra: &ExtraFields);
+fn bar(&mut self, extra: &mut ExtraFields);
+}
+// next, simply delegate to the trait, which gives the majority of the API already
+impl State {
+pub fn foo(&self) {
+self.store.foo(&self.extra);
+}
+pub fn bar(&mut self) {
+self.store.foo(&mut self.extra);
+}
+}
+// construction is easy, too:
+impl State {
+pub fn new(e: impl EventStore + 'static) -> Self {
+Self {
+store: Box::new(e), // this works because of below implementation
+extra: ExtraFields(/* … */),
+}
+}
+}
+// finally, add the actual code/logic for implementing `foo`, `bar`!
+// this also establishes how to create the `Box<dyn EventStoreInState>`
+// in the constructor
+impl<E: EventStore> EventStoreInState for E {
+fn foo(&self, extra: &ExtraFields) {
+// at this place, we *do* have access to `self`
+// as a *true* `EventStore`, and also to all extra
+// fields of `State`
+}
+fn bar(&mut self, extra: &mut ExtraFields) {
+// at this place, we *do* have access to `self`
+// as a *true* `EventStore`, and also to all extra
+// fields of `State`
+}
+}
+}
+if your intended API of State does include any other generics, that’s additional complication, I suppose, and whether or not it can be avoided depends on the exact details. (Of course, if those methods don’t directly interact with the EventStore, but only through other non-generic helper methods, that’s completely fine; they just don’t become part of that internal EventStoreInState helper interface at all.)
+
+---
+
+@steffahn · 2024-12-08T16:32:08.732Z:
+The above actually lays out a general approach of how to hide non-dyn-safe generic arguments in a struct that itself has a dyn-safe interface (or at least one can find a dyn-safe internal interface).
+For the case of EventStoreInState above, when the interaction with the EventStore is done by the implementor of State directly anyway, a minimal dyn-safe internal interface could just be a list of concrete
+fn create_stream_foo(&self, name: String) -> Result<Box<dyn EventStream<Foo>>, EventStoreError>;
+fn create_stream_bar(&self, name: String) -> Result<Box<dyn EventStream<Bar>>, EventStoreError>;
+…
+methods for different Foo, Bar, …: Codable types. (That of course still assumes that this list of actually used Codable types is finite; in fact, it makes it more obvious that that’s the case.)
+The other approach of the code example in my previous reply does however have the great benefit that struct State can choose not to interact with the EventStream directly but within the methods foo, bar, etc… it can freely invoke other existing API that’s generic over E: EventStream internally.
+
+---
+
+@spigaz · 2024-12-08T16:34:43.507Z:
+Fancyflame:
+I believe they are static functions so you can find a way to pack them up into a virtual table (automatically done by trait-object) so that you can pass only one thing.
+I would prefer to apply that technique to the Rc because as some examples led me believe, that is the problem I have when I try to do:
+pub fn new(event_store: Rc<dyn EventStore>) -> Self
+where Self: Sized {
+Self { stream: event_store.create_stream::<T>("test".to_string()).unwrap() }
+}
+Because then the method is only available to concrete implementations, so I have to define
+impl<E: EventStore> EventStore for Rc<E> {
+fn create_stream<T: Codable>(&self, name: String) -> Result<Box<dyn EventStream<T>>, EventStoreError> {
+(&**self).create_stream(name)
+}
+}
+And here lies the problem, as this only works if I didn't restricted the method to concrete implementations. In theory, as far as I'm able to understand, the problem I have here is how to access the vtable of the concrete type also.
+Handling the vtable here would allow me to make the changes some constrained locally.
+Thanks!
+
+---
+
+@spigaz · 2024-12-08T17:04:47.818Z:
+steffahn:
+I would be interested what parts of the interface you’re referring to. I.e.
+is there much code already using the Codable trait?
+are you also referring to much existing code using the EvenStream trait?
+does this “many components that use the current interface” also refer to the EventStore trait?
+The problem isn't regarding the Codable trait itself, but all the decorators and implementations of stream, that would have to be changed into a version with more cognitive load, and those are in practice fine with generics, which is in most perspectives the optimal approach.
+So it doesn't make sense to make them more complex, just for achieving a minor simplification at the top level, at least in this case.
+I understand that in external clients code it might make sense, for a question of encapsulation.
+But this is dependency injection so, the client code still has to know about it.
+let x: A<ConcreteEventStore> = A::new(ConcreteEventStore::new())
+Of course it can get confusing when you have 5-6-7 types, but sacrificing the State doesn't help much.
+steffahn:
+For the case of EventStoreInState above, when the interaction with the EventStore is done by the implementor of State directly anyway, a minimal dyn-safe internal interface could just be a list of concrete
+fn create_stream_foo(&self, name: String) -> Result<Box<dyn EventStream<Foo>>, EventStoreError>;
+fn create_stream_bar(&self, name: String) -> Result<Box<dyn EventStream<Bar>>, EventStoreError>;
+…
+Yes, I have thought about this strategy, but a simpler alternative would be to make the EventStore generic and allow the state to receive all the different EventStores implementations
+pub struct State {
+store_a: Box<dyn EventStore<A>>,
+store_b: Box<dyn EventStore<B>>,
+}
+I might be missing something, but I already do this with 4 event streams directly in a decorator, so I know this works.
+pub struct State {
+stream_a: Box<dyn EventStream<A>>,
+stream_b: Box<dyn EventStream<B>>,
+}
+Actually by doing this, I wouldn't require the EventStore, I could use the EventStreams directly, as I could, for instance, create all the streams on the struct initialisation for instance.
+steffahn:
+That of course still assumes that this list of actually used Codable types is finite
+Yes, this would expand the factory into its real usage, and is doable.
+But since the start my point was to reduce cognitive load, not increase it, as I already had a generic end to end version working.
+My point was to sacrifice that a bit to reduce cognitive load.
+Thanks!
+
+---
+
+@jumpnbrownweasel · 2024-12-08T17:47:47.278Z:
+steffahn:
+The above actually lays out a general approach of how to hide non-dyn-safe generic arguments in a struct that itself has a dyn-safe interface (or at least one can find a dyn-safe internal interface).
+Thank you for explaining this technique. It's very useful in general.
+
+---
+
+@system · 2025-03-08T17:48:03.174Z:
+This topic was automatically closed 90 days after the last reply. We invite you to open a new topic if you have further questions or comments.
+

@@ -1,0 +1,2081 @@
+=== ROW 160 | f009123 | https://internals.rust-lang.org/t/pre-rfc-scoped-impl-trait-for-type/19923 | 2023-11-26 | internals ===
+[Pre-RFC] Scoped `impl Trait for Type`
+
+@Tamschi · 2023-11-26T04:59:26.816Z:
+Feature Name: scoped_impl_trait_for_type
+[…]
+Summary
+This proposal adds scoped impl Trait for Type items into the core language, as coherent but orphan-rule-free alternative to implementing traits globally. It also extends the syntax of use-declarations to allow importing these scoped implementations into other item scopes (including other crates), and differentiates type identity of most generics by which scoped trait implementations are available to each discretised generic type parameter (also adding syntax to specify differences to these captured implementation environments directly on generic type arguments).
+This (along with some details specified below) enables any crate to
+locally, in item scopes, implement nearly any trait for any expressible type,
+publish these trivially composable implementations to other crates,
+import and use such implementations safely and seamlessly and
+completely ignore this feature when it's not needed*.
+* aside from one hopefully very obscure TypeId edge case that's easy to accurately lint for.
+This document uses "scoped implementation" and "scoped impl Trait for Type" interchangeably. As such, the former should always be interpreted to mean the latter below.
+Motivation
+While orphan rules regarding trait implementations are necessary to allow crates to add features freely without fear of breaking dependent crates, they limit the composability of third party types and traits, especially in the context of derive macros.
+For example, while many crates support serde::{Deserialize, Serialize} directly, implementations of the similarly-derived bevy_reflect::{FromReflect, Reflect} traits are less common. Sometimes, a Debug, Clone or (maybe only contextually sensible) Default implementation for a field is missing to derive those traits. While crates like Serde often do provide ways to supply custom implementations for fields, this usually has to be restated on each such field. Additionally, the syntax for doing so tends to differ between derive macro crates.
+Wrapper types, commonly used as workaround, add clutter to call sites or field types, and introduce mental overhead for developers as they have to manage distinct types without associated state transitions to work around the issues laid out in this section. They also require a distinct implementation for each combination of traits and lack discoverability through tools like rust-analyzer.
+Another pain point are sometimes missing Into<>-conversions when propagating errors with ?, even though one external residual (payload) type may (sometimes contextually) be cleanly convertible into another. As-is, this usually requires a custom intermediary type, or explicit conversion using .map_err(|e| …) (or an equivalent function/extension trait). If an appropriate From<>-conversion can be provided in scope, then just ? can be used.
+This RFC aims to address these pain points by creating a new path of least resistance that is easy to use and very easy to teach, intuitive to existing Rust-developers, readable without prior specific knowledge, discoverable as needed, has opportunity for rich tooling support in e.g. rust-analyzer and helpful error messages, is quasi-perfectly composable including decent re-use of composition, improves maintainability and (slightly) robustness to major-version dependency changes compared to newtype wrappers, and does not restrict crate API evolution, compromise existing coherence rules or interfere with future developments like specialisation. Additionally, it allows the implementation of more expressive (but no less explicit) extension APIs using syntax traits like in the PartialEq<>-example below, without complications should these traits be later implemented in the type-defining crate.
+For realistic examples of the difference this makes, please check the rationale-and-alternatives section.
+[…]
+Rendered on GitHub: 3634-scoped-impl-trait-for-type.md
+Use the rightmost icon in the file header to show the table of contents. The current section highlight doesn't sync automatically for me there though, unfortunately.
+Change History: Commits · Tamschi/rust-rfcs · GitHub
+Apologies in advance that it's a bit long. I had the initial idea earlier this year but only saw that the 2024 lang roadmap asks for ideas on coherence about two weeks ago and decided to give it a go. Then it turned out more complicated than I thought and kind of escalated.
+There are a few rough parts where I think I need help from someone more familiar with how implementations are currently bound to call sites and on generic type parameters. If something doesn't add up regarding the feature implementation then that's likely because I never really looked at the compiler code so far, so please read those bits in terms of 'behaves as if' (and please tell me about those issues so I can fix them).
+In any case, I hope there's nothing blatantly obvious that I missed, and thanks for your consideration.
+Shout-out
+to teliosdev for a piece of very helpful early syntax criticism and
+to cofinite for pointing out how this can be used for sugary API extensions with syntax traits.
+to tfpdev, and to @SkiFire13 below, for suggestions on how to make the draft more approachable and easier to understand.
+
+---
+
+@Tamschi · 2023-11-26T05:23:22.666Z:
+I'd forgotten to specify layout-compatibility, so I just added a small section in that regard.
+The forum also helpfully pointed out two earlier threads, Implementing traits and types for multiple foreign crates (pre-RFC) and Pre-RFC: pub(crate) impl Trait for Type, which might be good to link here for reference. I'm pretty sure my draft avoids the concerns with the former, and it does support the latter's use case as the scoped implementations follow item privacy rules.
+
+---
+
+@SkiFire13 · 2023-11-26T09:38:11.913Z:
+I find the rules for when a scoped impl is used or not, and for when a type splits identity, pretty confusing. Consider for example this situation:
+crate_a:
+pub struct A(u32);
+impl A {
+fn new_set() -> std::collections::HashSet<Self> {
+HashSet::new()
+}
+}
+crate_b:
+use impl Hash for crate_a::A {
+// ...
+}
+fn b() {
+let mut set = crate_a::A::new_set();
+set.insert(crate_a::A::(42)); // Is this allowed?
+}
+Is crate_b allowed to insert in the HashSet by using a scoped impl of Hash for crate_a::A? Now, this may seem silly with an HashSet (why even provide a new_set?) but I can imagine some library where HashSet is replaced with a wrapper that actually does something even when crate_a::A doesn't implement the corresponding trait to Hash.
+I can imagine two outcomes:
+insert doesn't compile
+but if you have to assume any value returned by a third party crate may use its own use impl internally then use impl becomes equivalent to a new-type, losing all the other benefits.
+A::new_set() actually becomes <A: Hash in crate_b>::new_set() and the insert compiles
+but this has the following problem. Consider this update to crate_a:
+pub struct A(u32);
+// New in A's update!
+// Is this now considered a breaking change?
+impl Hash for A {
+// ...
+}
+impl A {
+fn new_set() -> std::collections::HashSet<Self> {
+let mut set = HashSet::new();
+// Which impl does this use?
+set.insert(A(0));
+set
+}
+}
+Now crate_a provides its own implementation of Hash for A. This is not considered a breaking change, so it shouldn't break crate_b, right?
+But it also calls set.insert inside A::new_set(), meaning new_set now needs an implementation of Hash for A. Which one does it use? It may rely on the implementation details of Hash (remember, it could be some other trait), so it can't use the use impl in crate_b. Hence it must use its own Hash implementation in crate_a, meaning new_set now returns a HashSet<A: Hash in crate_a> and crate_b's insert either silently changes meaning (to use crate_a's Hash implementation) or it stops compiling.
+To me any outcome seems undesiderable. Or maybe I misinterpreted something?
+
+---
+
+@Tamschi · 2023-11-26T13:37:12.076Z:
+SkiFire13:
+To me any outcome seems undesiderable. Or maybe I misinterpreted something?
+This is addressed by making implementations part of type identity of generics like in Genus, though they are captured implicitly here.
+It's briefly mentioned in the summary, covered by the sections Scoped implementations and generics, Resolution at type instantiation site and (especially) Type identity, is the main distinction from 𝒢, 'collection use cases' (Ctrl+F) are mentioned in  Rationale and alternatives and it's also brought up as example use-case in Explicit binding. A HashSet-like example also comes up in Trait binding site.
+It's true that this fairly spread-out and could be much more visible in how it relates to containers specifically, though. I'll go over your questions one by one:
+SkiFire13:
+Is crate_b allowed to insert in the HashSet by using a scoped impl of Hash for crate_a::A?
+No, at least if there's no Hash implementation captured in crate_a at all. The available implementations for the HashSet<>'s type parameters are captured only where the type is discretised (here in the return type of A::new_set), so the example you give does not compile.
+The relevant error is
+error[E0599]: no method named `insert` found for struct `std::collections::HashSet<crate_a::A>` in the current scope`
+SkiFire13:
+Now crate_a provides its own implementation of Hash for A. This is not considered a breaking change, so it shouldn't break crate_b, right?
+No, adding a global implementation is not a breaking change (but would make the example compile and produce an 'unused' warning on the use impl Hash for crate_a::A in crate_b instead).
+However, if crate_a switched to its own scoped implementation, then that would change the type identity of the set instance from HashSet<A> to HashSet<A: Hash in crate_a> which are not mutually assignable. That would be a breaking change.
+Note that it could also be considered a breaking change to switch from its own scoped implementation to a re-exported external one, as that would create type-identity with other HashSets that use that scoped implementation, which, while it wouldn't break code statically, would change TypeId comparisons.
+SkiFire13:
+But it also calls set.insert inside A::new_set(), meaning new_set now needs an implementation of Hash for A. Which one does it use?
+This would infer the type parameter to be A according to the return type of the function, since the type parameters are not specified in HashSet::new(), and as such would use the global implementation crate_a provides.
+If a scoped implementation was in scope for the return type definition instead, then the type parameter would be inferred to be A: Hash in crate_a and that implementation would be used there and in crate_b. This applies even if the scoped implementation is not pub directly.
+All that said, this is a way for crate_a to make breaking changes accidentally, for example if it also uses a scoped implementation of e.g. bevy_reflect::Reflect for A in that scope to derive Reflect for another type where it appears as field.
+It would be a good idea to have a warning if a captured scoped implementation (local or imported) 'leaks' through a discretised generic, i.e. when the implementation is not made at least equally visible by crate_a itself.
+Edit: I just set a bookmark on this post for tomorrow as a reminder to add the warning to the draft. (Today I'm taking a break after publishing this )
+
+---
+
+@Tamschi · 2023-11-26T14:26:50.744Z:
+SkiFire13:
+but if you have to assume any value returned by a third party crate may use its own use impl internally then use impl becomes equivalent to a new-type, losing all the other benefits.
+Regarding this specifically: The type identity distinction only applies to generics since only they may expect this kind of consistency on their type parameters.
+Top-level bindings like Hash on an A value are entirely transient, so any discrete A is assignable to and from any other A regardless of the scoped implementations available. I think this is also how Genus handles it, but it seems to not be made explicit there. (Genus does not appear to have syntax for specifying a model to use outside of generic type parameters, but I could have missed that.)
+
+---
+
+@mathstuf · 2023-11-26T14:45:53.577Z:
+Tamschi:
+No, at least if there's no Hash implementation captured in crate_a at all. The available implementations for the HashSet<>'s type parameters are captured only where the type is discretised (here in the return type of A::new_set), so the example you give does not compile.
+HashSet::new doesn't require any trait bounds, so how is the error meant to be surfaced? Or is it going to look at every possible impl that might exist based on A's missing impl Trait bits and error? If A is not Eq, does an error get raised about HashSet::reserve or HashSet::difference being inaccessible even if no one cares?
+
+---
+
+@Tamschi · 2023-11-26T14:53:49.452Z:
+It's surfaced in crate_b where the implementation is actually required. crate_a compiles regardless of whether any Hash implementation is captured into the discrete HashSet<A> type. crate_b cannot provide an implementation for the externally-discretised type parameter.
+The type identity of the set instance is based on the set of all scoped implementations that exist on A where the discrete HashSet<A> type comes from, regardless of whether each is actually used or required by bounds. Here, that's in the return type declaration of A::new_set where the type parameter is written out explicitly, but it could be fully inferred in some cases (that I don't think can have any effect across crate boundaries, though, aside from the existing auto-trait leakage through return position impl Trait).
+Edit: This likely seems a bit overly strict at first glance, but it's the only way (I think?) to ensure both locality of the type identities of generics and consistency of the implementations each of their instances uses. Relaxing a generic type parameter bound is not a breaking change due to coherence rules for blanket implementations, so bounds shouldn't influence the type identity here either (in case they are present on the type itself) unless we accept that types may accidentally become identical at any point.
+Edit2: That could then lead to conflicts of scoped implementations in dependent crates though, aside from TypeId-related behaviour changes, so I don't think that would be a good idea.
+
+---
+
+@Tamschi · 2023-11-26T15:47:11.316Z:
+I just had an idea for how to use-declare the global implementation that I'd like feedback on.
+Since global implementations exist regardless of crate boundaries, I think they could be imported from the root namespace:
+use ::{impl Trait for Type};
+This can be useful to 'reset'/shadow scoped implementations in a nested scope and is already supported by the grammar in the draft. Note that the global implementation must actually exist for this to compile.
+With explicit binding, this would be
+Generic<Type: Trait in ::>
+, which would have to be special-cased since :: alone isn't a valid SimplePath.
+
+---
+
+@Tamschi · 2023-11-26T20:17:28.141Z:
+I did come up with a realistic API where there would be unexpected or outright faulty behaviour:
+pub struct ErasedHashSet<S: BuildHasher = RandomState> {
+storage: HashMap<TypeId, Storage<S>, S>,
+}
+impl<S: BuildHasher> ErasedHashSet<S> {
+pub fn insert<T: Hash + Eq + 'static>(&mut self, value: T) -> Result<(), T> {
+let storage = self.storage.get_mut(&TypeId::of::<T>());
+todo!("Manipulate `storage`.")
+}
+// ...
+}
+I didn't specify this properly so far, so there are two useful options here:
+(not useful) Generic type parameters of functions capture the full set of available scoped implementations. This would make TypeId::of::<_> behave unexpectedly for discrete types, so I'm not considering it here.
+Generic type parameters of functions ignore the available scoped implementations at the call site completely. This would cause this API ErasedHashSet to have no way at all to distinguish Hash implementations properly (except heuristically by function pointer, but that's not a solution as there are no equality/inequality guarantees on those), so if RandomState is used, the set can misbehave randomly.
+Generic type parameters of functions have identity that's distinguished by available scoped implementations for their bounds only. This distinction carries over when the generic type parameter is used elsewhere, like when calling TypeId::of::<T> with the generic type parameter here.
+I think that is by far the best option here because, while the behaviour may be unexpected in some cases, the unexpected behaviour would at least be deterministic (separating distinct Hash implementations cleanly).
+(This wouldn't limit reflexive implementations since on those, the type parameter is on the implementation rather than the function.)
+Option 2 is more complex to explain, but I think that's worth it for getting okay-ish behaviour here.
+Edit: Closures and function pointers must use the same rules as generic structs to avoid misbehaviour, I think, so this decision here is only about the generic functions' actual types that I think currently cannot be referred to in at least stable Rust.
+Late edit: I found a better way to define the behaviour of 2. that doesn't require special-casing functions and should be less confusing. I'll write that out and update the draft hopefully later today or tomorrow.
+Minor edit: There should be an Eq bound on that function, too.
+Minor edit: And that second S should be on Storage. Sorry, I'm not great at this without the compiler helping me.
+2 days later edit: Clearly I really shouldn't program freehand. S still goes onto the HashMap too. I have a proper version of this with more comments in my revised draft, which should be ready to publish soon-ish depending on how much I can work on it.
+
+---
+
+@scottmcm · 2023-11-29T03:31:09.374Z:
+One vague thing I was wondering here: What if we gave names to the non-global impls?
+When I see things like
+use other_module::{
+impl Trait for Type,
+impl UnsafeTrait for Type,
+};
+I feel like they wanted names, and with names you even define two impls -- say a case-sensitive and case-insensitive Eq -- in the same module.
+I'm also inspired here by how much better the NLL errors got when the started doing "let's call this lifetime '3" to be able to talk about things more easily.  If we're going to introduce errors about "well yes, they're both HashSet<Foo>, but they're different types because they're using different impls of some trait", I think it would be nice to give normal paths to named things in those errors, rather than "the impl from this module" or what have you.
+(Sorry if this is already addressed, I haven't dug deep into the details here yet.  Thanks for putting a bunch of work into it!  The noise in doing this today is a huge complaint and I'm excited to see all this progress.)
+
+---
+
+@Nadrieril · 2023-11-29T03:43:58.815Z:
+That'd be very neat, and would solve the verbosity of importing a generic impl like
+use module::{
+impl<T: Trait1> Trait2<T> for Box<[T]>,
+};
+I'm looking forward to the syntax bikeshedding on how to name an impl :D.
+let CaseInsensitiveStr = impl PartialEq<&str> for &str { ... }
+impl CaseInsensitiveStr: PartialEq<&str> for &str { ... }
+impl (CaseInsensitiveStr) PartialEq<&str> for &str { ... }
+
+---
+
+@scottmcm · 2023-11-29T03:51:29.701Z:
+Actually, one other request: could you add an overview somewhere for "here's a sketch of how this addresses the big problems that coherence exists to avoid"?  (If there already is one and I missed it, sorry.)
+My immediate questions here are things like SkiFire brought up: What's the basic way I should think about how this knows that the PartialEq+Eq+Hash in effect are important for HashSet<T>'s insert and similar methods, but that the T: Debug that's in effect doesn't matter, so I can debug-print a &HashSet<Foo> from someone else even if I have a different Foo: Debug from them?
+I assume the proposed rules work together in concert to address things like that, but I'd like the "here's a rough overview" version to have in my head as I go through the details.
+
+---
+
+@Tamschi · 2023-11-29T05:52:18.653Z:
+scottmcm:
+One vague thing I was wondering here: What if we gave names to the non-global impls?
+I admit that I did it on a hunch initially, but making them anonymous ended up having two very useful properties we would lose by naming them.
+scottmcm:
+I feel like they wanted names, and with names you even define two impls -- say a case-sensitive and case-insensitive Eq -- in the same module.
+First, as scoped implementations are resolved implicitly (to avoid the noise-level newtypes suffer from), they must not overlap in the same scope (e.g. exporting module).
+If they are anonymous like this, it's easy and intuitive to ensure this with the existing coherence rules for global implementations, just applied to one scope at a time. It also makes it clear 'what' is applied 'to what' every time they are in scope, and the uniqueness means that the module can be used as name in error messages (which would have to mention the trait and type separately anyway, in my opinion).
+Nadrieril:
+That'd be very neat, and would solve the verbosity of importing a generic impl like
+use module::{
+impl<T: Trait1> Trait2<T> for Box<[T]>,
+};
+Second, the explicit subsetting in the imports is required for coherence. If you import an implementation by a name instead of subsetting it, then it is a breaking change for the implementing crate to broaden that implementation. I would like to avoid this since broadening an implementation is non-breaking under existing coherence rules (because the rules for blanket implementations prevent those that may potentially overlap in the future that way).
+Nadrieril:
+I'm looking forward to the syntax bikeshedding on how to name an impl :D.
+That said, I'm very open to syntax suggestions. Acquaintances have told me that the use module::{impl Trait for Type}; syntax is intuitive, but that the use impl Trait for Type { /*...*/ } in definitions feels odd. use is just the closest existing keyword that felt somewhat right to me there, though it does very subjectively rhyme nicely with the imports.
+I didn't want to dig up override since that feels… very… dynamic dispatch-y, but that exists too.
+scottmcm:
+My immediate questions here are things like SkiFire brought up: What's the basic way I should think about how this knows that the PartialEq+Eq+Hash in effect are important for HashSet<T>'s insert and similar methods, but that the T: Debug that's in effect doesn't matter, so I can debug-print a &HashSet<Foo> from someone else even if I have a different Foo: Debug from them?
+I actually missed something in that regard completely in my first draft (see this earlier post), so some of that is upcoming. That said, two HashSet<T>s that were created with distinct T: Debug implementations are incompatible (but nicely mixable in the same scope!) types under this proposal. I don't think that there's any way around that really, without having the compiler do thorough data flow analysis or introducing a large number of coherence footguns.
+That said, the compiler should be able to warn you if you're about to run into this issue to a large extent, since it can immediately tell when a non-public implementation is captured in a public alias or signature. Using scoped implementations within functions is also less tricky, since you can be sure it won't show up in public items.
+As for type-erased value-keyed collections, those will be able to make that distinction based on the bounds of their type parameters to show expected behaviour, but this additionally requires permission to transmute specific newly-distinct types as long as this isn't observed by implementation bounds. (I have a proper writeup about how this works in my draft and should have that published soon. There's a tradeoff of this that needs an impact analysis.)
+Overall I also added a few more examples and rewrote much of the section(s) on type identity to be clearer.
+I still want to revise one more section tomorrow (and then need to go through everything one more time to make sure it's consistent and actually compiles/would compile), but in my eyes it's already a good incremental improvement and I should be able to publish the update fairly soon.
+Oh also, and this is unrelated to your posts, but if a specific section or paragraph is hard to understand in this then please tell me! I'm not a native English speaker and being very precise in this language can be tricky for me at times. Someone pointed out elsewhere that I'm using jargon to that end which may not be all that accessible.
+
+---
+
+@Tamschi · 2023-12-03T01:24:00.436Z:
+And updated, finally. Changes:
+Defined rules for the observed TypeId of generic type parameters' opaque types, rewrote sections on type identity and layout-compatibility
+Added section on sealed traits
+Corrected the use of 'blanket implementation' vs. 'generic implementation' vs. 'implementation on a generic type'
+Sketched two more warnings and one more error
+Added a section Behaviour change/Warning: TypeId of generic discretised using generic type parameters
+Removed the Trait binding site section but kept Coercion to trait objects and slightly expanded it
+Added section Unexpected behaviour of TypeId::of::<Self>() in implementations on generics in the consumer-side presence of scoped implementations and transmute
+Near-completely rewrote the Rationale and alternatives section with subheadings and before/after-style examples, added more positive effects of the feature
+Rewrote Alternatives section
+Removed some Unresolved questions that are now tentatively resolved
+Added top-level syntax and a field example to Explicit binding, elaborated a bit more
+Added Future possibilities:
+Conversions where a generic only cares about specific bounds' consistency
+Scoped bounds as contextual alternative to sealed traits
+Glue crate suggestions
+Various small fixes, adjustments and clarifications
+The draft is unfortunately too long for HackMD now, but overall should be much easier to read through now since it is much more structured especially under the Rationale and alternatives heading. I also added several additional cross-links to make navigation to related subsections easier.
+SkiFire13:
+I find the rules for when a scoped impl is used or not, and for when a type splits identity, pretty confusing.
+I rewrote these sections completely to make them easier to find and hopefully more clear. You can now find this information in one go starting at Generic type parameters capture scoped implementations.
+mathstuf:
+HashSet::new doesn't require any trait bounds, so how is the error meant to be surfaced? Or is it going to look at every possible impl that might exist based on A's missing impl Trait bits and error? If A is not Eq, does an error get raised about HashSet::reserve or HashSet::difference being inaccessible even if no one cares?
+The examples in the (renamed) section [Type identity of generic types] come with some additional expalanation in this regard now, though I'm not sure it's clear enough as the example is still abstract.
+Tamschi:
+It would be a good idea to have a warning if a captured scoped implementation (local or imported) 'leaks' through a discretised generic, i.e. when the implementation is not made at least equally visible by crate_a itself.
+These warnings are now described back-to-back in Scoped implementation is less visible than item/field it is captured in and Imported implementation is less visible than item/field it is captured in.
+Tamschi:
+I just had an idea for how to use-declare the global implementation that I'd like feedback on.
+This is now integrated into the main text.
+Tamschi:
+I did come up with a realistic API where there would be unexpected or outright faulty behaviour:
+The section TypeId of generic type parameters' opaque types contains the full example with comments and explanation. This is resolved now in a way that should have the least unexpected behaviour possible in as many situations as possible while maintaining future compatibility of existing code as much as possible.
+(The problematic cases can be surveyed automatically and should not result in unsoundness except for (hopefully) very unusual implementations.)
+scottmcm:
+Actually, one other request: could you add an overview somewhere for "here's a sketch of how this addresses the big problems that coherence exists to avoid"? (If there already is one and I missed it, sorry.)
+There finally is one now
+You can find consumer-side before/after comparisons in the Avoid newtypes' pain points. The initial glue code doesn't change too much with this proposal – essentially you can just skip the newtype struct definition itself and a few conversions there if this goes through.
+Sorry for how long this took. I ended up rewriting a bunch of stuff in addition to the changes needed to work with the TypeId behaviour wrt. transient generics that I hadn't considered in the first version of the draft. Found a bunch more positive side-effects of solving these issues (vaguely) this way.
+Random thought: Should glue code crates in Rust be called "grease crates" ?
+They wouldn't be all that rigid and 'sticky' anymore if something resembling this draft ends up accepted.
+
+---
+
+@dlight · 2023-12-03T04:13:46.776Z:
+How does this solve the hashtable problem?
+That is, we have a generic type A<T: Something> and we want to instantiate A<i32> but i32 doesn't impl Something. We use scoped impl Trait to impl Something for i32 two times in two different modules. Are we allowed to send an A<i32> created in one such module to the other module?
+(usually A here is something like HashSet and i32 is the key of the hashset; and Something is the Hash trait; and we must guarantee that for a given concrete hash table, the key is always hashed the same; that is, the same impl will always be selected)
+My gut feeling is that no, A<i32> from one module should be a different type from A<i32> from another module, because the type parameter from A requires a Something bound and the two places that instantiate A<i32> have different impls.
+This is effectively what happens when two crates depend on the same third crate, but with different versions (and as such they try to share the "same" type, but they are in fact different type (and you get confusing type errors as result).
+However, doing this may be impossible, because the A<i32> type may appear as part of a generic instantiation done in a third crate.
+
+---
+
+@Tamschi · 2023-12-03T04:38:28.866Z:
+You're correct in that they are different types, but you can send and use these instances across modules with this draft.
+As long as you don't need to name the type explicitly, there is no friction at all with this proposal. It'll just work according to the behaviour of where the type was defined (so you can actually create an A according to the other module's specification if the generic type parameter is inferred).
+If you do need to name the type in the other crate, you'll want to export a discretised type alias like pub type ThisA = A<i32>;. That takes a 'snapshot' of the available implementations on the type parameter, so you can then refer to that configuration by name elsewhere. (You don't necessarily need to fully discretise it to capture anything, but I'm assuming your Something implementation is on i32 specifically here.)
+The section that explains this is Type identity of generic types, which has an example that goes over all the scenarios you mention, including which types are identical and which are convertible (with this RFC alone. Conversions where a generic only cares about specific bounds' consistency points out a possible future mechanism for containers to define the conversion with broader, more accurate bounds).
+Note that these distinct collections can still feed into each other directly through their iterator APIs (as long as the type captured into the type parameters is identical) even generically, since the items are convertible through the reflexive blanket conversions (because blanket implementations disregard outer captured implementations when they bind on their target/receiver).
+Edit: Someone pointed out that it would help to name this concept, so: Generic type parameters capture the implementation environment of where they are specified. This is carried across module boundaries using type inference and explicit type aliases.
+I'll edit this into the draft later, to act as breadcrumbs/ctrl+f anchor for related ideas. I'm a bit too exhausted to do it today though, so I'll bookmark this post and update it when the edit is public.
+
+---
+
+@SkiFire13 · 2023-12-03T10:03:04.888Z:
+Tamschi:
+I rewrote these sections completely to make them easier to find and hopefully more clear. You can now find this information in one go starting at Generic type parameters capture scoped implementations.
+This is a bit more descriptive, but IMO it's still pretty hard to understand without context. The example after that uses only type aliases, which is something but I believe most of the time people will deal with calling functions/methods and it's unclear how that example translates. What about an example with:
+module a:
+a type A without a Hash implementation
+a type alias HashSetA to HashSet<A>
+a function taking HashSetA
+a function taking HashSet<A>
+a function taking HashSet<T> for a generic T
+module b:
+a type B with a scoped Hash implementation
+the same type alias/functions as in a, except for type B
+module c:
+a type C with a non-scoped Hash implementation
+the same type alias/functions as in a, except for type C
+module d:
+define a scoped implementation of Hash for A, B and C
+try to call the functions in modules a, b and c and describe what happens.
+
+---
+
+@dlight · 2023-12-04T18:06:07.254Z:
+Tamschi:
+Generic type parameters capture the implementation environment of where they are specified.
+But what if I instantiate the same generic type two times in different implementation environments? Then they will not be compatible, right?
+
+---
+
+@Tamschi · 2023-12-04T22:00:52.194Z:
+Yes, iff those environments differ for the specified type parameters.
+Implementations on unrelated types and on the outer generic itself don't matter.
+
+---
+
+@Tamschi · 2023-12-05T00:36:02.180Z:
+I just pushed an update to the draft that now includes this example here. Overall changes:
+Added a list of bullet points to the Summary and revised it slightly
+Coined the term implementation environment to refer to the set of all implementations applicable (to a given type) in a given place
+Near-completely rewrote the Logical consistency subsection to add subheadings and examples
+Small fixes and adjustments
+For convenience, here's that section in full as of right now (with a tiny formatting fix that's already in my draft here):
+Logical consistency
+Binding external top-level implementations to types is equivalent to using their public API in different ways, so no instance-associated consistency is expected here. Rather, values that are used in the same scope behave consistently with regard to that scope's visible implementations.
+of generic collections
+Generics are trickier, as their instances often do expect trait implementations on generic type parameters that are consistent between uses but not necessarily declared as bounded on the struct definition itself.
+This problem is solved by making the impls available to each type parameter part of the the type identity of the discretised host generic, including a difference in TypeId there as with existing monomorphisation.
+(See type-parameters-capture-their-implementation-environment and type-identity-of-generic-types in the reference-level-explanation above for more detailed information.)
+Here is an example of how captured implementation environments safely flow across module boundaries, often seamlessly due to type inference:
+pub mod a {
+// ⓐ == ◯
+use std::collections::HashSet;
+#[derive(PartialEq, Eq)]
+pub struct A;
+pub type HashSetA = HashSet<A>;
+pub fn aliased(_: HashSetA) {}
+pub fn discrete(_: HashSet<A>) {}
+pub fn generic<T>(_: HashSet<T>) {}
+}
+pub mod b {
+// ⓑ
+use std::{
+collections::HashSet,
+hash::{Hash, Hasher},
+};
+#[derive(PartialEq, Eq)]
+pub struct B;
+use impl Hash for B {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+pub type HashSetB = HashSet<B>; // ⚠
+pub fn aliased(_: HashSetB) {}
+pub fn discrete(_: HashSet<B>) {} // ⚠
+pub fn generic<T>(_: HashSet<T>) {}
+}
+pub mod c {
+// ⓒ == ◯
+use std::collections::HashSet;
+#[derive(PartialEq, Eq, Hash)]
+pub struct C;
+pub type HashSetC = HashSet<C>;
+pub fn aliased(_: HashSetC) {}
+pub fn discrete(_: HashSet<C>) {}
+pub fn generic<T>(_: HashSet<T>) {}
+}
+pub mod d {
+// ⓓ
+use std::{
+collections::HashSet,
+hash::{Hash, Hasher},
+iter::once,
+};
+use super::{
+a::{self, A},
+b::{self, B},
+c::{self, C},
+};
+use impl Hash for A {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+use impl Hash for B {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+use impl Hash for C {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+fn call_functions() {
+a::aliased(HashSet::new()); // ⓐ == ◯
+a::discrete(HashSet::new()); // ⓐ == ◯
+a::generic(HashSet::from_iter(once(A))); // ⊙ == ⓓ
+b::aliased(HashSet::from_iter(once(B))); // ⓑ
+b::discrete(HashSet::from_iter(once(B))); // ⓑ
+b::generic(HashSet::from_iter(once(B))); // ⊙ == ⓓ
+c::aliased(HashSet::from_iter(once(C))); // ⓒ == ◯
+c::discrete(HashSet::from_iter(once(C))); // ⓒ == ◯
+c::generic(HashSet::from_iter(once(C))); // ⊙ == ⓓ
+}
+}
+Note that the lines annotated with // ⚠ produce a warning due to the lower visibility of the scoped implementation in b.
+Circles denote implementation environments:
+◯
+indistinct from global
+ⓐ, ⓑ, ⓒ, ⓓ
+respectively as in module a, b, c, d
+⊙
+caller-side
+The calls infer discrete HashSets with different Hash implementations as follows:
+call in call_functions
+impl Hash in
+captured in/at
+notes
+a::aliased
+-
+type alias
+The implementation cannot be 'inserted' into an already-specified type parameter, even if it is missing.
+a::discrete
+-
+fn signature
+See a::aliased.
+a::generic
+d
+once<T> call
+b::aliased
+b
+type alias
+b::discrete
+b
+fn signature
+b::generic
+d
+once<T> call
+b's narrow implementation cannot bind to the opaque T.
+c::aliased
+::
+type alias
+Since the global implementation is visible in c.
+c::discrete
+::
+fn signature
+See c::aliased.
+c::generic
+d
+once<T> call
+The narrow global implementation cannot bind to the opaque T.
+of type-erased collections
+Type-erased collections such as the ErasedHashSet shown in typeid-of-generic-type-parameters-opaque-types require slightly looser behaviour, as they are expected to mix instances between environments where only irrelevant implementations differ (since they don't prevent this mixing statically like std::collections::HashSet, as their generic type parameters are transient on their methods).
+It is for this reason that the TypeId of generic type parameters disregards bounds-irrelevant implementations.
+The example is similar to the previous one, but aliased has been removed since it continues to behave the same as discrete. A new set of functions bounded is added:
+#![allow(unused_must_use)] // For the `TypeId::…` lines.
+trait Trait {}
+pub mod a {
+// ⓐ == ◯
+use std::{collections::HashSet, hash::Hash};
+#[derive(PartialEq, Eq)]
+pub struct A;
+pub fn discrete(_: HashSet<A>) {
+TypeId::of::<HashSet<A>>(); // ❶
+TypeId::of::<A>(); // ❷
+}
+pub fn generic<T: 'static>(_: HashSet<T>) {
+TypeId::of::<HashSet<T>>(); // ❶
+TypeId::of::<T>(); // ❷
+}
+pub fn bounded<T: Hash + 'static>(_: HashSet<T>) {
+TypeId::of::<HashSet<T>>(); // ❶
+TypeId::of::<T>(); // ❷
+}
+}
+pub mod b {
+// ⓑ
+use std::{
+collections::HashSet,
+hash::{Hash, Hasher},
+};
+use super::Trait;
+#[derive(PartialEq, Eq)]
+pub struct B;
+use impl Hash for B {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+use impl Trait for B {}
+pub fn discrete(_: HashSet<B>) { // ⚠⚠
+TypeId::of::<HashSet<B>>(); // ❶
+TypeId::of::<B>(); // ❷
+}
+pub fn generic<T: 'static>(_: HashSet<T>) {
+TypeId::of::<HashSet<T>>(); // ❶
+TypeId::of::<T>(); // ❷
+}
+pub fn bounded<T: Hash + 'static>(_: HashSet<T>) {
+TypeId::of::<HashSet<T>>(); // ❶
+TypeId::of::<T>(); // ❷
+}
+}
+pub mod c {
+// ⓒ == ◯
+use std::{collections::HashSet, hash::Hash};
+use super::Trait;
+#[derive(PartialEq, Eq, Hash)]
+pub struct C;
+impl Trait for C {}
+pub fn discrete(_: HashSet<C>) {
+TypeId::of::<HashSet<C>>(); // ❶
+TypeId::of::<C>(); // ❷
+}
+pub fn generic<T: 'static>(_: HashSet<T>) {
+TypeId::of::<HashSet<T>>(); // ❶
+TypeId::of::<T>(); // ❷
+}
+pub fn bounded<T: Hash + 'static>(_: HashSet<T>) {
+TypeId::of::<HashSet<T>>(); // ❶
+TypeId::of::<T>(); // ❷
+}
+}
+pub mod d {
+// ⓓ
+use std::{
+collections::HashSet,
+hash::{Hash, Hasher},
+iter::once,
+};
+use super::{
+a::{self, A},
+b::{self, B},
+c::{self, C},
+Trait,
+};
+use impl Hash for A {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+use impl Hash for B {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+use impl Hash for C {
+fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+use impl Trait for A {}
+use impl Trait for B {}
+use impl Trait for C {}
+fn call_functions() {
+a::discrete(HashSet::new()); // ⓐ == ◯
+a::generic(HashSet::from_iter(once(A))); // ⊙ == ⓓ
+a::bounded(HashSet::from_iter(once(A))); // ⊙ == ⓓ
+b::discrete(HashSet::from_iter(once(B))); // ⓑ
+b::generic(HashSet::from_iter(once(B))); // ⊙ == ⓓ
+b::bounded(HashSet::from_iter(once(B))); // ⊙ == ⓓ
+c::discrete(HashSet::from_iter(once(C))); // ⓒ == ◯
+c::generic(HashSet::from_iter(once(C))); // ⊙ == ⓓ
+c::bounded(HashSet::from_iter(once(C))); // ⊙ == ⓓ
+}
+}
+// ⚠ and non-digit circles have the same meanings as above.
+The following table describes how the types are observed at runtime in the lines marked with ❶ and ❷. It borrows some syntax from explicit-binding to express this clearly, but denotes types as if seen from the global implementation environment.
+within function
+(called by call_functions)
+❶ (collection)
+❷ (item)
+a::discrete
+HashSet<A>
+A
+a::generic
+HashSet<A: Hash in d + Trait in d>
+A
+a::bounded
+HashSet<A: Hash in d + Trait in d>
+A ∘ Hash in d
+b::discrete
+HashSet<B: Hash in b + Trait in b>
+B
+b::generic
+HashSet<B: Hash in d + Trait in d>
+B
+b::bounded
+HashSet<B: Hash in d + Trait in d>
+B ∘ Hash in d
+c::discrete
+HashSet<C>
+C
+c::generic
+HashSet<C: Hash in d + Trait in d>
+C
+c::bounded
+HashSet<C: Hash in d + Trait in d>
+C ∘ Hash in d
+The combination ∘ is not directly expressible in TypeId::of::<> calls (as even a direct top-level annotation would be ignored without bounds). Rather, it represents an observation like this:
+{
+use std::{any::TypeId, hash::Hash};
+use a::A;
+use d::{impl Hash for A};
+fn observe<T: Hash + 'static>() {
+TypeId::of::<T>(); // '`A` ∘ `Hash in d`'
+}
+observe::<A>();
+}
+
+---
+
+@dlight · 2023-12-05T12:22:21.020Z:
+That's very interesting! Perhaps this is too complex for a established language like Rust, but I would love to know if any existing language implements something like this.
+I would certainly consider scoped impls if I were creating a language.
+
+---
+
+@Tamschi · 2023-12-05T12:33:05.767Z:
+There's 𝒢 (link to the section in Prior art), but it's very C++-y so I don't think it's got any of these safety semantics. I lifted the core idea for the container safety more or less from Genus, which is the other prior art I cite. It's done quite differently there though since it aims for Java-style OOP semantics.
+Pretty sure both of those are research languages and not actively developed/supported, though.
+C# has extension methods that you can bring into scope on foreign types, but generic-bounds-wise it still only uses interfaces that must be part of the class definition, iinm.
+
+---
+
+@Nadrieril · 2023-12-05T13:43:01.887Z:
+The type identity stuff seems pretty subtle. If this sounds good to you, I would suggest that you provide an explicit mechanism to specify a type along with explicitly chosen impls. Then the implicit behavior you describe would desugar to this explicit thing, which would make it easier to follow what's happening.
+For example if you allowed the naming of impls, this could look like
+use std::str::{impl PartialEq for String as case_sensitive};
+impl (case_insensitive) PartialEq for String { ... }
+type CaseInsensitiveString = String with impl case_insensitive;
+type CaseSensitiveString = String with impl case_sensitive;
+You don't even need to allow users to write this in code. Having a desugaring could simply help explain your proposal. However I'd guess that for complex cases having an explicit syntax would really help.
+
+---
+
+@Tamschi · 2023-12-05T20:39:46.548Z:
+I probably should work explicit binding into the main text even though it's optional to scoped impl Trait for Type's function, yes.
+That said, there is a problem with this example:
+Nadrieril:
+type CaseInsensitiveString = String with impl case_insensitive;
+type CaseSensitiveString = String with impl case_sensitive;
+These types aren't just inexpressible but they (intentionally) do not exist as discrete types under this proposal. That is strictly a runtime distinction for the TypeId of PartialEq-bounded opaque generic type parameter types. (It should still render out in error messages where relevant though, yes.)
+There are two reasons for this:
+First, it keeps crate APIs clean. If a free-standing³ String in a signature is always just a String, then it's easier to not accidentally expose scoped implementations that you use in a module (aside from the lower-visibility warning, but it's most likely easier to not have to deal with this in the first place). This is also important to cleanly provide derive-dependencies to public fields, and for things like a HashSet<String: Eq in case_insensitive> to cleanly interface with String values moving into and out of it.
+Second, and more importantly, if you need a persistently case insensitive string then what you are dealing with is a semantically distinct instance, which should be a usage-named newtype like:
+#[derive(Debug, Display, Eq)]
+struct MentionedUserName(String);
+impl PartialEq for MentionedUserName {
+fn eq(&self, other: &Self) -> bool {
+str::eq_ignore_ascii_case(&self.0, &other.0)
+}
+}
+impl PartialEq<str> for MentionedUserName {
+fn eq(&self, other: &str) -> bool {
+str::eq_ignore_ascii_case(&self.0, &other.0)
+}
+}
+(There may be some argument for a newtype shorthand in a separate RFC, but I'm not at all confident that it's a good idea to have those inherit all implementations from their wrapped type by default.)
+Edit: ³ I just realised references are generics though. Hm. I think those should have special handling to not cause capturing by themselves, because they're so common in signatures, don't "look" like generics and have no consistency requirements. I think it's reasonable to exclude them, pointers and possibly tuples from causing captures to happen, while generics with <> and function pointers, closure traits do cause it for everything inside, transitively.
+That is a bit messy though
+Regarding proper-naming implementations: I'm very strongly opposed to it, since I think it is squarely detrimental here, mainly in terms of clarity but also syntactically and for ease of use.
+By identifying the implementation with its trait and module name instead, that's
+about as concise when used,
+more clear about what is being done and what would collide,
+ensures you get all the information you need by reading a usage example of either form,
+allows semantically identical implementations to share a name¹,
+and it removes the need for hard-to-remember² edge case syntax.
+¹  e.g. a shared "case_insensitive" with implementations for each of str, String, OsStr and OsString, without extra rules. It's definitely possible, but it would be a bit strange to have one particular kind of named item that doesn't collide in Rust.
+² That may be a me-problem though. I have to look up the macro_rules! syntax every time I write one.
+Something that may be interesting could be the ability to write
+use bevy_reflect_glue::typewise_prelude::{impl * for Type};
+for cases where multiple traits are needed, but that's definitely a tradeoff that lets people write more brittle code much more easily.
+
+---
+
+@Tamschi · 2023-12-08T16:36:18.105Z:
+I just pushed an update (diff) to the draft that now specifies a list of implementation-invariant generics.
+Otherwise there were only minor changes, mostly fixes to wording.
+This is a fix for this problem:
+Tamschi:
+Edit: ³ I just realised references are generics though. Hm. I think those should have special handling to not cause capturing by themselves, because they're so common in signatures, don't "look" like generics and have no consistency requirements. I think it's reasonable to exclude them, pointers and possibly tuples from causing captures to happen, while generics with <> and function pointers, closure traits do cause it for everything inside, transitively.
+That is a bit messy though
+Implementation-invariant generics
+The following generics that never rely in the consistency of implementation of their type parameters are implementation-invariant:
+&T, &mut T (references),
+*const T, *mut T (pointers),
+[T; N], [T] (arrays and slices),
+(T,), (T, U, ..) (tuples),
+superficially* fn(T) -> U and similar (function pointers),
+superficially* Fn(T) -> U, FnMut(T) -> U, FnOnce(T) -> U, Future<Output = T>, Iterator<Item = T>, std::ops::Coroutine and similar (closures),
+Pin<P>, NonNull<T>, Box<T>, Rc<T>, Arc<T>, Weak<T>, Option<T>, Result<T, E>**.
+Implementation-invariant generics never capture implementation environments on their own. Instead, their effective implementation environments follow that of their host, acting as if they were captured in the same scope.
+The type identity of implementation-invariant generics seen on their own does not depend on the implementation environment.
+* superficially: The underlying instance may well use a captured implementation internally, but this isn't surfaced in signatures. For example, a closure defined where usize: PartialOrd in reverse + Ord in reverse is just FnOnce(usize) but will use usize: PartialOrd in reverse + Ord in reverse privately when called.
+** but see which-structs-should-be-implementation-invariant.
+See also why-specific-implementation-invariant-generics.
+This is a purely pragmatic fix to these types appearing in signatures a lot, and not necessarily an elegant solution. I think it's still in line with other cases where Rust uses compiler- or standard-library-privilege to pave over certain ergonomic issues, but im definitely interested in hearing about ways to do this more naturally (while preserving the current level of separate compilation and coherence).
+A very useful side-effect, though, is that the implementation-invariance of tuples provides a usually sufficient quick-fix path for behaviour-changewarning-typeid-of-implementation-aware-generic-discretised-using-generic-type-parameters from e.g. TypeId::of::<HashMap<K, V>>() to TypeId::of::<(K, V)>(), as the latter now only makes a distinction between innate identity of and bounds-relevant implementations on the type parameters.
+
+---
+
+@Tamschi · 2023-12-09T02:03:39.917Z:
+Nadrieril:
+You don't even need to allow users to write this in code. Having a desugaring could simply help explain your proposal. However I'd guess that for complex cases having an explicit syntax would really help.
+Right, I forgot to mention this earlier: I'm planning to work explicit bindings into the proposal, but it's a larger edit since that seems to require quite a few grammar changes and a few new errors, and is likely to have edge cases I haven't thought of yet.
+I'm not entirely sure when I'll find the time, but I was planning to take this RFC fairly slowly from the beginning.
+
+---
+
+@dlight · 2023-12-09T11:56:53.292Z:
+Tamschi:
+These types aren't just inexpressible but they (intentionally) do not exist as discrete types under this proposal.
+Rust uses types to do monomorphization. If case insensitive strings and case sensitive strings were different types, Rust would be able to, at each call site, inline each PartialEq impl and not pay for dynamic dispatch. This is pretty huge for Rust's claim to zero cost abstractions.
+In this scenario (where those are different types), then a bare String is, strangely, a generic type: it's generic over its impls. As a generic type, it either monomorphizes wildly, or do dynamic dispatch.
+This also happens with closures: each one receives a different type to aid monomorphization. If you had a single type for all closures (and this type isn't generic) you would be forced to do dynamic dispatch per Rust rules.
+So how should scoped impls be implemented? Should it do dynamic dispatch under the hood, and rely on an optimizer to sometimes devirtualize? With this implementation, how to avoid pessimizing the execution of all impls, not just scoped impls?
+Or should it monomorphize each instance of a type with differing scoped impls as different types? Like, the type String with case_insensitive impl doesn't exist in the surface language, but it's created in a lowering. In this case, this has the potential to cause hidden blow ups in code size and compilation times (because there is no generic term to mark down the places where monomorphization can occur)
+
+---
+
+@Tamschi · 2023-12-09T17:32:15.440Z:
+(See also: Cost of additional monomorphised implementation instances)
+This needs another lowering layer in the compiler to be implemented efficiently, as purely by-type code generation is too coarse here. 'Monomorphisation +0.5' is a good way to look at it, though.
+In essence yes, this is intended to use full static dispatch outside of dyn, but there are a few mitigating factors:
+The layout of discrete types like String, but also including fully discretised generics, is guaranteed-identical between all implementation environments.
+Discrete implementations/functions bind all implementations locally, so they are guaranteed-monomorphic between implementation environments by their definition.
+Generic implementations are polymorphic, but they are guaranteed-identical between almost¹ all bound-irrelevant implementation differences* (so they can be unified to a large extent without looking too closely at their implementation details).
+¹ Unfortunately, this is another place where TypeId::of::<Generic<T>>() throws a spanner in the works. It may be advantageous to check/flag this in advance well ahead of code generation, since it's the only call that's a source for difference here in terms of defined behaviour. This needs to be scanned for anyway since it produces a warning.
+Regarding explicit dyn/trait objects:
+These would need to have full additional implementations generated per trait.
+Specifically supertrait coercions could still take advance of earlier/easier deduplication.
+Overall, I'd wager that the end result is very close to what you'll see with existing newtypes, possibly ever so slightly smaller and faster given equal use (because more use-cases can be easily unified before code generation and linking). The practical outcome I'm not sure about, however:
+This is a lot less painful than newtypes, so it'd likely get used a lot more.
+Code reuse is much easier with this feature, so there may be fewer reimplementations.
+I think that, given a compiler that takes advange of these properties, it's likely too close for me to call in advance in either direction.
+* Edit: I need to check over how exactly I worded that though, and add a clarification. It's possible I misdefined it and accidentally made non-blanket generic implementations aware of top-level implementation environment differences, which they probably shouldn't be without explicit bounds.
+
+---
+
+@Tamschi · 2024-03-07T08:08:31.277Z:
+Hello! I'm still working on this.
+(I took a holiday break, then unrelatedly got sick, then was extremely busy for a while.)
+I pushed another update (v5, diff) that (hopefully) clarifies when monomorphisation happens and when it does not.
+Changes:
+Added section "(Pending changes to this draft)", since I haven't gotten around to inserting explicit binding yet but want to clarify that it's coming to the draft.
+Revised "TypeId of generic type parameters' opaque types" as tuples are implementation-invariant.
+Replaced section "Contextual monomorphisation of generic implementations and generic functions" with sections "Binding choice by implementations' bounds" and "Binding and generics".
+Added sections "Marking a generic as implementation-invariant is a breaking change" and "Efficient compilation".
+Renamed future possibilities section "Scoped bounds as contextual alternative to sealed traits" to "Sealed trait bounds".
+Added future possibilities section "Reusable limited-access APIs".
+a range of smaller adjustments to wording and formatting
+I will likely still need a few weeks to work explicit binding into the proposal properly though, since I still have a stack of pending organisational work sitting next to me here. That said, this version of the draft should be consistent (as far as I can tell, which is to say it's ready to have holes poked into it again).
+
+---
+
+@Tamschi · 2024-05-05T14:43:58.530Z:
+I published another update (v6, diff), which finally adds explicit inline implementation environment specification to generic arguments. (I ended up using as instead of : as intro to the ImplEnvironment, feels overall a bit more consistent to me.)
+Changes:
+Implemented the former Future Possibilities section "Explicit binding" into the main text as "inline implementation environments", mainly in form of grammar extensions.
+Specified that call expressions capture the implementation environment of their function operand, acting as host for implementation-invariant generics there.
+Miscellaneous wording clarifications and fixes. (Turns out you can't call a tuple struct's implicit constructor through a type alias, whoops.)
+There was a bit of churn in the Unresolved Questions section too, as some things clicked into place and I moved some paragraphs from elsewhere there. I think the pre-RFC is a good reflection of which decisions follow from the feature and which are better left to someone more knowledgeable than me.
+It's likely I'll reorder some sections to make the proposal easier to follow, if possible, but other than that it feels overall solid to me now (even if I'm under no illusions that there aren't any smaller mistakes at all). I'll most likely submit it next Sunday, just giving it another week in case someone notices anything or I remember something I missed during that time.
+
+---
+
+@DanielFath · 2024-05-07T13:01:48.926Z:
+Looks great to me, something like this would be great to deal with glue crates.
+
+---
+
+@Tamschi · 2024-05-08T04:03:50.142Z:
+That's roughly where I started with this (I got very frustrated trying to implement bevy_reflect traits for declarative data-moshing in a JPEG XL decoder ), but I kept finding more use-cases.
+There are a few postponed RFCs (Hidden trait implementations,  Coercible and HasPrefix for Zero Cost Coercions), pre-RFCs (Pre-RFC describing mechanism to optionally loosen some orphan rule constraints) and previous discussions (pretty much anything here that mentions "orphan rule") where scoped implementations either covers the use-case entirely, would make the proposed feature easier to use or implement, or provides a generalised alternative.
+Aside from usefulness, I think the most important aspect here is that the RFC leads to readable/"boring" code and that it slots nicely into all other (planned) language features.
+Funnily enough, that last search above just let me come across Named and scoped trait implementations as a solution to orphan rules [ok, it wont' work], which probably would have discouraged me somewhat had I seen it earlier. I think I already rediscovered and solved all the issues that came up there, though.
+
+---
+
+@Tamschi · 2024-05-12T17:53:16.055Z:
+This is now submitted as RFC 3634:
+github.com/rust-lang/rfcs
+Scoped `impl Trait for Type`
+rust-lang:master ← Tamschi:scoped_impl_trait_for_type
+opened 01:59PM - 12 May 24 UTC
+Tamschi
++3436
+-0
+This may be a bit long. I thought it would be best to go over the interactions w…ith other language features and tooling as well as potential impacts thoroughly in advance, since while the addition to the language itself can be explained quickly, it does interact with *a lot* of other Rust features and aspects of the crate ecosystem.
+In (very) short this is a version of orphan-rule avoidance (i.e. non-unique trait implementations) that does not suffer from either version of "the hashtable problem", does not obscure imports, can be safely ignored unless needed (but is discoverable), is seamlessly compatible with specialisation and tries to strike a good balance between usability and complexity, so that developers are automatically funneled towards correct and unsurprising but also highly compatible code.
+I'm aware that there are often rash proposals in this direction, but I believe I've covered all previously-discussed issues.
+As the overall RFC is a fairly dense read, I've added cross-references and less-formal comments in form of blockquotes to it.
+---
+Thanks
+- to @teliosdev for some very early syntax feedback that helped put me on track,
+- to @cofinite for pointing out how scoped implementations allow syntax traits to be used as extension traits,
+- to @thefakeplace and to SkiFire13 in the [draft discussion](https://internals.rust-lang.org/t/pre-rfc-scoped-impl-trait-for-type/19923) for suggestions on how to make this RFC more approachable and easier to understand.
+---
+[Rendered](https://github.com/Tamschi/rust-rfcs/blob/scoped_impl_trait_for_type/text/3634-scoped-impl-trait-for-type.md)
+I made a few last-minute changes:
+Added more guide-level documentation changes
+Reordered warnings and errors to the end of the reference-level explanation
+Some small adjustments to wording and formatting
+The links in the OP are updated to point to the now-numbered file, but I didn't update links in the other posts here yet (where they don't point to a specific revision anyway). I may do that when I have a bit of downtime and am not as nervous about this anymore.
+
+---
+
+@system · 2024-08-10T17:53:29.518Z:
+This topic was automatically closed 90 days after the last reply. New replies are no longer allowed.
+
+=== ROW 161 | f009196 | https://internals.rust-lang.org/t/instant-systemtime-min-max/21375 | 2024-08-15 | internals ===
+{Instant,SystemTime}::{MIN,MAX}
+
+@kevincox · 2024-08-15T22:28:49.645Z:
+Right now there is no easy way to get the extents of representable values for Instant and SystemTime. It is often useful to be able to know the extents of the types, or to have a value that is <= or >= all other values of these types. For example I would like to implement saturating arithmetic on these types, it would be very easy if I could just do:
+time.checked_sub(duration)
+.unwrap_or(SystemTime::MIN)
+It is extra important to have these as part of the API as the representable values are documented as system-dependent, so they can't be hardcoded.
+You can binary-search the extents with checked_add and checked_sub methods, but that is pretty ugly. So by that argument it is already technically part of the public API.
+
+---
+
+@the8472 · 2024-08-15T23:11:10.007Z:
+kevincox:
+So by that argument it is already technically part of the public API.
+Observable behavior an API does not make.
+For SystemTime this might be reasonable to have, but the values wouldn't be portable. I think Instant would be more hazardous because even on a single platform they would not denote stable points in time. If you tried to calculate durations relative to a Instant::MIN you get different results after very reboot because the point-in-time denoted by that value shifts as the boot-time initial gets set to some random value, or boot-time is zero or whatever the OS chooses.
+
+---
+
+@kevincox · 2024-08-15T23:27:55.164Z:
+the8472:
+you get different results after very reboot
+But this is already the case with Instants in general. Their meaning is always meaningless across reboots. In fact they aren't guaranteed to be meaningful across process boundaries. I don't think having Instant::MIN would change that at all. It would make it easier to estimate when the reference time is, but I don't think that changes anything about what that reference time is.
+
+---
+
+@elidupree · 2024-08-15T23:44:57.075Z:
+kevincox:
+You can binary-search the extents with checked_add and checked_sub methods, but that is pretty ugly. So by that argument it is already technically part of the public API.
+By saying the word "technically", you've activated my rules-lawyer brain!
+It's possible I've missed something, but I don't see anything in the Instant or Duration docs that prevents them from being bigints, where checked_add and checked_sub would always succeed (until you run out of RAM). So I think the existence of a minimum/maximum is technically not part of the public API yet!
+
+---
+
+@the8472 · 2024-08-16T08:05:38.106Z:
+Instants currently do not provide any fixed reference point which could tempt anyone to construct a distance. Adding Instant::MIN would be the first such thing.
+
+---
+
+@farnz · 2024-08-16T08:43:34.961Z:
+kevincox:
+I don't think having Instant::MIN would change that at all. It would make it easier to estimate when the reference time is, but I don't think that changes anything about what that reference time is.
+This assumes that there is a fixed reference time for Instant, which isn't technically required at the moment. You can meet Instant's current contracts by tracking whether or not there are any extant instances of Instant, and starting the reference timer at a random number at the moment the first instance is created, stopping the reference timer when the last instance is destroyed.
+If you do this, you get an implementation of Instant that meets all of Rust's API guarantees, but that saves a tiny amount of power when there's no time being tracked, since it can forget the reference time every time you destroy the last instance of Instant, and choose a new reference time when the first new instance is created.
+
+---
+
+@kevincox · 2024-08-16T10:49:37.494Z:
+Getting off-topix for fun. I don't think you can do that.
+Methods like Duration.as_secs() give a max size for Duration and the methods in Instant and SystemTime imply that the distance between them can be represented by a Duration. Duration.MAX also says this explicitly.
+
+---
+
+@elidupree · 2024-08-16T10:54:36.503Z:
+(Continuing the off-topic for fun) Hmm. I see the difficulty… But perhaps you could still make Instant be a type that has a lower bound, but no representable minimum, by making it attain higher and higher precision as it gets close to the lower bound
+
+---
+
+@kevincox · 2024-08-16T10:57:36.653Z:
+farnz:
+This assumes that there is a fixed reference time for Instant
+If really needed it could be Inststant::min_value(). Then as long as you don't hold a value you can stop the clock. Different calls to min_value don't necessarily represent the same point in time, just a time smaller than any other times in existence and the minimum representable value.
+I would guess that something like this is probably not needed. It seems that on a platform like this it would make sense to use a specific API where you can pick the tradeoff between the cost of reference counting and cost of running the clock rather than hoping that std made the right choice for your application and hardware.
+
+---
+
+@farnz · 2024-08-16T11:41:28.113Z:
+kevincox:
+If really needed it could be Inststant::min_value(). Then as long as you don't hold a value you can stop the clock. Different calls to min_value don't necessarily represent the same point in time, just a time smaller than any other times in existence and the minimum representable value.
+You've already made the representation of Instant more complicated here, because it needs to be both "a time smaller than any other times in existence" and "the minimum representable value". It is reasonable to implement Instant as "read the 64-bit time stamp counter register on the CPU, which is synchronised across all CPU harts, initialized to a random value, and counts at a convenient reference clock rate unless all CPU cores are in deep sleep (when it stops)".
+The minimum representable value here would be 0u64; but because the TSC in this definition is initialized to a random value, it's possible for 0u64 to be a time in the future (e.g. if the TSC came up at 0u64.wrapping_sub(100_000_000_000) at boot, and the reference clock is at 100 MHz, then any applications that see an Instant in the first 1,000 seconds after boot see one where 0u64 is in the future.
+And this makes what you want quite hard to implement - I can have a minimum representable value, but that might represent a time in the future. Or I can let you handle it by having you call Instant::now early in the program, and then that's your minimum value and guaranteed to be earlier than any other Instant because you grabbed it early in execution. This also has the nice side-effect of working with the other scheme I described, where the time source only runs if an Instant exists.
+Note that none of this affects SystemTime::MIN, which is reasonable, since there's a reference timestamp there.
+
+---
+
+@kevincox · 2024-08-16T12:22:45.941Z:
+Thanks, that is a good overview. Having the minimum value be randomly initialized would be tricky. In this case the runtime would indeed probably need to take some form of reference timestamp at startup and use that as the minimum value. So that would rule out having Instant::MIN be const but I don't think it makes Instant::min_value() a bad idea.
+The minimum representable value here would be 0u64
+That isn't true, if this value is considered greater than other values it isn't the minimum. It is the minimum bit pattern but that is irrelevant. Instant doesn't have wrapping behaviour in the API. So something built on a clock like this would have to manage it's own wrapping internally to provide the Instant API.
+I don't see how you could implement the Instant API with pure wrapping and no reference timestamp internally. Instant::duration_since demands that the implementation knows which instant came first, so blind wrapping subtraction isn't good enough. So there probably needs to be some sort of reference point defined or some sort of assumption about how long a process can run (for example assuming that the time between two Instants is less than u64::MAX/2). But I don't think that assumption is safe in the face of the Instant math operations, they can make arbitrary amounts of time fly by and invalidate your assumption.  Instant::checked_add and Instant::checked_sub also require the implementation to know what that rollover point is and it needs to be common between all Instants. So as I said in my original post I think some "rollover point" is part of the API anyways.
+farnz:
+call Instant::now early in the program, and then that's your minimum value
+But this isn't true in the case of subtraction. I can easily subtract some time from an Instant and come up with a time that is less than this.
+
+---
+
+@the8472 · 2024-08-16T12:35:08.437Z:
+kevincox:
+I don't see how you could implement the Instant API with pure wrapping and no reference timestamp internally
+The OS holds whatever internal state is necessary to do offsetting. We just get an unanchored timestamp. The POSIX (non-)guarantee is
+CLOCK_MONOTONIC
+A nonsettable system-wide clock that represents monotonic time since—as described by POSIX—"some unspecified point  in  the  past". [...] All
+CLOCK_MONOTONIC  variants guarantee that the time returned by consecutive calls will not go backwards, but successive calls may—de‐
+pending on the architecture—return identical (not-increased) time values.
+
+---
+
+@kevincox · 2024-08-16T12:48:10.979Z:
+But in that case what Rust sees is a reference of 0 as the minimum. So I don't think there is a problem.
+
+---
+
+@burntsushi · 2024-08-16T13:04:57.183Z:
+SystemTime::MIN and SystemTime::MAX seem reasonable to me. Although, just adding the saturating arithmetic routines on SystemTime itself also seems reasonable to me. We could do both or just one.
+Instant::MIN and Instant::MAX seem fraught, for reasons already discussed. Can we just add the saturating arithmetic operations to Instant itself?
+And popping up a level, @kevincox, can you say more about the motivation here? Why do you want saturating arithmetic on Instant?
+
+---
+
+@kevincox · 2024-08-16T13:23:59.223Z:
+burntsushi:
+Can we just add the saturating arithmetic operations to Instant itself
+If we are doing this we may as well add ::min_value() and ::max_value() as you can do Instant::now().saturating_{add,sub}(Duration::MAX) to calculate them.
+the motivation here
+I am implementing token bucket rate limiting and you end up shifting timestamps forwards and backwards to track the current fill level of the rate limit. Moving it forwards is probably not a problem in practice as any reasonable rate limit should not overflow (but even then knowing that you won't panic is nice) but going backwards can be a problem especially for Instant as you never know how long ago your minimum point is. For my use case it is preferable to saturate.
+My crate is public: rl_core - Rust
+The support for Instant is pretty new and I probably want to rework things a bit to account for the fact that Instant::MIN can be arbitrarily recent. (Right now the "start fill" time is recorded, but it is probably better to update this to store the "full at" time.) But even with those changes ::MAX is still helpful and in all cases I would rather saturate than panic.
+
+---
+
+@farnz · 2024-08-16T16:37:05.510Z:
+kevincox:
+So there probably needs to be some sort of reference point defined or some sort of assumption about how long a process can run (for example assuming that the time between two Instants is less than u64::MAX/2).
+That assumption is very likely to be practically safe. With a 64-bit integer, and a 100 MHz reference clock, you're not going to run into the limits of the assumption until the program has been running for over 2,900 years (2**63 ticks of a 100 MHz clock). On the other hand, defining a reference point constrains the platform considerably, or forces extra arithmetic on all Instant::now operations to adjust to the reference time.
+
+---
+
+@kevincox · 2024-08-16T16:59:15.118Z:
+farnz:
+That assumption is very likely to be practically safe
+I agree for time passing in general, but see:
+kevincox:
+But I don't think that assumption is safe in the face of the Instant math operations, they can make arbitrary amounts of time fly by and invalidate your assumption. Instant::checked_add and Instant::checked_sub also require the implementation to know what that rollover point is and it needs to be common between all Instants.
+
+---
+
+@farnz · 2024-08-16T17:37:33.360Z:
+kevincox:
+But I don't think that assumption is safe in the face of the Instant math operations, they can make arbitrary amounts of time fly by and invalidate your assumption. Instant::checked_add and Instant::checked_sub also require the implementation to know what that rollover point is and it needs to be common between all Instants.
+They don't need to know what that rollover point is; merely that their arithmetic crosses a rollover point.
+As a trivial example, you could say that you're using a 64 bit TSC fed by a 133 MHz reference clock, and you're simply going to fail operations if you're more than 1,000 years from Instant::now. That prevents you crossing a rollover point, but doesn't have you knowing what the rollover point is - you're instead saying that getting too far from now is a failure.
+
+---
+
+@kevincox · 2024-08-17T17:46:23.926Z:
+I just noticed that Tokio has their own form of Instant::MAX. And based on the comments they have had a bit of difficulty maintaining it.
+github.com
+tokio-rs/tokio/blob/365269adaf6ec75743c0693f2378c3c6d04f806b/tokio/src/time/instant.rs#L57-L63
+pub(crate) fn far_future() -> Instant {
+// Roughly 30 years from now.
+// API does not provide a way to obtain max `Instant`
+// or convert specific date in the future to instant.
+// 1000 years overflows on macOS, 100 years overflows on FreeBSD.
+Self::now() + Duration::from_secs(86400 * 365 * 30)
+}
+
+---
+
+@kevincox · 2024-08-17T17:49:30.566Z:
+Tokio's use of this far_future() seems to be to implement their own form of saturating addition in Instant.
+One example of its use:
+github.com
+tokio-rs/tokio/blob/365269adaf6ec75743c0693f2378c3c6d04f806b/tokio/src/time/interval.rs#L483-L485
+timeout
+.checked_add(self.period)
+.unwrap_or_else(Instant::far_future)
+
+---
+
+@bjorn3 · 2024-08-17T18:40:14.074Z:
+I think there is an argument to be made that it should either panic or cause the future to never be ready ever again in case of an overflow in Interval::poll_tick. The overflow only happens when one of the following conditions is true:
+We are close to the latest time representable by Instant. In this case Instant::far_future will panic anyway and Instant::MAX would wait too little time.
+We are already after the latest time representable by Instant. In this case it is impossible to obtain an Instant anyway, so there is no safe way to handle this. The only options are to panic or have the future never be ready ever again.
+The period is ridiculously large. This is likely a bug in the program that uses Interval, thus warranting a panic. Even if it is not a bug, if Instant::MAX is used as next time to be ready, on the next tick the first condition would trivially be true. And using Instant::far_future would wait too little time.
+
+---
+
+@kevincox · 2024-08-17T19:19:10.352Z:
+I think you have some good points, maybe the Tokio code code be improved. But I have a few questions.
+bjorn3:
+The period is ridiculously large. This is likely a bug in the program that uses Interval, thus warranting a panic.
+I don't think this is a given. Especially since some OSes apparently can't represent Instants 100 years away. I can imagine a program that calculates the next time it needs to do something and that happens to be very far in the future. In this case the best behaviour is likely to just wait forever. For example maybe it is calculating the next instant of an event on an astronomical timescale. Just because an event is incredibly unlikely to occur before a program stops running doesn't mean that waiting for it is a bug.
+I think the best solution for sleep(std::time::Duration::MAX) is probably to keep the future alive but never call it. Panic if Instant::now reaches Instant::MAX. This behaves the same as all other sleeps, keeping the future alive until the specified time, but panics only in the unlikely condition that the process does run for as long as the clock can function. At this point I don't think there is any reasonable behaviour for a program that is using timers, so just panic. This means that you never run a timer too early but you also don't panic upfront just in case the incredibly unlikely situation of Instant::now() hitting Instant::MAX occurs.
+This is also an interesting use case for Instant::MAX, you can monitor Instant::MAX - Instant::now() to figure out how long your process has before timers completely break.
+bjorn3:
+Even if it is not a bug, if Instant::MAX is used as next time to be ready, on the next tick the first condition would trivially be true. And using Instant::far_future would wait too little time.
+I don't know what you mean here. What is "the first condition"? And yes Instant::far_future would wait too little, that is the reason why it is a hack and Instant::MAX could improve the code.
+
+---
+
+@bjorn3 · 2024-08-17T19:47:40.315Z:
+kevincox:
+In this case the best behaviour is likely to just wait forever.
+That is a good option, but not what tokio does. It doesn't need Instant::MAX either. Just never registering an instant to be woken up again would be enough.
+kevincox:
+I don't know what you mean here. What is "the first condition"?
+Being very close to the latest time representable by an Instant. Aka the first bullet point I listed.
+kevincox:
+And yes Instant::far_future would wait too little, that is the reason why it is a hack and Instant::MAX could improve the code.
+Even Instant::MAX would wait too little in that case.
+
+---
+
+@kevincox · 2024-08-17T20:01:30.963Z:
+bjorn3:
+Even Instant::MAX would wait too little in that case.
+Only if you ever actually returned, if you guarantee to panic at Instant::MAX then you are fine. Basically it lets you continue to store futures how you normally would but with a clear value that is the "end of time" as far as the scheduler is concerned.
+You can check this condition specifically and just do Box::leak or whatever, but I'm not convinced that it is better.
+
+---
+
+@steffahn · 2026-02-08T20:01:45.440Z:
+This topic was automatically closed 540 days after the last reply. New replies are no longer allowed.
+
+=== ROW 162 | f009292 | https://internals.rust-lang.org/t/pre-rfc-derive-support-for-arithmetic-traits-add-sub-mul-div-on-structs/23482 | 2025-09-02 | internals ===
+Pre-RFC: #[derive] support for arithmetic traits (Add, Sub, Mul, Div) on structs
+
+@vangata-ve · 2025-09-02T17:06:42.006Z:
+Summary
+Add support for deriving Add, Sub, Mul and Div on structs whose fields implement them.
+EDIT: Here we are talking about Rhs=Self implementation.
+Rationale
+In Rust, implementing arithmetic traits like Add, Sub, Mul, or Div requires either manually writing implementation or dependency on third-party crates like derive_more even for trivial cases where the semantics are unambiguous (e.g. field-wise operations on numeric structs).
+#[derive(Add)]
+struct Point(u32, u32); // a + b == Point(a.0 + b.0, a.1 + b.1)
+This is pointless busywork when the only sensible behavior is to perform the operation field by field. It would work the same way Clone, Debug and Copy is resolved.
+Generics?
+For generic structs like:
+#[derive(Add)]
+struct Point<T> {
+x: T,
+y: T,
+}
+the derived implementation automatically requires T: Add (exactly like #[derive(Clone)] requires T: Clone ).
+What about enums?
+I noticed that enums rarely need arithmetic and when they do, manual impls are clearer so this proposal intentionally excludes support for deriving arithmetic traits on enums. While third-party crates like derive_more offer a solution for enums - wrap the output in Result<Self, Error>.
+impl Add for FooBar {
+type Output = Result<Self, Error>;
+fn add(self, rhs: Self) -> Self::Output {
+match (self, rhs) {
+(Foo(a), Foo(b)) => Ok(Foo(a + b)),
+(Bar(a), Bar(b)) => Ok(Bar(a + b)),
+_ => Err(Error::Mismatch),
+}
+}
+}
+Drawbacks
+Adding a solution to the standard library that is necessarily more limited will create a small split in the ecosystem: "Should I use the standard derive or the more powerful derive_more ?"
+Nevertheless, I decided to propose it, especially since the #[derive(From)] RFC has recently reached implementation so ¯\_(ツ)_/¯.
+Unresolved Questions
+Overflow behavior
+Should derived implementations panic on overflow? The std's arithmetic traits provide no overflow control
+
+---
+
+@2e71828 · 2025-09-02T17:47:25.304Z:
+vangata-ve:
+even for trivial cases where the semantics are unambiguous (e.g. field-wise operations on numeric structs).
+My main concern is whether unconstrained field-wise projection of these operators is really all that common.  Most times that I have a wrapper struct that I want to implement arithmetic operators for, it's because the struct represents some kind of mathematical object that has its own rules for those operators, e.g. complex numbers, quaternions, matrices, or homogeneous vectors.
+vangata-ve:
+#[derive(Add)]
+struct TcpPort(u16);
+Why would you ever want to add two TcpPorts to each other?  Adding an integer makes sense if you want to scan for an open port to use, or even a range iterator, but I just don't see the value in this particular example.
+
+---
+
+@jrose · 2025-09-02T18:05:27.751Z:
+vangata-ve:
+This is pointless busywork when the only sensible behavior is to perform the operation field by field.
+curves.xargs.org
+The Animated Elliptic Curve
+Visualize elliptic curve cryptography with animated examples
+Not that you’d ever expect derive to do this, but my point is that “addition” can mean a bunch of things that are not “add the components”, even in the realm of math.
+I’m much more positive about wrappers for single values, but even there we run into trouble. A Duration plus a Duration is another Duration, but the operation you want for Instant isn’t Instant + Instant = Instant; it’s Instant + Duration = Instant. Your TcpPort example and 2e71828’s response are probably part of this category too.
+Still, a derive doesn’t have to handle every solution to be useful, since you can always fall back to a manual implementation. So…
+
+---
+
+@vangata-ve · 2025-09-02T18:08:36.412Z:
+Most times that I have a wrapper struct that I want to implement arithmetic operators for, it's because the struct represents some kind of mathematical object that has its own rules for those operators, e.g. complex numbers, quaternions, matrices, or homogeneous vectors.
+Fair point - for cases like yours this proposal is largely irrelevant. I often work with domain-specific quantities representing something where field-wise arithmetic is the "natural" behavior and that made me wonder why the std doesn't provide derive for arithmetic traits.
+Why would you ever want to add two TcpPorts to each other?
+Was playing around in rust playground and didn't feel like using Foo/Bar/Baz for it's name. I'll change it to not raise confusion
+
+---
+
+@Vorpal · 2025-09-02T19:53:50.695Z:
+If you have newtype wrapper structs for units (kg, m, etc) I can see this being useful. But for any type with more than one member there are a lot of diffrent ways to implement these operations.
+Is it a 4 element vector, or a 2x2 matrix?
+is it a 2D vector? Cool, polar or cartesian coordinates? Are they in the same coordinate system even?
+Or a complex number (on what form of coordinates again)? Or something entirely non-geometric?
+
+---
+
+@jdahlstrom · 2025-09-02T19:56:12.974Z:
+Other commenters have hinted at the existence of something called affine geometry and affine spaces. Where vector spaces are made of vectors (duh), affine spaces are made of points and translation vectors, or just translations, between points.
+Addition and scalar multiplication make sense for vectors, but for points they are meaningless in general; instead the two primitive operations are point–translation addition, yielding a point, and point–point subtraction, yielding a translation.
+Surprisingly many real-world spaces are in fact affine, not vector spaces – including the physical Euclidean space itself! Instants and durations are a textbook example, as are the Celsius and Fahrenheit temperature scales. Another example familiar to programmers is pointers and ptrdiff_t aka isize.  Geographical coordinates are yet another (dim>1) example; it makes no sense to add together the coordinates of two cities, but the difference of two coordinates is entirely meaningful.
+(I’m finishing a MSc thesis about this and some related topics  As it happens, it also involves Rust and its type system.)
+
+---
+
+@scottmcm · 2025-09-02T20:20:45.017Z:
+jdahlstrom:
+Geographical coordinates are yet another (dim>1) example; it makes no sense to add together the coordinates of two cities, but the difference of two coordinates is entirely meaningful.
+For a while now I've been pondering encoding this in compile-time-homogeneous coordinates.
+If you have something like
+type Point<T> = Homogeneous<T, 1>;
+type Vector<T> = Homogeneous<T, 0>;
+Then you could write things like
+impl<T, C> Neg for Homogeneous<T, C> {
+type Output = Homogeneous<T, -C>;
+....
+}
+impl<T, C1, C2> Add<Homogeneous<T, C2>> for Homogeneous<T, C1> {
+type Output = Homogeneous<T, {C1 + C2}>;
+}
+impl<T, C1, C2> Sub<Homogeneous<T, C2>> for Homogeneous<T, C1> {
+type Output = Homogeneous<T, {C1 - C2}>;
+}
+and all of a sudden not only does p1 - p2 work, but -p2 + p1 does too!
+Add in some div-by-constant things and you can even make let p = (p1 + p2 + p3).div_const<3>() work.
+
+---
+
+@kornel · 2025-09-02T20:24:36.828Z:
+This may be better solved by delegation syntax or generalised macros for constructing derives.
+The problem with such basic arithmetic derive is that it has to assume a certain relationship between the fields and operations. It means it can only generate that one type (like a point or a vector), so you're not really gaining ability to derive arithmetic easily, you only gain ability to make struct Point with different names.
+How do you derive for matrices? Quaternions? Complex numbers? Angle + magnitude vectors? Points on non-Euclidean surfaces? Temperature in units other than Kelvin? Gamma-compressed colors? Types that contain a mix of these?
+If you really need points in type-safe flavors, maybe it would be better to have delegation that would allow you to extend/wrap an existing UVec2 instead.
+
+---
+
+@tczajka · 2025-09-03T18:45:12.405Z:
+vangata-ve:
+In Rust, implementing arithmetic traits like Add, Sub, Mul, or Div requires either manually writing implementation or dependency on third-party crates like derive_more even for trivial cases where the semantics are unambiguous (e.g. field-wise operations on numeric structs).
+#[derive(Add)]
+struct Point(u32, u32); // a + b == Point(a.0 + b.0, a.1 + b.1)
+Even in this example, Point, field-wise addition makes little sense as others have mentioned.
+For Vector field-wise addition would make sense, but multiplication wouldn't normally be field-wise. The dot product would make more sense as the multiplication operator for Vector.
+
+---
+
+@DragonDev1906 · 2025-09-04T07:06:14.089Z:
+I see it this way: Per-field operations don't always make sense, similar to adding Eq or Ord doesn't always make sense, that's part of why they are not there by default. Deriving Debug doesn't always produce useful results (e.g. on a struct containing a large Vec<u8>). But they are all useful in most cases and their limitations are documented.
+If addition does not make sense in your context you don't have to derive Add. If the fieldwise implementation doesn't make sense for your Vector you don't derive Mul. You derive those for which the default implementation makes sense, otherwise you implement it manually.
+There certainly is the argument that #[derive(Mul)] struct Vector(u32, u32) can be misleading, but so would a wrongly implemented manual implementation. The main difference is the amount of (boilerplate) code you have to write.
+I'm therefore not sure if it should be done for multi-field structs or how useful it would actually be for them. But I think the existence of them in derive_more shows that they are useful and the most sane default implementation is fieldwise operation.
+
+---
+
+@Vorpal · 2025-09-04T09:27:14.191Z:
+DragonDev1906:
+But I think the existence of them in derive_more shows that they are useful and the most sane default implementation is fieldwise operation.
+How used is that particular part of derive_more though? Maybe that is not widely used and other derives from that crate is what most dependencies use.
+A survey of that from dependants on crates.io would be useful input to this discussion. I.e, for the dependants: which derives do they actually make use of.
+
+---
+
+@vangata-ve · 2025-09-04T18:07:03.835Z:
+I noticed that this part of derive_more isnt used all that often (it even might be there simply for the sake of completeness), though I actually run into it pretty frequently when working with newtypes or complex objects in gamedev - like for colors or physics forces. One pattern I noticed in my code is that I usually derive arithmetic traits when I dont need any validation and also most of the time, the fields already come with their own Add implementation, which makes sense - for example, with Radians and Degrees, or clamped number types.
+In the end I think that if this gets added to std, it won't see much use outside of this pretty specific niche.
+
+---
+
+@Vorpal · 2025-09-04T22:19:58.893Z:
+vangata-ve:
+for example, with Radians and Degrees,
+Wouldn't you want the arithmetic operators to perform a modulo 2pi for radians and modulo 360 for degrees?
+
+---
+
+@2e71828 · 2025-09-05T07:39:17.916Z:
+That depends a lot on what this is being used for— You might not want a commanded 360 degree turn to be automatically canceled out to nothing, for example.
+
+---
+
+@Vorpal · 2025-09-05T08:06:03.300Z:
+Fair enough, but I think this again shows that even for seemingly simple newtypes it is not obvious what the derives for arithmetic operators should do. There isn't a single right answer, and derives in Rust are hard to make flexible in a way that they are useful to a large group of people in such a situation.
+Contrast that with deriving Clone or Debug: very rarely do you actually need anything but the standard derive. Same goes for PartialEq, PartialOrd etc: most structs don't need to customise here (but it is slightly more common to do so than for Clone or Debug).
+
+---
+
+@eugene2k · 2025-09-06T03:28:20.050Z:
+jdahlstrom:
+Geographical coordinates are yet another (dim>1) example; it makes no sense to add together the coordinates of two cities, but the difference of two coordinates is entirely meaningful.
+If you think about it, this applies to any kind of coordinates, because the purpose of coordinates is to designate a place in a given space, and adding two places is not semantically meaningful; adding two offsets or a place and an offset, however, is, so adding two Point's is also meaningless, but OP uses exactly that as an example
+P.S. I would welcome a newtype derive in the std library, as I tend to reimplement this stuff in the rare cases that need it, instead of using the newtype crate.
+
+---
+
+@mathstuf · 2025-09-06T04:21:30.531Z:
+You can add two points…on an elliptic curve. But that needs a specific curve as context and, even with some "standard" curve, feels like way too much to hide behind a simple + symbol.
+
+---
+
+@zackw · 2025-09-08T15:59:48.016Z:
+In one of my (unpublished) crates I have a macro that hides a lot of the boilerplate of the various traits that error objects need to implement:
+/// Represents failure to interpret a string as a Checksum value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseChecksumError;
+error_impl! {
+ParseChecksumError:
+Display (self, f) {
+f.write_str("invalid checksum value")
+};
+Error () {};
+From (_discard: blake3::HexError) { Self };
+From (_discard: std::array::TryFromSliceError) { Self };
+}
+I feel like this is a better approach to making it less tedious to impl traits that need some programmer-supplied code, than trying to shoehorn 'em into #[derive] somehow. I wonder if we could come up with a generalization of this macro that would be suitable as official syntactic sugar.
+Hypothetically, for any trait whose impl blocks must define exactly one method, we could allow something like
+impl Display (self, f) for ParseChecksumError {
+f.write_str("invalid checksum value")
+}
+instead of
+impl Display for ParseChecksumError {
+fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+f.write_str("invalid checksum value")
+}
+}
+Now you may be thinking "meh, that's not that much boilerplate removal," but consider: it removes a level of indentation, it frees you from having to remember the name and type signature of the required method (I always have to look that up), and if you have N impls in a row (e.g. of From<X>), it's substantially less repetitive and therefore also less visually cluttered.
+Unresolved problems include:
+Can we generalize this to cover "one required method and one required type" trait impls?  That would make it applicable to a bunch more stdlib traits that people often need to impl, such as FromStr and Iterator.
+How much about the type signature of the one required method should be elided? I went for an extreme above,  but I could be persuaded we shouldn't leave quite that much out.
+
+---
+
+@R081n · 2025-09-08T18:49:32.742Z:
+zackw:
+it frees you from having to remember the name and type signature of the required method (I always have to look that up)
+This isn't really a problem, rust analyser has code actions to create either all or only the required funtions for any trait.
+
+---
+
+@zackw · 2025-09-08T19:20:53.123Z:
+[All-purpose reminder that not everyone uses rust-analyzer, nor necessarily can use rust-analyzer.]
+[The last time I tried to use it it cut my laptop's battery runtime in half.]
+
+---
+
+@Mokuz · 2025-09-08T23:17:14.394Z:
+I have thought a bit about potential syntax for quickly implementing traits, and this could reduce the help reduce the boiler plate.
+struct Foo(u32);
+use std::fmt::*;
+impl Foo {
+fn Debug::fmt(&self, f: &mut Formatter) -> Result { .. }
+// with this might be too much, but possible in theory
+fn std::ops::Add::<Output = Self>::add(self, other: Self) -> Self::Output { .. }
+}
+(specifically the Self::Output as a part of return is a bit shakey, since you'd often have to write Add::Output, or even <Self as Add>::Output to disambiguate. (trait::Output could be used instead?))
+
+---
+
+@scottmcm · 2025-09-08T23:27:35.279Z:
+For things like Add, the piece I'd like is to have (more than a derive) is inferred associated types.
+For example, there's really no need in
+impl Iterator for MyType {
+fn next(&mut self) -> Option<i32> { ... }
+}
+for me to have to write the
+type Item = i32;
+because it's the only possible thing given that next.
+And that would immediately make it that little bit simpler to implement Add, Sub, IntoIterator, even things like Deref.
+
+---
+
+@porky11 · 2026-01-16T20:01:40.626Z:
+Derive more is great. No need to have it in the core fo the language. That's kind of the point of the Rust package manager, that the core language includes the important things while most things are outsourced to libraries.
+Also you should never add points. The point of points is that you can only subtract them, and get a vector. Else you could just stick with vectors.
+
+=== ROW 163 | f009316 | https://internals.rust-lang.org/t/idea-trait-methods-with-un-overridable-implementations/23906 | 2026-01-07 | internals ===
+Idea: trait methods with un-overridable implementations
+
+@newpavlov · 2026-01-07T21:26:16.248Z:
+Often traits contain extension methods which are not intended to be overwritten. Overriding their implementation may result in correctness bugs. Additionally, accounting for potential overrides may complicate API evolution.
+I think something like #[non_overridable] could be a useful addition to the language:
+trait Foo {
+fn foo(&self);
+#[non_overridable]
+fn foo_twice(&self) {
+self.foo();
+self.foo();
+}
+}
+Such methods could also be excluded from vtables, thus potentially reducing their size (i.e. implementation of the extension methods can be reused across trait implementors).
+We can achieve a similar result with extension traits, but I think the attribute would be a cleaner and more ergonomic solution.
+What do you think?
+
+---
+
+@quinedot · 2026-01-07T21:42:34.499Z:
+newpavlov:
+We can achieve a similar result with extension traits, but I think the attribute would be a cleaner and more ergonomic solution.
+Sealing is another approach.
+A first-class way to have final methods would be nicer.  It should be made forward-compatible with specialization.
+
+---
+
+@josh · 2026-01-07T21:42:35.707Z:
+github.com/rust-lang/rfcs
+Trait method impl restrictions (`final` methods)
+master ← joshtriplett:final
+opened 07:51PM - 13 Aug 24 UTC
+joshtriplett
++202
+-0
+Support restricting implementation of individual methods within traits, using th…e already reserved `final` keyword.
+This makes it possible to define a trait that any crate can implement, but disallow overriding one of the trait's methods or associated functions.
+This was inspired in the course of writing another RFC defining a trait, which wanted precisely this feature of restricting overrides of the trait's method. I separated out this feature as its own RFC, since it's independently useful for various other purposes, and since it should be available to any crate and not just the standard library.
+[Rendered](https://github.com/joshtriplett/rfcs/blob/final/text/3678-final.md)
+Tracking:
+- https://github.com/rust-lang/rust/issues/131179
+
+---
+
+@newpavlov · 2026-01-07T21:54:36.714Z:
+Good to see that there is already an RFC for that!
+Though it would be nice to mention whether dyn-compatible final methods will be or not part of generated vtables since it has implications for optimizing performance vs binary size. (I haven't read the RFC discussion yet)
+
+---
+
+@dlight · 2026-01-07T23:10:53.935Z:
+They don't need to be, right?
+
+---
+
+@newpavlov · 2026-01-07T23:16:52.824Z:
+Yes. It's explicitly mentioned in the RFC:
+A final fn never prevents a trait from having dyn-compatibility; the trait
+can remain dyn-compatible as long as all non-final methods support
+dyn-compatibility. This also means that a final fn can always be called on
+a dyn Trait, even if the same method as a non-final fn would not have
+been dyn-compatible.
+
+---
+
+@cuviper · 2026-01-07T23:33:16.548Z:
+This also means that a final fn can always be called on a dyn Trait, even if the same method as a non-final fn would not have been dyn-compatible.
+"Always"? Surely not for Self: Sized methods... but I could see this working to use final on generic methods that would have had a "fake" Self: Sized requirement before just to release it from dyn-compatiblity. Being generic also implies that they're not accessed through the vtable.
+
+---
+
+@jrose · 2026-01-07T23:44:09.228Z:
+I had that thought too, but either the final fn is also declared Self: Sized, meaning it’s not available on dyn for that reason, or it’s not, meaning it can’t call the non-dyn-compatible requirements anyway.
+
+---
+
+@cuviper · 2026-01-07T23:48:23.614Z:
+I guess I could use an example, because I'm not sure what this "always... even if ..." statement is allowing that you couldn't do before.
+
+---
+
+@jrose · 2026-01-07T23:51:40.319Z:
+Yeah, good point, I think the very last sentence is incorrect as written.
+
+---
+
+@Evian-Zhang · 2026-01-08T01:53:35.587Z:
+I'm not sure what is the difference with the standalone functions:
+trait Foo {
+fn foo(&self);
+}
+fn foo_twice(foo: &impl Foo) {
+foo.foo();
+foo.foo();
+}
+
+---
+
+@cuviper · 2026-01-08T02:08:17.204Z:
+That doesn't let users call thing.foo_twice().
+
+---
+
+@SkiFire13 · 2026-01-08T06:52:34.134Z:
+newpavlov:
+Such methods could also be excluded from vtables
+How would that work when the method accesses an associated method/constant of Self or its TypeId?
+
+---
+
+@afetisov · 2026-01-08T14:37:33.435Z:
+Surely there are other benefits, besides minor sugar, for a new feature?
+Personally I can't think of any. Any trait bound and function call which is used by a final method can just as well be replicated on a free function. Final methods also are explicitly exempt from the normal dynamic dispatch and implementation override rules that normal trait methods have. Any trait method which calls a final method can just as well call a corresponding free function.
+One potential benefit could be forbidding further specialization. E.g. a specialized trait implementation could declare some method definition as final, forbidding further specialization. But specialization itself is very unstable, and it's unclear whether such a feature could be compatible with it (normally, specialization is allowed/disallowed at the level of type & trait signatures and bounds, and the definitions of methods don't play a part in it).
+
+---
+
+@marcianx · 2026-01-08T15:13:16.232Z:
+It would be a generic method that's generic on Self: Trait. It's just that the generic implementation would be common to all types that implement it so that no additional viable entry would be needed.
+
+---
+
+@JarredAllen · 2026-01-08T18:45:50.560Z:
+To be explicit about something that took me a little bit to figure out: this will need to use the vtable, but it will have the same code for any implementer (assuming no inlining or other optimizations that interfere with it) such that it doesn't need its own entry in the same way a fn foo(foo: &impl Trait) doesn't need a vtable entry.
+
+---
+
+@HjVT · 2026-01-08T18:47:53.397Z:
+How's that supposed to work? You still need monomorphised instances, because types have different sizes, different ABI conventions based on that. A single function can't have one prologue that can handle every possible argument type.
+
+---
+
+@marcianx · 2026-01-08T19:39:42.103Z:
+(Edit: This doesn't work in a subtle case crafted by @SkiFire13 in his response below.)
+Yes, exactly, you would have monomorphized instances. That doesn't require a vtable entry, though, same as what @JarredAllen said in his reply.
+In case I'm overlooking something or perhaps am misunderstanding the concern, here's a concrete example:
+trait Foo {
+fn bar(&self);
+final fn baz(&self) {
+// ...
+}
+}
+is functionally equivalent to
+trait Foo {
+fn bar(&self);
+}
+fn baz<T: Foo + ?Sized>(t: &T) {
+// ...
+}
+Here, baz can call Foo methods, and since there's exactly one code implementation of baz, Foo methods can call that baz implementation. And monomorphization can do its magic to make that work for the given type. This should also work fine for trait objects due to the ?Sized on baz.
+The only advantage I can see for defining it as a final trait method is that when you import trait Foo somewhere, you also import the baz method rather than having to import it separately. But functionally, I don't see a difference, unless I've misunderstood something. I'd appreciate any corrections.
+
+---
+
+@SkiFire13 · 2026-01-08T21:16:18.959Z:
+Here's an example of observable difference between the two implementations by using TypeId/type_name:
+trait Foo: 'static {
+/*final*/ fn baz(&self) {
+println!("{}", std::any::type_name::<Self>());
+}
+}
+fn baz<T: Foo + ?Sized>(t: &T) {
+println!("{}", std::any::type_name::<T>());
+}
+impl Foo for () {}
+fn test(t: &dyn Foo) {
+t.baz();
+baz(t);
+}
+fn main() {
+test(&());
+}
+The .baz() method prints () because it's being monomorphized for () and inserted into the vtable, while the baz function call prints dyn playground::Foo because it's being monomorphized for the trait object type.
+
+---
+
+@marcianx · 2026-01-08T21:19:13.191Z:
+Wow, excellent example! You're right! baz would need to be in the vtable for this!
+
+---
+
+@afetisov · 2026-01-08T22:17:34.212Z:
+That's a great example, but I don't think it proves what you claim it's proving.  "The .baz() method prints () because it's being monomorphized for ()" --- this isn't true. The .baz() methods follows the usual rules of method resolution: it calls <dyn Foo>::baz(t), which calls the compiler-provided method implementation:
+impl Foo for dyn Foo {
+fn baz(&self) {
+unsafe { (*vtable_ptr(self)).baz(data_ptr(self)); }
+}
+}
+The function pointer in the vtable, in turn, corresponds to <() as Foo>::baz.
+This shows that dynamic dispatch crucially depends on the ability to override default trait implementations.
+If the final feature is self-consistent, this implies that final methods cannot be allowed to work with dynamic dispatch on trait objects. Arguably, this makes them even less useful.
+If we allow dynamic dispatch for final methods, it would be a weird exception from the rules specifically for the compiler, and would lead to surprising resolution ambiguities, like in the example above.
+
+---
+
+@HjVT · 2026-01-08T22:44:10.013Z:
+Monomorphisation is a process of turning generic a foo<T> into a number of foo_sometype for each type it is instantiated with. There is no longer a singleton foo you can call, hence you need vtable if your object has been type-erased.
+
+---
+
+@quinedot · 2026-01-09T00:08:37.519Z:
+The type_name example is related to #57893; namely, always preferring the user defined method in cases of overlap breaks invocations of .type_id() on dyn Any (preferring the built-in implementation in that case is load bearing).  Which is considered unfortunate as preferring the user implementation is the best fix from a soundness perspective, as I understand it.[1]
+Whatever ends up happening to fix that bug will probably involve weird exceptions no matter what.  The new trait solver already prefers the user implementation in more cases.
+If final fn is always not in the vtable, it would basically act like preferring the user implementation.  Corollary: Any::type_id could not be a final fn.
+See this example of preferring the built-in implementation causing unsoundness. ↩︎
+
+---
+
+@dhm · 2026-01-10T14:51:51.504Z:
+Fwiw, I had written a helper attribute to achieve this very thing:
+Lib.rs – 16 Apr 25
+seal-the-deal
+Attribute to use on the `trait` methods (or associated functions) that you wish to "seal", a.k.a., render them `final`
+
+---
+
+@eggyal · 2026-03-12T06:00:48.747Z:
+github.com/rust-lang/rust
+`final` methods should work the same as without it (if it works without it)
+opened 09:31AM - 10 Mar 26 UTC
+mu001999
+I-unsound
+C-bug
+T-types
+A-dyn-trait
+F-final_associated_functions
+Tracking: https://github.com/rust-lang/rust/issues/131179
+Found when trying to …use `final` to impl `Error::type_id` in https://github.com/rust-lang/rust/pull/153598, this code ([play](https://play.rust-lang.org/?version=nightly&mode=debug&edition=2024&gist=e66ab9589c40a9a748b08ef0097d4d3c)) doesn't work as expected:
+```rust
+#![feature(final_associated_functions)]
+trait Tr
+where
+Self: 'static,
+{
+final fn foo(&self) -> std::any::TypeId {
+std::any::TypeId::of::<Self>()
+}
+}
+struct Foo;
+impl Tr for Foo {}
+struct Bar;
+impl Tr for Bar {}
+fn foo(t: &dyn Tr) -> std::any::TypeId {
+t.foo()
+}
+fn main() {
+assert_ne!(foo(&Foo), foo(&Bar));
+}
+```
+I expected to see this happen: run successfully
+Instead, this happened: assertion failed. And without `final`, this will run as expected.
+### Meta
+```
+Build using the Nightly version: 1.96.0-nightly
+(2026-03-09 2d76d9bc76f27b03b489)
+```
+
+=== ROW 164 | f009343 | https://internals.rust-lang.org/t/code-compiles-on-playground-but-fails-when-passed-via-stdin-to-rustc/24393 | 2026-06-11 | internals ===
+Code compiles on playground but fails when passed via stdin to rustc
+
+@MusicalNinjaDad · 2026-06-11T17:21:59.576Z:
+I've run into the following very strange behaviour and am unsure whether it's some kind of weird bug that I should report or a subtle mistake on my part.
+The following code compiles and runs fine on playground (as does an equivalent test locally)
+#![allow(stable_features)]
+#![allow(unused)]
+#![feature(iterator_try_collect)]
+fn main() {
+let foo: Option<Vec<_>> = [Some(1)].into_iter().try_collect();
+assert_eq!(foo.unwrap().len(), 1);
+}
+but when passed via stdin to rustc --crate-name flurb --crate-type=lib --out-dir target/flurb --emit=llvm-ir - it fails with
+error[E0277]: the trait bound `&Option<{integer}>: Try` is not satisfied
+--> <anon>:5:53
+|
+5 |     let foo: Option<Vec<_>> = [Some(1)].into_iter().try_collect();
+|                                                     ^^^^^^^^^^^ the nightly-only, unstable trait `Try` is not implemented for `&Option<{integer}>`
+|
+help: the trait `Try` is implemented for `Option<T>`
+--> /opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:2767:1
+|
+2767 | impl<T> const ops::Try for Option<T> {
+| ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+error: aborting due to 1 previous error
+For more information about this error, try `rustc --explain E0277`.
+Is there a reason for the difference in output from a direct rustc invocation vs a cargo/playground based compilation?
+
+---
+
+@toc · 2026-06-11T17:28:19.287Z:
+--edition 2024
+At a minimum. Probably there are other differences in the exact command, but this at least compiles it.
+
+---
+
+@jer · 2026-06-11T17:28:36.870Z:
+The playground defaults to edition 2024.
+Fails if you select edition 2015: Rust Playground (or 2018 for what it's worth).
+works locally if you pick at least edition 2021:
+rustc +nightly --crate-name flurb --crate-type=lib --out-dir target/flurb --emit=llvm-ir t.rs --edition 2021
+
+---
+
+@MusicalNinjaDad · 2026-06-11T17:30:07.987Z:
+Thanks both - so that looks like a subtle edition bug for try_collect() and an extra param for me to pass to autocfg
+
+---
+
+@cuviper · 2026-06-11T17:56:47.822Z:
+The relevant edition change for that error is 2021's IntoIterator for arrays.
+Calls to IntoIterator::into_iter are hidden in Rust 2015 and Rust 2018 when using method call syntax (i.e., array.into_iter()). So, array.into_iter() still resolves to (&array).into_iter() as it has before.
+
+---
+
+@MusicalNinjaDad · 2026-06-11T18:00:57.493Z:
+Thanks. I was 2 minutes to fast opening an issue - now closed.
+
+---
+
+@kpreid · 2026-06-11T18:43:32.982Z:
+I think that, given the number and significance of edition differences that now exist, rustc ought to warn whenever it is invoked without an --edition, because almost nobody writing a rustc invocation today should be using the 2015 edition.
+At one point I tried implementing such a warning; the complication I found was that very many of the “UI” tests (tests that compile code and look at the compiler output) were written without any edition set, and each one would gain a new warning unless modified to set the edition.
+
+---
+
+@dlight · 2026-06-11T21:29:26.813Z:
+I think that if there is no edition and there's a compiler error (not just warning), compiling again with newer editions just for better diagnostics would be so damn cool.
+Something like Note: this compiles on edition 2024 (or even on editions: 2021, 2024)
+This makes code with no edition fail to compile slower, but people shouldn't be developing with no edition set (and code already developed usually doesn't fail to compile and isn't affected)
+
+---
+
+@scottmcm · 2026-06-12T03:03:46.816Z:
+kpreid:
+and each one would gain a new warning unless modified to set the edition.
+The various suites can set default flags, so you could add a -Z flag to not do that warning that's passed by default.  (Or if it's a lint just the existing allow-a-lint flag.)
+
+---
+
+@MusicalNinjaDad · 2026-06-12T11:01:16.245Z:
+It was a similar situation that led to my confusion. In this case it wasn't trybuild etc but rather autocfg which doesn't automatically set the edition.
+I'd see the biggest "block" to those tools updating would be the lack of an immediately obvious basic cargo.toml parser in that part of the ecosystem that is fast and complete. As I'd assume the preffered approach would be to set the edition as per the crate's spec.
+cargo_metadata has a runtime cost, which is annoying in tests & unsuitable in build scripts. cargo_toml uses serde, which adds extra build time. The workspace challenge makes simpler options less viable.
+
+---
+
+@ekuber · 2026-06-18T20:34:44.973Z:
+github.com/rust-lang/rust
+When compiling without a specified `--edition`, emit a note (#158102)
+main ← estebank:note-default-edition
+opened 08:28PM - 18 Jun 26 UTC
+estebank
++178
+-43
+Would someone have the energy to write the MCP for merging this change? I believe that we might have to coordinate with cargo (to ensure the edition is being passed in always).
+
+---
+
+@epage · 2026-06-19T16:09:19.113Z:
+ekuber:
+I believe that we might have to coordinate with cargo (to ensure the edition is being passed in always).
+I believe Cargo unconditionally passes in the edition already.
+
+---
+
+@kpreid · 2026-06-19T17:50:20.748Z:
+It does. It used to be conditional, but that was 5 years ago.
+github.com/rust-lang/cargo
+src/cargo/core/compiler/mod.rs
+master
+if unit.show_warnings(bcx.gctx) {
+warn(msg)
+} else {
+Ok(())
+}
+};
+cmd.arg("--crate-name").arg(&unit.target.crate_name());
+let edition = unit.target.edition();
+edition.cmd_edition_arg(cmd);
+add_path_args(bcx.ws, unit, cmd);
+add_error_format_and_color(build_runner, cmd);
+add_allow_features(build_runner, cmd);
+let mut contains_dy_lib = false;
+if !test {
+for crate_type in &unit.target.rustc_crate_types() {
+cmd.arg("--crate-type").arg(crate_type.as_str());
+contains_dy_lib |= crate_type == &CrateType::Dylib;
+
+---
+
+@MusicalNinjaDad · 2026-06-20T13:37:09.112Z:
+ekuber:
+Would someone have the energy to write the MCP for merging this change?
+I'll try to give it a go tomorrow. It'll be my first MCP. Thanks for picking this up! But ... Before I do ...
+ekuber:
+I believe that we might have to coordinate with cargo (to ensure the edition is being passed in always).
+My worry would be autocfg. If anyone has probes with a leading #[deny(warnings)] then that could break with rather nasty consequences. (?) It'd be great if @cuviper could quickly weigh in as to whether that's a valid concern or not?
+
+---
+
+@programmerjake · 2026-06-20T15:11:51.750Z:
+MusicalNinjaDad:
+If anyone has probes with a leading #[deny(warnings)] then that could break with rather nasty consequences.
+IMO Rust never guaranteed it wouldn't add more warnings for code that was warning-free, so if you use deny(warnings), you're opting-in to breakage.
+
+---
+
+@steffahn · 2026-06-20T15:15:05.660Z:
+ekuber:
+Would someone have the energy to write the MCP for merging this change?
+There exists some prior discussion with similar ideas by the way:
+Idea: rustc & cargo should warn on unspecified edition tools and infrastructure
+A moderately common source of beginner confusion is that they encounter unexpected behavior due to not specifying a language edition, and getting the default 2015 edition. This can be either due to calling rustc instead of cargo and not specifying any options, or writing a Cargo.toml from scratch (that is, not using cargo new) without remembering to include the edition field.
+Users in this position encounter various surprising behaviors, such as needing extern crate to use dependencies, and not…
+kpreid:
+It does. It used to be conditional, but that was 5 years ago.
+cargo/src/cargo/core/compiler/mod.rs at master · rust-lang/cargo · GitHub
+Judging by the PR linked from the abovementioned discussion
+github.com/rust-lang/cargo
+fix(rustc): Always pass --edition to rustc (#13499)
+master ← epage:always-edition
+opened 09:38PM - 28 Feb 24 UTC
+epage
++299
+-288
+On [Internals](https://internals.rust-lang.org/t/idea-rustc-cargo-should-warn-on…-unspecified-edition/20309), the idea came up for warning on unset Edition.
+I am working on the cargo warning but if rustc ever wants to do so, they'd be blocked on cargo ensuring `--edition` is always set. Hence this change.
+it sounds the relevant change is more like ~2 years ago? (And explicitly for the purpose of enabling what this thread now suggests.)
+In other words, the coordination with cargo already happened
+
+---
+
+@MusicalNinjaDad · 2026-06-21T13:01:41.214Z:
+programmerjake:
+IMO Rust never guaranteed it wouldn't add more warnings for code that was warning-free, so if you use deny(warnings), you're opting-in to breakage.
+Yes, and probes really should aim to use a specific #[forbid(...)] etc. to change the specific case they are testing.
+And yet ... In this case we are looking at potentially breaking build scripts silently with hard-to-spot and hard-to-debug consequences, not only for the crate in question but for anyone downstream and without any action needed on anyone's part (other than updating rustc) for the breakage to occur.
+So, while I agree that "you really shouldn't have done that, so you have no-one else to blame" is the technically right call, I also don't feel comfortable putting an MCP in for this without a thumbs-up form someone more senior.
+
+---
+
+@epage · 2026-06-21T14:00:20.337Z:
+MusicalNinjaDad:
+My worry would be autocfg. If anyone has probes with a leading #[deny(warnings)] then that could break with rather nasty consequences
+Unsure about T-compiler but T-cargo has decided to not support build probes, see Provide a way for build scripts to invoke rustc the way cargo would · Issue #11244 · rust-lang/cargo · GitHub
+Without Cargo support, build probes have some gotchas.
+Also, for fully general build probes, like autocfg, the edïtion should be set. The caller has to do this currently. We've approved telling build scripts the edition but it is unclear if that might get superseded by a compiler feature.
+
+---
+
+@Nemo157 · 2026-06-21T16:30:36.831Z:
+I almost think it would be a good thing to break autocfg occasionally and try to influence people away from using it. I run into crates that have issues working on nightly over, and over, and over because of bad auto-detection. I would really like a way to just say "I'm on at least the latest stable when you were published, use all those features" and bypass any attempt at detecting for MSRV's I don't care about or unstable features I do not want used.
+
+---
+
+@cuviper · 2026-06-21T17:56:38.713Z:
+I agree that blanket deny(warnings) is a bad idea for feature probes, and even in general that makes compiler upgrades more likely to break your code.
+epage:
+Also, for fully general build probes, like autocfg, the edïtion should be set. The caller has to do this currently. We've approved telling build scripts the edition but it is unclear if that might get superseded by a compiler feature.
+If that's going to be another of these environment variables, perhaps something like CARGO_PKG_EDITION, then that sounds great, and I would probably change autocfg to use that by default. I don't know how a compiler feature could supersede that though, because I would want the edition of the package with the build script, not of autocfg itself.
+
+---
+
+@ekuber · 2026-06-21T22:53:55.156Z:
+Do note that I implemented this as an undismisable note, which could also be a warning (that wouldn't be affected by forbid warnings, if iirc, as that only looks at lints, but might be getting things wrong there). The only people affected would be those explicitly comparing textual compiler output in scripts.
+
+---
+
+@epage · 2026-06-23T14:47:41.909Z:
+cuviper:
+If that's going to be another of these environment variables, perhaps something like CARGO_PKG_EDITION, then that sounds great, and I would probably change autocfg to use that by default. I don't know how a compiler feature could supersede that though, because I would want the edition of the package with the build script, not of autocfg itself.
+Around the time we approved an environment variable, there started talk among T-lang to add an edition cfg which would then be exposed to build scripts as CARGO_CFG_EDITION. That went through several proposals, delaying it. The latest has been untouched for enough time that it might  not be worth waiting on anymore and to instead use CARGO_PKG_EDITION.
+
+---
+
+@MusicalNinjaDad · 2026-06-24T14:45:27.476Z:
+I'm also struggling to see how this would work. To my understanding the cargo env variables are set once for a cargo invocation[1]. Build scripts and edition selection are unique to a specific crate, wherever it sits in the dependency tree; not driven by the one(s) at the top of the chain which triggered the build. Edit: got it now [2] weird how I can spend 2 days trying to figure something out and then get it almost straight away after asking publicly!
+building all crates in parallel and the global-nature of env vars suggests this cannot be done any other way(?) ↩︎
+prefix the call with the env cars directly ↩︎
+
+---
+
+@bjorn3 · 2026-06-24T16:37:16.383Z:
+Cargo sets a bunch of env vars for each build script invocation with different values depending on the package they are part of.
+
+---
+
+@RalfJung · 2026-06-27T11:51:51.824Z:
+Nemo157:
+I almost think it would be a good thing to break autocfg occasionally and try to influence people away from using it. I run into crates that have issues working on nightly over, and over, and over because of bad auto-detection. I would really like a way to just say "I'm on at least the latest stable when you were published, use all those features" and bypass any attempt at detecting for MSRV's I don't care about or unstable features I do not want used.
+I wish we had proper cargo support for build probes (or something else that alleviates the need for build probes) so people wouldn't have to write their own hacks to substitute for lack of official support. But, well, everyone only has finite capacity so here we are.
+There is an env var you can set which makes rustc -vV claim that this is "stable" even if you are on nightly; this will disable most of this kind of auto-detection (and it's very clearly a bug in the ones that do not get disabled): RUSTC_OVERRIDE_VERSION_STRING.
+
+---
+
+@MusicalNinjaDad · 2026-06-29T15:04:10.084Z:
+I'm genuinely confused by what appears to be the prevailing negative view of build probes in principle. (I'm quite able to understand a negative view of poorly-created build probes in practice)
+Here's my thinking. What am I missing? Is it another implicit social contract?
+No other crate can force you onto nightly or any other version of stable.
+Nemo157:
+I would really like a way to just say "I'm on at least the latest stable when you were published,   use all those features" and bypass any attempt at detecting for MSRV's I don't care about or unstable features I do not want used.
+The toolchain version is decided by whoever is compiling the final binary. It should be up to them and only them what is used.
+If that's you in this case - how are you being forced to use an experimental nightly feature?
+If you're a lib in the middle - why should you be able to restrict your downstream user's choice of toolchain?
+As a lib developer I may want to provide additional functionality which requires experimental nightly features
+if this is in the form of extensions to the API, via a feature - the direct consumer needs actively use the additional API, so it makes sense that they set a feature in their dependency (on me)
+if this is via a consistent API, via a build probe - it doesn't make sense to require a direct consumer lib to make a choice for their downstream users. Should they opt in and only support others on nightly? Or opt out and their users lose the benefit?
+The fewer people use nightly experimental features, the longer it takes to get meaningful feedback on them and the slower the language develops.
+The very real impact of this are year-long timelines for amazing ergonomic changes - that's not due to lack of effort etc. from the various teams, that's simply due to the reality of usage levels and the time needed to get good data.
+To my mind, taking the time as a lib developer to try to incorporate nightly features in a way which allows stable-by-default to "just work" and gives value add for those who wish to use nightly is the least I can do to support the people who devote huge time and effort into improving the language.
+RalfJung:
+I wish we had proper cargo support for build probes (or something else that alleviates the need for build probes) so people wouldn't have to write their own hacks to substitute for lack of official support.
+I'm not sure that anything short of well-written probes and thoughtful API design would solve the issue. I've recently tried to lib-ify the probes that I use - and it's not even possible to have a general probe for "do you need this #![feature(...)]" that works in every case.
+Perhaps providing a section in the unstable book on these topics would help with reducing the number of "hacks" and increasing the number of well-written probes & APIs?
+
+---
+
+@Nemo157 · 2026-06-29T15:30:35.384Z:
+MusicalNinjaDad:
+The toolchain version is decided by whoever is compiling the final binary.
+Which is me, I only care about build probes when they execute on my system (maybe because I'm developing an application, maybe when I'm compiling the tests for my library).
+MusicalNinjaDad:
+If that's you in this case - how are you being forced to use an experimental nightly feature?
+Because I use a nightly compiler to take advantage of unstable toolchain features that don't impact the code, just improve the developer experience e.g. Cargo's workspace-feature-unification. But dependencies see that I am using a nightly compiler and attempt to use other unstable library or compiler features that I don't want them to.
+MusicalNinjaDad:
+As a lib developer I may want to provide additional functionality which requires experimental nightly features
+And you still can, you should just provide a way to allow users to opt-in to this (e.g. via --cfg flags or environment variables). If users do not, don't just assume you can use them (since build probes are commonly wrong and cause compilation failures, e.g. latest instance of this I've found).
+MusicalNinjaDad:
+The fewer people use nightly experimental features, the longer it takes to get meaningful feedback on them and the slower the language develops.
+If I do not know that a dependency of mine has enabled an unstable feature, I am not going to give feedback on it anyway. By surfacing the feature as something the final developer actually enables that gives you a chance to link to the tracking issue and suggest they go leave feedback if they use it.
+
+---
+
+@kpreid · 2026-06-29T15:39:25.162Z:
+As the person choosing the toolchain to build with, I may be using nightly for any number of reasons; in particular, I may be using it to get access to flags useful for debugging that aren't stable, or to use a newer compiler version that might have fixed a bug.
+When I switch to nightly for one of those reasons, I don't want my project's dependencies to also implicitly change to making use of unstable features. I don't want them to be compiling different code. I don't want them to be exercising parts of the compiler that are marked unstable. I want everything  about those dependencies to be exactly the same except what I chose to change (the compiler version) so that the results of my experiment are as controlled as possible.
+That said, I would also enjoy having a sort of global feature flag (perhaps just a conventional environment variable, or cfg to stick in RUSTFLAGS?) to tell every dependency "yes, do use all the unstable features you would like to", for the testing of nightly features. But I don't want that to be implied by any usage of nightly at all, which is what happens when libraries use build probes for unstable features.
+
+---
+
+@epage · 2026-06-29T17:46:02.300Z:
+MusicalNinjaDad:
+Here's my thinking. What am I missing? Is it another implicit social contract?
+Beyond the anecdotes given, there is a general principle within the Rust Project that unstable features only impact those who have opted in. We should not be gating functionality based on the channel. This makes it much safer for people to run nightly. The rare exception is when we are needing extra testing on something right before stabilization. Libraries auto-enabling features are running counter to that principle.
+
+---
+
+@MusicalNinjaDad · 2026-06-29T17:48:03.889Z:
+kpreid:
+I may be using it to get access to flags useful for debugging that aren't stable, or to use a newer compiler version that might have fixed a bug.
+When I switch to nightly for one of those reasons, I don't want my project's dependencies to also implicitly change to making use of unstable features.
+That makes perfect sense.
+kpreid:
+That said, I would also enjoy having a sort of global feature flag (perhaps just a conventional environment variable, or cfg to stick in RUSTFLAGS?) to tell every dependency "yes, do use all the unstable features you would like to", for the testing of nightly features.
+With a small twist I'd agree that that is a great idea ...
+Why not the other way around? Instead of requiring an opt-in to a full nightly experience on nightly, provide an opt-in-to-only which then disables everything else. That way those who need or want very granular control have it with no extra effort and those who want "full nightly" also have that with no extra effort.
+It's the idea of either requiring an opt-in if you don't want granular control, or, worse, if you don't want an arbitrary set of pre-defined features that irks me.
+Nemo157:
+By surfacing the feature as something the final developer actually enables
+and there's the rub ... the final developer cannot enable a feature if they are consuming via a transitive dependency.
+Yes - you could require them to set a cfg flag or env variable manually ... and some choose that route. Personally, I prefer a crate that documents clearly if they auto-detect & use nightly features to one that makes me go through that hassle, and choose accordingly (just as others will choose the opposite)
+
+---
+
+@epage · 2026-06-29T17:48:45.747Z:
+kpreid:
+That said, I would also enjoy having a sort of global feature flag (perhaps just a conventional environment variable, or cfg to stick in RUSTFLAGS?) to tell every dependency "yes, do use all the unstable features you would like to", for the testing of nightly features. But I don't want that to be implied by any usage of nightly at all, which is what happens when libraries use build probes for unstable features.
+I have wondered about replacing nightly cargo features with Pre-RFC: Mutually-excusive, global features .  More recently, I found out about -Zallow-features and wonder if there is something there we could build up to better support these use cases, including forwarding that to build scripts and proc-macros for the code they generate.
+doc.rust-lang.org
+allow-features - Unstable Features - The Cargo Book
+Experimental Cargo features are only available on the nightly channel. You are encouraged to experiment with these features to see if they meet your needs, and if there are any issues or problems. Check the linked tracking issues listed below for...
+
+---
+
+@MusicalNinjaDad · 2026-06-29T17:56:33.601Z:
+epage:
+More recently, I found out about -Zallow-features and wonder if there is something there we could build up to better support these use cases, including forwarding that to build scripts and proc-macros for the code they generate.
+MusicalNinjaDad:
+Why not the other way around? Instead of requiring an opt-in to a full nightly experience on nightly, provide an opt-in-to-only which then disables everything else.
+Sounds like that actually already exists. (Thanks - another thing I learned today!)
+So, what's the concern about a build probe which correctly reacts to RUSTFLAGS="-Zallow-features=" by not enabling any nightly features?
+If you want to limit what is enabled on nightly for reasons like those above, set the env variable, ...
+(I just checked and all my probes react correctly to it - so it's not rocket science, just so under-documented that getting probes right is much harder than it needs to be)
+
+---
+
+@Nemo157 · 2026-06-29T18:07:58.110Z:
+Did you try when set via CARGO_UNSTABLE_ALLOW_FEATURES too? That’s probably the more common interface to the functionality now that it exists, and that’s what I’ve been running into a lot of buggy probe handling for recently.
+(And it’s kind of an eternal fact that every time the interface for this sort of thing improves, build scripts will fail to handle it because they’re kind of fail open, instead of fail closed; I remember long ago when none handled RUSTFLAGS correctly either).
+
+---
+
+@MusicalNinjaDad · 2026-06-29T18:15:31.803Z:
+Nemo157:
+Did you try when set via CARGO_UNSTABLE_ALLOW_FEATURES too?
+Yep - and no that won't work - for the same reason as the original post in this thread.
+I'd consider that a different issue though and question whether CARGO_UNSTABLE_ALLOW_FEATURES should remain the more common approach given -Zallow-features now exists, offers the same and doesn't suffer from the problem of "only relevant when rustc is invoked via cargo" (or whether cargo could set -Zallow-features based on  this setting)
+Nemo157:
+And it’s kind of an eternal fact that every time the interface for this sort of thing improves, build scripts will fail to handle it because they’re kind of fail open, instead of fail closed; I remember long ago when none handled RUSTFLAGS correctly either
+If I understand you correctly - that's bad build script design. (I'd expect a build script to see "is rustc[1] actually going to be able to compile this code in the current environment")
+rustc, not cargo. Although I'd see nothing in principle against cargo developing an equivalent  set up support functionality. In practice it's a lot of work for something very controversial ↩︎
+
+---
+
+@Nemo157 · 2026-06-29T20:58:03.643Z:
+MusicalNinjaDad:
+and question whether CARGO_UNSTABLE_ALLOW_FEATURES should remain the more common approach given -Zallow-features now exists
+It's the other way around, rustc -Zallow-features has existed for years longer than cargo -Zallow-features (but I'm pretty sure that is also years old at this point). The latter is a superset of the former, it controls both cargo and rustc unstable features, and has a much better UX for shared workspace definitions in its TOML form.
+
+---
+
+@RalfJung · 2026-06-30T12:20:20.661Z:
+MusicalNinjaDad:
+So, what's the concern about a build probe which correctly reacts to RUSTFLAGS="-Zallow-features=" by not enabling any nightly features?
+Basically every build probe is broken in subtle ways. It's not currently possible to construct a correct build probe, cargo does not provide enough information.
+autocfg is about as good as it gets, but a lot of crates roll their own build probes and many of them are ways worse. By asking about "a correct build probe" you are asking about a hypothetical alternative universe. In practice, a large fraction of build probes are broken.
+And even perfect build probes still have the wrong polarity: nightly features should be opt-in, not opt-out. That's how the entire Rust nightly feature system is designed. I shouldn't have to set an env var that says "please actually give me a reliable developer experience where I can update my compiler without breaking the build". Defaulting to "unreliable developer experience" is a terrible default. It is frustrating to see that principle constantly violated by a small set of crates, to the detriment of nightly users and  compiler maintainers that want to do normal nightly feature development (i.e., change/break how nightly feature work) or that need to debug regressions.
+I understand that there's an actual need here from the side of crate developers. But instead of running ahead with a broken non-solution, I would have hoped there would be some attempt at doing something standardized that actually works for everyone involved. Sadly, to my knowledge, that was never even attempted. Now my best hope is that we do get global features in cargo and we can standardize on a global feature to control whether crates should  use nightly features that they don't strictly need.
+
+---
+
+@MusicalNinjaDad · 2026-06-30T13:32:54.763Z:
+I realise that my previous comments can easily appear argumentative (and have thought a lot about this since my last post here). I'm sorry for that, it was not my intention.
+I think I've understood the complex web of intertwined concerns, needs & historical frustration - here's my attempt to summarise it
+Groups using nightly
+There are two, relevant, groups of rust users who have very different expectations and needs when they use nightly:
+Group A - safety is a requirement
+These are people using rust because the safety guarantees provide safety(!). Obvious members are regulated industries where failure can cost human lives; rust for linux, ... I get the feeling that this is either where you are @Nemo157, or at least closely related to your mindset.
+Every use of nightly requires a clear risk assessment.
+Developers may need to use nightly to allow debugging support etc. - they should be able to guarantee that their local work is otherwise identical to the final built product.
+A small, reviewed, whitelisted subset of experimental features may be required to make the product work - each of these is well considered, documented & risk-assessed.
+Build scripts are needed to support product-specific technical requirements.
+This group really needs the ability to work on a nightly toolchain and have everything act just like stable except where specifically whitelisted (whether developer or product related)
+Group B - safety is an ergonomic benefit
+These are people using rust because the safety guarantees make coding nicer/easier/more ergonomic. These are the evangelistic colleagues who grab you at the coffee machine and say "let me show you rust". I'd consider myself in this category.
+Channel selection is a mainly binary decision: nightly or stable?
+sticking to stable can be frustrating - so many ergonomic improvements are available on nightly for a very long time before they stabilise.
+using nightly is viable for binaries but colours libs.
+the lib eco-system generally avoids nightly features, even where these could provide a more ergonomic API.
+build scripts provide a way to remove the colouring and support stable & nightly.
+Technical blockers
+cargo does not provide details of unstable.allow-features to build scripts (+ other settings?) & has previously been against extending build-script-specific support
+there is effectively no documentation of "how to write a good build script"
+there is no documentation on how to probe for the availability of a nightly feature
+no specific probes are available from trusted sources
+Facits
+epage:
+there is a general principle within the Rust Project that unstable features only impact those who have opted in
+For "Group A" this is at the granularity of "I opted in to only these specific features". For "Group B" it is "I opted in by using nightly".
+RalfJung:
+Basically every build probe is broken in subtle ways. It's not currently possible to construct a correct build probe, cargo does not provide enough information.
+That means someone is always going to be upset. As long as there are different groups with different needs (& usually only a few members who consider the other groups may even exist - I'd consider all the participants here to be the "considerate" category BTW) then each build script author needs to decide how to handle these edge cases and given that many come from "Group B" that means usually
+Nemo157:
+build scripts will fail to handle it because they’re kind of fail open, instead of fail closed
+Thoughts, ideas & opinions
+Build probes are here to stay - as much as they cause problems. (no value judgement, just raw practical observation, which has been stated by others who are active in this thread too)
+Perhaps providing (edit) CARGO_UNSTABLE_FLAGS (probably outputting it (edit: from the GlobalContext) here - based on a first reading of the code) would be better than not?
+Documenting best practices & providing well-thought-out probes would reduce the average bugginess. The cost is "implicit approval", the cost of status-quo is "constantly broken probes".
+Thank you for reminding me of the needs of "Group A". I will add a "--cfg namespace=stable" to all my nightly-testing build scripts (via my personal lib for consistency). At least that way people can fully opt out of the probes. I target mainly "Group B" types so a "must opt in" is not suitable for the main target audience. I know this is not what most on this thread would consider "ideal" or "correct" - but would it at least be "enough" @Nemo157?
+
+---
+
+@Nemo157 · 2026-06-30T13:54:15.306Z:
+My case is about stability rather than safety. We use nightly for a few features we believe are worth the cost of lower stability, we have looked at the tradeoff of not using them vs. the chance of them causing issues and how we would remove our usage. We want to be able to very freely update our compiler without having to worry if dependencies will break.
+
+---
+
+@MusicalNinjaDad · 2026-07-01T19:44:45.297Z:
+Nemo157:
+My case is about stability rather than safety.
+Got it, I see the subtle difference. thanks for the clarification.
+
+---
+
+@MusicalNinjaDad · 2026-07-01T20:03:48.851Z:
+RalfJung:
+Basically every build probe is broken in subtle ways. It's not currently possible to construct a correct build probe, cargo does not provide enough information.
+autocfg is about as good as it gets, but a lot of crates roll their own build probes and many of them are ways worse. By asking about "a correct build probe" you are asking about a hypothetical alternative universe. In practice, a large fraction of build probes are broken.
+OK ... so I had one of those bad brain days after the dog woke me up at 4:30 this morning. And I finally gave up after lunch and just let ADHD-brain choose what to focus on for the afternoon.
+So - challenge accepted (it just felt interesting and impossible is always motivator)
+I think I have a solution with:
+a set of truly safe build probes (for a few select features)
+which follows the opt-in approach of optional whitelisting that rustc & cargo both use (opt-in 1 to unstable, then opt-in 2 to granular opt-ins, then opt-in 3 to individual features)
+respecting cargo unstable.allow-features & RUSTFLAGS="-Zallow-features"
+in a way which promotes good practices and makes short-cuts very hard
+I would be genuinely interested (as much from an intellectual point of view than anything else) as to whether this is clearly still broken or flaky? I expect to spot one or two typos & errors in the "easy stuff" tomorrow, but I think the hard stuff is good...
+github.com/MusicalNinjaDad/rust
+ninja-build_rs/src/nightly.rs
+main
+//! Extensions to the amazing [autocfg] designed to help with ergonomically and safely handling
+//! experimental features in nightly.
+use std::{
+path::Path,
+process::{Command, Output},
+};
+use autocfg::AutoCfg;
+use crate::{BuildError, Result, get_var};
+use probes::{has, make_probe};
+/// Known features with `unstable_...` & `has_...`
+#[allow(non_camel_case_types, reason = "shadowing feature naming")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnstableFeature {
+/// Also offers `assert_matches_location=root/module` to identify whether to
+/// `use std::assert_matches`(root) or `use std::assert_matches::assert_matches` (module)
+assert_matches,
+This file has been truncated. show original
+
+---
+
+@Nemo157 · 2026-07-01T21:18:47.789Z:
+My first thought would be "what directory is that cargo config executing under?", I would kind of expect build-script-run to use the manifest-dir of the defining crate, while the config you care about is the top-level build.
+EDIT: which leads into the second question: "if this is cached and reused for a different build with a different config, how does it invalidate the cache?" (since there's no rerun-if-changed for cargo config).
+
+---
+
+@MusicalNinjaDad · 2026-07-02T17:21:33.550Z:
+Nemo157:
+My first thought would be "what directory is that cargo config executing under?", I would kind of expect build-script-run to use the manifest-dir of the defining crate, while the config you care about is the top-level build.
+My assumption was the current working directory where cargo build/test/run was invoked. You were right, and I found it in the cargo docs after manually debugging via one of my other crates.
+Thanks for the tip.
+The best solution I could come up with is[1]:
+This will obtain config.toml files based upon OUT_DIR. If this is not under the project root, you can override by providing an alternative path via the environment variable NINJA_CARGO_CONFIG_DIR. See cargo’s documentation on config file hierarchical structure for more details.
+To my view that now respects the standard expectations of the cumulative opt-in approach taken by rustc & cargo:
+opt-in to unstable features via toolchain (all features available)
+opt-in to granular opt-in by specifying allow-features (empty whitelist - no features available)
+opt-in to specific features (only whitelisted features available)
+Nemo157:
+EDIT: which leads into the second question: "if this is cached and reused for a different build with a different config, how does it invalidate the cache?" (since there's no rerun-if-changed for cargo config).
+If you have a suitable trigger for this I'd be happy to add it. How do you trigger a rebuild of your own crate when you update any of the relevant config.tomls`? - the config change is potentially equally relevant there...
+both documented in the crate docs under "Note to downstream crates" and designed to be obvious in the code ↩︎
+
+=== ROW 165 | f009632 | https://blog.rust-lang.org/2024/11/06/trademark-update | 2024-11-06 | project-blog ===
+Next Steps on the Rust Trademark Policy | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Next Steps on the Rust Trademark Policy
+Nov. 6, 2024 · the Leadership Council
+As many of you know, the Rust language trademark policy has been the subject of
+an extended revision process dating back to 2022. In 2023, the Rust Foundation
+released an updated draft of the policy for input following an initial survey
+about community trademark priorities from the previous year along with review
+by other key stakeholders, such as the Project Directors. Many members of our
+community were concerned about this initial draft and shared their thoughts
+through the feedback form. Since then, the Rust Foundation has continued to
+engage with the Project Directors, the Leadership Council, and the wider Rust
+project (primarily via all@) for guidance on how to best incorporate as much
+feedback as possible.
+After extensive discussion, we are happy to circulate an updated draft with the
+wider community today for final feedback. An effective trademark policy for an
+open source community should reflect our collective priorities while remaining
+legally sound. While the revised trademark policy cannot perfectly address
+every individual perspective on this important topic, its goal is to establish
+a framework to help guide appropriate use of the Rust trademark and reflect as
+many common values and interests as possible. In short, this policy is designed
+to steer our community toward a shared objective: to maintain and protect the
+integrity of the Rust programming language.
+The Leadership Council is confident that this updated version of the policy has
+addressed the prevailing concerns about the initial draft and honors the
+variety of voices that have contributed to its development. Thank you to those
+who took the time to submit well-considered feedback for the initial draft last
+year or who otherwise participated in this long-running process to update our
+policy to continue to satisfy our goals.
+Please review the updated Rust trademark policy here, and share
+any critical concerns you might have via this form by November 20, 2024.
+The Foundation has also published a blog post which goes into more
+detail on the changes made so far. The Leadership Council and Project Directors
+look forward to reviewing concerns raised and approving any final revisions
+prior to an official update of the policy later this year.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+

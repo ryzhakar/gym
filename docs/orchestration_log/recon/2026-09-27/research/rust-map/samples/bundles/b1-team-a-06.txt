@@ -1,0 +1,2728 @@
+=== ROW 69 | f003266 | https://forums.swift.org/t/is-this-a-bug-in-automatic-reference-counting/81167 | 2025-07-17 | domain-subframes ===
+Is this a bug in automatic reference counting?
+
+@theundergroundsorcerer · 2025-07-17T16:48:49.152Z:
+When I run the following code
+class OwnedValue {
+var value: Int
+init(_ value: Int) {
+self.value = value
+}
+}
+struct ValueOwner {
+let ownedValue1: OwnedValue
+let ownedValue2: OwnedValue
+}
+func updateValue(owndedValue ownedValue: consuming OwnedValue, with newValue: Int) {
+if isKnownUniquelyReferenced(&ownedValue) {
+print("Value \(ownedValue.value) is unique")
+} else {
+print("Value \(ownedValue.value) is not unique")
+}
+ownedValue.value = newValue
+}
+func testOwnership() {
+let valueOwner = ValueOwner(
+ownedValue1: OwnedValue(10),
+ownedValue2: OwnedValue(15))
+let valueOwner2 = consumeValueOwner(valueOwner: consume valueOwner)
+print("\(valueOwner2.ownedValue1.value), \(valueOwner2.ownedValue2.value)")
+}
+@discardableResult
+func consumeValueOwner(valueOwner: consuming ValueOwner) -> ValueOwner {
+let ownedValue1 = valueOwner.ownedValue1
+let actualOwnedValue1 = ownedValue1.value
+let ownedValue2 = valueOwner.ownedValue2
+let actualOwnedValue2 = ownedValue2.value
+_ = consume valueOwner
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+return ValueOwner(
+ownedValue1: OwnedValue(actualOwnedValue1),
+ownedValue2: OwnedValue(actualOwnedValue2))
+}
+testOwnership()
+the output is
+Value 15 is not unique
+Value 10 is unique
+If I reorder the last lines in testOwnership the output becomes
+Value 10 is not unique
+Value 15 is unique
+Now, after this line
+_ = consume valueOwner
+there should be only one reference for each one of the ownedValues. Yet, for some reason, a reference stays alive during first call.
+Now replacing
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+with
+updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: consume ownedValue1, with: actualOwnedValue2 + 10)
+does result in correct output. (it is enough to do it in the first line TBH)
+Value 15 is unique
+Value 10 is unique
+Is it a bug or a feature?
+It looks like a bug TBH.
+It occurs in release mode.
+
+---
+
+@bbrk24 · 2025-07-17T16:50:49.253Z:
+Not exactly. From what I remember, objects are held until end of scope by default, so that weak references continue to work after what would otherwise be the last use. Years ago there was an experiment to change this that broke a lot of idiomatic Cocoa code, iirc.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T16:51:50.051Z:
+But the object is explicitly consumed by
+_ = consume valueOwner
+Should not it end its lifetime?
+Also, has it been the case - ValueOwner alive until last use, why after changing
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+to
+updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+we do gt the expected behavior?
+If valueOwner is alive until
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+then consume should not have any effect - we still have two references - one in the alive valueOwner and second local to updateValue.
+
+---
+
+@jrose · 2025-07-17T17:03:33.306Z:
+It makes a difference whether the local variables are consumed, as you already noticed. If they are, then yes, inside updateValue the references should always be unique. If not, then you’re leaving it up to the optimizer. It would be valid for both ownedValue1 and ownedValue2 to be kept alive until the end of consumeValueOwner.
+So, why doesn’t the optimizer treat them the same? I’m a bit bemused by this too; it feels like if the optimizer can “forward” the last use of one refcounted object, it should be able to do the same for another, independent refcounted object. Even if they were dynamically the same object, there are distinct, immutable local references to it. Maybe an optimizer person can answer your actual question; all I’ve done is elaborate on bbrk’s point that this is permitted behavior.
+To summarize: this is a missed optimization, and a missed optimization is not a bug, even if it’s observable by the program.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:10:08.546Z:
+Okay. But is not
+_ = consume valueOwner
+supposed to explicitly end the lifetime of valueOwner? Or only end its scope?
+Correct me if I am wrong, but accessing members of valueOwner, using a weak reference, after it has been explicitly consumed is not idiomatic Cocoa code, but undefined behavior. (Old idiomatic Cocoa code exists from times long before consume, borrow, became a thing as far as I am aware).
+
+---
+
+@ksluder · 2025-07-17T17:13:18.838Z:
+I think Jordan is saying you need to make this change:
+@discardableResult
+func consumeValueOwner(valueOwner: consuming ValueOwner) -> ValueOwner {
+let ownedValue1 = valueOwner.ownedValue1
+let actualOwnedValue1 = ownedValue1.value
+let ownedValue2 = valueOwner.ownedValue2
+let actualOwnedValue2 = ownedValue2.value
+_ = consume valueOwner
+-      updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+-      updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
++     updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
++     updateValue(owndedValue: consume ownedValue1, with: actualOwnedValue2 + 10)
+return ValueOwner(
+ownedValue1: OwnedValue(actualOwnedValue1),
+ownedValue2: OwnedValue(actualOwnedValue2))
+}
+
+---
+
+@jrose · 2025-07-17T17:21:39.694Z:
+Formally, let ownedValue2 = valueOwner.ownedValue2 creates an independent owned reference to ownedValue2. It doesn’t matter to the local variable that valueOwner gets destroyed afterwards. In manual-retain-release terms, it’s closer to id ownedValue2 = [valueOwner.ownedValue2 retain]. (Just like ObjC ARC, for the record.)
+In practice, there’s almost never an actual retain performed here, because the compiler can see that it would be redundant (this is better than ObjC ARC, which often can’t be quite as confident). But when we’re talking about what is and isn’t permitted, and what is and isn’t a bug, the answer is that the local variable is an independent owner. Which is why you can consume it at all.
+If you can use an object after it’s been destroyed, that’s a bug. But that shouldn’t be possible in Swift without going through an API labeled “unsafe”, sidestepping the concurrency rules to make a data race, or calling back to an ObjC API that does something Swift can’t check.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:24:27.538Z:
+I am aware making this change works, and I've mentioned it in my original post. The thing I don't understand is - why is it necessary.
+Citing E366
+In this document, we propose adding a new operator, marked by the context-sensitive keyword consume, to the language. consume ends the lifetime of a specific local let, local var, or function parameter, and enforces this by causing the compiler to emit a diagnostic upon any use after the consume. This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers. As an example
+In this document, we propose adding a new operator, marked by the context-sensitive keyword consume, to the language. consume ends the lifetime of a specific local let, local var, or function parameter, and enforces this by causing the compiler to emit a diagnostic upon any use after the consume. This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers. As an example:
+useX(x) // do some stuff with local variable x
+// Ends lifetime of x, y's lifetime begins.
+let y = consume x // [1]
+useY(y) // do some stuff with local variable y
+useX(x) // error, x's lifetime was ended at [1]
+// Ends lifetime of y, destroying the current value.
+_ = consume y // [2]
+useX(x) // error, x's lifetime was ended at [1]
+useY(y) // error, y's lifetime was ended at [2]
+It seems that
+_ = consume valueOwner
+is supposed to end the lifetime, not just the scope.
+
+---
+
+@jrose · 2025-07-17T17:25:21.967Z:
+It ends the lifetime of valueOwner, but just like in ObjC that doesn’t immediately end the lifetime of its members. It merely releases them.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:28:30.704Z:
+But what about
+This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers
+part?
+This is a toy example, but it does rely on the fact that valueOwner is not alive, with naive assumption that its members are not alive either.
+
+---
+
+@jrose · 2025-07-17T17:31:28.108Z:
+You are the one who assigned its members to local variables. Now you need to consume those to get the forwarding guarantee you’re looking for.
+
+---
+
+@ksluder · 2025-07-17T17:47:16.261Z:
+I had deleted my post because I realized that @theundergroundsorcerer had written updateValue() to take consuming arguments, so I assumed I had misunderstood the problem. But it seems like you’re saying the consume at the call site is necessary.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:49:54.404Z:
+jrose:
+You are the one who assigned its members to local variables. Now you need to consume those to get the forwarding guarantee you’re looking for.
+This is not always an option. What happens if there are more “wrapping levels” but my code relies on the fact that the object (and its part as well) ended its lifetime, but consuming the wrapped references is not an option? (They could be private for example).
+
+---
+
+@John_McCall · 2025-07-17T17:55:11.645Z:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value). If Swift always consumed in these situations (as Rust does), making a parameter consuming would be source-breaking, and we did not want programmers to have to make that choice. The consequence is that, for now, clients have to be explicit about wanting to consume.
+It would be good if Swift could promise to consume in cases like this one where it can clearly see that the variable is not used after the potentially-consuming use. As was noted earlier in the thread, however, this could also be source-breaking (in a different sense) because it could end the lifetime of an object that the code was implicitly relying on staying alive, whether through weak references or something spookier. It’s something we’re still interested in, but it’s not an easy change to make.
+
+---
+
+@John_McCall · 2025-07-17T17:57:09.988Z:
+theundergroundsorcerer:
+This is not always an option. What happens if there are more “wrapping levels” but my code relies on the fact that the object (and its part as well) ended its lifetime, but consuming the wrapped references is not an option? (They could be private for example).
+If you cannot consume it explicitly, I don’t know how you’re expecting the compiler to do it implicitly.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T22:38:21.589Z:
+John_McCall:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value). If Swift always consumed in these situations (as Rust does), making a parameter consuming would be source-breaking, and we did not want programmers to have to make that choice. The consequence is that, for now, clients have to be explicit about wanting to consume.
+Please correct me if I am wrong, but I recall that one of the SE proposals said that copyable variable is copied instead of being consumed if it is being used later. My issue not with consuming parameters, but with consume operator which is supposed to end the life of an object, but seemingly doesn't and is "subject to optimization". An object is being consumed explicitly, using consume operator.
+Citing SE-0377
+SE-0366 introduced an operator that explicitly ends the lifetime of a variable before the end of its scope. This allows the compiler to reliably destroy the value of the variable, or transfer ownership, at the point of its last use, without depending on optimization and vague ARC optimizer rules. When the lifetime of the variable ends in an argument to a consume parameter, then we can transfer ownership to the callee without any copies.
+In addition, almost all examples using consume seem to imply that it ends the lifetime of operator, while things still seem to happen behind the scenes and "depend" on the optimizer.
+John_McCall:
+If you cannot consume it explicitly, I don’t know how you’re expecting the compiler to do it implicitly.
+I can consume the wrapper, but I don't see whether it guarantees that references it stores are consumed as well, or implicitly alive references that are part of another object that was consumed earlier, as in my example.
+
+---
+
+@John_McCall · 2025-07-17T23:29:20.227Z:
+theundergroundsorcerer:
+Please correct me if I am wrong, but I recall that one of the SE proposals said that copyable variable is copied instead of being consumed if it is being used later. My issue not with consuming parameters, but with consume operator which is supposed to end the life of an object, but seemingly doesn't and is "subject to optimization".
+The consume operator is not itself subject to optimization. But consume on a storage location of copyable type only transfers ownership of the value stored in that specific location. Other locations will have independent ownership of the values they store. So if you have a reference to an object in two locations, and you transfer ownership of only one of them, the object will stay alive.
+Allow me to simplify your example:
+func consumeValueOwner(valueOwner: consuming ValueOwner) {
+// At this point, `valueOwner` has ownership of its current value, which
+// is a struct value consisting of two strong object references.
+// Let's assume these are references to different objects, which we'll
+// call A and B, and that this value is the only remaining reference
+// to them.
+let obj = valueOwner.ownedValue1
+// `obj` now has independent ownership of the object A.
+// There are two references to this object.
+_ = consume valueOwner
+// We have consumed the value out of `valueOwner`, leaving it empty.
+// Ownership is transferred to a temporary, which is immediately dropped.
+// In other words, we destroy the value that was previously stored in
+// `valueOwner`, which is to say, we destroy the two strong references
+// by decrementing the reference count on the objects they refer to.
+// There is still a reference to A in `obj`.
+// There are no longer any references to B, and the object will be
+// immediately destroyed at this point.
+let propertyValue = obj.value
+// The set of extant references to object A has not changed.
+updateValue(ownedValue: obj, with: propertyValue + 10)
+// Because arguments passed to consuming parameters are copied,
+// the parameter to `updateValue` is an independent reference to
+// object A, and `obj` continues to have its value. Therefore there are
+// two references to object A, and the unique reference test within
+// `updateValue` fails.
+// When we reach the end of the scope, all local variables (that have
+// not already been consumed from) are destroyed, dropping the
+// last reference to object A and causing it to be immediately
+// destroyed.
+}
+So whether consume consumes the value in the named location is not subject to optimization — it must do so, and if that is the only reference to the value, you should see that reflected in reference counts and so on. But if there are other copies of the same value (or its component values) in other locations, they will maintain independent ownership. Those other locations are not somehow magically affected by an independent copy of their value having been consumed from somewhere else.
+Explicitly using consume on the argument to updateValue forces the compiler to transfer ownership from obj to the consuming parameter, rather than copying, and is the right thing to do if you need a guarantee of no copies. This could also be done automatically by Swift's optimizer, but currently this does not happen reliably for reasons already discussed.
+This sensitivity of reference counts to optimization — and the finickiness of manually optimizing it — definitely makes unique-reference tests somewhat semantically frustrating. That is why we encourage them to be used mostly for things like copy-on-write data structures, where the expected cost of a non-unique reference is just a performance hit. (And that performance hit, and the difficulty of optimizing it, is definitely something that programmers have also noted as frustrating when doing Swift performance work.)
+
+---
+
+@theundergroundsorcerer · 2025-07-18T06:14:35.960Z:
+Thanks. Great explanation. So the problem is not that valueOwner stays alive, but with the fact that whether consuming ownedValue parameters are copied or not is a subject to optimization, independent of valueOwner being consumed?
+Hence, if we are interested in forcing forwarding, every consuming function argument should be passed with preceeding consume word (when it's possible)?
+John_McCall:
+That is why we encourage them to be used mostly for things like copy-on-write data structures, where the expected cost of a non-unique reference is just a performance hit
+The origin of my question was dealing with some COW issues - it just boiled to this toy example.
+Correct me if I am wrong, but using consuming parameters together with copyable allows modifiying the function argument, which can be a good thing in some use scenarios. Previously we needed either to make a local copy within the function (which introduces extra overhead) or pass them as inout which breaks protection mechanisms (because I want to modify the copy, not the object itself) Is this intended use or just a "side effect"? Or we are not supposed to use them in this way?
+
+---
+
+@CrystDragon · 2025-07-18T06:47:46.398Z:
+Thanks for your elaboration. Can you please clarify in what circumstances are consuming parameters for copyable types not implicitly copied? Is it what you put in the parentheses?
+John_McCall:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value)
+For example, for one of the motivating examples of consuming parameter in the proposal:
+extension String {
+// Append `self` to another String, using in-place modification if
+// possible
+consuming func plus(_ other: String) -> String {
+// Modify our owned copy of `self` in-place, taking advantage of
+// uniqueness if possible
+self += other
+return self
+}
+}
+// This is amortized O(n) instead of O(n^2)!
+let helloWorld = "hello ".plus("cruel ").plus("world")
+Although String is copyable, this optimization can still work here if we can rely on self not being implicitly copied when passed to plus. It is crucial that self does have an exclusive ownership of the string buffer, otherwise the following += will trigger COW.
+So what do you mean by saying "if the expression (does or) does not naturally produce an owned value"?. Does this implicit copy happen on the callee's side?
+
+---
+
+@John_McCall · 2025-07-18T15:11:15.789Z:
+theundergroundsorcerer:
+Thanks. Great explanation. So the problem is not that valueOwner stays alive, but with the fact that whether consuming ownedValue parameters are copied or not is a subject to optimization, independent of valueOwner being consumed?
+I would say that the core problem is just that code is allowing the caller to still have an independent copy by not consuming ownedValue1. The optimization question is just something that adds some unpredictability on top of that, because it could have saved you here by implicitly consuming, it just didn’t.
+theundergroundsorcerer:
+Hence, if we are interested in forcing forwarding, every consuming function argument should be passed with preceeding consume word (when it's possible)?
+Correct.
+theundergroundsorcerer:
+Is this intended use or just a "side effect"? Or we are not supposed to use them in this way?
+This is an intended use. If you don’t semantically want to modify the caller’s copy of the value, it shouldn’t be inout. Having decided that, if it’s still good for performance for the callee to have ownership of the value, then yeah, you should take it consuming. This works well in some ways with Swift’s semantics of copying into consuming parameters because the caller isn’t forced to worry about it — they’ll get the optimization opportunistically, and if they want to cooperate to get it in more places, they can explicitly consume. But you should understand the flip side of that: if this optimization is really important to you — if you would actually prefer it if callers had to explicitly copy when they cannot cooperate with the optimization — the language is going to be somewhat at odds with that goal because of the copying into consuming thing.
+
+---
+
+@John_McCall · 2025-07-18T15:53:29.436Z:
+CrystDragon:
+So what do you mean by saying "if the expression (does or) does not naturally produce an owned value"?
+Many expressions have to produce an independent value that the evaluating context will has independent ownership of: functions have to return independent values, getters have to return independent values, and so on. Other expressions don’t: most importantly, references to stored variables or properties. (This is all getting more complicated as we introduce more support for lifetime-dependent values, but for now, this is the big picture.)
+The big concern about implicitly forwarding values is that forwarding necessarily means the caller loses access to the value. If the caller actually needs the value to stay alive, either because it’s going to use it again or because the program as a whole has an implicit dependency on its lifetime (e.g. because of a weak reference somewhere else), the forward can break behavior.
+But that’s really only a problem with expressions that don’t naturally produce an independent value. If you use a call expression directly as an argument for a consuming parameter, the current context doesn’t have any other way of referring to that result, so it obviously can’t directly use it again later. Along similar lines, forwarding it could end up shortening its lifetime and invalidating weak references earlier, but it doesn’t really seem reasonable that someone would expect the the current context to keep this temporary value alive arbitrarily. So there’s no good reason not to implicitly forward into the parameter.
+CrystDragon:
+Does this implicit copy happen on the callee's side?
+Yes. The callee simply receives a value that it has ownership of, with no idea how that was produced.
+
+---
+
+@CrystDragon · 2025-07-22T14:53:12.978Z:
+John_McCall:
+Yes. The callee simply receives a value that it has ownership of, with no idea how that was produced.
+Thank you for tirelessly explaining this to us, but I'm a little bit confused by your last statement in this post. You replied to my question with "Yes.", but I suppose you actually mean "No", right?
+My understanding of your other lines is this: in a scenario of a function func foo(_ a: consuming A) being invoked as foo(someExpressionOfA), the compiler will insert implicit copies from the "caller" (not the "callee") side when it cannot tell someExpressionOfA can produce an independent value. Am I right?
+
+---
+
+@John_McCall · 2025-07-22T17:11:08.100Z:
+CrystDragon:
+Thank you for tirelessly explaining this to us, but I'm a little bit confused by your last statement in this post. You replied to my question with "Yes.", but I suppose you actually mean "No", right?
+Ah, yes, sorry. The problem with caller/callee terminology is that I misread it about 20% of the time. It is the caller’s responsibility.
+CrystDragon:
+My understanding of your other lines is this: in a scenario of a function func foo(_ a: consuming A) being invoked as foo(someExpressionOfA), the compiler will insert implicit copies from the "caller" (not the "callee") side when it cannot tell someExpressionOfA can produce an independent value. Am I right?
+Correct. The semantics are that we emit the expression in a way that produces an independent value, which may require copies.
+
+=== ROW 70 | f003375 | https://iroh.computer/blog/message-framing-tutorial | 2025-08-12 | domain-subframes ===
+Tutorial: Message Framing with iroh - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Tutorial: Message Framing with irohAugust 12, 2025 by ramfox, matheus23, b5
+This tutorial is a written version of the youtube tutorial published on the n0computer youtube channel:
+Intro
+The first time you dig into iroh to write your own protocol, you quickly realize that what you mostly interact with is the QUIC API.
+The QUIC API can feel extremely low level: you are dealing with raw streams and sometimes need to use methods that involve literally reading and writing a single byte at a time.
+In this post, we are going to talk about message framing as a technique to get you away from having to think of your protocol in terms of bytes and instead thinking of it in terms of logical messages.
+Message framing is a generally applicable concept, and by no means limited to working with protocols on iroh!
+Framed Messages
+QUIC connections are made of streams and those streams can be bi-directional or uni-directional. Bi-directional streams are streams you can read from and write to in both directions. Uni-directional streams are streams that can only be written to on one side and read from by the other.
+A single QUIC connection to another endpoint can have many streams, some uni-directional, some bi-directional.
+For the purposes of this tutorial, we are going to focus on a single, uni-directional stream, where one side writes to the stream and the other side reads from it.
+Streams are made up of bytes. You write bytes to the stream and you read bytes out of it.
+But the big question here is: once side A has written to the stream, how does side B know how much data to read?
+The first thing you might do when trying to get familiar with working with streams, is you might just use APIs like write_all and read_all, to write a chunk of data to the stream and then read that full chunk of data off of it, then close the stream.
+This is fine while you are getting familiar, but when you go to write your protocols you will want something more sophisticated.
+What we really want to do is send multiple logical messages on the stream, and have some format for figuring out how to separate out those messages. We also must deal with the fact that not all messages are going to be the same length.
+That's where message framing comes in. In message framing, you prepend the length, in bytes, of your message data to your message before sending over the data. On the receiving side, you read that length data first, then you create or adjust your buffer to accommodate that length, and finally read the exact number of bytes off your stream and into your buffer.
+The next time you read off the stream, you read off another length, and repeat the process.
+For an in-depth look at message framing, including a look into other forms of framing that already exist in networking, watch the youtube video that this tutorial is based on.
+Code setup
+First, head to your coding directory and run cargo init frame_me, which is what we are calling this project locally.
+Open up your IDE and take a look at your main.rs, which should simply show a main function that prints "Hello, world!" For sanity, run cargo run in your terminal to ensure everything is set up correctly.
+Now, let's add a few crates that we will be using in this example:
+cargo add tokio iroh anyhow
+Tokio is our async runtime, iroh is our networking library, and the Anyhow crate allows us to do easy error handling.
+Setting up our main function
+Heading back to main.rs, let's prep our main function to work with tokio:
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+Ok(())
+}
+CopyCopied!
+This doesn't do anything yet, but run cargo run to make sure everything is peachy!
+For this example, we are going to show the send and receive sides in the same main function. This just makes the example easier to illustrate and keeps it down to a single file. Normally, we would create a whole CLI with different commands associated with the send and receive sides. Our examples of dumbpipe and sendme show this pattern off nicely.
+For this demo, we are going to set up the receiving side, set up the sending side, write on the sending side, read from the receiving side, and then clean up and close down.
+use iroh::{Endpoint, Watcher, protocol::Router};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+Ok(())
+}
+CopyCopied!
+The iroh::Endpoint is the endpoint on which we make connections. By default, an iroh::Endpoint allows us to dial by endpoint_id without having to manually send address information.
+We use the EndpointBuilder to create the receive endpoint, recv_ep.
+The iroh::protocol::Router is where we will eventually add our custom protocol. We've already created the ALPN for our custom protocol, which we are calling ALPN.
+The ALPN string is formatted based on the conventions we recommend. The first section indicates this is an iroh protocol, the second indicates that the protocol is called smol, and the last section shows this is version 0 of the protocol, all delimited by a "/".
+We use the RouterBuilder to create the recv_router, which won't do much for us until we add our custom protocol later.
+The addr is the endpointAddr of the receive endpoint, which contains all the address information we know about ourselves, including our endpoint_id. We will use the addr to connect from the send endpoint to the receive endpoint, using the Endpoint::connect method.
+Scaffolding out write_frame and read_frame
+Now that we have a connection, let's open a stream and send some data!
+We can use the Connection::open_bi to create a bi-directional stream, or Connection::open_uni to create a uni-directional stream. In this case, we will create a uni-directional stream.
+To be more explicit, using open_bi would give us both a SendStream and RecvStream, while using open_uni will give us only a SendStream. In our example, we will be using open_uni.
+Once we have our SendStream, we have many different options for how we want to write to the stream, but we will cover that in a later section. For now, let us continue with our main function, and we'll scaffold out write_frame and read_frame functions that we will include in the code for now, but actually implement later.
+use iroh::{
+Endpoint, Watcher,
+endpoint::{RecvStream, SendStream},
+protocol::Router,
+};
+const ALPN: &[u8] = b"iroh/smol-msgs/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+todo!();
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+todo!();
+}
+CopyCopied!
+So, as you see, we're using todo! in the write_frame and read_frame functions. This allows the program to compile, but if we run the program and write_frame or read_frame are called, it will throw a panic. It's very useful in development!
+In our main function, we call write_frame to send "hi" and then "fren!" to the receiving side. This is the data that will get framed.
+Then we do some clean up!
+stream.finish()? tells the stream "hey, I'm done sending data".
+conn.closed().await will wait until the other side of the connection calls conn.close() before returning and won't let you send any other data across while it's waiting. conn.close (without the "d") informs the other side of the connection "hey, I'm closing the connection, and here is why".
+send_ep.close().await closes the endpoint. The endpoint won't close until all the connections have closed and cleaned up.
+recv_router.shutdown().await? stops the accept loop, closes all the connections, and closes the underlying endpoint.
+If you call cargo run at this point, the example will compile, but it will error at runtime: the Router is expecting at least one protocol and will error when it builds.
+Smol Protocol
+We've already defined the ALPN. The next thing we want is to create a SmolProtocol that implements the ProtocolHandler trait. This requires us to implement the accept method on the ProtocolHandler trait.
+use iroh::{endpoint::Connection, protocol::{ProtocolHandler, AcceptError}};
+const SMOL_ALPN: &[u8] = b"iroh/smol/0";
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(
+&self,
+connection: Connection,
+) -> Result<(), AcceptError> {
+todo!();
+}
+}
+CopyCopied!
+Again, we are using todo! here, but we will come back to it.
+One thing we can now do, is add the SmolProtocol to our router!
+let recv_router = Router::builder(recv_ep)
+.accept(ALPN, SmolProtocol)
+.spawn();
+CopyCopied!
+Our code so far:
+use iroh::{
+Endpoint, Watcher,
+endpoint::{Connection, RecvStream, SendStream},
+protocol::{AcceptError, ProtocolHandler, Router},
+};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).accept(ALPN, SmolProtocol).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+todo!();
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+todo!();
+}
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+todo!();
+}
+}
+CopyCopied!
+Implementing write_frame and read_frame
+Now we get to the actual message framing part! When we go to write data to the stream, we first need to write the size of the data, then the data itself.
+But what write methods should we use?
+Thankfully, message framing is so popular that tokio provides extension traits for reading and writing that allow you to read and write specific integers to the stream. We are going to use write_u8 to do our length prefixing.
+You'll note that by using a u8, we are limiting our message size to 255 bytes. In a protocol that sends larger messages, you would want to use a larger integer size. (Check out varints that use space-saving techniques when sending smaller numbers, but allow you to express very large numbers as well.)
+But it's u8s for us in this example! So first, we will ensure that the length of the message is smaller than an 8-bit integer. Then, we write the u8 using the write_u8 method, and then we will use write_all to write the entire contents of the message onto the stream:
+use iroh::endpoint::SendStream;
+use tokio::io::AsyncWriteExt;
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+assert!(message.len() <= u8::MAX as usize);
+stream.write_u8(message.len() as u8).await?;
+stream.write_all(message.as_bytes()).await?;
+Ok(())
+}
+CopyCopied!
+The read side first reads a u8 from the stream. If there is no u8 to read, then there are no current messages on the stream to read, and it will return Ok(None). The Ok indicates that there were no read errors during this read, but the None indicates that no data was read off of the stream.
+Next, we create a buffer the size of the u8 that we read. Then, we read that number of bytes from the stream and into the buffer using read_exact, which will fill the buffer with data from the stream.
+We then need to create a UTF-8 string from the bytes in the buffer. Finally, we return the String:
+use iroh::endpoint::RecvStream;
+use tokio::io::AsyncReadExt;
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+let Ok(frame_len) = stream.read_u8().await else {
+return Ok(None);
+};
+let mut buf = vec![0u8; frame_len as usize];
+stream.read_exact(&mut buf).await?;
+let smol_msg = String::from_utf8(buf)?;
+Ok(Some(smol_msg))
+}
+CopyCopied!
+Implementing SmolProtocol
+Time to implement the accept handler on SmolProtocol. This is what will get called each time we get an incoming connection to the Router.
+First, we will take the given connection and create a uni-directional stream using the accept_uni method. This will give us a RecvStream.
+Then we will use the above read_frame function to read messages from the stream and print them to stdout, looping until we find no more messages (i.e., read_frame returns None). If any errors occur while reading, we will convert them from an anyhow::Error to a standard library error before returning.
+Then we will close the connection using connection.close, giving an integer close code and a close reason. In a production-grade protocol, you may have a list of close codes and close reasons to communicate to the other side of the connection why the connection was closed. Sending 0 typically means that the connection closed without error.
+Finally, we return Ok:
+const ALPN: &[u8] = b"iroh/smol/0";
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+let mut stream = connection.accept_uni().await?;
+while let Some(msg) = read_frame(&mut stream)
+.await
+.map_err(anyhow::Error::into_boxed_dyn_error)?
+{
+println!("Got a smol message! {msg}");
+}
+println!("Done reading smol messages");
+connection.close(0u32.into(), b"thx for all the msgs :)");
+Ok(())
+}
+}
+CopyCopied!
+The full example:
+use iroh::{
+Endpoint, Watcher,
+endpoint::{Connection, RecvStream, SendStream},
+protocol::{AcceptError, ProtocolHandler, Router},
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).accept(ALPN, SmolProtocol).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+assert!(message.len() <= u8::MAX as usize);
+stream.write_u8(message.len() as u8).await?;
+stream.write_all(message.as_bytes()).await?;
+Ok(())
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+let Ok(frame_len) = stream.read_u8().await else {
+return Ok(None);
+};
+let mut buf = vec![0u8; frame_len as usize];
+stream.read_exact(&mut buf).await?;
+let smol_msg = String::from_utf8(buf)?;
+Ok(Some(smol_msg))
+}
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+let mut stream = connection.accept_uni().await?;
+while let Some(msg) = read_frame(&mut stream)
+.await
+.map_err(anyhow::Error::into_boxed_dyn_error)?
+{
+println!("Got a smol message! {msg}");
+}
+println!("Done reading smol messages");
+connection.close(0u32.into(), b"thx for all the msgs :)");
+Ok(())
+}
+}
+CopyCopied!
+Further exploring
+We hope you've learned a bit about writing protocols on this journey, specifically how framed messages are an incredibly useful technique.
+In this example, we sent simple strings on our streams, but in a real-world use case, we often send structured data. For a more in-depth example exploring how you might send structured data, including how we at n0 like to serialize and deserialize data to and from the wire, take a look at the framed messages example in iroh-examples.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 71 | f003389 | https://neon.com/blog/azure-native-integration-ga | 2025-08-14 | domain-subframes ===
+Neon’s Microsoft Azure Native Integration is Generally Available - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Product
+Neon’s Microsoft Azure Native Integration is Generally Available
+Deploy and manage Neon Serverless Postgres as a deeply integrated Azure-native service
+Monica Steinke–Technical Product ManagerMay 07, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Neon’s Microsoft Azure Native Integration has reached General Availability, providing developers with a powerful, serverless Postgres solution on Azure. Neon integrates with your existing Azure workflows, including unified billing, Microsoft single-sign on (SSO), and full MACC eligibility. Whether you’re building new apps or scaling global workloads, Neon brings the power of serverless Postgres to your Azure environment with zero friction.
+context
+Neon is working with Microsoft to bring serverless Postgres to the Azure ecosystem. Review our original announcement for a refresher.
+What Is the Neon Azure Native Integration?
+Neon’s Azure Native Integration lets you use Neon like any other native Azure service, fully embedded within your Azure workflows, identity systems, and billing structure.
+You can provision Neon Serverless Postgres directly from the Azure portal, where it appears alongside Microsoft’s own database offerings in the Databases section, complete with a partner badge:
+Once provisioned, you can manage Neon projects, branches, and connection strings using the Azure Command-Line Interface (CLI) and SDK.
+This deep integration also simplifies security and procurement:
+Authenticate using Microsoft Entra ID (formerly Azure Active Directory)
+Consolidate Neon usage into your Azure bill—no separate account or payment required
+What’s New with General Availability?
+While in preview, developers were able to create a Neon organization through Azure; now, with general availability, they can also manage Neon projects, branches, and connection strings directly through Azure.
+This update makes it easier to operationalize Neon across your team, enabling tighter CI/CD integration, more granular environment management, and a faster path from provisioning to production.
+And while we’re excited about the improvements available today, we’re already working on our next enhancement, designed to further simplify identity and access management, making your workflow even more streamlined within the Azure ecosystem.
+Who Benefits From the Neon Azure Native Integration?
+Enterprises with Azure MACC
+If your organization has a Microsoft Azure Consumption Commitment (MACC), Neon is now an eligible partner. Any Neon usage through the Azure Marketplace contributes toward your committed Azure spend, with no additional procurement steps or vendor onboarding required. This makes it simple for enterprises to adopt serverless Postgres within their existing Azure contracts and governance structures.
+Why Neon for Enterprise
+Enterprises choose Neon due to its efficient scalability, strong recovery guarantees, and developer workflows that align with modern software development practices:
+Efficient scalability: Neon’s compute layer scales automatically based on workload, including CPU, memory, and active connections. There’s no need to overprovision resources or worry about connection limits. The benefits are smoother performance during peak traffic, lower infrastructure costs, and reduced operational overhead for engineering teams.
+Reliable recovery options: Neon also enables instant restores, even for multi-terabyte databases. This significantly reduces downtime in the event of failures, providing a strong safety net for production environments. Every database on Neon also includes high availability by default, with no need to manage replicas or monitor replication lag.
+Smoother development workflows: Neon’s database branching makes it easy to create isolated, production-like environments for testing, CI/CD, and feature development. Teams can spin up branches in seconds, iterate quickly, and launch with confidence. And with scale-to-zero, idle dev and staging environments incur no cost, keeping budgets lean across the SDLC.
+All of this is backed by Neon’s commitment to enterprise-grade security and compliance. We follow industry best practices for encryption, access control, and data protection.
+talk to us
+If you’re just discovering Neon, schedule a meeting with our team. Our Solutions Engineers are ready to review your requirements and help you evaluate whether Neon is the right fit.
+AI Startups scaling on Azure
+If you’re a startup, especially if part of the Microsoft for Startups program and embracing the AI wave, the Neon Azure Native Integration is also a perfect fit. Neon’s serverless Postgres architecture delivers the speed, flexibility, and automation that modern AI applications demand. Here’s how AI startups are building on Neon:
+AI agents powered by Neon
+Replit Agent and Create.xyz are using Neon as a foundation for agentic app creation. These AI agents automatically spin up Neon databases in response to user input, whether it’s a new AI workspace, a micro SaaS, or a proof-of-concept app.
+Neon’s instant provisioning, fully managed storage, and powerful API enable agents to deploy Postgres completely autonomously. No manual setup, no disk provisioning, no credential management. Neon handles it all in the background, so the agent can stay focused on the user experience.
+RAG pipelines with pgvector
+Neon is also an ideal vector store for Retrieval-Augmented Generation (RAG) workflows. Startups are building pipelines that generate embeddings with Azure OpenAI Service and store them in Neon using the pgvector extension, unlocking fast, SQL-native semantic search inside a fully managed Postgres environment.
+There’s no need for a separate vector database or added infrastructure. With Neon, you get native vector search, seamless scaling, and the simplicity of standard Postgres tooling to insert, index, and retrieve vectors efficiently.
+And if you’re building with Microsoft-native tools, Neon integrates directly with Semantic Kernel. Using the Postgres memory connector, you can orchestrate a full RAG pipeline:
+Generate embeddings with Azure OpenAI Service
+Store and query them in Neon with pgvector
+Retrieve relevant results in milliseconds, all with SQL
+A Big Milestone, But We’re Just Getting Started
+This release is the result of close collaboration between Neon and Microsoft engineering teams. With a roadmap and ongoing co-investment, we’re working to make Neon truly native to the Microsoft developer ecosystem.
+Whether you’re an individual developer or part of an enterprise engineering team, log in to the Azure Marketplace and try Neon’s Native Integration today.
+Find us at MS Build
+If you’re attending Microsoft Build 2025, come find us at booth 518. We’d love to meet you and hear your feedback on how we can build the best serverless Postgres experience on Azure!
+On this page
+What Is the Neon Azure Native Integration?
+What’s New with General Availability?
+Who Benefits From the Neon Azure Native Integration?
+A Big Milestone, But We’re Just Getting Started
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 72 | f003414 | https://github.com/zed-industries/zed/pull/36497 | 2025-08-19 | domain-subframes ===
+Add support for encodings other than UTF-8
+
+---
+
+@EuclidDivisionLemma · 2025-08-19T15:17:27Z:
+Add the ability to open and save files in different encodings. Closes #16965
+
+
+
+
+---
+
+@zed-industries-bot · 2025-08-29T17:25:17Z:
+
+<!--
+  0 failure: 
+  1 warning:  This PR is missin...
+  
+  
+  DangerID: danger-id-Danger;
+-->
+
+
+<table>
+  <thead>
+    <tr>
+      <th width="50"></th>
+      <th width="100%" data-danger-table="true">Warnings</th>
+    </tr>
+  </thead>
+  <tbody><tr>
+      <td>:warning:</td>
+      <td>
+
+  This PR is missing release notes.
+
+Please add a "Release Notes" section that describes the change:
+
+```
+Release Notes:
+
+- Added/Fixed/Improved ...
+```
+
+If your change is not user-facing, you can use "N/A" for the entry:
+```
+Release Notes:
+
+- N/A
+```
+  </td>
+    </tr>
+  </tbody>
+</table>
+
+
+
+<p align="right">
+  Generated by :no_entry_sign: <a href="https://danger.systems/js">dangerJS</a> against 4330e5ff1439be5c0b2a88203b456379526abf84
+</p>
+
+
+---
+
+@CrazyboyQCD · 2025-08-30T04:06:10Z:
+I wonder why use [`encoding`](https://github.com/lifthrasiir/rust-encoding) instead of [`encoding_rs`](https://github.com/hsivonen/encoding_rs), since the former has not been developed for a long time.
+
+---
+
+@EuclidDivisionLemma · 2025-08-30T04:35:32Z:
+@CrazyboyQCD 
+
+Well, I considered it, but eventually decided against it as the docs explicitly states 
+>Both in terms of scope and performance, the focus is on the Web.
+
+
+---
+
+@CrazyboyQCD · 2025-08-30T08:19:58Z:
+@EuclidDivisionLemma 
+
+The main issue is that it is unmaintained, [buggy](https://github.com/lifthrasiir/rust-encoding/issues/128) and [legacy](https://github.com/lifthrasiir/rust-encoding/pull/124), so I think a more mordern crate would be better if you don't want to fork and maintain it.
+https://rustsec.org/advisories/RUSTSEC-2021-0153.html
+
+---
+
+@EuclidDivisionLemma · 2025-08-30T08:45:15Z:
+@CrazyboyQCD 
+
+Yes, you're right. I'll definitely look into it. Also, what do you think about using [ICU](https://icu.unicode.org/). Surely, it is more mature and has multi-threaded support. There is a C Version of the library, ICU4C, and also the Rust version is a part of the ICU4X project.
+
+https://docs.rs/icu/2.0.0/icu/
+https://icu4x.unicode.org/
+
+---
+
+@CrazyboyQCD · 2025-08-30T09:11:34Z:
+`ICU4X` is related with i18n and is not suitable for this.
+
+---
+
+@EuclidDivisionLemma · 2025-08-30T09:25:57Z:
+@CrazyboyQCD 
+Just out of curiosity. I know ICU has encoding conversion capabilities too. Is the main reason to avoid it the dependency size, or are there other technical reasons why `encoding_rs` should be used?
+
+---
+
+@CrazyboyQCD · 2025-08-30T09:42:24Z:
+@EuclidDivisionLemma 
+
+`ICU4X` only deals with `UTF-8` and `UTF-16` encoding format with specific data like `date`, which is completely different from what we want, and `encoding_rs` provides encoding and decoding methods directly.
+
+---
+
+@cla-bot[bot] · 2025-08-31T16:06:32Z:
+We require contributors to sign our Contributor License Agreement, and we don't have @Copilot on file. You can sign our CLA at https://zed.dev/cla. Once you've signed, post a comment here that says '@cla-bot check'.
+
+---
+
+@cla-bot[bot] · 2025-08-31T16:10:23Z:
+We require contributors to sign our Contributor License Agreement, and we don't have @Copilot on file. You can sign our CLA at https://zed.dev/cla. Once you've signed, post a comment here that says '@cla-bot check'.
+
+---
+
+@cla-bot[bot] · 2025-08-31T17:45:10Z:
+We require contributors to sign our Contributor License Agreement, and we don't have @Copilot on file. You can sign our CLA at https://zed.dev/cla. Once you've signed, post a comment here that says '@cla-bot check'.
+
+---
+
+@cla-bot[bot] · 2025-09-01T12:47:36Z:
+We require contributors to sign our Contributor License Agreement, and we don't have @Copilot on file. You can sign our CLA at https://zed.dev/cla. Once you've signed, post a comment here that says '@cla-bot check'.
+
+---
+
+@CrazyboyQCD · 2025-09-04T01:50:20Z:
+`encoding_rs` provides decoders for `UTF-16 (without BOM/LE/BE)` but not encoders, consider adding support for them by doing like this:
+```rust
+// BE Example
+src: &str;
+let mut dst = vec![0xFE, 0xFF]; // BE Byte Order Mark
+dst.reserve(src.len() * 2);
+dst.extend(src.encode_utf16().flat_map(|v| v.to_be_bytes()));
+```
+
+---
+
+@ConradIrwin · 2025-09-09T19:30:54Z:
+Thanks for this! Do you have a collection of files in various encodings I could test with? 
+
+---
+
+@YangGangUEFI · 2025-09-10T03:13:25Z:
+> Thanks for this! Do you have a collection of files in various encodings I could test with?
+
+As far as I know, there are some files in #16965
+
+ISO-8859-1 (Latin-1) [latin1.txt](https://github.com/user-attachments/files/16767064/latin1.txt)
+
+CP865 (DOS Nordic) [cp865.txt](https://github.com/user-attachments/files/16767023/cp865.txt)
+
+KOI8-R (Russian) [koi8_r.txt](https://github.com/user-attachments/files/16767039/koi8_r.txt)
+
+UTF-16 (16bit Unicode) [utf16.txt](https://github.com/user-attachments/files/16767053/utf16.txt)
+
+Shift-JIS (Japanese) [main_shift-jis.cpp.txt](https://github.com/user-attachments/files/16767118/main_shift-jis.cpp.txt)
+
+Windows 1252 (CP1252) [cp1252.txt](https://github.com/user-attachments/files/16778117/cp1252.txt)
+
+Big-5 (Traditional Chinese) [big5.txt](https://github.com/user-attachments/files/18483861/big5.txt)
+
+GB 2312, GB18030, GBK (Simplified Chinese) [gb2312.txt](https://github.com/user-attachments/files/18483849/gb2312.txt)
+
+---
+
+@EuclidDivisionLemma · 2025-09-10T13:00:24Z:
+@ConradIrwin 
+
+[It's here](https://drive.google.com/drive/folders/1tf7JEIdxuCSIpB5Nfzr7l5h3jdHlOqrc?usp=sharing)
+
+---
+
+@ConradIrwin · 2025-09-12T19:43:46Z:
+Thanks for this, I really like the idea of being able to open these files in Zed :D.
+
+A few thoughts on the UX:
+
+* Currently on this branch if I open most of the files, it opens them as utf-8 and puts replacement characters in place of the binary ones. I think we should continue to show the "Failed to load file" screen in this case, otherwise if you edit and save the buffer it silently corrupts it. We can add a "Open with encoding..." button to that screen alongside the "Open with system default" button.
+* There's still an issue with the ASCII-only UTF16 files (because they are technically valid utf-8). In some follow up work, we could also notice "there's a lot of null bytes on the first line, let's show the error page to ask you to pick an encoding". But happy to do that later (as we already have this problem today).
+* I am also sure we should not show the `utf-8` text in the status bar (though I'd be happy to show any non-UTF-8 encodings, having the same text present almost all the time is too noisy).
+* I think we should add two actions to the command palette: `editor: Reopen With Encoding` and `editor: Change Encoding`. These would open the appropriate selector directly. (If you try and open a file in an encoding, but that file is not valid in that encoding, we can continue to show the existing error pane or alert; we shouldn't replace with replacement chars).
+
+Looking at the code, I have a few thoughts too:
+
+* Currently we have the `EncodingWrapper` type. I'm a bit surprised that we can't pass `&'static Encoding` around directly. If we can do that, let's. Otherwise let's rename `EncodingWrapper` to `Encoding`, and a default to it that picks UTF_8 and hide the `encoding_rs` types completely from the rest of the code.
+* I'd like to simplify the API for loading. I think we can just add a required Encoding parameter to the existing `load` call. Callers that want to load the bytes and then guess the encoding should call `load_bytes` instead, and do that. (I'd  also be OK to merge a v1 of this work without the BOM detection).
+
+Happy to pair with you on getting this over the line if you need it: https://cal.com/conradirwin/pairing
+
+---
+
+@EuclidDivisionLemma · 2025-09-13T06:20:43Z:
+@ConradIrwin 
+
+>I'd like to simplify the API for loading. I think we can just add a required Encoding parameter to the existing load call. Callers that want to load the bytes and then guess the encoding should call load_bytes instead, and do that.
+
+Actually, I added a separate `load_with_encoding` function, because there are several places where `load` is being called, and having a single function will require us to pass four arguments in all those places, making the code significantly less readable. Maybe, if we do not need the automatic detection of UTF-16 encoded files, the number of arguments that we need to pass can be reduced to two: the path and the encoding we wish to open the file with (removing `force` and `buffer_encoding`).
+
+So, there are three options: the first is to keep the `load_with_encoding` function, the second is to have a single `load` function with support for UTF-16 detection at the cost of making the code less readable, and the third is to remove the automatic detection of UTF-16 and have a single `load` function requiring the callers to pass only two arguments.
+
+I assume that you prefer the third option, as you've mentioned in your previous comment, and I quote
+
+> I'd also be OK to merge a v1 of this work without the BOM detection
+
+---
+
+@ConradIrwin · 2025-09-15T15:06:23Z:
+I am happy with option 3. But now I think about it even more, can we not get the filesystem layer involved at all and just call `load_bytes` from `load_file`?
+
+---
+
+@EuclidDivisionLemma · 2025-09-18T17:32:54Z:
+@ConradIrwin 
+Do you mean to say that the decoding should be done in the `load_file` function?  And if that's the case, can I keep the BOM detection?
+
+---
+
+@ConradIrwin · 2025-09-19T14:29:14Z:
+That was the idea (but with the caveat I havent tried to build it). The main thing I was trying to clear up was the fs trait. If we can factor things so the complexity doesn’t leak out of the APIs it makes it easier to say yes more complicated logic
+
+---
+
+@ConradIrwin · 2025-09-19T15:49:29Z:
+Sorry for being unclear, I am not making any changes; just proposing how the diff in this PR could be.
+
+Happy to pair with you on getting this over the line if that's helpful: https://cal.com/conradirwin 
+
+---
+
+@ConradIrwin · 2025-09-29T21:45:07Z:
+I missed you on Friday. Would it still be helpful to talk these things through? 
+
+---
+
+@EuclidDivisionLemma · 2025-09-30T02:07:23Z:
+@ConradIrwin 
+Yes. I'm having trouble implementing the changes you've suggested. I'll schedule the pair programming session for 11:00 pm (11:30 am where you are) this Friday. I understand that only a few slots are available. But might it be possible to schedule it a couple of hours earlier? If not, I'm happy to stick with the original time. 
+
+---
+
+@ConradIrwin · 2025-09-30T02:37:07Z:
+@EuclidDivisionLemma Friday doesn't work so well, but I could meet a bit earlier on Thursday? I'm free from 8:15am until 9am?
+
+---
+
+@EuclidDivisionLemma · 2025-09-30T02:54:41Z:
+@ConradIrwin 
+Fine, Thursday is good for me. 
+
+---
+
+@EuclidDivisionLemma · 2025-10-08T14:18:43Z:
+@ConradIrwin 
+
+I've implemented some of the changes. Does this look good?
+
+[Screencast from 2025-10-12 16-46-23.webm](https://github.com/user-attachments/assets/02710948-8308-496d-aa52-7910c3c0bdb0)
+
+
+
+---
+
+@ConradIrwin · 2025-10-17T04:25:03Z:
+@EuclidDivisionLemma Thanks!
+
+I think the UI change is moving in the right direction, but I still see a problem with binary safe-ness:
+
+* open `ISO_2022-JP.txt` 
+* see that the encoding is wrong
+* choose "reopen with encoding" and select "ISO 2022 JP" from the list
+* see that the encoding looks right
+* save the file
+
+Even though I change nothing in Zed, the file is changed when I write it.
+
+I am not sure why this would happen, but I think we need to figure it out before we can ship this
+
+
+---
+
+@EuclidDivisionLemma · 2025-10-27T13:50:15Z:
+@ConradIrwin 
+I think everything now works (atleast for me). The only changes you suggested that still need to be implemented are:
+
+* Adding options to open and save files with different encodings to the command palette
+
+* Showing the status bar indicator only when the encoding is not UTF8
+
+I've refactored the code so that `encoding_rs::Encoding` is completely hidden from all other crates (as you initially suggested).
+
+However, I was not able to get rid of the `load_with_encoding` function, as I could not think of an alternative without cluttering `load`.
+
+I believe the error message is now at the centre.
+<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/39a9e28e-4e7c-428c-ad6f-35fc3c3ad3a3" />
+
+
+---
+
+@ConradIrwin · 2025-10-28T01:59:12Z:
+@EuclidDivisionLemma thank you again for this!
+
+The functionality is now working better, but there are a number of things I think we should change still.
+
+* This PR assigns state on the workspace for encoding_options. We should pass the encoding around where-ever we need it. I think this means we need a method on workspace for `open_path_with_encoding` or similar.
+* Similarly I don't like that the Buffer contains an `Arc<Mutex<>>` that allows callers to change the encoding without the buffer knowing. Any API that changes the buffer should look like:
+```
+buffer.update(cx, |buffer, cx| {
+  buffer.set_encoding(encoding)
+}
+```
+* I do like your `EncodingOptions` struct that you store on the workspace. maybe that's what we should pass to `open_buffer` (instead of an Encoding + bool + bool).
+* There are a lot of new `unwrap`s: these should pretty much all be early returns (for example when you are upgrading a weak reference). `unwrap` is OK in tests and also when you can tell by reading the current function that it can't ever unwrap.
+
+Let me know if you need help with any of these.
+
+---
+
+@EuclidDivisionLemma · 2025-10-29T07:57:04Z:
+@ConradIrwin 
+
+To change the code so that `Buffer` can see all the updates, I must include `language` as a dependency of `encodings` so that `to_utf8` and `decode` take a `WeakEntity<Buffer>`. But if I do that, I get a cyclic dependency error.  Even if there were no cyclic dependency error, I wouldn't be able to do that because I would also need to pass `cx`. One way I thought might resolve this issue is to take a closure as an argument `&dyn Fn(Encoding)`. Wherever the `to_utf8` is called, the closure can be passed as `|encoding| buffer.update(cx, |buffer, cx| buffer.update_encoding(encoding));`
+Is this approach okay, passing a closure instead of a buffer?
+
+Also, can I instead add `encoding_options` as a parameter of `open_abs_path`, if the number of places where the changes need to be made is not that many?
+
+---
+
+@ConradIrwin · 2025-11-04T08:07:26Z:
+@EuclidDivisionLemma 
+
+I finally got some time to sit down and make some significant changes. They are here: https://github.com/zed-industries/zed/commit/7e22d054098135bb06e42cc7115f99cf1903aba9 because for some reason I am not able to push to your fork directly.
+
+The biggest change is to remove the mutexes and have methods return the detected encoding along with the string; but I also tried to make the BOM handling safer (so Zed will not silently remove the BOM).
+
+Next steps;
+* Fix the rendering of the selectors
+* Add actions to reopen/save with encoding to the editor that open the modal directly so you can get there from the command palette
+* Implement a setting to show/hide the character set indicator
+* Rebuild the "Take the risk" button using a fake Latin1 encoding (encodings_rs supports this in there `mem` module, but don't expose it as an encoding for some reason). When you open the character set selector we can show `Latin1 (Binary)` as one of the options and if that is the case open the file.
+* (maybe) Stop using a picker for `save_or_open` and make it use a menu on the status item instead (not sure about this).
+* Add some tests! I'm particularly worried about cases where you open a file in Zed and save it and we add or remove a BOM.
+* Consider what to do when you've edited a file to contain characters that cannot be represented in the encoding. Currently this writes HTML-escaped characters, but it might also just error. not sure what we want.
+
+Thanks again for all your work on this. If you get time to build some of this, that would be great; otherwise I'll try and pick it up when I get some time.
+
+---
+
+@ConradIrwin · 2025-11-21T04:20:48Z:
+Hey! I'm going to close this PR for now, as I realistically don't have the time to get this merged right now.
+
+If you'd like to build on this again, I'd love something more like https://github.com/zed-industries/zed/commit/7e22d054098135bb06e42cc7115f99cf1903aba9 where we can avoid the shared mutable state; but there's still a lot of details to iron out.
+
+Thank you again for your contributions here, and I hope to work with you again the next time!
+
+---
+
+@EuclidDivisionLemma · 2025-11-21T05:02:18Z:
+I'm sorry that i couldn't respond to the last comment immediately as I am caught up with something else. I really wish to make further contributions. I understand that significant portions of the code have been changed. But I still wish to be a part of it as it matters to me.  I can  try, if you could tell exactly what you want me to work on.
+
+---
+
+@ConradIrwin · 2025-11-21T05:24:41Z:
+Amazing thank you!
+
+I want to take the approach more like this commit: https://github.com/zed-industries/zed/commit/7e22d054098135bb06e42cc7115f99cf1903aba9 (with no Mutexes that allow state to change implicitly) and flesh out the rest of the functionality to make sure it's working).
+
+The other question back of mind for me is about UTF-8 files that start with a zero-width space. Should we interpret that as a BOM and hide it from the editor (as my commit did) or should we assume that actually, very few people use UTF-8 BOM's, and just pass this to the editor as a file that starts with a zero-width space?.
+
+The final change that I want to make is to use a fallback "binary" encoding instead of the existing "open anyway" option. I am not sure that encodings.rs provides one, but I think it would be reasonable to map bytes in the range `0x80-0xff` to the corresponding unicode character (\u80-\uff), and the same on the inverse.
+
+
+
+
+---
+
+@EuclidDivisionLemma · 2025-11-24T03:44:40Z:
+@ConradIrwin 
+I have implemented the fallback encoding. Please look into it when you have time.
+
+---
+
+@CrazyboyQCD · 2025-09-07T04:01:08Z:
+`collect()` is unnecessary since it allocates and `extend` accepts iterator.
+```suggestion
+            let utf16be_bytes =
+                input.encode_utf16().flat_map(|u| u.to_be_bytes());
+```
+
+---
+
+@CrazyboyQCD · 2025-09-07T04:02:00Z:
+Same as above.
+
+---
+
+@CrazyboyQCD · 2025-09-07T04:10:04Z:
+Could be simplified as :
+```suggestion
+            if let Some(encoding) = match input.get(..2) {
+                Some([0xFF, 0xFE]) => Some(encoding_rs::UTF_16LE),
+                Some([0xFE, 0xFF]) => Some(encoding_rs::UTF_16BE),
+                _ => None,
+            } {
+                self.0 = encoding;
+
+                if let Some(v) = buffer_encoding {
+                    if let Ok(mut v) = (*v).lock() {
+                        *v = encoding;
+                    }
+                }
+            }
+```
+
+=== ROW 73 | f003558 | https://github.com/wasm-bindgen/wasm-bindgen/issues/4667 | 2025-09-19 | domain-subframes ===
+Add feature-gated `getrandom` support
+
+---
+
+@newpavlov · 2025-09-19T12:24:38Z:
+`getrandom` got a lot of complaints about our [handling](https://docs.rs/getrandom/latest/getrandom/#webassembly-support) of Web WASM.
+
+We consider adding a separate "custom fallback" crate feature. Enabling it would use late linking on unsupported targets. In other words, we would have the following code in `getrandom`:
+```rust
+// Gated on the custom fallback feature
+pub fn fill_inner(dest: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    extern "Rust" {
+        fn __getrandom_v03_custom(dest: *mut u8, len: usize) -> Result<(), Error>;
+    }
+    unsafe { __getrandom_v03_custom(dest.as_mut_ptr().cast(), dest.len()) }
+}
+```
+Next, `wasm-bindgen` or `js-sys` could define the following feature:
+```rust
+[dependencies]
+getrandom03 = { version = "0.3", package = "getrandom", features = ["custom-fallback"], optional = true }
+```
+And define the `__getrandom_v03_custom` symbol in its code gated on the `getrandom03` feature.
+
+This would allow users to easily enable the `getrandom` support for their WASM projects by just enabling the crate feature.
+
+This proposal was considered during pre-v0.3 discussions and was [rejected](https://github.com/rust-random/getrandom/issues/433#issuecomment-2593477930) by @daxpedda, but I think it's worth to reconsider it. We could move the implementation into a separate crate, but it would be less ergonomic, since crate does not get linked if no items are used from it, so we would have to do something similar to the [`register_custom_getrandom!`](https://docs.rs/getrandom/0.2.16/getrandom/macro.register_custom_getrandom.html) macro from v0.2.
+
+cc @dhardy @josephlr 
+
+---
+
+@CryZe · 2025-09-19T12:38:24Z:
+Isn't the only reason why all of this is even a problem because there's no way to tell if someone even wants to use `wasm-bindgen`? Which is why historically basically every crate ever needed to have a `web` / `wasm-bindgen` feature to communicate that. Your proposal here sounds like yet another workaround. Shouldn't we finally discuss a proper `wasm32-web` / `wasm32-bindgen` target instead, now that the project is properly maintained again?
+
+---
+
+@newpavlov · 2025-09-19T12:43:15Z:
+I long argued for a proper Web WASM target, but there was **zero** progress on it in the last (IIRC) 4 years, so I don't have any hope for getting it anytime soon (to be fair, there are good technical reasons for that).
+
+Yes, the proposed solution is a workaround for the Web WASM mess, but I think it's best what we can do with what we currently have.
+
+---
+
+@CryZe · 2025-09-19T12:44:48Z:
+I'd say proposing it as a 1:1 of wasm32-unknown-unknown with no other (initial changes) other than `target_env` or `target_os` being set to `web` / `wasm-bindgen` would already solve a lot, with very little effort.
+
+(And as a follow up I'd start discussions about potential fixed APIs similar to the randomness you proposed that std can rely on, so it can actually do things properly)
+
+---
+
+@newpavlov · 2025-09-19T12:53:59Z:
+We need a solution which would work with the current version of Rust. It's perfectly fine to reject the proposal using a potential Web target as one of arguments against it, we would just go forward with a separate crate with the aforementioned ergonomic issues (though I would forward all complaining users to this issue).
+
+>And as a follow up I'd start discussions about potential fixed APIs similar to the randomness you proposed that std can rely on, so it can actually do things properly
+
+It's already discussed extensively. See: https://github.com/rust-lang/rust/issues/130703
+
+I think it has a very low chance of being stabilized in the following one-two years. And a proper `no_std` support would take even longer.
+
+---
+
+@CryZe · 2025-09-19T13:00:12Z:
+Well I meant two different things:
+1. With the `wasm32-web` target you can just depend on `wasm-bindgen` yourself in the `getrandom` crate and implement randomness as usual.
+2. `std` itself has its own things it would like (time, threads, also technically randomness for `HashMap`s and `std::rand`, backtraces maybe, stdout, ...), so a similar solution to what you proposed here, where `wasm-bindgen` provides fixed C symbols `__wasm_bindgen_std_time_now` or whatever so `std` can actually function properly. `getrandom` itself wouldn't consume those as it can just depend on `wasm-bindgen` as usual, but I mean it also technically could use `__wasm_bindgen_std_rand` (though I don't see why it would).
+
+All of the second point is completely just nice to have eventually though. The first point is very quickly done and solves the problems with the `web` features across the entire ecosystem.
+
+---
+
+@newpavlov · 2025-09-19T13:06:16Z:
+I will repeat myself again: in the context of this issue I am not interested in hypothetical Rust changes. In future `getrandom` releases we need to provide a solution which works with the declared MSRV (1.63 for v0.3 and 1.85 for hypothetical v0.4).
+
+When/if the Rust changes are implemented and stabilized, we will adapt `getrandom` accordingly. This issue is a wrong place for suggesting and discussing such "would be nice to have" changes to the language.
+
+---
+
+@CryZe · 2025-09-19T13:07:16Z:
+Okay, that's true. If you have a low MSRV, then this wouldn't help and you need a different solution. I'll open a discussion about the target elsewhere.
+
+---
+
+@daxpedda · 2025-09-19T13:43:41Z:
+> We could move the implementation into a separate crate, but it would be less ergonomic, since crate does not get linked if no items are used from it, so we would have to do something similar to the [`register_custom_getrandom!`](https://docs.rs/getrandom/0.2.16/getrandom/macro.register_custom_getrandom.html) macro from v0.2.
+
+I was hoping that https://github.com/rust-random/getrandom/pull/684 would address this problem. See https://github.com/wasm-bindgen/wasm-bindgen/issues/4586. What is the status of this? Is `getrandom` still considering moving forward with it?
+
+I'm still in favor of making it a separate crate, but if that doesn't work out, I'm fine with adding it to `wasm-bindgen` as a crate feature as well.
+
+---
+
+@newpavlov · 2025-09-19T13:50:10Z:
+I plan to create a separate PR which would implement roughly the same idea. (UPD: see https://github.com/rust-random/getrandom/pull/725)
+
+>I'm still in favor of making it a separate crate
+
+As I wrote in the OP, a separate crate is likely to have linking issues if no items from it are explicitly used (i.e. it's not sufficient to just add it to `Cargo.toml`, you need to `use` something from it, explicit `extern crate` may also work), but I would need to check it later.
+
+---
+
+@daxpedda · 2025-09-19T15:24:43Z:
+> I plan to create a separate PR which would implement roughly the same idea.
+
+I assume adding a crate feature to `wasm-bindgen`?
+
+> > I'm still in favor of making it a separate crate
+> 
+> As I wrote in the OP, a separate crate is likely to have linking issues if no items from it are explicitly used (i.e. it's not sufficient to just add it to `Cargo.toml`, you need to `use` something from it, explicit `extern crate` may also work), but I would need to check it later.
+
+I was saying that https://github.com/rust-random/getrandom/pull/684 would address this problem, by letting users setup the custom backend themselves. Similar to how `tracing` works.
+
+But if that isn't how `getrandom` wants to proceed, lets do what you have proposed in OP.
+
+---
+
+@daxpedda · 2025-09-19T15:30:05Z:
+I should probably note that while I'm fine to proceed here because we can't compromise on any other solution, this isn't really a better solution. Users will face the same problem with linking issues in theory here as well.
+
+E.g., the `getrandom` feature has to live in `js-sys`. If for some reason it remains unused, e.g. only `wasm-bindgen` is used, its going to be a problem. While this is unlikely, we had issue reports like this here before.
+
+However, it would solve the issue for big crates like Bevy and such.
+
+---
+
+I also want to note that AFAIK the reason `getrandom` has moved away from the crate feature, is that some users don't want `wasm-bindgen` to show up in their dependency tree even though its not going to be used by Cargo, as its behind a crate feature. This is a bigger Cargo/tooling issue. However, this seems to be the smaller problem then the workarounds we are doing here to get around this issue.
+
+I'm still in favor to just return to the crate feature in `getrandom`, unless I'm missing something.
+
+---
+
+@newpavlov · 2025-09-19T15:42:30Z:
+>I assume adding a crate feature to wasm-bindgen?
+
+I meant the getrandom PR which I linked in the UPD. I can create a followup `wasm-bindgen` PR later after we will release `getrandom` with the `custom-fallback` feature.
+
+>I was saying that https://github.com/rust-random/getrandom/pull/684 would address this problem, by letting users setup the custom backend themselves.
+
+Users can still use a different implementation crate if they want without enabling the `getrandom03` feature in `js-sys`. Having a go-to recipe (enable this feature in `js-sys`) would be more ergonomic and would significantly reduce chances of different crates using different implementation crates.
+
+>E.g., the getrandom feature has to live in js-sys. If for some reason it remains unused, e.g. only wasm-bindgen is used, its going to be a problem.
+
+Yes, it would be a problem. Ideally, `getrandom` support would be part of `wasm-bindgen`, but I guess it's not possible with the current design.
+
+>I also want to note that AFAIK the reason getrandom has moved away from the crate feature, is that some users don't want wasm-bindgen to show up in their dependency tree even though its not going to be used by Cargo, as its behind a crate feature.
+
+No, the main reason why we moved from the crate feature is because some crates ignored our warnings and enabled it unconditionally for "convenience", thus creating problems for non-Web WASM developers. Yes, they could make a similar mistake by unconditionally and unnecessarily depending on `js-sys` with the enabled feature, but I think it's much less likely.
+
+Cargo.lock bloat is also an issue, although a lesser one.
+
+---
+
+@daxpedda · 2025-09-19T15:54:28Z:
+> > E.g., the getrandom feature has to live in js-sys. If for some reason it remains unused, e.g. only wasm-bindgen is used, its going to be a problem.
+> 
+> Yes, it would be a problem. Ideally, `getrandom` support would be part of `wasm-bindgen`, but I guess it's not possible with the current design.
+
+While putting it in `wasm-bindgen` is making the scenario even more unlikely, fundamentally its still the same problem.
+
+> > I also want to note that AFAIK the reason getrandom has moved away from the crate feature, is that some users don't want wasm-bindgen to show up in their dependency tree even though its not going to be used by Cargo, as its behind a crate feature.
+> 
+> No, the main reason why we moved from the crate feature is because some crates ignored our warnings and enabled it unconditionally for "convenience", thus creating problems for non-Web WASM developers. Yes, they could make a similar mistake by unconditionally and unnecessarily depending on `js-sys` with the enabled feature, but I think it's much less likely.
+
+I see!
+
+However, I think that this is exactly whats going to happen here. The motivation remains the same: libraries were trying to avoid requiring additional user configuration, this motivation is still present.
+
+I'm also a bit confused. Are users complaining about the fact that its now a `RUSTFLAG`? Because I thought the problem is that crates like Bevy want to provide a *more* configuration-free experience. Which would make the whole transition, problem and solution quite circular.
+
+---
+
+@newpavlov · 2025-09-19T16:01:42Z:
+In the case of Bevy it would be correct for them to enable the `getrandom` feature unconditionally since IIUC they support only Web WASM, i.e. if your crate pulls `wasm-bindgen`/`js-sys` unconditionally, then it's fine for it to enable the proposed feature unconditionally as well.
+
+---
+
+@daxpedda · 2025-09-19T16:10:49Z:
+> In the case of Bevy it would be correct for them to enable the `getrandom` feature unconditionally since IIUC they support only Web WASM, i.e. if your crate pulls `wasm-bindgen`/`js-sys` unconditionally, then it's fine for it to enable the proposed feature unconditionally as well.
+
+I concur.
+
+But these appear to all be very convincing arguments that we should go back to the `getrandom` crate feature. Libraries that shouldn't be using this crate feature, should instead be notified and corrected. It really seems to be the best compromise here.
+
+---
+
+@newpavlov · 2025-09-19T16:28:13Z:
+I think it's weirder for a crate dependent on `rand` stuff to unconditionally add `js-sys` as a dependency, than `getrandom` with the enabled `wasm_js` feature. Since the `wasm_js` feature has no effect on non-WASM targets, such incorrect behavior does not get punished, while users would be more careful with `js-sys`.
+
+---
+
+@daxpedda · 2025-09-19T16:33:37Z:
+Yeah, that's a good point.
+
+Maybe we could instead punish that behavior then? Ergo force libraries to *not* use:
+```toml
+[dependencies]
+getrandom =  { version = "*", features = ["wasm_js"] }
+```
+And instead use:
+```toml
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom =  { version = "*", features = ["wasm_js"] }
+```
+
+That should be doable with a gated `compile_error!`. WDYT?
+
+(using `*` for version just for illustrative purposes)
+
+---
+
+@newpavlov · 2025-09-19T16:47:00Z:
+It still has the problem of making live of non-Web WASM users difficult. Imagine a computational crate which runs tests using Web WASM, it's easy to slap
+```toml
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# It's fine, I use `rand` stuff in my crate, so `getrandom` is already part of my dependency tree
+getrandom =  { version = "*", features = ["wasm_js"] }
+```
+without much thought, while doing the same for `js-sys` would look weird. It's more likely that users would instead correctly use:
+```toml
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+js-sys =  { version = "*", features = ["getrandom"] }
+```
+
+It's also a matter of consistency. We reject PRs which add built-in support for environments without proper Rust targets associated with it (e.g. https://github.com/rust-random/getrandom/pull/716) and `wasm_js` is the only exception here.
+
+---
+
+@daxpedda · 2025-09-19T16:54:04Z:
+> It's also a matter of consistency. We reject PRs which add built-in support for environments without proper Rust targets associated with it (e.g. [rust-random/getrandom#716](https://github.com/rust-random/getrandom/pull/716)) and `wasm_js` is the only exception here.
+
+I understand, but we are in a similar position. We try to not add support for external libraries into `wasm-bindgen` itself, and instead encourage external libraries to do so. E.g. we have removed/deprecated Serde support a long time ago.
+
+---
+
+I think we have exhausted this conversation so far. As I said before: I'm fine with proceeding with the proposal outlined in the OP.
+
+---
+
+@dhardy · 2025-09-21T09:27:05Z:
+My opinion is that I'm fine with adding a `getrandom` feature like
+```toml
+getrandom = { version = "*", features = ["assume_wasm_means_js"] }
+```
+with the understanding that library crates using this is a bug OR a deliberate decision not to support non-web WASM (the `getrandom` v0.2 solution, with a slightly more explicit name).
+
+This is not incompatible with ALSO supporting a custom getrandom backend with the `getrandom_backend` cfg (at the cost of `Cargo.lock` bloat since `wasm-bindgen` would remain a dependency as far as the resolver is concerned).
+
+Adding a `getrandom` feature to `wasm-bindgen` achieves the same goal, minus support for specifying a different custom backend using the `getrandom_backend` cfg, and possibly with more linker issues.
+
+---
+
+@daxpedda · 2025-09-21T17:50:27Z:
+I was reading the conversation in https://github.com/rust-random/getrandom/pull/725 and was trying to visualize the trade-offs for myself. So here is what I have:
+
+| | `getrandom` | `js-sys` | `web-getrandom` |
+|-|-|-|-|
+| protects against misusing the crate feature | ❌ | ✔️ | ✔️ |
+| always linked in | ✅ | ✔️[^1] | ❌ |
+| clean `Cargo.lock` | ❌ | ✅ | ✅ |
+| convenience (least amount of work by the end-user) | ✅ | ❌ | ❌ |
+| ownership separation | ❌[^2] | ✖️[^3] | ✅ |
+
+(grey symbols representing weaker versions of their colored counterparts)
+
+[^1]: Unlikely for `js-sys` to be completely unused when targeting the Web.
+[^2]: `getrandom` doesn't want to add support for targets that lack a dedicated Rustc target.
+[^3]: `wasm-bindgen` doesn't want to add direct support for external crates and instead encourages external implementations.
+
+I think we can safely eliminate a separate implementation crate like `web-getrandom`, because it does require end-user action to get linked in. This isn't entirely without precedence, see `tracing`, `log`, `critical-section`.
+
+Personally, I don't particularly buy into the crate feature misuse protection argument. While I think its a good idea to *try* and prevent that issue, it does come with downsides that have to be considered nevertheless. In addition, no solution really protects against misusing it, it just reduces the chance.
+
+The ownership separation argument is interesting. `getrandom` only wants to support targets that actually have a dedicated Rustc target, which seems reasonable to me. However, `wasm-bindgen` also doesn't want to add support for all crates out there. Otherwise we have little excuses not to keep adding support for more and more.
+
+However, `wasm-bindgen` is the one adding a new target without having a dedicated one in Rustc, so I can concede that its better there then in `getrandom`.
+
+In conclusion: unless we want to move the responsibility to the end-user, like with `tracing`, I'm still fine with letting it live in `js-sys`.
+
+---
+
+@Pauan · 2025-09-21T22:11:14Z:
+> @newpavlov No, the main reason why we moved from the crate feature is because some crates ignored our warnings and enabled it unconditionally for "convenience", thus creating problems for non-Web WASM developers.
+
+I don't see why that's a problem for getrandom to solve... that's a problem with those other crates.
+
+You cannot force other crates to behave properly, you cannot force other developers to behave properly.
+
+If they are misbehaving, they are at fault and issues / pull requests should be filed against those crates, not getrandom.
+
+This seems to me like a solution in search of a problem.
+
+---
+
+@Pauan · 2025-09-21T22:31:20Z:
+> @newpavlov Since the wasm_js feature has no effect on non-WASM targets, such incorrect behavior does not get punished, while users would be more careful with js-sys.
+
+I don't agree. I don't think shifting it into `js-sys` will provide any protection.
+
+If a crate wishes to support the web, then it's going to do *whatever is required* to support the web... whether that's enabling a `getrandom` feature, or a `js-sys` feature.
+
+Shifting things around doesn't accomplish anything, it just means crates will now incorrectly use `js-sys` instead of incorrectly using `getrandom`.
+
+----
+
+The solution is to inform crates of the correct way of doing things. There are two possible solutions for crates:
+
+1. If a crate really does need web support (e.g. Bevy), then it should add its own feature which delegates to `getrandom`:
+
+   ```toml
+   [features]
+   wasm_js = ["getrandom/wasm_js"]
+   ```
+
+2. If a crate doesn't actually need web support within itself, it can just not enable `wasm_js` at all, and instead allow the application to enable `wasm_js`.
+
+Most crates just shouldn't care about `wasm_js` or `wasm-bindgen` at all, they should choose option 2 and allow the application to enable the `getrandom` feature.
+
+---
+
+@josephlr · 2025-09-29T11:04:12Z:
+I agree with @Pauan above, see my comment https://github.com/rust-random/getrandom/issues/675#issuecomment-3346288066 suggesting we have `wasm_js` just enable the `wasm_js` backend by default.
+
+I think it might be reasonable to have some code in `js-sys` which exposed a component of the [WebCrypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) to make our [`wasm_js` implementation](https://github.com/rust-random/getrandom/blob/3983e0fbec37516bd5e1b32eb4bdacb612f36f8b/src/backends/wasm_js.rs) less convoluted, but that discussion should probably be in a different issue.
+
+---
+
+@newpavlov · 2025-10-13T09:18:33Z:
+Closing since it was decided to follow a different approach in `getrandom`.
+
+=== ROW 74 | f003580 | https://blog.cloudflare.com/r2-sql-deep-dive | 2025-09-25 | domain-subframes ===
+R2 SQL: a deep dive into our new distributed query engine | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+This Post is Available in
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+Birthday WeekDataDeep Dive+5Show 5 more tags
+8 TagsShow 8 tags
+Post Tags
+Birthday WeekDataDeep DiveEdge ComputingR2RustServerlessSQL
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+Edge ComputingR2RustServerlessSQL
+Birthday WeekDataDeep DiveEdge ComputingR2RustServerlessSQL
+September 25, 2025
+R2 SQL: a deep dive into our new distributed query engine
+Yevgen Safronov, Nikita Lapkov, and Jérôme Schneider
+15 minute readCOPY URL
+This post is also available in 简体中文.
+How do you run SQL queries over petabytes of data… without a server?
+We have an answer for that: R2 SQL, a serverless query engine that can sift through enormous datasets and return results in seconds.
+This post details the architecture and techniques that make this possible. We'll walk through our Query Planner, which uses R2 Data Catalog to prune terabytes of data before reading a single byte, and explain how we distribute the work across Cloudflare’s global network, Workers and R2 for massively parallel execution.
+From catalog to query
+During Developer Week 2025, we launched R2 Data Catalog, a managed Apache Iceberg catalog built directly into your Cloudflare R2 bucket. Iceberg is an open table format that provides critical database features like transactions and schema evolution for petabyte-scale object storage. It gives you a reliable catalog of your data, but it doesn’t provide a way to query it.
+Until now, reading your R2 Data Catalog required setting up a separate service like Apache Spark or Trino. Operating these engines at scale is not easy: you need to provision clusters, manage resource usage, and be responsible for their availability, none of which contributes to the primary goal of getting value from your data.
+R2 SQL removes that step entirely. It’s a serverless query engine that executes retrieval SQL queries against your Iceberg tables, right where your data lives.
+Designing a query engine for petabytes
+Object storage is fundamentally different from a traditional database’s storage. A database is structured by design; R2 is an ocean of objects, where a single logical table can be composed of potentially millions of individual files, large and small, with more arriving every second.
+Apache Iceberg provides a powerful layer of logical organization on top of this reality. It works by managing the table's state as an immutable series of snapshots, creating a reliable, structured view of the table by manipulating lightweight metadata files instead of rewriting the data files themselves.
+However, this logical structure doesn't change the underlying physical challenge: an efficient query engine must still find the specific data it needs within that vast collection of files, and this requires overcoming two major technical hurdles:
+The I/O problem: A core challenge for query efficiency is minimizing the amount of data read from storage. A brute-force approach of reading every object is simply not viable. The primary goal is to read only the data that is absolutely necessary.
+The Compute problem: The amount of data that does need to be read can still be enormous. We need a way to give the right amount of compute power to a query, which might be massive, for just a few seconds, and then scale it down to zero instantly to avoid waste.
+Our architecture for R2 SQL is designed to solve these two problems with a two-phase approach: a Query Planner that uses metadata to intelligently prune the search space, and a Query Execution system that distributes the work across Cloudflare's global network to process the data in parallel.
+Query Planner
+The most efficient way to process data is to avoid reading it in the first place. This is the core strategy of the R2 SQL Query Planner. Instead of exhaustively scanning every file, the planner makes use of the metadata structure provided by R2 Data Catalog to prune the search space, that is, to avoid reading huge swathes of data irrelevant to a query.
+This is a top-down investigation where the planner navigates the hierarchy of Iceberg metadata layers, using stats at each level to build a fast plan, specifying exactly which byte ranges the query engine needs to read.
+What do we mean by “stats”?
+When we say the planner uses "stats" we are referring to summary metadata that Iceberg stores about the contents of the data files. These statistics create a coarse map of the data, allowing the planner to make decisions about which files to read, and which to ignore, without opening them.
+There are two primary levels of statistics the planner uses for pruning:
+Partition-level stats: Stored in the Iceberg manifest list, these stats describe the range of partition values for all the data in a given Iceberg manifest file. For a partition on day(event_timestamp), this would be the earliest and latest day present in the files tracked by that manifest.
+Column-level stats: Stored in the manifest files, these are more granular stats about each individual data file. Data files in R2 Data Catalog are formatted using the Apache Parquet. For every column of a Parquet file, the manifest stores key information like:
+The minimum and maximum values. If a query asks for http_status = 500, and a file’s stats show its http_status column has a min of 200 and a max of 404, that entire file can be skipped.
+A count of null values. This allows the planner to skip files when a query specifically looks for non-null values (e.g., WHERE error_code IS NOT NULL) and the file's metadata reports that all values for error_code are null.
+Now, let's see how the planner uses these stats as it walks through the metadata layers.
+Pruning the search space
+The pruning process is a top-down investigation that happens in three main steps:
+Table metadata and the current snapshot
+The planner begins by asking the catalog for the location of the current table metadata. This is a JSON file containing the table's current schema, partition specs, and a log of all historical snapshots. The planner then fetches the latest snapshot to work with.
+2. Manifest list and partition pruning
+The current snapshot points to a single Iceberg manifest list. The planner reads this file and uses the partition-level stats for each entry to perform the first, most powerful pruning step, discarding any manifests whose partition value ranges don't satisfy the query. For a table partitioned by day(event_timestamp), the planner can use the min/max values in the manifest list to immediately discard any manifests that don't contain data for the days relevant to the query.
+3. Manifests and file-level pruning
+For the remaining manifests, the planner reads each one to get a list of the actual Parquet data files. These manifest files contain more granular, column-level stats for each individual data file they track. This allows for a second pruning step, discarding entire data files that cannot possibly contain rows matching the query's filters.
+4. File row-group pruning
+Finally, for the specific data files that are still candidates, the Query Planner uses statistics stored inside Parquet file's footers to skip over entire row groups.
+The result of this multi-layer pruning is a precise list of Parquet files, and of row groups within those Parquet files. These become the query work units that are dispatched to the Query Execution system for processing.
+The Planning pipeline
+In R2 SQL, the multi-layer pruning we've described so far isn't a monolithic process. For a table with millions of files, the metadata can be too large to process before starting any real work. Waiting for a complete plan would introduce significant latency.
+Instead, R2 SQL treats planning and execution together as a concurrent pipeline. The planner's job is to produce a stream of work units for the executor to consume as soon as they are available.
+The planner’s investigation begins with two fetches to get a map of the table's structure: one for the table’s snapshot and another for the manifest list.
+Starting execution as early as possible
+From that point on, the query is processed in a streaming fashion. As the Query Planner reads through the manifest files and subsequently the data files they point to and prunes them, it immediately emits any matching data files/row groups as work units to the execution queue.
+This pipeline structure ensures the compute nodes can begin the expensive work of data I/O almost instantly, long before the planner has finished its full investigation.
+On top of this pipeline model, the planner adds a crucial optimization: deliberate ordering. The manifest files are not streamed in an arbitrary sequence. Instead, the planner processes them in an order matching by the query's ORDER BY clause, guided by the metadata stats. This ensures that the data most likely to contain the desired results is processed first.
+These two concepts work together to address query latency from both ends of the query pipeline.
+The streamed planning pipeline lets us start crunching data as soon as possible, minimizing the delay before the first byte is processed. At the other end of the pipeline, the deliberate ordering of that work lets us finish early by finding a definitive result without scanning the entire dataset.
+The next section explains the mechanics behind this "finish early" strategy.
+Stopping early: how to finish without reading everything
+Thanks to the Query Planner streaming work units in an order matching the ORDER BY clause, the Query Execution system first processes the data that is most likely to be in the final result set.
+This prioritization happens at two levels of the metadata hierarchy:
+Manifest ordering: The planner first inspects the manifest list. Using the partition stats for each manifest (e.g., the latest timestamp in that group of files), it decides which entire manifest files to stream first.
+Parquet file ordering: As it reads each manifest, it then uses the more granular column-level stats to decide the processing order of the individual Parquet files within that manifest.
+This ensures a constantly prioritized stream of work units is sent to the execution engine. This prioritized stream is what allows us to stop the query early.
+For instance, with a query like ... ORDER BY timestamp DESC LIMIT 5, as the execution engine processes work units and sends back results, the planner does two things concurrently:
+It maintains a bounded heap of the best 5 results seen so far, constantly comparing new results to the oldest timestamp in the heap.
+It keeps a "high-water mark" on the stream itself. Thanks to the metadata, it always knows the absolute latest timestamp of any data file that has not yet been processed.
+The planner is constantly comparing the state of the heap to the water mark of the remaining stream. The moment the oldest timestamp in our Top 5 heap is newer than the high-water mark of the remaining stream, the entire query can be stopped.
+At that point, we can prove no remaining work unit could possibly contain a result that would make it into the top 5. The pipeline is halted, and a complete, correct result is returned to the user, often after reading only a fraction of the potentially matching data.
+Currently, R2 SQL supports ordering on columns that are part of the table's partition key only. This is a limitation we are working on lifting in the future.
+Architecture
+Query Execution
+Query Planner streams the query work in bite-sized pieces called row groups. A single Parquet file usually contains multiple row groups, but most of the time only a few of them contain relevant data. Splitting query work into row groups allows R2 SQL to only read small parts of potentially multi-GB Parquet files.
+The server that receives the user’s request and performs query planning assumes the role of query coordinator. It distributes the work across query workers and aggregates results before returning them to the user.
+Cloudflare’s network is vast, and many servers can be in maintenance at the same time. The query coordinator contacts Cloudflare’s internal API to make sure only healthy, fully functioning servers are picked for query execution. Connections between coordinator and query worker go through Cloudflare Argo Smart Routing to ensure fast, reliable connectivity.
+Servers that receive query execution requests from the coordinator assume the role of query workers. Query workers serve as a point of horizontal scalability in R2 SQL. With a higher number of query workers, R2 SQL can process queries faster by distributing the work among many servers. That’s especially true for queries covering large amounts of files.
+Both the coordinator and query workers run on Cloudflare’s distributed network, ensuring R2 SQL has plenty of compute power and I/O throughput to handle analytical workloads.
+Each query worker receives a batch of row groups from the coordinator as well as an SQL query to run on it. Additionally, the coordinator sends serialized metadata about Parquet files containing the row groups. Thanks to that, query workers know exact byte offsets where each row group is located in the Parquet file without the need to read this information from R2.
+Apache DataFusion
+Internally, each query worker uses Apache DataFusion to run SQL queries against row groups. DataFusion is an open-source analytical query engine written in Rust. It is built around the concept of partitions. A query is split into multiple concurrent independent streams, each working on its own partition of data.
+Partitions in DataFusion are similar to partitions in Iceberg, but serve a different purpose. In Iceberg, partitions are a way to physically organize data on object storage. In DataFusion, partitions organize in-memory data for query processing. While logically they are similar – rows grouped together based on some logic – in practice, a partition in Iceberg doesn’t always correspond to a partition in DataFusion.
+DataFusion partitions map perfectly to the R2 SQL query worker’s data model because each row group can be considered its own independent partition. Thanks to that, each row group is processed in parallel.
+At the same time, since row groups usually contain at least 1000 rows, R2 SQL benefits from vectorized execution. Each DataFusion partition stream can execute the SQL query on multiple rows in one go, amortizing the overhead of query interpretation.
+There are two ends of the spectrum when it comes to query execution: processing all rows sequentially in one big batch and processing each individual row in parallel. Sequential processing creates a so-called “tight loop”, which is usually more CPU cache friendly. In addition to that, we can significantly reduce interpretation overhead, as processing a large number of rows at a time in batches means that we go through the query plan less often. Completely parallel processing doesn’t allow us to do these things, but makes use of multiple CPU cores to finish the query faster.
+DataFusion’s architecture allows us to achieve a balance on this scale, reaping benefits from both ends. For each data partition, we gain better CPU cache locality and amortized interpretation overhead. At the same time, since many partitions are processed in parallel, we distribute the workload between multiple CPUs, cutting the execution time further.
+In addition to the smart query execution model, DataFusion also provides first-class Parquet support.
+As a file format, Parquet has multiple optimizations designed specifically for query engines. Parquet is a column-based format, meaning that each column is physically separated from others. This separation allows better compression ratios, but it also allows the query engine to read columns selectively. If the query only ever uses five columns, we can only read them and skip reading the remaining fifty. This massively reduces the amount of data we need to read from R2 and the CPU time spent on decompression.
+DataFusion does exactly that. Using R2 ranged reads, it is able to read parts of the Parquet files containing the requested columns, skipping the rest.
+DataFusion’s optimizer also allows us to push down any filters to the lowest levels of the query plan. In other words, we can apply filters right as we are reading values from Parquet files. This allows us to skip materialization of results we know for sure won’t be returned to the user, cutting the query execution time further.
+Returning query results
+Once the query worker finishes computing results, it returns them to the coordinator through the gRPC protocol.
+R2 SQL uses Apache Arrow for internal representation of query results. Arrow is an in-memory format that efficiently represents arrays of structured data. It is also used by DataFusion during query execution to represent partitions of data.
+In addition to being an in-memory format, Arrow also defines the Arrow IPC serialization format. Arrow IPC isn’t designed for long-term storage of the data, but for inter-process communication, which is exactly what query workers and the coordinator do over the network. The query worker serializes all the results into the Arrow IPC format and embeds them into the gRPC response. The coordinator in turn deserializes results and can return to working on Arrow arrays.
+Future plans
+While R2 SQL is currently quite good at executing filter queries, we also plan to rapidly add new capabilities over the coming months. This includes, but is not limited to, adding:
+Support for complex aggregations in a distributed and scalable fashion;
+Tools to help provide visibility in query execution to help developers improve performance;
+Support for many of the configuration options Apache Iceberg supports.
+In addition to that, we have plans to improve our developer experience by allowing users to query their R2 Data Catalogs using R2 SQL from the Cloudflare Dashboard.
+Given Cloudflare’s distributed compute, network capabilities, and ecosystem of developer tools, we have the opportunity to build something truly unique here. We are exploring different kinds of indexes to make R2 SQL queries even faster and provide more functionality such as full text search, geospatial queries, and more.
+Try it now!
+It’s early days for R2 SQL, but we’re excited for users to get their hands on it. R2 SQL is available in open beta today! Head over to our getting started guide to learn how to create an end-to-end data pipeline that processes and delivers events to an R2 Data Catalog table, which can then be queried with R2 SQL.
+We’re excited to see what you build! Come share your feedback with us on our Developer Discord.
+On this page
+Discuss Online
+Related tags
+Birthday WeekDataDeep DiveEdge ComputingR2RustServerlessSQL
+Follow on Social Media
+Cloudflare
+Jérôme Schneider
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+This Post is Available in
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 75 | f003590 | https://iroh.computer/blog/lets-write-a-dht-1 | 2025-09-26 | domain-subframes ===
+A DHT for iroh - Part 1, The Protocol - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+A DHT for iroh - Part 1, The ProtocolSeptember 26, 2025 by Rüdiger Klaehn
+Iroh blobs is a very efficient way to distribute data from one peer to another. It even has some capabilities to get data from multiple nodes, as of iroh-blobs 0.9x. But there is one crucial component missing for it to become a global permissionless content distribution system: a content discovery service that tells you which nodes have which content.
+This is a very hard problem. Existing systems such as bittorrent solve it reasonably well, although they are not perfect.
+The standard solution for content discovery in systems such as bittorrent and IPFS is a Distributed Hash Table (DHT). This series of blog posts and the associated repository are an experiment: is it possible to write a high performance distributed hash table using iroh connections?
+The code is not yet production ready, but it is an interesting use case for many advanced techniques involving iroh connections, such as connection pools and 0rtt connections. It also is a nice way to show off irpc, both for local rpc to control a DHT node and for the DHT protocol itself.
+What is a Distributed Hash Table
+Let's see what wikipedia says:
+"A distributed hash table (DHT) is a distributed system that provides a lookup service similar to a hash table. Key–value pairs are stored in a DHT, and any participating node can efficiently retrieve the value associated with a given key. The main advantage of a DHT is that nodes can be added or removed with minimum work around re-distributing keys."
+So a distributed hash table seen as a black box is just like a hashtable, but spread over possibly millions of machines that are connected via possibly slow and fallible network connections. The algorithm needs to gracefully deal with nodes being slow or high latency, nodes coming and going, and ideally even with some nodes that intentionally misbehave.
+Keys
+Just like a normal hash table, a distributed hash table maps some key type to some value type. Keys in local hash tables can be of arbitrary size. The key that is actually used for lookup is a (e.g., 64-bit) hash of the value, and the hash table has additional logic to deal with rare but inevitable hash collisions. For distributed hash tables, you typically restrict the key to a fixed size and let the application deal with the mapping from the actual key to the hash table keyspace. For example, the BitTorrent mainline DHT uses a 20-byte keyspace, which is the size of a SHA1 hash. The main purpose of the mainline DHT is to find content providers for data based on a SHA1 hash of the data. But even with mainline, there are cases where the actual key you want to look up is larger than the keyspace, e.g., bep_0044 where you want to look up some information for an ED25519 public key. In that case, mainline does exactly what you would do in a local hash table—it hashes the public key using SHA1 and then uses the hash as the lookup key.
+For iroh, we are mainly interested in looking up content based on its BLAKE3 hash. Another use case for the DHT is to look up information for an iroh node ID, which is an ED25519 public key. So it makes sense for a clean-room implementation to choose a 32-byte keyspace. An arbitrary size key can be mapped to this keyspace using a cryptographic hash function with an astronomically low probability of collisions.
+It is important to keep in mind that despite the main purpose of the DHT being BLAKE3 lookups, the key is just an arbitrary blob. You can put whatever you want in these 32 bytes: BLAKE3 hashes, SHA2 hashes, ED25519 public keys, whatever fits 32 bytes.
+Also, a DHT with a smaller keyspace such as mainline with its 20 bytes would still be completely viable provided that you had a way to store arbitrary values for a key. The reason to use 32 bytes is just convenience, since this is a completely separate implementation anyway.
+Values
+In principle, values in a DHT can be of arbitrary size. But there are various reasons for wanting to keep the values small.
+First, we want requests to store and look up data to be small for efficiency. Ideally a storage or lookup request should fit into a single network packet even with the inevitable framing overhead. In QUIC, the minimum MTU (maximum transmission unit) is specified as 1200 bytes. So if a request consisting of key, value, and some overhead fits into 1200 bytes, a request or response will be sent as a single non-fragmented UDP packet.
+Second, we rely on arbitrary nodes on the network to store data for us without being in any way compensated for it. So the values need to be small so that a small DHT node can store many of them. If the value size were unlimited, people could and would abuse the DHT for storing actual data, which would put a lot of load on DHT nodes and make it extremely unlikely that people would run DHT nodes without being compensated for it.
+For that reason, mature systems such as the mainline DHT restrict value size to 1000 bytes, and we are going to limit value size to 1024 bytes or 1KiB.
+You could write a DHT to store arbitrary values, but in almost all cases, the value should have some relationship with the key. For example, for mainline, the value in most cases is a set of socket addresses where you can download the data for the SHA1 hash of the key. So in principle, you could validate the key by checking if you can actually download the data from the socket addresses contained in the data. In some mainline extensions, like BEP_0044, the key is the SHA1 hash of an ED25519 public key, and the value contains the actual public key, a signature computed from the corresponding private key, and some user data. Again, it is possible to validate the value based on the key—if the SHA1 hash of the public key contained in the value does not match the lookup key, the value is invalid for the key.
+Storage
+Even disregarding all the distributed systems complexity, at the end of the day the data needs to live somewhere. Each node will store a fraction of the total data. So one component of a DHT node is just a remotely accessible key-value store, where the key is a fixed-size blob. There can be multiple values for a key. For example, there can be multiple nodes that store the same data. For that reason the storage is a multimap. The storage layer needs to have some mechanism to limit the number of values for a key, typically by time based expiry and/or a maximum number of values per key.
+Routing
+As mentioned above, in a DHT, not every node has all the data. So we need some mechanism to find which node has the data. Basically, we need a way for a node to say "I don't have the data, but you might try my neighbours X and Y, they are more likely to have it". Regardless of the exact routing algorithm, it is important to understand that routing is only concerned with keys, not with values. You first find the nodes that are most likely to have a value for a key, then ask these nodes for the actual value. So the two parts (routing and value storage/retrieval) should be pretty separate. Adding new value types should be possible without having to touch the routing algorithm, and modifying the routing algorithm should be possible without having to think about values at all.
+Kademlia
+The most popular routing algorithm for DHTs is Kademlia. The core idea of Kademlia is to define a metric that gives a scalar distance between any two keys (points in the metric space) that fulfills the metric axioms. DHT nodes have a node ID that gets mapped to the metric space, and you store the data on the k nodes that are closest to the key.
+The metric chosen by Kademlia is the XOR metric: the distance between two keys a and b is simply the bitwise XOR of the keys. This is absurdly cheap to compute and fulfills all the metric axioms. It also helps with sparse routing tables, as we will learn later.
+If a node had perfect knowledge of all other nodes in the network, it could give you a perfect answer to the question "where should I store the data for key key". Just sort the set of all keys that correspond to node IDs by distance to the key and return the k smallest values. For small to medium DHTs, this is a viable strategy, since modern computers can easily store millions of 32-byte keys without breaking a sweat. But for either extremely large DHTs or nodes with low memory requirements, it is desirable to store just a subset of all keys.
+It would be easily possible for a modern machine to keep the entire set of known node IDs in memory even for very large DHTs. But you have to remember that routing is just a part of the work of the DHT, and the DHT process should be cheap enough in terms of memory and storage that you can run it in the background without slowing down the entire system.
+A fixed-size random sampling of the set of all known node IDs would be viable and would work, but there are some downsides. For a completely random sampling, you do not have detailed knowledge of your immediate neighbours, so it would take many hops to find a better node if you are already close to the goal. If the sampling was only neighbours in terms of the distance metric, it would take you many hops to find a node that is far away. It turns out that the best distribution is a power-law distribution where you know a lot of immediate neighbours but also some nodes that are far away.
+Imagine you wanted to find an arbitrary person, and your entire friend group was geographically close. It would be a lot of hops to find somebody that is far away. Now imagine your entire friend group was randomly spread around the world. It would take a lot of hops to find a neighbour that is not in your friend group. The ideal friend distribution is to know a lot of people in your village, but also some people in the next city, in neighbouring countries, and a few on different continents.
+Kademlia uses a routing table that remembers nodes based on proximity. It defines proximity buckets based on the number of leading zeros of the XOR distance to your own node ID. For a k-bit keyspace, there are k proximity buckets, and for each of these so-called k-buckets, you have a maximum number of nodes you will remember. This gives a fixed upper limit on the size of the routing table while automatically keeping a power-law distribution. You will know almost all nodes in your immediate proximity, but also some nodes that are on the other side of the world in terms of the XOR metric space. The way the bucketing is done is quite cheap, but other schemes would work just as well as long as you approximate a power law distribution. For example, you could also have 32 buckets based on the number of trailing zero bytes in the distance and increase the bucket size.
+For our key size of 32 bytes or 256 bits, and a max bucket size of 20 keys, the maximum routing table size is 20 * 256 = 5120 nodes or 20 * 256 * 32 = 163840 bytes.
+Lookup algorithm
+If each node had perfect knowledge of all other nodes on the network, lookup and storage would be just a two step process:
+Ask any node for the k closest nodes to key x.
+Store/look up the data on these k nodes.
+But since this is no longer the case, the lookup process needs to be iterative. We first use our local knowledge to find good candidates to ask, then ask them for the k closest nodes to our target x that they know. We then ask some of the resulting nodes the same question again, until we can no longer make an improvement. Basically, we do a greedy downhill search until we arrive at a minimum, which due to the power-law distribution of the nodes is hopefully a global minimum. There are some intricacies to this iterative algorithm. For example, we always ask multiple nodes at each stage while keeping the parallelism limited to avoid having too many concurrent connections. Fortunately, these complexities don't leak into the protocol. All we need is a way to ask a node for the k closest nodes to some key x according to its local knowledge.
+Due to the limited size of the routing table and the low cost of computing the distance, this query is extremely cheap for a node to answer. Both the query and the response are small enough to fit into an unfragmented UDP packet.
+Routing table updates
+A key property of a DHT compared to more rigid algorithms is that nodes should be able to come and go at any time. So you update the routing tables whenever you interact with a different node ID of a DHT node. In addition, you actively query the network with random keys to learn about new node IDs. We will perform some experiments with various updating schemes later.
+RPC protocol
+Now that we have a very rough idea what a distributed hashtable is meant to do, let's start defining the protocol that nodes will use to talk to each other. We are going to use irpc to define the protocol. This has the advantage that we can simulate a DHT consisting of thousands of nodes in memory for tests and then use the same code with iroh connections as the underlying transport in production.
+First of all, we need a way to store and retrieve values. This is basically just a key-value store API for a multimap. This protocol in isolation is sufficient to implement a tracker, a node that has full knowledge of what is where.
+Every type we use in the RPC protocol must be serializable so we can serialize it using postcard. Postcard is a non-self-describing format, so we need to make sure to keep the order of the enum cases if we want the protocol to be long-term stable. All rpc requests, responses and the overall rpc enum have the #[derive(Debug, Serialize, Deserialize)] annotation, but we will omit this from the examples below for brevity.
+Values
+An ID is just a 32-byte blob, with conversions from iroh::NodeId and blake3::Hash.
+pub struct Id([u8; 32]);
+CopyCopied!
+A value can be a bunch of different things, all related to the key. Either a provider for a BLAKE3 hash, a message signed by an Ed25519 key, or a tiny blob of BLAKE3 hashed data. Each of these variants corresponds to a mainline feature.
+pub enum Value {
+Blake3Provider(Blake3Provider),
+ED25519SignedMessage(ED25519SignedMessage),
+Blake3Immutable(Blake3Immutable),
+}
+CopyCopied!
+We want the ability to query only values of a certain kind, so we need a corresponding Kind enum:
+pub enum Kind {
+Blake3Provider,
+ED25519SignedMessage,
+Blake3Immutable,
+}
+CopyCopied!
+KV store protocol
+For the key-value store part of the DHT RPC protocol, we want to keep things extremely minimalistic. So we need a way to set and get values.
+pub struct Set {
+pub key: Id,
+pub value: Value,
+}
+pub struct GetAll {
+pub key: Id,
+pub kind: Kind,
+...
+}
+CopyCopied!
+Set allows us to ask the node to store a value. It might refuse to do so, but we can ask. GetAll allows us to get all values of a certain kind. That's it. So here is the storage and retrieval part of our protocol:
+#[rpc_requests(message = RpcMessage)]
+pub enum RpcProto {
+/// Set a key to a value.
+#[rpc(tx = oneshot::Sender<SetResponse>)]
+Set(Set),
+/// Get all values of a certain kind for a key, as a stream of values.
+#[rpc(tx = mpsc::Sender<Value>)]
+GetAll(GetAll),
+... // routing part TBD
+}
+CopyCopied!
+So let's take a look at the RPC annotations. Set is a normal RPC call with a single answer message of type SetResponse, which contains some information about whether the set was successful and if not, why not. GetAll might return many values, so we use a response stream of Values. The #[rpc_requests(message = RpcMessage)] annotation is to turn this enum into an irpc rpc protocol and to define a corresponding message enum. For details, see this blog post about irpc.
+GetResponse is still missing. It's an enum describing whether the set succeeded, and if not, why it failed. You might wonder why we don't use a Result<(), SetError>: you could do that, but you have to be aware that serializing detailed errors is sometimes a big pain, and also the exact details of the failure like the stack trace are nobody's business. We give you a very rough idea of why the request failed so you can decide whether to try again or not. For example, ErrFull means you might try a bit later; ErrInvalid means that there is something wrong with the value, e.g., signature error, and there is no point in trying again.
+pub enum SetResponse {
+Ok,
+/// The key was too far away from the node ID in terms of the DHT metric.
+ErrDistance,
+/// The value is too old.
+ErrExpired,
+/// The node does not have capacity to store the value.
+ErrFull,
+/// The value is invalid, e.g. the signature does not match the public key.
+ErrInvalid,
+}
+CopyCopied!
+Routing protocol
+The routing part of the protocol is a bit more interesting. We want the ability to query a node for its local knowledge of nodes for a key. So the message needs to contain the key we are looking for. But there is one more thing: if the requester is itself a DHT node, the callee might want to add this node ID to its routing table. If the requester is a short-lived client, we don't want its node ID to be added to the routing table since asking it anything would be pointless. It is up to the callee to validate that the ID is a valid responsive DHT node and then update its routing table; all we do in the request is provide this information.
+Note that for a mem transport, there is no way for the callee to check the requester node ID. For the RPC protocol, the mem transport is used in simulations where we trust the caller. When the request comes in via an iroh connection, we can do a quick check that the requester node ID is the remote node ID of the connection.
+pub struct FindNode {
+pub id: Id,
+pub requester: Option<NodeId>,
+}
+CopyCopied!
+Now let's add this message to the rpc protocol:
+#[rpc_requests(message = RpcMessage)]
+pub enum RpcProto {
+...
+/// A request to query the routing table for the most natural locations
+#[rpc(tx = oneshot::Sender<Vec<NodeAddr>>)]
+FindNode(FindNode),
+}
+CopyCopied!
+The answer is a sequence of iroh NodeAddrs, containing most importantly the node ID of the nodes, but also information like the current home relay and possibly even socket addresses where you can attempt to dial the node. Of course, we could rely on node discovery here, but DHTs will perform a lot of connections to a very large number of nodes, and the callee already has some information about how to dial the node, so we might as well include it to reduce the load on the node discovery system.
+An implementation detail: the routing table does not have to contain discovery information. It is purely about node IDs. When we answer a FindNode request, we enrich the node IDs with the discovery information that is stored in the iroh endpoint.
+You might ask why this is not a streaming response but rather a single Vec. The number of nodes a node will return in response to a FindNode query is very small (at most ~20) and is immediately available after querying the routing table. So there is no point in streaming this - 20 NodeAddrs with some discovery info will fit into 1 or 2 MTUs, so it is more efficient to send them all at once.
+And that's it. That is the entire RPC protocol. Many DHT implementations also add a Ping call, but since querying the routing table is so cheap, if you want to know if a node is alive, you might as well ask it for the closest nodes to some random key and get some extra information for free.
+Please checkout our published DHT code under iroh-dht-experiment, but we will explore actually implementing and testing the DHT in later blog posts! Stay tuned.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+

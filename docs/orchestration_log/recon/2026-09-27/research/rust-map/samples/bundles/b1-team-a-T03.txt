@@ -1,0 +1,1693 @@
+=== ROW 22 | f001094 | https://forums.swift.org/t/se-0427-noncopyable-generics/70525 | 2024-03-08 | domain-subframes ===
+SE-0427: Noncopyable Generics
+
+@hborla · 2024-03-08T22:59:50.531Z:
+Hello, Swift community!
+The review of SE-0427: Noncopyable Generics begins now and runs through March 22nd, 2024.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to me as the review manager by email or DM. When contacting the review manager directly, please put "SE-0427" in the subject line.
+Trying it out
+If you'd like to try this proposal out, you can download a toolchain supporting it for Linux, Windows, or macOS using the latest development snapshot from main at Redirecting…. You will need to add -enable-experimental-feature NoncopyableGenerics to your build flags.
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at:
+https://github.com/apple/swift-evolution/blob/main/process.md
+Thank you,
+Holly Borla
+Review Manager
+
+---
+
+@MPLewis · 2024-03-09T00:21:15.248Z:
+Targeted mechanisms are being developed to preserve ABI compatibility when adopting `~Copyable` on previously-shipped generic code.
+This will enable adoption of this feature by standard library types such as `Optional`.
+Such mechanisms will require extreme care to use correctly.
+Will these mechanisms be available outside the standard library, or will changing an existing generic type to also support ~Copyable types always be an ABI-breaking change for third-party libraries?
+
+---
+
+@George · 2024-03-09T01:00:05.128Z:
+I'm excited for this to land!
+I know this has been covered in prior discussions, but with this one in particular I'm lamenting the choice of ~ as a short hand for "suppress this conformance". Even though this proposal spells it out pretty clearly and I know better, I still find myself reading this as "not copyable" (especially since ~ is used as the bitwise negation operator). Something like @suppress(Copyable) seems like it would create less mental load.
+
+---
+
+@j-f1 · 2024-03-09T01:06:06.326Z:
+This part feels syntactically strange to me:
+struct Pair<T: ~Copyable>: ~Copyable {...}
+extension Pair: Copyable /* where T: Copyable */ {...}
+I feel like it would be much clearer if explicitly spelling out Copyable in an extension like this would require that you explicitly specify either T: Copyable or T: ~Copyable for all possible constraints, so it’s clearer in what cases Copyable conformance is available. I recognize the benefit of assuming Copyable in most cases, but here where you’re already being explicit I think it would make sense to require you to be fully explicit.
+
+---
+
+@batikan · 2024-03-09T10:04:12.769Z:
+j-f1:
+I feel like it would be much clearer if explicitly spelling out Copyable in an extension like this would require that you explicitly specify either T: Copyable or T: ~Copyable for all possible constraints, so it’s clearer in what cases Copyable conformance is available. I recognize the benefit of assuming Copyable in most cases, but here where you’re already being explicit I think it would make sense to require you to be fully explicit.
+Yeah, I agree. It seems odd to me that this syntax is used.
+
+---
+
+@fclout · 2024-03-09T15:27:23.531Z:
+When we say that the mechanisms to retrofit ~Copyable on existing generics will need extreme care to deploy, what kind of mechanisms are we looking at, and what are the consequences for getting it wrong?
+
+---
+
+@ben-cohen · 2024-03-09T18:14:03.515Z:
+j-f1:
+but here where you’re already being explicit I think it would make sense to require you to be fully explicit.
+When you say here you are being explicit: this extension is right next to the type declaration, but the main use of extensions is to write them elsewhere, in other people's code than where the type was defined.
+For example, a follow-on proposal to this one will adopt this change within types in the standard library such as Optional, which will become:
+enum Optional<Wrapped: ~Copyable>: ~Copyable {
+case none, some(Wrapped)
+}
+This is an important change that will unlock, for example, being able to return an optional non-copyable type from functions. So a stack would be able to have pop() -> Element? even when those elements were non-copyable. Further out, Array and other collections will acquire the ability to hold non-copyable types.
+Optional and Array are popular types to extend with all sorts of convenience methods. It would be source breaking to require all extensions on them to now need to explicitly state they were extensions where Element: Copyable.
+But more important than the source break (which we could gate under a language version or upcoming feature flag), it would be the wrong thing to do. Non-copyable types are an advanced feature. As part of Swift's progressive disclosure, we need to keep the default of implicit copies in place for most users, and that includes when adding simple extensions on basic types.
+Swift is not a language that should throw the concept of ownership in your face with even the most early code you try to write. Rather, these tools will be there when you need them, but should stay out of your way when you don't.
+To take a more theoretical angle on why this is the right default, rather than the user experience one:
+Copyability is the default in Swift, and when you want to explicitly suppress it, you use ~Copyable. But that suppression is not sticky. You suppress copyability in struct Stack<Element: ~Copyable> { } and so within the braces you don't get to assume that Element is copyable. But that doesn't mean that in an extension, that suppression persists. So when you write an extension, you need to restate it.
+Here's a (perhaps tenuous) claim for some precedent for this: I think it's similar to how implicit unwrapping of optionals works. An IUO is an optional, but with a special property that you don't need to explicitly unwrap it:
+let iuoString: String! = "hello"
+print(iuoString + " world") // prints hello world
+But when you assign it to a new variable, it doesn't stay implicitly unwrappable. If you want that, you have to restate it explicitly:
+let maybeString = iuoString
+print(maybeString + " world") // error: Value of optional type String? must be unwrapped
+
+---
+
+@cal · 2024-03-09T18:16:38.018Z:
+A question about the new Copyable protocol: what happens if you try to manually write a redundant Copyable conformance? Would it make sense for this to result in an error or warning?
+// Copyable conformance is redundant, should this be an error / warning?
+struct MyCopyableType: Copyable { ... }
+And what about in cases where Copyable is used as a redundant generic constraint?
+// Copyable constraints are redundant, should this be an error / warning?
+extension Array where Element: Copyable { ... }
+func onlyTakesCopyables<T: Copyable>(_ t: Copyable) { ... }
+
+---
+
+@ben-cohen · 2024-03-09T18:21:38.483Z:
+fclout:
+what are the consequences for getting [retrofitting of non-copyability] wrong?
+Mostly, the consequences are that methods may change their mangling without applying any necessary "don't do that" annotations, causing an ABI break. If you are producing an ABI-stable library, you already need to be careful with basically any refactor that it not break ABI in this way, and need ways to check for any unintentional breaks. So from my perspective, I don't think this really introduces much additional risk beyond what ABI-stable library authors already have to handle.
+Note that these annotations probably belong in a separate proposal that will allow existing ABI-stable libraries to apply these techniques, we should probably stick to the text of this proposal rather than discussing them here.
+
+---
+
+@rauhul · 2024-03-09T18:28:07.079Z:
+As others have said earlier in this thread, I also dont love the implicit Copyable requirement for generic type parameters in extensions:
+struct Pair<T: ~Copyable>: ~Copyable {...}
+extension Pair /* where T: Copyable */ {...}
+I understand why something is needed to avoid breaking source for existing types we want to become ~Copyable. Instead could we leverage @retroactive to signal the Copyable requirement was dropped after the type was created, so extensions should assume Copyable. New ~Copyable types would not use this attribute and follow more obvious defaults.
+With an existing type, Optional:
+enum Optional<Wrapped: @retroactive ~Copyable> {
+case none, some(Wrapped)
+}
+// implicit `where Wrapped: Copyable` because the Copyable requirement was retroactively suppressed.
+extension Optional { ... }
+With a new type Basket:
+struct Basket<Fruit: ~Copyable> { ... }
+// Fruit is still ~Copyable as is naively expected
+extension Basket { ... }
+
+---
+
+@j-f1 · 2024-03-09T18:28:32.271Z:
+I agree! I was only talking about the specific case where you’re conforming Foo: Copyable where I think you should be required to explicitly specify the copyability or noncopyability of all type parameters/associated types. For all other extensions where T: Copyable should be inferred for all type parameters/associated types T.
+struct Foo<T: ~Copyable>: ~Copyable {}
+// Error: must specify `where T: Copyable` or `where T: ~Copyable`
+extension Foo: Copyable {}
+// ok, assumes `where T: Copyable`
+extension Foo: Equatable {}
+
+---
+
+@Alejandro · 2024-03-09T18:31:13.011Z:
+The issue with this is that you don't know what implicit requirements are present in the following extension:
+extension Foo {}
+Is it where T: Copyable or where T: ~Copyable? You'd need to go lookup the type declaration. For some types this is ok, but for types in libraries you don't own, it's not as simple.
+Having a consistent rule makes it obvious for every extension.
+
+---
+
+@rauhul · 2024-03-09T18:33:33.145Z:
+I agree partially, but I don't love the idea of needing to write:
+extension Foo where T: ~Copyable, T: ~Escapable {}
+All over the place, in the future.
+
+---
+
+@Alejandro · 2024-03-09T18:35:17.790Z:
+We may be able to introduce a new typealias in the standard library (spitballing here, nothing concrete)
+public typealias Nothing = ~Copyable & ~Escapable & ...
+so you can say
+extension Foo where T: Nothing {}
+
+---
+
+@ben-cohen · 2024-03-09T18:37:16.156Z:
+j-f1:
+I agree! I was only talking about the specific case where you’re conforming Foo: Copyable
+Oh I see! That seems like a very reasonable narrow counter proposal/tweak.
+Anyway, I wanted to get that "this is why having to restate copyability is the right default" post out of my system, so thanks for being the prompt even if it was as a result of my misunderstanding :)
+
+---
+
+@rauhul · 2024-03-09T18:38:23.692Z:
+Can't say I love that, but it's certainly an idea. I wonder if there's another approach where you could tell the compiler to not assume Copyable / Escapable / Reflectable / etc... within a module and/or package.
+This would keep all the same public source behavior, but within a package you could flip the defaults.
+
+---
+
+@Alejandro · 2024-03-09T18:40:48.494Z:
+I still thinks this suffers from someone reviewing a brand new codebase not knowing what that project's default is and having to lookup potentially compiler flags to figure it out..? It might also cause vertigo for some folks swapping between modules who have 1 default and another have the other which would be very confusing.
+
+---
+
+@xwu · 2024-03-09T20:12:49.487Z:
+ben-cohen:
+Oh I see! That seems like a very reasonable narrow counter proposal/tweak.
+Anyway, I wanted to get that "this is why having to restate copyability is the right default" post out of my system, so thanks for being the prompt even if it was as a result of my misunderstanding :)
+I think the overall rationale you've stated here is absolutely correct—and exactly as you say, not just from a source stability standpoint but also from a progressive disclosure standpoint. That is, even if we had no existing source code to worry about, I think we'd want some inference along the lines proposed.
+I do want us to consider if we can rationalize and narrow the rule from that proposed even further than @j-f1 stated.
+One of my nits here is that, as proposed, we are further diverging the behavior of protocol primary associated types and concrete types' generic parameters. Both written in angle brackets, the latter get inferred as Copyable in extensions but the former do not:
+The default conformance in a protocol extension applies only to Self , and not the associated types of Self .
+In thinking this through, it occurs to me that—at least for the specific cases of Pair in the proposal and of Optional as you give above—the much more limited rule proposed for protocols suffices. That is, given a standard library with:
+enum Optional<Wrapped: ~Copyable>: ~Copyable { ... }
+extension Optional: Copyable where Wrapped: Copyable { }
+...for the end user, the following two inference rules are equivalent:
+// Inference rule proposed for concrete types:
+extension Optional /* where Wrapped: Copyable */ {
+// `Wrapped` is `Copyable` here
+}
+// Inference rule proposed for protocols, if applied to concrete types:
+extension Optional /* where Self: Copyable */ {
+// `Wrapped` is `Copyable` here also
+}
+Obviously, this makes sense only for concrete types that have a conditional conformance to Copyable—but perhaps that's enough? In other words, can we achieve much or all of the behavior we want with a unified inference rule that's something like:
+Extensions of conditionally copyable types or of protocols that suppress inheritance from Copyable infer the requirement where Self: Copyable unless explicitly suppressed.
+
+---
+
+@Slava_Pestov · 2024-03-09T21:09:55.909Z:
+Suppose you have a type with noncopyable generic parameters. The type itself may or may not be copyable. The type might be unconditionally noncopyable, so everything is suppressed:
+struct G<T: ~Copyable, U: ~Copyable>: ~Copyable {}
+The type might be unconditionally copyable (an example is UnsafePointer; even if T is noncopyable, the pointer can be copied):
+struct G<T: ~Copyable, U: ~Copyable> /* : Copyable */ {}
+The tricky case is conditional copyability. Because of the restrictions on conditional requirements of Copyable specifically, the conditional Copyable conformance requires that some subset of generic parameters is Copyable. With G, there are three possibilities, but two are mirror images of each other:
+extension G: Copyable /* where T: Copyable, U: Copyable */ {}
+extension G: Copyable where T: ~Copyable /* , U: Copyable */ {}
+Now, if I instantiate a conditionally or unconditionally Copyable type with generic arguments that are all Copyable, the result must be Copyable as well. This means if I start with the "universe" of copyable types, and apply a bunch of type constructors that might be conditionally copyable, the result is always copyable; I cannot escape my "universe".
+On the other hand, the first case of an unconditionally noncopyable type is different, because it allows you to construct a noncopyable type even if you didn't utter ~Copyable in your own source code.
+So another way to change the extension rule is to say that there are no default conformance requirements in an extension of an unconditionally noncopyable type.
+xwu:
+Extensions of conditionally copyable types or of protocols that suppress inheritance from Copyable infer the requirement where Self: Copyable unless explicitly suppressed.
+In an extension of a concrete type, Self is the generic type with the identity substitutions applied, so like G<T, U> here. Then, the requirement G<T, U>: Copyable simplifies into exactly the conditional requirements of Copyable.
+I think this almost gets you all of the way, however the case of an unconditional Copyable conformance might not give you the right behavior. For example, given struct UnsafePointer<T: ~Copyable> /* : Copyable */ {}, an existing user who writes extension UnsafePointer would get extension UnsafePointer where Self: Copyable, which is UnsafePointer<T>: Copyable which simplifies away entirely (there's no implied requirement that T: Copyable because it doesn't need to be for UnsafePointer<T> to be copyable). So now your extension gives you a noncopyable T, which might not be what you wanted.
+On the subject of redundant requirements in general:
+cal:
+A question about the new Copyable protocol: what happens if you try to manually write a redundant Copyable conformance? Would it make sense for this to result in an error or warning?
+So back in the day (Swift 5.7 or 5.8, I forget now) we used to diagnose redundant generic requirements. This was disabled by default at some point and then I removed the code recently. So writing T: Copyable anywhere is just silently ignored. The compiler happily accepts this for example even though the entire where clause is pointless:
+func f<T: Sequence>(_: T) where T: Sequence, T.Iterator: IteratorProtocol {}
+
+---
+
+@xwu · 2024-03-09T21:49:31.172Z:
+Slava_Pestov:
+I think this almost gets you all of the way, however the case of an unconditional Copyable conformance might not give you the right behavior. For example, given struct UnsafePointer<T: ~Copyable> /* : Copyable */ {}, an existing user who writes extension UnsafePointer would get extension UnsafePointer where Self: Copyable, which is UnsafePointer<T>: Copyable which simplifies away entirely (there's no implied requirement that T: Copyable because it doesn't need to be for UnsafePointer<T> to be copyable). So now your extension gives you a noncopyable T, which might not be what you wanted.
+Good point—such a pared back rule would mean that suppressing Copyable on a generic parameter would be source-breaking in the case of an unconditionally copyable type like UnsafePointer.
+Setting aside the source compatibility angle for a second, though, it's not entirely clear to me what the "right behavior" default should be for such types: There's an entire universe of operations, and indeed conformances to Copyable protocols (e.g.:, for pointers, striding) which make sense for unconditionally copyable types without implicitly constraining their generic parameters. A user who's not ready to learn about ownership could still be miffed if they wrote a perfectly good extension on UnsafePointer and found that it wasn't available for UnsafePointer<FileDescriptor>.
+With this proposal subsetting out standard library adoption, the source compatibility angle here is a bit trickier to envision fully. I hesitate that we adopt an across-the-board rule that's more complicated, though, with source compatibility being the major driver of that decision if simpler alternatives would otherwise do and we're thinking that there will need to be compiler-internal features needed anyway to migrate the standard library.
+A solution that's laser-targeted to source compatibility around existing type adoption may even be a flavor of the @retroactive usage suggested above: we could say that types can write UnsafePointer<T: @retroactive ~Copyable> so that—for those generic parameters only—extensions implicitly infer T: Copyable.
+
+---
+
+@jrose · 2024-03-09T23:16:04.356Z:
+I see that this is the simplest model that supports source-compatible modification of existing protocols and generic parameters, as well as progressive disclosure, and I compliment Kavon, Tim, and Slava for nailing it down. At the same time, though, I think it’s going to get old real fast. Resource & ~Copyable is a really strong example of this: if you have a protocol that in practice is going to be mostly adopted by non-Copyable types, it’s all too easy for someone to accidentally add API that’s restricted to Copyable Resources only, and the spelling Resource & ~Copyable feels redundant from a “names mean things” perspective. And extension List: Copyable {} is the kind of magic incantation that will be in FAQs forever; because our extension syntax doesn’t require uttering List’s generic parameters, it’s not at all obvious what the conditions are.
+The @retroactive idea is good for source compatibility, but not for progressive disclosure. Maybe an opposite polarity attribute, as in “it doesn’t make sense to think about this type without considering restrictions on Copyability”? That sounds like something that could be added in a follow-up proposal, except that adding such an attribute to an existing protocol or generic parameter would be source-breaking. That doesn’t quite cover extension List: Copyable {}, though.
+Concretely, can I put ~Copyable in a typealias? If I can, I’d be very tempted to write typealias Resource = any ResourceProtocol & ~Copyable, which should already work in all positions protocols do. Doesn’t help with generic parameters though.
+
+---
+
+@Slava_Pestov · 2024-03-10T16:09:02.289Z:
+We've spent a fair amount of time discussing these "ergonomics" issues internally, and never really came up with a completely satisfactory solution for eliminating this ~Copyable spam, which I agree might be slightly repetitive in practice. The proposal as written spells out the minimum model, in a sense, because it's what has to work for the feature to make sense at all, but there are certainly additional tweaks we could make. They are pretty straightforward to implement, and mostly independent of each other, I think. I'm not sure I love any of them, but I could certainly live with them:
+We could say that an extension of an unconditionally noncopyable struct or enum does not introduce any default conformance requirements. Here there are no source compatibility concerns:
+struct Holder<T: ~Copyable>: ~Copyable { var t: T }
+extension Holder /* no requirements */ {}  // probably what you want?
+I should also mention that @xwu's proposed rule is solving a similar problem.
+2. For protocols, I admit that one might intuitively think that something like defines a noncopyable T:
+protocol Manager: ~Copyable { associatedtype Resource: ~Copyable }
+func f<T: Manager >(_: T) /* today: where T: Copyable */ {}
+This isn't source-compatible if a protocol retroactively adopts Copyable, but we could invent  some way to distinguish protocols that were "born copyable", eg what a few folks are calling   @retroactive ~Copyable, or as I'm going to spell it here, ?Copyable because I'm lazy:
+protocol Equatable: ?Copyable {...} // strawman syntax!
+protocol Manager: ~Copyable {...}
+Then we could say if a generic parameter is subject to a conformance requirement to a ~Copyable   protocol, we suppress the default conformance, whereas ?Copyable protocols would behave like   they do today. This would be purely "syntactic" still, so eg
+func f<T, U>(...) where T == U.A, U.A: Manager, U: ... /* T: Copyable still inferred here unless suppressed */
+func f<T, U>(...) where T: Manager, U: ... /* T would be ~Copyable */
+Similarly, protocol extensions could easily look at ?Copyable vs ~Copyable when desugaring the   where clause:
+extension Equatable /* where Self: Copyable */ {}
+extension Manager /* no requirements */ {}
+jrose:
+And extension List: Copyable {} is the kind of magic incantation that will be in FAQs forever;
+We could bring back the synthesis of the conditional conformance, but make it explicit. This was the old behavior implemented until a week ago or so:
+struct G<T: ~Copyable> {} // synthesizes conditional conformance
+struct G<T: ~Copyable>: Copyable {} // unconditionally copyable
+struct G<T: ~Copyable>: ~Copyable {} // unconditionally noncopyable
+(Now of course the first two are both unconditional Copyable.) We could of course do something like this instead:
+struct G<T: ~Copyable>: ?Copyable {} // new way to request conditionally Copyable
+extension G /* where T: Copyable */ {}
+struct G2<T /* : Copyable */>: ?Copyable {} // probably a warning/error?
+We could also say that in a conditional conformance to Copyable specifically, the where clause desugaring rules are not applied, so you'd always write out the "positive" requirements:
+struct G<T: ~Copyable, U: ~Copyable>: ~Copyable {}
+extension G: Copyable where T: Copyable, U: Copyable {}
+extension G /* where T: Copyable, U: Copyable */ {}
+This might be confusing if your conformance is only conditional on a subset of the generic parameters:
+struct G<T: ~Copyable, U: ~Copyable>: ~Copyable {}
+extension G: Copyable where T: Copyable {}
+extension G /* where T: Copyable, U: Copyable */ {} // what?
+jrose:
+Concretely, can I put ~Copyable in a typealias? If I can, I’d be very tempted to write typealias Resource = any ResourceProtocol & ~Copyable, which should already work in all positions protocols do. Doesn’t help with generic parameters though.
+Yes:
+protocol P: ~Copyable {}
+typealias PP = P & ~Copyable
+func f<T: PP>(_: T) {}
+
+---
+
+@michelf · 2024-03-10T17:10:37.856Z:
+Slava_Pestov:
+This isn't source-compatible if a protocol retroactively adopts Copyable, but we could invent some way to distinguish protocols that were "born copyable", eg what a few folks are calling @retroactive ~Copyable, or as I'm going to spell it here, ?Copyable because I'm lazy:
+protocol Equatable: ?Copyable {...} // strawman syntax!
+protocol Manager: ~Copyable {...}
+I find this solution (and its syntax) very elegant. Much more than @retroactive. In short:
+~Copyable assumes type is not copyable unless you add where T: Copyable
+?Copyable assumes type is copyable unless you add where T: ~Copyable
+I'll note that the later only makes sense for types with conditional conformance (in addition to protocols). It'd probably be best to make ?Copyable an error for types declarations that don't have a conditional conformance to Copyable.
+And with this in mind, perhaps ?Copyable could be used to declare conditional conformances too. For instance, we could consider all the ?Copyable in a generic type declaration to be "linked together":
+struct Array<Element: ?Copyable>: ?Copyable {}
+// or:
+struct Array<Element>: ?Copyable
+where Element: ?Copyable {}
+Since the two ?Copyable in the declaration are linked together, Array becomes copyable when its element is. This eliminates the need for a separate conditional conformance declaration (as long as we want our type to be "assumed copyable" by default).
+If you don't want them to be linked, use ~Copyable.
+
+---
+
+@kavon · 2024-03-10T18:07:26.686Z:
+MPLewis:
+Will these mechanisms be available outside the standard library, or will changing an existing generic type to also support ~Copyable types always be an ABI-breaking change for third-party libraries?
+The plan is to make some mechanism available for everyone in a future proposal. We're currently experimenting with an attribute that ignores all inverse requirements when mangling a symbol, but it's fraught with danger...
+fclout:
+When we say that the mechanisms to retrofit ~Copyable on existing generics will need extreme care to deploy, what kind of mechanisms are we looking at, and what are the consequences for getting it wrong?
+The danger is that, if you say that a function f can now accept a generic noncopyable value and we mangle that function symbol just as it were in prior libraries, it's very hard to know whether those older libraries's versions of f truly will not copy that generic value.
+Unlike a regular protocol, where you could go back through source control to see if any older versions of f called any of that protocol's methods, you can't actually verify there were no copies by looking at the source code. For a Copyable type, the compiler was free to make copies as-needed. So the version of the compiler and compiler flags (mainly optimization) used when you compiled and deployed your shared library will determine whether there are any copies of the generic value in that old library's version of f.
+Under consideration is some sort of availability-based mechanism like @backDeployed so you can state "since version X, generic parameters A and B, became noncopyable" and your deployment target effectively determines how we handle callers of the function. I was thinking of having this feature be part of a separate proposal, as this one is more focused on syntax and semantics.
+
+---
+
+@jrose · 2024-03-10T18:50:47.035Z:
+Slava_Pestov:
+This isn't source-compatible if a protocol retroactively adopts Copyable, but we could invent some way to distinguish protocols that were "born copyable", eg what a few folks are calling @retroactive ~Copyable, or as I'm going to spell it here, ?Copyable because I'm lazy
+I know you said “because I’m lazy”, but before it gets too much traction I’ll say that I’m against any solution that privileges both syntaxes equally. It’s not just about learning two symbols with similar meaning; now you have to think about which one you want, instead of just going with “the default spelling”.
+(Fun Swift history: we worried about this exact thing with let and var. We knew we wanted to make let the common case, at least for local bindings, but if we made it any longer than the keyword for var then some people would prefer var just out of minimizing typing. If we had been even more ambitious we could have gone Rust’s route of penalizing var, but that wouldn’t have been the best thing for struct properties, where var is usually better in practice (not to mention literally everyone was coming from ObjC, where var behavior is the default.). JavaScript has this “problem” today because they added a let that was mutable before they added an immutable const, and it’s not a huge difference in practice but it is just slightly less nice.)
+
+---
+
+@michelf · 2024-03-10T19:22:52.475Z:
+jrose:
+I know you said “because I’m lazy”, but before it gets too much traction I’ll say that I’m against any solution that privileges both syntaxes equally. It’s not just about learning two symbols with similar meaning; now you have to think about which one you want, instead of just going with “the default spelling”.
+This came to mind too when writing my reply to @Slava_Pestov. And then I made a suggestion about another way of writing conditional conformances based on the ?Copyable syntax (see reply above). And then I concluded with "This eliminates the need for a separate conditional conformance declaration (as long as we want our type to be "assumed copyable" by default)."
+Well, it turns out if we used this syntax for conditional conformance to Copyable and made the one we currently have illegal, we could have one true way: types with a conditional conformance to Copyable would be ?Copyable and types with no conditional conformance would be ~Copyable. No exception.
+// note: not something in the reviewed proposal, just my idea
+struct Array<Element: ?Copyable>: ?Copyable {}
+extension Array {} // Self is copyable here
+extension Array where Self: Copyable {} // same as above
+extension Array where Self: ~Copyable {}
+// conditional conformance illegal (and redundant) in extension:
+extension Array: Copyable where Element: Copyable {}
+struct MyType<T: ~Copyable>: ~Copyable {}
+extension MyType {} // Self is noncopyable here
+extension MyType where Self: Copyable {} // illegal, MyType is never copyable
+extension MyType where Self: ~Copyable {} // redundant
+// conditional conformance illegal in extension:
+// (must be put in type declaration)
+extension MyType: Copyable where Element: Copyable {}
+// illegal: MyType must be conditionally copyable to use ?Copyable
+// use `?Copyable` in the declaration of T to make it conditionally copyable
+struct MyType2<T: ~Copyable>: ?Copyable {}
+No exception needed, not even for legacy types. They all work the same: a conditionally non-copyable type would be assumed to be copyable in extensions unless you explicitly suppress with where Self: ~Copyable, while an unconditionally non-copyable type is always non-copyable in extensions.
+What then becomes a breaking change is adding a conditional conformance to Copyable to a type that is non-conditionally non-copyable. The reverse (making a copyable type conditionally non-copyable) remains possible.
+For protocols I suppose you'd have the choice of making them ~Copyable or ?Copyable. Perhaps for coherence we could forbid ~Copyable protocols to be conformed to by copyable types (thus favoring ?Copyable in protocol declarations). I fear that's going too far though.
+But at this stage this is more brainstorming than a review. I should probably shut up now.
+
+---
+
+@Slava_Pestov · 2024-03-10T19:56:44.567Z:
+jrose:
+before it gets too much traction I’ll say that I’m against any solution that privileges both syntaxes equally.
+The proposal describes the "default where clause" idea which was originally due to @kavon. While we never figured out the semantics in full generality, I realized that what I'm suggesting in my first reply to you can also be seen as a restricted form of this. So,
+struct G1<T: ~Copyable> {}
+extension G1 /* no requirements */ {}
+struct G2<T: ~Copyable> {
+default where T: Copyable
+}
+extension G2 /* where T: Copyable */ {}
+protocol Manager: ~Copyable {}
+extension Manager /* no requirements */ {}
+func f<T: Manager> /* no other requirements */ {}
+protocol Equatable: ~Copyable {
+default where Self: Copyable
+}
+extension Equatable /* where Self: Equatable */ {}
+func f<T: Equatable> /* where T: Copyable */ {}
+Basically, we would restrict a protocol's default where clause to only specify copyability on Self.
+This would be equivalent to my made-up ?Copyable syntax in the two places where you could utter it.
+This would not be possible (yet? help me figure out the math here so we can define the rewrite system!):
+protocol IteratorProtocol: ~Copyable {
+associatedtype Element: ~Copyable
+default where Self: Copyable, Self.Element: Copyable
+}
+
+---
+
+@jaredgrubb · 2024-03-10T20:05:00.495Z:
+I have re-read this thread quite a bit and can distill my confusion.
+SE-390 gives this definition for "noncopyable" in its introduction:
+Values of noncopyable type always have unique ownership, and can never be copied (at least, not using Swift's implicit copy mechanism)."
+Note the "always" and "never". A move-only, copy-never type.
+However this proposal uses the term "noncopyable" different for generics: that automatic conformance to Copyable is suppressed. It still allows for copyability as a refinement. In addition, any ~Copyable is a strict superset of all Copyable types.
+Further, consider the proposal's base example:
+struct Pair<T: ~Copyable, U: ~Copyable>: ~Copyable { .. }
+Would documentation about the Pair type say that it "always has unique ownership and can never be copied", as described in SE-390? No, because:
+// ...
+extension Pair: Copyable where T: Copyable, U: Copyable {}
+It seems to me that these two nuances are, at best, confusing and, at worst, incongruent.
+Can we use a different term than "Noncopyable Generics" for the title of SE-0427?
+Can we avoid using same syntax to express both as well?
+It will be a teaching nightmare to explain struct MyMoveOnlyType: ~Copyable, but then later try to explain how struct Pair<T: ~Copyable>: ~Copyable  is not declaring a move-only type.
+
+---
+
+@Slava_Pestov · 2024-03-10T20:25:17.829Z:
+jaredgrubb:
+It will be a teaching nightmare to explain struct MyMoveOnlyType: ~Copyable, but then later try to explain how struct Pair<T: ~Copyable>: ~Copyable  is not declaring a move-only type.
+There’s no inconsistency here because a generic type declaration is not declaring a single type, but a family of types, parameterized by their generic arguments. Each member of this family can be determined to be Copyable or not, and we can still talk about values of non-Copyable types as having unique ownership.
+
+---
+
+@1-877-547-7272 · 2024-03-10T21:01:22.766Z:
+The identity functions in the sections “Default conformance to Copyable” and “Suppression of Copyable” are incorrect. They are both missing the return type of the function (-> T).
+I haven’t read the proposal thoroughly, but I’m glad this is being addressed. The lack of generics support for noncopyable types is probably their biggest usability issue right now.
+
+---
+
+@ellie20 · 2024-03-11T01:29:50.388Z:
+jrose:
+if you have a protocol that in practice is going to be mostly adopted by non-Copyable types, it’s all too easy for someone to accidentally add API that’s restricted to Copyable Resources only, and the spelling Resource & ~Copyable feels redundant from a “names mean things” perspective.
+This gave me an idea: what if the implicit copyability of a generic parameter or associated type is bound to the name of a type or protocol? Maybe that could be a simpler mental model. It would also give us a way to avoid excessive ~Copyables for a specific type within a specific scope:
+typealias Optional<Wrapped: ~Copyable> = Swift.Optional<Wrapped>
+Another idea is that maybe we can allow users to customize the implicit default protocol bounds in a specific scope by rebinding Any in that scope:
+typealias Any = ~Copyable
+
+---
+
+@ben-cohen · 2024-03-11T01:36:23.346Z:
+jaredgrubb:
+It will be a teaching nightmare to explain struct MyMoveOnlyType: ~Copyable, but then later try to explain how struct Pair<T: ~Copyable>: ~Copyable  is not declaring a move-only type.
+It might help to talk about the same situation, just with a different protocol, and leaving aside the ~ part at first. I don't think this would be a nightmare to teach:
+Say I create a protocol Parseable, which means that the type provides an init?(_ from: String). Types in Swift are, by default, non-Parseable (unsurprisingly, since I can't go add it to every type out there).
+Some types are unconditionally Parseable. I just conform them directly to Parseable  with e.g. extension Int: Parseable { }. Then if I have an Int, I can parse it.
+Some types are conditionally Parseable. I might add extension Optional where Element: Parseable. Then, if I have an optional containing something that's Parseable, like an Int?, I can parse it. But if it contains something that's non-Parseable, you can't parse it.
+Only types with generic parameters can be conditionally Parseable. You can't make an Int conditionally parseable – conditional on what?
+If I am in some generic function and I have a generic type T, I do not know if it is Parseable. It might be. Maybe it's an Int. But since I do not know whether it is or not, the compiler won't let me us it's string initializer.
+If a type doesn't support a protocol you can't pass it to a function that requires that protocol.
+On the other hand, if I have a generic T and there is a where T: Parseable I can use it's init?(). I don't need to know what it is, just that I can use that.
+Copyable is almost the same, except that part about types in Swift not being Copyable by default. Instead, that part is flipped around. This leads to some minor, but perfectly teachable, differences:
+There's a protocol Copyable, which means you can copy a value. Types in Swift are, by default, Copyable. The compiler adds this conformance automatically.
+Some types are unconditionally non-Copyable. I can opt them out of being Copyable by writing ~Copyable. So struct Box<Element>: ~Copyable cannot be copied.
+Some types are conditionally Copyable – that is you can make them non-Copyable, then opt back in conditionally. I might add extension Optional where Wrapped: Copyable because when the type contains a copyable value, it's fine to copy it. So I can make copies of Int? but not copies of Box?.
+Only types with generic parameters can be conditionally Copyable. You can't make an Int conditionally copyable – conditional on what?
+If I am in some generic function and I have a generic type T, I know it will be Copyable. I do not know what it – but I know I can copy it.
+Because Copyable is the default, unless a generic function explicitly says it won't make copies, it is assumed that it will.
+You promise you won't make copies by using  ~Copyable. The compiler will check you don't make any copies accidentally.
+If I am in some generic function and I have a generic type T: ~Copyable, I don't know I can copy it, and the compiler won't let me. I might be able to. It might be an Int. But I don't know that, so I can't copy it.
+If a generic function hasn't explicitly promised it doesn't rely on Copyable, you cannot call it with a non-Copyable type because you don't know it won't make a copy.
+You can, of course, call functions that take non-Copyable types with Copyable types. You just know the function won't copy that type, despite it actually being Copyable.
+
+---
+
+@tbkka · 2024-03-12T16:41:43.855Z:
+jaredgrubb:
+It will be a teaching nightmare to explain struct MyMoveOnlyType: ~Copyable, but then later try to explain how struct Pair<T: ~Copyable>: ~Copyable  is not declaring a move-only type.
+I recall a physics professor once explaining how all physics classes had at least one "reset" where the students were told that everything before that point was "wrong" (or at least "incomplete") and that now they would talk about how things really work.
+You could take that approach here as well:   First say that struct MyType: ~Copyable means that struct MyType can't be copied.  That's easy to explain, easy to understand, and correct enough for this example.
+Then refine it:  ~Copyable really means "not required to be copyable" or "maybe not copyable."   Explain how that's really the same thing for simple declarations, but opens the possibility for more complex constructions:  struct Pair<T: ~Copyable>: ~Copyable means that T "might not be copyable" (so the implementation of Pair cannot copy it) and the resultant Pair<Concrete> "isn't necessarily copyable" (unless some other constraint makes it so).
+Ultimately, "copyability" is just like any other capability that can be added to (but not taken away) from a constructed type.  The notational complexity comes from how Swift makes it available by default.
+
+---
+
+@Slava_Pestov · 2024-03-12T16:55:50.354Z:
+We could also make this the preferred spelling, so the type doesn’t itself state ~Copyable:
+struct Pair<T: ~Copyable> {}
+extension Pair: Copyable {}
+
+---
+
+@wadetregaskis · 2024-03-12T17:28:04.470Z:
+It took me a long time to gain what little, tenuous grasp I have on this syntax as it is - and a big epiphany in that process was realising I should never think of "~" as meaning "not", because it's really just "maybe" (except when it isn't, of course, which is why this whole syntax and "opt-out" mechanism is so difficult).
+I don't think lies to children is the right approach in this case.  It instills a foundational way of thinking which isn't merely inaccurate (in the sense of Newtonian vs Einsteinian physics) but outright wrong.  There's a big difference between learning refinements or edge cases (e.g. actually this doesn't work correctly at relativistic speeds, but this more complicated model does) vs having to start over.
+
+---
+
+@jrose · 2024-03-12T17:49:29.185Z:
+This proposal is pretty clear that ~ should be read as “suppress” in type position going forward. It’s not the same as bitwise NOT (though it’s similar to how bitwise masking works), but neither is protocol composition with & the same as bitwise AND (though it’s still a form of intersection).
+
+---
+
+@Slava_Pestov · 2024-03-12T18:01:40.287Z:
+The way I think about it is that concrete syntax is useful in that it gives a way to talk about things, but it doesn’t itself carry any meaning. While there’s an analogy between negation and ~Copyable, and a protocol composition and bitwise and, it’s just that, an analogy. The “essence” of a protocol composition is the same today as it was in Swift 2 where “P & Q” was written as “protocol<P, Q>”.
+
+---
+
+@jaredgrubb · 2024-03-12T18:16:31.098Z:
+I am really vibing with the concept of "maybe copyable" or "not necessarily copyable", and I like the syntax of ?Copyable for that.
+My discomfort of reusing the same syntax for generic and non-generic uses is a direct echo of what I dislike about teaching what Foo&& means. I really wish the rule was "if you see token1, that's rvalue binding" and "if you see token2 (which is only allowed in generic contexts), that means forwarding binding".
+I don't mean to rehash a conversation that has been had in this thread and the original one for ~Copyable, so I'll defer to the experts. Thanks for hearing me out and I'm enjoying the viewpoints.
+
+---
+
+@kavon · 2024-03-14T06:15:57.762Z:
+Reading “~Copyable” as anything other than “suppressing Copyable” is not a correct way to think about it.
+The concept of ~Copyable is based on the principle of suppressing a default, implicit Copyable conformance or generic requirement that will otherwise exist in all of the places that you can write ~Copyable. That’s actually how it is implemented too.
+If it helps, you can think of ~Copyable as stating the absence of Copyable.
+
+---
+
+@scanon · 2024-03-14T11:29:07.274Z:
+It probably doesn’t help that we keep writing “noncopyable” in pitch and proposal titles.
+
+---
+
+@Slava_Pestov · 2024-03-14T13:33:57.629Z:
+scanon:
+It probably doesn’t help that we keep writing “noncopyable” in pitch and proposal titles.
+Silly me. I thought “noncopyable” refers to our design. It’s just so fresh, and original, you can’t imitate it.
+
+---
+
+@tbkka · 2024-03-14T18:11:11.678Z:
+MPLewis:
+Targeted mechanisms are being developed to preserve ABI compatibility when adopting ~Copyable on previously-shipped generic code.
+This will enable adoption of this feature by standard library types such as Optional.
+Such mechanisms will require extreme care to use correctly.
+Will these mechanisms be available outside the standard library, or will changing an existing generic type to also support ~Copyable types always be an ABI-breaking change for third-party libraries?
+We're working to ensure that it is possible to retrofit existing types.  You can see what the Swift standard library is doing in these two PRs.  Once we understand how that's worked out, I expect we'll write up some guides for other people who want to do this.
+As usual, the biggest problem will be for libraries that want to support back-deployment.  Allowing clients to compile with a newer version of the library and then use an older version requires that the older version behaves correctly in the new scenarios.
+
+---
+
+@adamkuipers · 2024-03-14T18:26:24.099Z:
+It makes sense but i still think it requires too much theory to come to an understanding that struct Pair<Copyable>: ~Copyable is move only and struct Pair<Copyable: ~Copyable>: ~Copyable is only conditionally move only; and that this distinction rears its head in extensions is doubly confusing. I think there will always be some pain-points since the concepts are based in negation, but this aspect seems more confusing than the other parts of the proposal.
+It seems to me declaring a type a unconditionally copyable is different from conditionally copyable and that they use the same syntax will always be confusing.
+
+---
+
+@carlynorama · 2024-03-15T13:24:52.127Z:
+Also I think he proved the point with
+Say I create a protocol Parseable, which means that the type provides an init?(_ from: String). Types in Swift are, by default, non-Parseable (unsurprisingly, since I can't go add it to every type out there).
+vs
+There's a protocol Copyable, which means you can copy a value. Types in Swift are, by default, Copyable. The compiler adds this conformance automatically.
+In that additive processes generally require different techniques than subtractive processes, and to work around that Copyable, previously a fundamental nature of the material, could get changed to a conformance.
+No other protocol works this way (yet ?)  Every type must acknowledge its existence and EVERY type must have an opinion about it? What does it even mean for a type to be neither Copyable nor ~Copyable? I understand the compiler chooses Copyable for the developer but, if this is implemented, fundamentally now Swift types are no longer at their core Copyable, they are Copyable = Undefined.
+Does that mean if ~ becomes a general thing as soon as a person writes a protocol the compiler will have to add ~DevProtocol to everything in that codebase behind the scenes? Because we all know  if ~ is only allowed for Swift and Apple protocols, people will complain.
+Actors can be ignored, you can just use a Class. Honestly, you can still ignore async if you want to. This changes the nature of variables from "I AM a Copyable thing! (But you can not if you jump through a hoop)"  to "Copying? Whatever. The Compiler tells me I should try to make that easy for you" Its not a "feature add", it's a philosophy change.
+I think this will all be figured out, and I get the value of having the compiler be able to check your work if its important copies of type not be made, but my fundamental point is that isn't surprising people are struggling with it, and "Its fine" is maybe not the best messaging.
+
+---
+
+@ben-cohen · 2024-03-15T13:29:14.081Z:
+adamkuipers:
+struct Pair<Copyable>: ~Copyable is move only and struct Pair<Copyable: ~Copyable>: ~Copyable is only conditionally move only
+This is not correct. Both are non-copyable, and can be made conditionally copyable if the type provides a conditional conformance to : Copyable driven by the type of the generic placeholder (which I'd suggest not calling Copyable, the name of a protocol, even though that will work, as it may lead to trauma :)
+The only thing you can't make conditionally copyable is a struct with no generic placeholder i.e. struct Concrete: ~Copyable. Same as you can't make struct Concrete conditionally printable or squishable. The reason being, there's nothing to hang the conditional conformance on. extension Concrete: SomeProtocol where <what goes here?>
+Now it so happens that conditionalizing copyability on anything other than the copyability of a generic placeholder type is going to be extremely rare. But that's not fundamental to the model, that's just how things work out. But there are other options e.g. extension SomeContainer: Copyable where Element: Trivial (i.e. you can copy this type only if it contains trivial elements).
+
+---
+
+@xwu · 2024-03-15T14:50:58.527Z:
+carlynorama:
+What does it even mean for a type to be neither Copyable nor ~Copyable?
+That is a misunderstanding of ~Copyable: every type that is Copyable is also ~Copyable, in the same way that every type that is Hashable is Equatable, etc. This makes sense because any value of a copyable type can obviously just be not copied. This proposal merely makes it possible to express types that are ~Copyable but not Copyable.
+
+---
+
+@taylorswift · 2024-03-15T15:05:41.808Z:
+xwu:
+This makes sense because any value of a copyable type can obviously just be not copied. This proposal merely makes it possible to express types that are ~Copyable but not Copyable.
+to be honest, this isn’t making things easier to understand for me
+
+---
+
+@ben-cohen · 2024-03-15T15:23:53.664Z:
+taylorswift:
+to be honest, this isn’t making things easier to understand for me
+Some things are Printable, some things aren't. If you're given a thing, and not told it's Printable, that doesn't mean it isn't, it just means you don't know if it is. So if you have a T, it may or not be printable.
+The same is true for Copyable. Except that by default, code in Swift assumes all generic placeholders are copyable unless you tell it otherwise. ~Copyable is how you do that.
+
+---
+
+@carlynorama · 2024-03-15T15:26:49.415Z:
+I was imprecise: "What does it even mean for a type to conform to neither Copyable nor ~Copyable?"
+I believe the counter argument is "But The Compiler will make sure anything unspecified is assigned a :Copyable so that won't happen."
+But I really could be misunderstanding - so this is what I'm taking away (I promise I did read the pitch), thanks in advance for clearing anything up:
+The grammar around copying is being presented as 2 protocols. It may be different under the hood, but that's the grammar. Protocols are independent currently as there is no formal way to ~ a protocol.  They can have conflicting definitions but at the moment there is no way to have a protocol exclude/remove the presence of a variable or function.  Hence the need to refactor everything that made things fundamentally copyable out into a Protocol (as these types don't require the developer to implement anything, that's some nuance).  We've all probably done that flavor of refactoring.  And now for the code to keep working everything has to get assigned that new protocol, Copyable.  That makes room for the new conformance requirements of the independent protocol ~Copyable.
+The underlying nature of that original type (which is everything) has changed.
+Types generally don't HAVE to have an opinions about any protocols.  Now failure to conform to one or the other of these protocols would be an error.
+Two things would be different now:
+Swift no longer bakes in the ability to copy, its Copyable by Compiler fiat.
+Everything must say whether it is  Copyable or ~Copyable.  Nothing else is like that (?)
+A choice has been intro the universe where none was before.
+And choices are forks.
+People will have to decide or be decided for. Another choice, another fork.
+No matter which state configuration gets selected, someone will have questions, and perhaps be angry.  (Why do i have to think about this? / Why did you make this choice? / This is controllable, why is this out of my control? )
+ETA: My impression was that conforming something to ~Copyable was under the hood removing "weak" compiler conformances of Copyable but would not do so for developer  provided ones?
+
+---
+
+@carlynorama · 2024-03-15T15:38:34.903Z:
+And that would be NEW.
+Copy-ability used to be solid ground. Now it isn't. And that may be a useful and valuable change, but it is radical.
+
+---
+
+@AlexisQapa · 2024-03-15T15:48:59.017Z:
+Could we do something like for the concurrency model where if one doesn’t use the feature in the module the compiler treat it as it was before i.e. everything is copyable but as soon as one use the feature in the module the compile switch to everything is not copyable and one need to be explicit everywhere about copyability ?
+
+---
+
+@ben-cohen · 2024-03-15T15:55:33.357Z:
+AlexisQapa:
+Could we do something like for the concurrency model where if one doesn’t use the feature in the module the compiler treat it as it was before
+That is, essentially, what is being proposed.
+Types like Optional will be able to hold non-copyable types, but people who don't know about that feature will be able to keep using them like they always have.
+People who opt in to wanting to write code that manipulates non-copyable types will be able to do so. The trade-off being, these people will need to apply more syntax to do this.
+
+---
+
+@xwu · 2024-03-15T15:58:12.874Z:
+carlynorama:
+And that would be NEW.
+Indeed—and hence, this proposal.
+
+---
+
+@ben-cohen · 2024-03-15T16:05:52.723Z:
+carlynorama:
+Copy-ability used to be solid ground. Now it isn't. And that may be a useful and valuable change, but it is radical.
+That is definitely true. Supressing copyability is a big new feature for Swift. It unlocks some major new capabilities. But when you unlock those capabilities, you enter a new world where many things that were previously effortless are now fiddly and annoying, and sometimes not even possible. This is a feeling familiar to people used to writing Rust.
+The goal is to keep this fiddlyness further up the learning curve. If done right, people new to Swift (including experienced programmers coming from other languages) will not bang their head against this feature early on in their journey.
+This comes as a trade-off. When writing non-copyable-capable code in Swift, you will have to be more verbose. There will even be some foot water pistols (oh I forgot to make this extension ~Copyable, I gotta go do that/file an issue asking for that, so I can use it on non-copyable types).
+Time will tell if these are the right trade-offs. I suspect they are. If they aren't, we can tweak them, perhaps under a future language variant.
+
+---
+
+@carlynorama · 2024-03-15T16:06:18.477Z:
+Indeed!
+It's the "relax, its no big deal, you won't even notice" posture that I think people mean to be reassuring that I'm taking issue with.  This is a pretty big deal. "We're safe because we copy" (simplification) to "We can be safe and not copy" is kinda big, will be impressive to have pulled off, and a fundamental change to how the language interacts with information.
+
+---
+
+@carlynorama · 2024-03-15T16:28:03.685Z:
+Sorry, I misspoke here.
+I was thinking of / my impression of a new verbosity around Copyable types in mixed ~Copyable/Copyable codebases.
+
+---
+
+@PALKOVNIK · 2024-03-15T16:36:46.836Z:
+Yes, please! I've been waiting for this since inception of non-copyable types. It's going to unblock one very important piece of work for me
+
+---
+
+@wadetregaskis · 2024-03-15T16:54:13.856Z:
+taylorswift:
+to be honest, this isn’t making things easier to understand for me
+I think a better analogy is Int and Int?.  The latter might be an Int, or it might not.  That's usually all ~ means in protocol context.
+I've said before and I won't rehash the details, but I still feel that the chosen syntax is the biggest problem.  Simply using Copyable? for constraints and !Copyable for conformances would have saved a lot of confusion.
+This relates closely to the key hump I had to surmount to grok this, which maybe others are facing as well:  the distinction of "what it is" vs "what I need from it".  Most of the time when you write a protocol clause - i.e. when you're defining generic functions and properties, conditional conformance requirements, etc - you're not saying it is or isn't copyable, you're saying what you need from it.
+…where T: Copyable is saying it must be copyable; that you need that functionality from it.
+…where T: ~Copyable is the [awkward] syntax for saying it does not have to be copyable.  You're not saying it's not copyable, just that it doesn't have to be copyable for your purposes.  It could be copyable; you don't care.
+It feels weird at first because you never had to express these notions before, because there weren't any implicit protocol conformances & requirements that you could opt out of.  But it makes sense functionally.
+The exception of course is when you're defining the type itself; that's when you're actually saying what it is.  Which is the small but significant crack in this mental model, because saying struct Foo: ~Copyable is the one time where you're saying it is not copyable (you cannot conform it later; it is the final word on the matter for Foo).  It'd be more intuitive if you phrased it struct Foo: !Copyable.  If you can substitute that in your mind as you're working, I find it much easier.
+
+---
+
+@Matt_McLaughlin · 2024-03-15T18:21:00.993Z:
+wadetregaskis:
+it.
+…where T: ~Copyable is the [awkward] syntax for saying it does not have to be copyable. You're not saying it's not copyable, just that it doesn't have to be copyable for your purposes. It could be copyable; you don't care.
+Makes me wonder if maybe we missed the boat and should have spelled it ~NonCopyable with the tilde meaning “accepts” or “allows”. Then it would read T accepts non-copyable types which I think is a bit easier to explain.
+
+---
+
+@Slava_Pestov · 2024-03-15T18:48:55.624Z:
+wadetregaskis:
+This relates closely to the key hump I had to surmount to grok this, which maybe others are facing as well: the distinction of "what it is" vs "what I need from it". Most of the time when you write a protocol clause - i.e. when you're defining generic functions and properties, conditional conformance requirements, etc - you're not saying it is or isn't copyable, you're saying what you need from it.
+Maybe what I’m about to say is abstract nonsense, but here’s the deal: “what I need from it” and “what it is” are the same thing for a generic parameter. It helps to think that you’re declaring a new type named T, because that’s what you’re doing, and in Swift we describe “what I need” by writing down these requirements. I get a new type named T, and I can work with values of this type, and “what it is” is completely described by requirements (Compare to C++ where “what I need from it” is implicit in the template body and “what it is” is just whatever the hell I substitute in)
+
+---
+
+@carlynorama · 2024-03-15T18:59:24.552Z:
+I mean, I think @wadetregaskis explanation is very helpful for understanding, but I actually think the syntax is fine in the long run given what's changing.
+If something is flagged as ~Copyable the compiler will add what will feel like new and additional restrictions to the behavior of that item.  What's actually happening is that language has changed and what happens in ~Copyable conforming code is actually the new default and it's the Copyable stuff that's giving you special features.   (As seen in the proposal) Expressing the removal/suppression of features has to be done with two protocols at the moment, because that's what the language has to do it.  (Do I have this correct?)
+any ~Copyable
+/         \
+/           \
+Any == any Copyable   <all purely noncopyable types>
+|
+<all copyable types>
+Introducing a suppression of protocols syntax AND doing with something that wasn't even a protocol before and gets automagically assigned to things... whew.  It's going to hurt, but I don't agree that it was wrong.
+
+---
+
+@kavon · 2024-03-15T20:43:06.442Z:
+carlynorama:
+The grammar around copying is being presented as 2 protocols. It may be different under the hood, but that's the grammar. Protocols are independent currently as there is no formal way to ~ a protocol.
+‘~Copyable’ is not a protocol. It’s the absence of the Copyable protocol. It doesn’t make sense to say “conforming to ~Copyable”. You don’t conform to nothing.
+This proposal is about changing the grammar of generics, so you can state the absence (or suppression) of one specific protocol, Copyable, as a requirement of a generic parameter.
+You’re requiring the absence of Copyable, and when that can’t be satisfied (because maybe some other requirement needs Copyable) then you get an error from the type checker. For example, this is an error: ‘Copyable & ~Copyable’
+T: P means “T is required to satisfy P”. And T: ~Copyable means “T is required to not have a Copyable requirement”.
+Similarly, ‘some ~Copyable’ is some generic value without a Copyable requirement.
+Once a type does not satisfy Copyable, you can’t copy it. Thus if T: ~Copyable is true, then T is noncopyable.
+
+---
+
+@carlynorama · 2024-03-15T21:32:48.492Z:
+kavon:
+‘~Copyable’ is not a protocol.
+I honestly really do get that that's the end goal.  And I'm all for it.
+But right now
+~Copyable was introduced into the language as a usable thing before Copyable will have been
+It appeared to introduce new behaviors
+Copyable will be largely invisible to the average user so talking about its absence while insisting no one will have to notice it's existence feels less than illuminating.
+it goes in the same place as a protocol
+There will (at least temporarily currently) be no such thing as a concrete type that will be allowed to be declared as neither :Copyable or :~Copyable, (see the changes to any) although much of that will again be invisible. Which if ~Copyable was genuinely the absence of Copyable that wouldn't be needed for concrete types (protocols and generics, yes, but not concrete), Copyable could just be left off. But you can't just do nothing because something needs to block the Compiler from making the super secret Copyable conformance. Which I understand the reason for, but for the folks who were told "don't worry your pretty little head about what's behind the curtain it doesn't need to bother you"  it's another "Wait, what?"
+I honestly don't think just repeatedly insisting that something that looks like that duck, walks like that duck and quacks like that duck isn't that duck gets people where they need to be.
+But I will with all deference stop using the phrase "conform to ~Copyable."
+I hope this proposal or something near to it passes because I think the direction is exciting.
+I also think its going to take more than one chicken-island-pineapple WWDC video for people to sort it out.
+
+---
+
+@xwu · 2024-03-15T22:04:41.152Z:
+kavon:
+And T: ~Copyable means “T is required to not have a Copyable requirement”.
+Mmm...not quite: it means that T is not required to have a Copyable requirement.
+
+---
+
+@Jumhyn · 2024-03-15T22:18:16.200Z:
+I believe that @kavon's point is that specifying ~Copyable is actually saying "this type param must not have a Copyable requirement, and that if such a requirement is inferred then that's a conflict", if I'm reading this correctly:
+kavon:
+You’re requiring the absence of Copyable, and when that can’t be satisfied (because maybe some other requirement needs Copyable) then you get an error from the type checker. For example, this is an error: ‘Copyable & ~Copyable’
+If ~Copyable only meant "not required to be Copyable" then Copyable & ~Copyable would be silly, but not an error. Of course, the downstream effect for callers of "T must not have a Copyable requirement" is "whatever you substitute for T is not required to be Copyable".
+
+---
+
+@Karl · 2024-03-15T22:35:04.278Z:
+Requiring that something can't be copied doesn't really make sense though, does it?
+Even if a thing can be copied (ie it is Copyable), you don't have to copy it. Why would you ever want to require that copying must be impossible?
+I've always understood ~Copyable as Xiaodi described it: that copyability is not required.
+
+---
+
+@Jumhyn · 2024-03-15T22:48:05.652Z:
+I don't really think we're disagreeing, just talking about slightly different viewpoints. The way I am thinking about the distinction being drawn here is as between an 'internal' view of the T: ~Copyable declaration, i.e., "what can I do with a value of type T?" and the 'external' view of T: ~Copyable as a potential target for a client's generic substitution, i.e. "what types can be passed for T?".
+Externally, T: ~Copyable allows substitution for types which may or may not be copyable for exactly the reason you mention: the ~Copyable constraint only removes capabilities so a type which is, in fact, Copyable of course satisfies such a constraint.
+Internally, though, T: ~Copyable is indeed a requirement that values of type T cannot formally be copied within the implementation of the relevant function or type. It couldn't be any other way--if copies were allowed in the implementation then it wouldn't be possible to substitute some concrete non-copyable type for T.
+As a practical matter it would be irritating if you could declare T: ~Copyable but then inadvertently reintroduce a T: Copyable requirement due to, e.g., the transitive effect of some other constraint in a where clause: the author has explicitly declared their intent that T should not be required to be Copyable and so it's an error if something else reintroduces a requirement that was explicitly suppressed.
+
+---
+
+@Slava_Pestov · 2024-03-15T23:05:21.181Z:
+Jumhyn:
+Internally, though, T: ~Copyable is indeed a requirement that values of type T cannot formally be copied within the implementation of the relevant function or type. It couldn't be any other way--if copies were allowed in the implementation then it wouldn't be possible to substitute some concrete non-copyable type for T.
+As a practical matter it would be irritating if you could declare T: ~Copyable but then inadvertently reintroduce a T: Copyable requirement due to, e.g., the transitive effect of some other constraint in a where clause: the author has explicitly declared their intent that T should not be required to be Copyable and so it's an error if something else reintroduces a requirement that was explicitly suppressed.
+The behavior you describe is implemented by making a second pass over the suppressed requirements after the generic signature has been built, and diagnosing any that are “nevertheless true”. This is purely artificial though, and we didn’t do that we would accept “Copyable & ~Copyable” without any inconsistency. So it’s still not really a requirement, even with the fancy diagnostic check.
+So if a protocol P is Copyable, then where T: P, T: ~Copyable and where T: P define the same generic signature; the latter also had a T: Copyable, which was just redundant so it got deleted.
+
+---
+
+@Jumhyn · 2024-03-15T23:10:33.094Z:
+Right, there's no soundness issue with Copyable & ~Copyable, but preventing it keeps authors from accidentally writing signatures which purport to suppress the Copyable requirement, but in fact introduce the requirement via some other constraint (perhaps accidentally).
+
+---
+
+@xwu · 2024-03-15T23:48:37.865Z:
+Jumhyn:
+If ~Copyable only meant "not required to be Copyable" then Copyable & ~Copyable would be silly, but not an error.
+Because there is no soundness issue, my feedback re this part of the proposal—which I had meant to post earlier but neglected—is that this artificial diagnostic pass is brilliant but ought to result in a warning and not an error, precisely because it encourages an inconsistent understanding of the semantics of ~Copyable.
+It is perfectly well defined what Copyable & ~Copyable means in Swift and to the compiler: in  cases where Copyable is inferred, it can well be misleading to the human reader, but in the explicit case it really just is silly, which is not grounds for refusing to compile at all in my view.
+
+---
+
+@carlynorama · 2024-03-16T01:30:47.615Z:
+I'd like to place a vote for no longer using "non-copyable type" or anything along the lines of calling ~Copyable "a constraint" or a "requirement", too?
+~SomeProtocol meaning
+a type that does not conform to SomeProtocol
+a type that's not SomeProtocol
+a protocol/generic  that does not required a type to be SomeProtocol
+a protocol or generic that promises not to use the features of SomeProtocol
+the ~SomeProtocol release, the ~SomeProtocol freeing of the SomeProtocol constraint
+ETA: Okay perhaps I take the "a constraint" or a "requirement" part back in light of the below, but just saying "noncopying type" is at this stage in the game too vague for those of us in the peanut gallery.
+a type that does not conform to SomeProtocol (too weak for labeled ~Copyable?)
+a type that's not SomeProtocol (too weak? for labeled ~Copyable?)
+a type/protocol/generic that disallows SomeProtocol behavior  in itself (and all extensions ?)
+a prohibited SomeProtocol
+a protocol or generic that promises not to use the features of SomeProtocol
+the ~SomeProtocol suppression, the ~SomeProtocol quash of SomeProtocol constraint
+
+---
+
+@kavon · 2024-03-16T01:44:18.061Z:
+xwu:
+kavon:
+And T: ~Copyable means “T is required to not have a Copyable requirement”.
+Mmm...not quite: it means that T is not required to have a Copyable requirement.
+No. It really does mean that T cannot have a Copyable requirement. In other words, it requires the absence of Copyable. There's no "maybe" about it. It's a subtle difference but an important one that I will demonstrate...
+Slava_Pestov:
+The behavior you describe is implemented by making a second pass over the suppressed requirements after the generic signature has been built, and diagnosing any that are “nevertheless true”. This is purely artificial though, and we didn’t do that we would accept “Copyable & ~Copyable” without any inconsistency. So it’s still not really a requirement, even with the fancy diagnostic check.
+But it is an intentional and crucial part of the design I'm proposing that we make ~Copyable act as though it is a requirement in the Swift language for users. The fact that it's artificial in the current implementation does not matter.
+xwu:
+Jumhyn:
+If ~Copyable only meant "not required to be Copyable" then Copyable & ~Copyable would be silly, but not an error.
+Because there is no soundness issue, my feedback re this part of the proposal—which I had meant to post earlier but neglected—is that this artificial diagnostic pass is brilliant but ought to result in a warning and not an error, precisely because it encourages an inconsistent understanding of the semantics of ~Copyable.
+I will not relent on it being an error without some very convincing reasoning!
+The model is absolutely nonsensical if I can write T: Copyable & ~Copyable and my code still compiles with just a warning. With the ability to copy values of type T, despite having written ~Copyable, turns that syntax into just a suggestion. It should be a requirement that T isn't Copyable because that's what the user is requesting.
+In fact, my goal in this work has been that people can reliably write ~Copyable on a type T anywhere, and it can always be consistently summarized as thinking "T is absent of a Copyable requirement". That aligns with the existing usage of ~Copyable as well.
+Here are all of the places where ~Copyable can be written, with the currently implemented diagnostics, to demonstrate why I keep saying that it requires the absence of Copyable:
+Inheritance clauses for concrete types.
+protocol P {}
+// note: type 'S' does not conform to inherited protocol 'Copyable'
+struct S: ~Copyable, P {}
+// error: type 'S' does not conform to protocol 'Copyable'
+Here, the protocol P implicitly inherits from Copyable because it did not opt-out of requiring it. So its conformers must also conform to Copyable. Since S opted out of conforming to Copyable via ~Copyable, S cannot conform to P.
+Thus, writing ~Copyable on S most definitely made it not be required to be Copyable. In fact, if I try:
+struct S: ~Copyable {}
+extension S: Copyable {}
+// error: struct 'S' required to be 'Copyable' but is marked with '~Copyable'
+I can't add it back with this extension, since there's nothing for it to be conditional on! And an unconditional extension adding Copyable when it was required to not be Copyable is nonsense. Even if S were generic, I still can't add it back if T is already Copyable, because all conditions are then already satisfied:
+struct S<T>: ~Copyable {}
+extension S: Copyable {}
+// error: generic struct 'S' required to be 'Copyable' but is marked with '~Copyable'
+Inheritance clauses of generic nominal types
+struct S<T: ~Copyable>: ~Copyable {}
+Here, T does not require Copyable, and the family of types S<T> is not Copyable. Just like how the family of types S<T> is not Equatable. Now, if I also have this extension (which is required to be in the same source-file as S:
+extension S: Copyable where T: Copyable {}
+The family of types S, in general, is still not Copyable. There definitely exists a type you can substitute into S<T> to make it noncopyable.
+This extension just adds the condition that "S is Copyable when T is Copyable". You're totally welcome to write that out, and the compiler won't complain about the redundant where clause.
+Keep in mind that this is exactly like how the following extension adds the condition "S is Equatable when T is Equatable":
+extension S: Equatable where T: Equatable {}
+Try as I might, I still cannot make the entire family of S<T> Copyable, despite being marked ~Copyable! The compiler catches this conflicting extension too!
+struct S<T: ~Copyable>: ~Copyable {}
+extension S: Copyable where T: ~Copyable {}
+// error: generic struct 'S' required to be 'Copyable' but is marked with '~Copyable'
+Inheritance clauses for protocols
+protocol P {}
+protocol Q: ~Copyable, P {}
+// error: 'Self' required to be 'Copyable' but is marked with '~Copyable'
+Here, Q tries to inherit from P, which requires Copyable, but Q's Self is also required to not require Copyable, because of the ~Copyable in its inheritance clause.
+That boils down to Copyable & ~Copyable: two conflicting requirements that indicates the programmer made a mistake. If the compiler were to only warn about Q actually requiring it's conformers to be Copyable, despite programmer's explicit marking, that would be terribly confusing.
+where clauses
+This is where most of the complexity can arise, due to how Swift's generics system works. But you still can rely on ~Copyable requiring that a generic parameter does not have a Copyable requirement...
+Example 1:
+protocol P {}
+func f<T>(_ t: T) where T: ~Copyable, T: P {}
+// error: 'T' required to be 'Copyable' but is marked with '~Copyable'
+Similar to the inheritance clause examples, T here was required to not require Copyable, yet in order to satisfy the requirements of P, which implicitly inherits from Copyable, T would have to be Copyable. This again boils down to Copyable & ~Copyable.
+Example 2:
+struct R<V> {}
+func f<T: ~Copyable>(_ r: R<T>) {}
+// error: 'T' required to be 'Copyable' but is marked with '~Copyable'
+Here, R's generic parameter V did not opt out when it was defined, so it requires Copyable. In function f, T is required to not require Copyable. But once we attempt to substitute T in for V, we get an error, because in Swift we infer requirements for T based on its substitution here inside R.
+It would be very confusing if T were still Copyable here, or only warned about. Who's requirement really wins? Does V's Copyable win or T's ~Copyable? Neither, it's an error!
+Example 3:
+protocol P {
+associatedtype Element
+}
+func f<T, U>(_ t: T, _ u: U)
+where
+U: ~Copyable, // error: 'U' required to be 'Copyable' but is marked with '~Copyable'
+T: P,
+U == T.Element
+{}
+This one is more subtle, but the compiler has your back! You wanted to require U to not require Copyable, but you've used a same-type requirement that implies U must be Copyable, because the associatedtype Element has not opted-out, and thus requires Copyable.
+Example 4:
+class Soup {}
+func f<T>(_ t: T) where T: ~Copyable, T: Soup {}
+// error: 'T' required to be 'Copyable' but is marked with '~Copyable'
+Here, you've required T to not require Copyable, but you've also placed a class bound on T, which means only classes that are a subtype of the class Soup can be substituted. But all classes require Copyable, thus you haven't actually made it such that a noncopyable type can be substituted for T at all! The same principle underlies the rejection of AnyObject & ~Copyable.
+Existentials
+This is sort of a freebie, because existentials can only have a ~Copyable in it if the existential is some composition. Thus, we have the same set of rules here, as if the composition A & B were broken up into a where clause like Self where Self: A, Self: B.
+protocol P {}
+protocol Q: ~Copyable {}
+class Soup {}
+let _: any P & ~Copyable // error: composition cannot contain '~Copyable' when another member requires 'Copyable'
+let _: any AnyObject & ~Copyable // error: composition involving 'AnyObject' cannot contain '~Copyable'
+let _: any Soup & ~Copyable // error: composition involving class requirement 'Soup' cannot contain '~Copyable'
+let _: any Q & ~Copyable // OK
+
+---
+
+@Slava_Pestov · 2024-03-16T01:52:22.699Z:
+kavon:
+Inheritance clauses for concrete types.
+protocol P {} // note: note: type 'S' does not conform to inherited protocol 'Copyable'
+struct S: ~Copyable, P {} // error: type 'S' does not conform to protocol 'Copyable'
+Here, the protocol P implicitly inherits from Copyable because it did not opt-out of requiring it. So its conformers must also conform to Copyable. Since S opted out of conforming to Copyable via ~Copyable, S cannot conform to P.
+Thus, writing ~Copyable on S most definitely made it not be required to be Copyable.
+For what it's worth, this would still be an error with @xwu's proposed change. A concrete type not satisfying the requirements of a protocol is a fundamentally different issue, and necessarily fatal.
+kavon:
+Example 4:
+class Soup {}
+func f<T>(_ t: T) where T: ~Copyable, T: Soup {}
+// error: 'T' required to be 'Copyable' but is marked with '~Copyable'
+This is also interesting if you consider AnyObject instead of Soup:
+func f<T: AnyObject & ~Copyable>(_: T) {}
+This is totally fine! Except that today all classes are copyable so this is the same as T: AnyObject. But maybe it won't be in the future? Error or warning?
+
+---
+
+@Jumhyn · 2024-03-16T02:19:06.477Z:
+kavon:
+In fact, my goal in this work has been that people can reliably write ~Copyable on a type T anywhere, and it can always be consistently summarized as thinking "T is required to not be Copyable". That aligns with the existing usage of ~Copyable as well.
+I think the difficulty is that while this makes sense from the internal view of T where it is a bona fide type which cannot be copied, this framing is at odds with external users of T approaching it as a target for generic substitution. Theses users must view T: ~Copyable as “T may be substituted with any type, regardless of copyability.” To read it as “T is required to not be Copyable” as an external user suggests something which is not true. So I don’t think we can escape some notion of ~Copyable being read as “not required to be Copyable”, at least in some circumstances.
+That said, I’m not totally sold on Xiaodi’s suggestion that it just be a warning. While a warning might be suitable for the author of a generic type using ~Copyable, if it is possible for ~Copyable to appear in a generic signature despite the generic parameter formally requiring Copyable (because, perhaps a library author was sloppy and let a warning slip through), it will also no longer be possible for clients to reliably read ~Copyable as “does not require Copyable”—there may indeed be types marked ~Copyable which nonetheless are in fact required to be Copyable!
+
+---
+
+@kavon · 2024-03-16T02:30:36.043Z:
+Jumhyn:
+Theses users must view T: ~Copyable as “T maybe be substituted with any type, regardless of copyability. To read it as “T is required to not be Copyable” as an external user suggests something which is not true. So I don’t think we can escape some notion of ~Copyable being read as “not required to be Copyable”, at least in some circumstances.
+Yes I agree that there’s two ways to view it, from the user of an interface and its implementation.
+I admittedly have been a little sloppy in that last post, but “T is required to not require Copyable” is a sort of double-negative for saying “T is absent of Copyable”.
+Absence of a requirement does suggest to people that you can put anything in there regardless of copyability. It also means that it lacks the capability to be copied, so it’s noncopyable. So does it make sense to anyone to read ‘~Copyable’ as ‘absent Copyable’ ?
+
+---
+
+@Matt_McLaughlin · 2024-03-16T13:16:38.329Z:
+kavon:
+I admittedly have been a little sloppy in that last post, but “T is required to not require Copyable” is a sort of double-negative for saying “T is absent of Copyable”.
+Help me square the above with this from the proposal:
+func identity<T: ~Copyable>(x: consuming T) { return x }
+This function imposes no requirements on the generic parameter T. All possible types, both Copyable and noncopyable, can be substituted for T.
+What’s in the proposal scans to me pretty clearly as ‘maybe copyable’ which is very different in my mind from ‘absent Copyable’.
+
+---
+
+@Slava_Pestov · 2024-03-16T14:08:34.691Z:
+Jumhyn:
+I think the difficulty is that while this makes sense from the internal view of T where it is a bona fide type which cannot be copied, this framing is at odds with external users of T approaching it as a target for generic substitution.
+This is why the abstraction here is slightly leaky. I don’t think there’s a way to fully explain substitution without appealing to the internal “desugared” list of requirements, that already had the defaults and suppression applied, which is what the proposal does when it spells out the three rules:
+A new Copyable protocol abstracts over types whose values can be copied.
+Every struct, enum, class, generic parameter, protocol and associated type now conforms to Copyable by default.
+The ~Copyable notation is used to suppress this default conformance requirement anywhere it would otherwise be inferred.
+If this was a math textbook, the above would be all you’d get (and the algorithm for detecting spurious ~Copyable might be an exercise ); the rest of the proposal is an immediate logical consequence of these rules.
+
+---
+
+@xwu · 2024-03-16T15:46:39.577Z:
+kavon:
+But it is an intentional and crucial part of the design I'm proposing that we make ~Copyable act as though it is a requirement in the Swift language for users.
+This is irreconcilable with the notion that any ~Copyable—which, since we are deferring mandatory existential any, would also just be plain ~Copyable—is the supertype of all types.
+That ~Copyable is not a requirement is plain because, if it were, it would make no sense that this proposal would have it that I can write var x: ~Copyable; x = [1, 2, 3].
+The spelling and semantics of ~Copyable as “not required to be Copyable”—and the decision that “required not to be Copyable” would not be utterable—was settled during the review process for the original proposal for noncopyable types; it’s unclear why this proposal is revisiting that decided point.
+
+---
+
+@xwu · 2024-03-16T16:06:14.980Z:
+Jumhyn:
+While a warning might be suitable for the author of a generic type using ~Copyable, if it is possible for ~Copyable to appear in a generic signature despite the generic parameter formally requiring Copyable (because, perhaps a library author was sloppy and let a warning slip through), it will also no longer be possible for clients to reliably read ~Copyable as “does not require Copyable”—there may indeed be types marked ~Copyable which nonetheless are in fact required to be Copyable
+Yes, that is an excellent point. That could argue for a middle ground where such misleading signatures are forbidden in public declarations (in the same spirit in which we require explicit access modifiers and refuse to synthesize memberwise initializers for public APIs) without being so severe with, say, local declarations. That is a bit convoluted, admittedly, and an across-the-board error is probably the best suited to address your point.
+That said, I am concerned that we do not have consensus on the meaning of suppressed Copyable; having rejected a distinct indicator for unconditionally noncopyable types, then having one spelling pull double duty as both “not required to be” and “required not to be” was very much not the intention as I understand it.
+
+---
+
+@Jumhyn · 2024-03-16T16:24:48.259Z:
+xwu:
+That is a bit convoluted, admittedly, and an across-the-board error is probably the best suited to address your point.
+Yeah, if we concede that the problem is severe enough to warrant an error across module boundaries then I don't see a compelling reason to allow such constructions internally. I view it as similar to the prohibition on constraints which make generic declarations effectively non-generic, which are slated to be errors in Swift 6:
+func f<T>(_: T) where T == Int {} // this is an error in Swift 6
+xwu:
+The spelling and semantics of ~Copyable as “not required to be Copyable”—and the decision that “required not to be Copyable” would not be utterable—was settled during the review process for the original proposal for noncopyable types; it’s unclear why this proposal is revisiting that decided point.
+I do not read the diagnostic we're discussing as re-litigating this point, nor as inconsistent with:
+xwu:
+That ~Copyable is not a requirement is plain because, if it were, it would make no sense that this proposal would have it that I can write var x: ~Copyable; x = [1, 2, 3].
+I agree with Slava that calling this a 'requirement' is misleading because it is not generic requirement in the precise, formal sense used when discussing generics. The sense in which it is a requirement is more colloquial: it is a 'requirement' of non-misleadingness within the scope of the type declaration. One can read a type declaration with a ~Copyable constraint suppression and be confident that the implicit Copyable constraint is indeed suppressed.
+To phrase things slightly differently: ~Copyable is not a requirement in that it imposes any additional restrictions on the underlying types/values to which it applies (indeed, it only relaxes such restrictions). Rather, it is a sort of meta-requirement on the type declaration itself, that once ~Copyable has appeared in source, no other part of the type signature may contradict that explicit suppression (implicitly or explicitly). This property is what will allow readers of a type declaration to consistently understand ~Copyable as "has had the implicit Copyable conformance suppressed".
+
+---
+
+@xwu · 2024-03-16T16:39:26.598Z:
+Jumhyn:
+Rather, it is a sort of meta-requirement on the type declaration itself, that once ~Copyable has appeared in source, no other part of the type signature may contradict that explicit suppression (implicitly or explicitly).
+That is well put: we can consider that an explicit ~Copyable requires not requiring Copyable conformance.
+Just as metatypes are a more advanced concept than plain types, such “meta-requirement” semantics are a step beyond plain generic requirements.
+I am not sure making it this meta gets us incrementally much more than sticking to  “maybe” semantics and ensuring diagnostics point out manifest silliness. But it is a nice formulation!
+We still need to be careful, though, not to conflate “requires not requiring conforming to Copyable” with “requires not conforming to Copyable”—and I am wary of anything that causes ~Copyable to behave as-if the latter.
+
+---
+
+@Jumhyn · 2024-03-16T17:01:03.807Z:
+xwu:
+That is well put: we can consider that an explicit ~Copyable requires not requiring Copyable conformance.
+[...]
+We still need to be careful, though, not to conflate “requires not requiring conforming to Copyable” with “requires not conforming to Copyable”
+Yes, I think this is the (subtle) distinction that @kavon was getting at originally:
+kavon:
+T: ~Copyable means “T is required to not have a Copyable requirement”.
+xwu:
+I am not sure making it this meta gets us incrementally much more than sticking to “maybe” semantics and ensuring diagnostics point out manifest silliness. But it is a nice formulation!
+I think in order to have a solid user model of the "maybe"/suppression semantics it is fundamentally important that this diagnostic be in place and not just treated as a convenience detail. If treated just as a convenience, a weaker (insufficient) version of the rule might prohibit only straightforward syntactic conflicts where Copyable and ~Copyable both appear in source as in, e.g., Copyable & ~Copyable. But then transitive constraints could still reintroduce a Copyable constraint, and ~Copyable could at best be read as "maybe allowed to be non-copyable, but maybe required to be copyable" which much less useful than the "maybe" reading we'd want, that is, "maybe copyable but permitted to be non-copyable".
+
+---
+
+@kavon · 2024-03-16T17:06:18.106Z:
+Matt_McLaughlin:
+Help me square the above with this from the proposal:
+func identity<T: ~Copyable>(x: consuming T) { return x }
+This function imposes no requirements on the generic parameter T. All possible types, both Copyable and noncopyable, can be substituted for T.
+What’s in the proposal scans to me pretty clearly as ‘maybe copyable’ which is very different in my mind from ‘absent Copyable’.
+T is only "maybe" Copyable because any requirement for it to be Copyable is absent. The type T here inside of identity is also "maybe" Equatable, Hashable, SetAlgebra, and every protocol under the sun, because no requirement exists for those protocols either, yet types that do support those capabilities can still be substituted for T / passed into identity.
+So I think both ways of thinking about it are fine and can work coherently. The only situation I can think of is that struct S: ~Copyable {} definitely does not conform to Copyable, rather than "maybe".
+I personally don't like using "maybe" because it feels rather wishy-washy and can be said about every protocol. Using "absence" leaves no ambiguity, but does force you to think a tiny bit about the consequence of removing a requirement.
+
+---
+
+@benlings · 2024-03-16T17:07:55.503Z:
+Would it be helpful to describe a T: ~Copyable constraint as ‘the list requirements on T doesn’t include Copyable’? I think this makes it clear why it should be an error for some other requirement to include Copyable.
+
+---
+
+@xwu · 2024-03-16T17:07:59.618Z:
+Jumhyn:
+Yes, I think this is the (subtle) distinction that @kavon was getting at originally:
+I can certainly get on board with the "meta-requirement" semantics here. I do think the distinction is of huge import, though. Put another way, this would be consistent with (one possible reading of) @kavon's revised formulation:
+my goal in this work has been that people can reliably write ~Copyable on a type T anywhere , and it can always be consistently summarized as thinking "T is absent of a Copyable requirement" .
+...but not (as you quote replied) his original formulation:
+my goal in this work has been that people can reliably write ~Copyable on a type T anywhere , and it can always be consistently summarized as thinking "T is required to not be Copyable" .
+
+---
+
+@Jumhyn · 2024-03-16T17:26:48.004Z:
+kavon:
+So I think both ways of thinking about it are fine and can work coherently. The only situation I can think of is that struct S: ~Copyable {} definitely does not conform to Copyable, rather than "maybe".
+I personally don't like using "maybe" because it feels rather wishy-washy and can be said about every protocol. Using "absence" leaves no ambiguity, but does force you to think a tiny bit about the consequence of removing a requirement.
+Yeah struct S: ~Copyable {} is the case that I think necessitates thinking in terms of "suppress Copyable" or "absent Copyable" if one really wants to have One True Reading of ~Copyable. But then, as you note, the downstream consequences of Copyable being suppressed can differ depending on what sort of declaration ~Copyable is applied to, and I think we will necessarily have to teach those cases separately. As this thread evidences, it is not immediately intuitive what the effects of suppressing Copyable are for each use case, and I don't think it's wrong for users to have a 'piecewise' understanding of ~Copyable such as:
+In struct S: ~Copyable it means that S cannot be copied
+In struct S<T: ~Copyable>: ~Copyable it means that:
+Substitutions for T are not required to be copyable (but "maybe" any given one is)
+S is not copyable by default (but "maybe" has Copyable reintroduced conditionally)
+In protocol P: ~Copyable it means that types conforming to P are not required to be Copyable (but "maybe" any given conformer is in fact Copyable)
+Of course, IMO the generalization is still immensely valuable (and potentially elucidating), especially as an explanation of "why do each of these positions use the same spelling?", uncovering the fact that T: ~Copyable behaves internally just as S: ~Copyable, etc.
+
+---
+
+@kavon · 2024-03-16T17:55:05.917Z:
+Jumhyn:
+As this thread evidences, it is not immediately intuitive what the effects of suppressing Copyable are for each use case, and I don't think it's wrong for users to have a 'piecewise' understanding of ~Copyable such as: [one that relies on thinking in terms of “maybe”]
+I completely agree. The formal model relies on suppressions to create the absence of Copyable, and I see no harm in people’s intuition preferring a slightly leaky abstraction on top of that.
+
+---
+
+@carlynorama · 2024-03-16T19:07:59.489Z:
+So there is going to be a problem with getting people to understand  what  <T:~Copyable> does by saying "Working with Copyable is just like working with other protocols"!  because one doesn't need doesn't need <T: ~Equatable, ~Hashable, ~SetAlgebra, ~EveryProtocolUnderTheSun> and the typical Swift user will have been intentionally sheltered from being aware of the implicit :Copyable addition from what I understand.
+I know progressive disclosure is important, but I hope the documentation for structs and enums puts up front something like "A struct/enum is a type with an implicit conformance to the following special protocols (Copyable, Escapable, etc.) Special protocols are different from regular protocols in that..." to make clear why ~SpecialProtocol is needed but ~Hashable isn't and would never be with this current usage of ~
+ETA: This part right here is no longer actually true. (Documentation)
+"All structures and enumerations are value types in Swift. This means that any structure and enumeration instances you create — and any value types they have as properties — are always copied when they’re passed around in your code."
+Maybe better?
+"All structures and enumerations are value types in Swift. This means that any structure and enumeration instances you create — and any value types they have as properties — are copied when they’re passed around in your code through their conformance to a special protocol, Copiable. The typical programmer will not have to interact with this protocol except under very special circumstances. "
+
+---
+
+@jrose · 2024-03-16T19:21:20.340Z:
+I want to point out something stupid that should still be valid:
+struct X: ~Copyable {}
+extension X: Copyable {}
+With this code, X is Copyable. This demonstrates that ~Copyable does not mean "unconditionally non-copyable" when applied to a non-generic type. It really does mean "suppress Copyable" or "don't include an implicit conformance to Copyable" here.
+This example is silly when written like this, but I could see it being reasonable for macro-generated declarations* that work on both generic and non-generic types. (Rust has run into that kind of thing, though their macros are much less constrained than Swift's are.)
+* when macros support generating declarations and extensions at the same time, can't remember if they do yet
+
+---
+
+@Slava_Pestov · 2024-03-16T19:25:47.289Z:
+Maybe this should be valid:
+struct G<T: ~Copyable> {}
+extension G: Copyable where T: Copyable {}
+I see no technical reason to demand that the conformance on the type is suppressed if the user then declares an extension, since both must be in the same module anyway; it’s mostly a matter of style if we allow one or both, and ban the other, etc.
+
+---
+
+@jrose · 2024-03-16T19:30:47.307Z:
+I worry a little about that if the extension is in a different file, or even several pages down in the same file. It's no trouble for the compiler, but is it better or worse for humans?
+
+---
+
+@Jumhyn · 2024-03-16T19:58:00.148Z:
+As a general rule I’d also prefer to start out on the side of requiring (perhaps excessive) explicitness that could be relaxed down the road by introducing additional inference rules rather than preemptively introduce conveniences that would be difficult to roll back (if we later think they were a mistake) and/or potentially constrain future evolution.
+
+---
+
+@kavon · 2024-03-16T20:20:15.368Z:
+carlynorama:
+I know progressive disclosure is important, but I hope the documentation for structs and enums puts up front something like "A struct/enum is a type with an implicit conformance to the following special protocols (Copyable, Escapable, etc.) Special protocols are different from regular protocols in that..." to make clear why ~SpecialProtocol is needed but ~Hashable isn't and would never be with this current usage of ~
+Sure, documenting this in the Swift book is definitely something that should happen.
+I want to point out that we also automatically try to infer implicit conformances to Sendable for non-public nominal types. In addition, enums that only have cases with no associated values, i.e., enum E {case yellow; case blue} automatically get implicit Hashable and Equatable conformances. If someone wants to optimize every ounce of code size, they'd find ~Hashable useful to suppress the implicit conformance of an enum to Hashable in its inheritance clause.
+I don't see any value in allowing you to write this, though:
+protocol Q: ... {}
+func f<T>(_ t: T)
+where T: Q, T: ~Hashable {}
+There's no implicit requirement T: Hashable that we'd be suppressing here, so this code basically is just asserting is that Q doesn't require Hashable. That's something I think an IDE should be responsible for telling the user if they are curious.
+jrose:
+I want to point out something stupid that should still be valid:
+struct X: ~Copyable {}
+extension X: Copyable {}
+With this code, X is Copyable. This demonstrates that ~Copyable does not mean "unconditionally non-copyable" when applied to a non-generic type. It really does mean "suppress Copyable" or "don't include an implicit conformance to Copyable" here.
+I think people will also want a less clunky way to be able to suppress the inference of unconditional Sendable conformance on a type. My question is, do they also want to prevent that unconditional conformance from being introduced in an extension? Even an extension in the same file? If ~ really only means suppress and not prevent, then we can't quite do away with this:
+@available(*, unavailable)
+extension X: Sendable {}
+Because this extension actually does both suppression and prevention, but only of the unconditional Sendable conformance. You can still also add this if S is generic:
+extension X: Sendable where T: Sendable {}
+Personally, I think there's a lot of peace-of-mind with having both suppression and prevention that ~ can give you. It also does away with the need for this unavailable-extension trick.
+
+---
+
+@carlynorama · 2024-03-16T21:16:32.274Z:
+Thank you that was help a helpful reminder about those having background conformances, that it won't just be Copiable and Escapable as possible ~-ables.
+kavon:
+suppression and prevention
+This seems like a remaining thing that I'm seeing some inconsistent messaging on.  Whether ~ will suppress implicit only or suppress implicit AND prevent explicit, and I can see pros and cons to each!
+
+---
+
+@hborla · 2024-03-16T21:40:41.333Z:
+(taking off my review manager hat)
+kavon:
+I think people will also want a less clunky way to be able to suppress the inference of unconditional Sendable conformance on a type. My question is, do they also want to prevent that unconditional conformance from being introduced in an extension?
+No. For Sendable, it should be completely valid to explicitly say that a superclass does not have a Sendable conformance using ~Sendable, but add Sendable conformances to subclasses. Right now, folks have tried to do this with an unavailable Sendable conformance on the superclass, but that fundmentally does not work because the subclass inherits the unavailable conformance, meaning adding the @unchecked Sendable conformance on the subclass does nothing, leading to some very surprising behavior (the compiler should also warn you if you try to do this).
+
+---
+
+@wadetregaskis · 2024-03-17T01:52:59.869Z:
+Jumhyn:
+In struct S: ~Copyable it means that S cannot be copied
+In struct S<T: ~Copyable>: ~Copyable it means that:
+…
+S is not copyable by default (but "maybe" has Copyable reintroduced conditionally)
+This doesn't make sense to me.  Why would the presence of an unrelated generic cause the behaviour of ~Copyable to change in this position?  Either way it should merely be saying "don't automatically make S Copyable", no?
+jrose:
+I worry a little about that if the extension is in a different file, or even several pages down in the same file. It's no trouble for the compiler, but is it better or worse for humans?
+Is this any different to any other protocol conformance via an extension, though?  Special-casing Copyable in this respect would make the overall system more complicated.
+kavon:
+I don't see any value in allowing you to write this, though:
+protocol Q: ... {}
+func f<T>(_ t: T)
+where T: Q, T: ~Hashable {}
+There's no implicit requirement T: Hashable that we'd be suppressing here, so this code basically is just asserting is that Q doesn't require Hashable. That's something I think an IDE should be responsible for telling the user if they are curious.
+Isn't that how you would express the limitation "I don't want to use Hashable on T", to have the compiler ensure you don't inside f?
+That seems like a reasonable thing to do, in principle.  I don't know how often it would come up, but then we've never had this ~ syntax before, so we have no experience with it yet.
+
+---
+
+@Nobody1707 · 2024-03-17T04:54:07.939Z:
+wadetregaskis:
+This doesn't make sense to me. Why would the presence of an unrelated generic cause the behaviour of ~Copyable to change in this position? Either way it should merely be saying "don't automatically make S Copyable", no?
+It doesn't change the meaning, it's just that there's no way to spell the conditional conformance without a generic parameter. Either way ~Copyable just means suppress the implicit conformance.
+
+---
+
+@Matt_McLaughlin · 2024-03-17T13:08:03.808Z:
+Nobody1707:
+Either way ~Copyable just means suppress the implicit conformance.
+Maybe I’m not fully following, but I don’t think that’s true. ~Copyable on a concrete type means ‘suppress the implicit conformance’. ~Copyable as a generic constraint means ‘accept (but don’t require) concrete types that have had their implicit conformance suppressed.’ I’d argue that’s a meaningful distinction.
+
+---
+
+@ben-cohen · 2024-03-17T14:25:02.844Z:
+These amount to the same thing, so no, this is not a distinction. Or rather, it's a distinction about how expressing conformances vs constraining generic arguments are different things in Swift, not a distinction about ~Copyable:
+struct S: Printable means add a conformance Printable to S
+struct S: ~Copyable means suppress the automatic conformance of Copyable to S
+func f<T: Printable(t: T) means allow the body to use Printable on T
+func f<T: ~Copyable>(t: T) means suppress the automatic ability for the body to use Copyable on T
+edit: and to take this further – this ends up resulting in:
+func f<T: Printable(t: T) accepts (but doesn't require) things that are Squishable as an argument
+func f<T: ~Copyable>(t: T) accepts (but doesn't require) things that are Copyable as an argument
+This just falls out from 3. and 4. above rather than being a new rule.
+
+---
+
+@wadetregaskis · 2024-03-17T14:30:45.232Z:
+ben-cohen:
+struct S: ~Copyable means suppress the automatic conformance of Copyable to S
+Are we sure?  Because @Jumhyn said it means:
+Jumhyn:
+In struct S: ~Copyable it means that S cannot be copied
+It might seem pedantic but I think this is pivotal behaviour, at least insofar as how it heavily defines the conceptual model here.
+If S cannot be made Copyable even by an extension, then that is completely novel behaviour in the language (and IMO a much more complicated protocol conformance model than what we have now).
+
+---
+
+@Jumhyn · 2024-03-17T14:32:28.016Z:
+@jrose replied above pointing out how that simplification is not entirely correct.
+(Though I do think this is how many users will end up thinking about ~Copyable on a non-generic concrete type because I expect exceptions to be very rare/unusual).
+
+---
+
+@carlynorama · 2024-03-17T15:48:20.885Z:
+I'll admit when I first saw ~Copyable, I was skeptical. I have since come to appreciate value-type-as-lego while still preserving safety potential here, and I'm very excited.
+Both ~ and Copyable will remain really hard to talk about for a long time though. Because of really simple sentences like:
+Classes have additional capabilities that structures don’t have...
+from the documentation Documentation
+This is how pretty much everyone teaches this. Value types are the base and reference types are more. The problem comes that the average reader will parse this as reference types have been given extra powers. That classes have more moving parts to them than structs.
+Those of us who learned or spend a lot time in environments that have no value types maybe don't remember what it's like to really not know that value types are a gift. They were made to make a lot of things easier and safer by putting in guards rails and adding default behaviors. In environments without them the programmer always has to keep track of this stuff and it's a relief to work in a environment where that gets taken care of for you when you want it to.
+Most modern languages have value types, and they sensibly get taught first. So now for a huge swath of people who program, they experience value types as "the base" and reference types as a value types that have had features bolted on to the them. The idea that value types are just as much of a construct and that reference types have "more abilities" because they have fewer/different apparatuses bolted on to them is totally foreign. (simplification, true)
+Past code does need to work; value types will still prefer to have copying. I understand both the benefit and the need for the implicit behind the scenes :Copyable addition. So there needs to be a mechanism to stop it from happening. Enter ~.
+That copying is a choice that value types make is going to be a surprise. ~Copyable will absolutely feel like it's putting a parking boot on the Copyable wheel, not removing the Copyable wheel, because most don't have an internalized sense that the wheel was invented, that it is an added thing, that it can be removed.
+Swift, understandably, adds lots of different parts at the factory, but invisible parts. So in the case for this Copyable wheel any talk about "It's not a boot, its saying you don't want that wheel. It's like working with any other wheel." makes no sense because essentially the buyer thinks they've ordered a hovercraft because they don't see the wheels... "What wheels? It just moves?"
+This is complicated by the fact that there are two needs, potentially. The ability to blanket decline particular factory installed parts and the ability to prevent a specific type of part from being installed by anyone.
+The "Car Engineers" on this forum understandably want to talk about the new apparatus around deciding about the Copyable wheel and the mechanism around declining factory installed parts and declining parts in general (it's very cool). But it's super confusing to so many people because most of the people still don't understand that wheels exist, that factory installed parts are parts not molded in, and that some of them are invisible.
+For many things it's fine to treat the documentation as secondary. As something that comes after the pitch, after the implementation, but this is such a new concept to so many people in the Swift user base. So deeply fundamental. And it wasn't even treated as full number release (because it didn't have to be, I get semantically why).  It's totally not even hinted at anywhere in the documentation even though ~Copyable is actively already being used. Copyabilty has been factored out of value types.  That's "the earth is not the center of the universe" level in this context. Is it right to say that most programers day to day experience in Swift won't change? Yeah. But it's more than just "a detail that can be explained later".
+And the ~ thing is also hard in its own right, even if one gets about the wheels, because it's difficult to hold in mind where all the places the invisible parts get added. To know what you don't know. (An IDE feature to "show implicit conformances" kinda like was VSCode does in some cases might be really helpful.)
+I probably sound like a broken record and I'll stop now. But I think for this particular feature the documentation absolutely cannot be an after thought, and what might feel like "progressive disclosure" to some will feel like falling off a cliff to many others.
+Edited: So many typos! I caught some of them.
+
+---
+
+@Jumhyn · 2024-03-17T16:46:39.105Z:
+wadetregaskis:
+If S cannot be made Copyable even by an extension, then that is completely novel behaviour in the language (and IMO a much more complicated protocol conformance model than what we have now).
+It is worth emphasizing that while a Copyable conformance may be introduced by extension, it cannot be done in an unrestricted manner:
+Conditional Copyable conformance must be declared in the same source file as the struct or enum itself. Unlike conformance to other protocols, copyability is a deep, inherent property of the type itself.
+So it is not possible, for instance, for a user to define a retroactive conformance to Copyable for a type they do not control.
+
+---
+
+@ben-cohen · 2024-03-17T17:11:07.977Z:
+Note that this isn't entirely without precedent, e.g.
+b.swift:2:1: error: extension outside of file declaring struct 'S' prevents automatic synthesis of '==' for protocol 'Equatable'
+1 │
+2 │ extension S: Equatable { }
+│ ╰─ error: extension outside of file declaring struct 'S' prevents automatic synthesis of '==' for protocol 'Equatable'
+
+---
+
+@Jumhyn · 2024-03-17T17:20:42.045Z:
+Yeah, and even though for many protocols the compiler will (validly) accept a retroactive conformance which simply implements the syntactic requirements, it’s always been the case that one must ensure their implementations obey the documented formal semantics of the protocol (which someone other than the type author may not be able to do!).
+Copyable is special in that the compiler has built-in knowledge about how those non-syntactic semantic requirements behave and how they are able to be satisfied, rather than just taking a retroactive conformance’s word for it.
+
+---
+
+@taylorswift · 2024-03-17T23:06:35.864Z:
+Jumhyn:
+It is worth emphasizing that while a Copyable conformance may be introduced by extension, it cannot be done in an unrestricted manner:
+this doesn’t work for me at all, although the diagnostic could be improved
+struct S:~Copyable
+{
+}
+extension S:Copyable
+//  cannot find type 'Copyable' in scope
+{
+}
+to me, if it were possible to make something noncopyable copyable again, that would sort of defeat the purpose of marking a (concrete) type ~Copyable in the first place. i understand the concept is more nuanced for generic types, but for concrete types, it would undermine a lot of use cases if it were possible to backdoor a Copyable conformance to something ~Copyable.
+
+---
+
+@Alejandro · 2024-03-17T23:30:34.142Z:
+<source>:3:1: error: noncopyable struct 'A' cannot conform to 'Copyable'
+1 │ struct A: ~Copyable {}
+2 │
+3 │ extension A: Copyable {}
+│ ╰─ error: noncopyable struct 'A' cannot conform to 'Copyable'
+This is what I get at least on main
+
+---
+
+@wadetregaskis · 2024-03-18T00:15:09.002Z:
+taylorswift:
+to me, if it were possible to make something noncopyable copyable again, that would sort of defeat the purpose of marking a (concrete) type ~Copyable in the first place. i understand the concept is more nuanced for generic types, but for concrete types, it would undermine a lot of use cases if it were possible to backdoor a Copyable conformance to something ~Copyable.
+Yeah, but it's also conceptually simpler if it behaves like any other protocol in this regard, e.g. Codable.  It just so happens that instead of:
+struct S {}
+extension S: Codable {}
+…the syntax is:
+struct S: ~Copyable {}
+extension S: Copyable {}
+Limiting the difference to only whether it's on or off by default helps keep it tractable, especially for beginners or more casual users.
+And if you do write extension S: Copyable - and it has to be in the same file, even - then, well, what were you expecting?
+I think pragmatically there's not actually much room for confusion or error.  And what room there is likely requires relatively complex or convoluted logistics (e.g. interplays with macros), in which case you kinda already have to be an expert in all the relevant parts of the language & compiler, in order to make it work correctly anyway.
+
+---
+
+@taylorswift · 2024-03-18T01:42:06.090Z:
+wadetregaskis:
+Limiting the difference to only whether it's on or off by default helps keep it tractable, especially for beginners or more casual users.
+i appreciate there is mathematical elegance in having a dichotomy centered around abstract assumptions about types, and making this dichotomy fit into existing thought patterns about protocol conformances. but when it comes to everyday practical coding, i would much prefer a “dumb” trichotomy that might take the form of:
+never Copyable
+sometimes Copyable, depending on generics
+always Copyable
+
+---
+
+@Jumhyn · 2024-03-18T03:03:29.290Z:
+taylorswift:
+this doesn’t work for me at all, although the diagnostic could be improved
+struct S:~Copyable
+{
+}
+extension S:Copyable
+//  cannot find type 'Copyable' in scope
+{
+}
+Ah i had thought the previous discussion indicated that this was already accepted, I should have checked. I tend to agree that this is confusing and undesirable, though I find Jordan’s point about macros compelling as well. There are a few design goals that end up conflicting:
+When possible we should design syntax that is more consistent/composable to make it easier to write correct macros that work in all relevant cases.
+Macro productions copy-pasted into actual source should continue compiling without any new diagnostics.
+Composable syntactic rules can sometimes admit more pathological cases which are confusing in practice to human readers, and we should try to selectively disallow those cases when they arise.
+I don’t see a way to reconcile these points—something has to give.
+I certainly would never suggest anyone write code like your snippet above, but does the (3) downside outweigh the (1) interest here? I’m not sure.
+
+---
+
+@jrose · 2024-03-18T03:09:23.850Z:
+I didn’t check either, but my concrete suggestion is “downgrade this to a warning, and silence the warning if the code comes from a macro”.
+
+---
+
+@Jumhyn · 2024-03-18T03:26:25.630Z:
+Yeah, I’ve suggested something similar in past situations where there’s been an undesirable syntax which is easier to generate systematically, but this runs afoul of goal (2) above. I’m still not totally sure that purity on (2) is always the right tradeoff to make against compromises on (1) and (3).
+
+---
+
+@wadetregaskis · 2024-03-18T03:55:47.095Z:
+There's no such issues if you just consider extension S: Copyable acceptable.
+If the intent is to require that copyability or not be specifiable only on the core type specification, then maybe it shouldn't be using protocol conformance, an existing mechanism which doesn't behave that way?
+e.g. @nonCopyable struct S instead, or whatever.
+In parallel, consider that a warning can always be added after the fact (such an addition isn't considered source-breaking, I believe).  So it's also an option to just allow extension S: Copyable and just see how it goes; see if it actually turns out to cause significant problems.
+
+---
+
+@carlynorama · 2024-03-18T13:32:42.377Z:
+There's a trickiness to this situation:
+~ makes more sense when it is suppress implicit only
+People went to the effort to make Copyable a thing so it could be prevented for safety reasons (so "whats the point of ~Copyable if we can't do that...") so limiting Copyable to extendable only in the Source file is the compromise (generic associated type exception)?
+ETA: Now in generics its triply hard because it still needs suppressing, but also it sounds like people want to be able to use ~Copyable kind of like AnyObject, "I only want to take the type of thing that's MoveOnly", which having a ~ mean suppress-implicit-conformance only doesn't get them.  (If ~ meant "without SomeProtocol" not "suppress implicit SomeProtocol" it could, and I think that is what most people at a casual reading take it to mean.)  ETA: So what we're getting is a compromise where ~ in the generic context means "Promises not to use any SomeProtocol features" (Maybe we need another glyph? Ha. one that means "un-using") But team - "I need to forbid this for safety reasons" will naturally find this insufficient. (And the casual reader will find confusing because they thought it meant "without-without")
+I don't know what could/should be done to decorate Copyable or other root-file-extensions-only things as different than "the usual protocol" to indicate its not the ~ doing that it's the thing itself with that limitation.
+Unless that is part of what ~ is supposed to mean? "I only suppress implicit protocols that also have an added at the root only limitation"
+
+---
+
+@taylorswift · 2024-03-18T16:28:19.594Z:
+wadetregaskis:
+So it's also an option to just allow extension S: Copyable and just see how it goes; see if it actually turns out to cause significant problems.
+this isn’t really the right approach to take when adding features to a mature language such as Swift. if it becomes possible to re-Copyable a noncopyable struct, people will start doing it, and removing it would be source breaking.
+
+---
+
+@wadetregaskis · 2024-03-18T17:05:39.292Z:
+taylorswift:
+…and removing it would be source breaking.
+Not if it's merely a compiler warning.
+
+---
+
+@michelf · 2024-03-18T17:47:04.553Z:
+taylorswift:
+never Copyable
+sometimes Copyable, depending on generics
+always Copyable
+There is a certain value in thinking about types that way: "never Copyable" means a struct can have a deinit while "sometimes Copyable" means it cannot have one. The restrictions and capabilities are different.
+This is also pretty close to what I suggested earlier in the thread:
+~Copyable — type is never copyable
+?Copyable — type is sometime copyable depending on generics (also causes extensions to be Copyable by default unless you suppress it with where Self: ~Copyable)
+Copyable (the default)
+
+---
+
+@Slava_Pestov · 2024-03-18T20:04:09.698Z:
+taylorswift:
+if it becomes possible to re-Copyable a noncopyable struct, people will start doing it, and removing it would be source breaking.
+Type metadata directly encodes whether a type is copyable or not, so its an intrinsic property of a type; a conformance to Copyable (conditional or not) can only be declared in the same source file as the type.
+
+---
+
+@taylorswift · 2024-03-18T21:57:54.177Z:
+Slava_Pestov:
+Type metadata directly encodes whether a type is copyable or not, so its an intrinsic property of a type; a conformance to Copyable (conditional or not) can only be declared in the same source file as the type.
+i’m not sure how this relates to the revocability of extension T:Copyable?
+
+---
+
+@kavon · 2024-03-18T23:54:03.740Z:
+wadetregaskis:
+In parallel, consider that a warning can always be added after the fact (such an addition isn't considered source-breaking, I believe). So it's also an option to just allow extension S: Copyable and just see how it goes; see if it actually turns out to cause significant problems.
+But much more importantly: making it an error after the fact becomes impossible without a source break.
+wadetregaskis:
+Is this any different to any other protocol conformance via an extension, though? Special-casing Copyable in this respect would make the overall system more complicated.
+I disagree.
+I'd much rather it be an error to write an extension adding an unconditional Copyable conformance to a type marked with ~Copyable, as it is implemented and proposed today. I argue it is always a code smell as there are many ways, other than the dead-obvious extension discussed so far, to accidentally make the type always Copyable. Suppose you see this:
+struct S: ~Copyable {}
+extension S: P {}
+You'd think S is still noncopyable, right? Not if we loosen the error! If we had this:
+protocol P {}
+then S becomes unconditionally copyable through that extension, because P inherits from Copyable (implicitly) and Copyable has no explicit requirements. That extension was obviously a mistake!
+Furthermore, if you want to permit this:
+struct S: ~Copyable {}
+extension S: Copyable {}
+Then you must also permit this awful thing:
+struct S: ~Copyable, Copyable {}
+As they are equivalent rewritings.
+Jumhyn:
+I tend to agree that this is confusing and undesirable, though I find Jordan’s point about macros compelling as well.
+I think macros are going to also stumble upon the same problem that I just described, where it accidentally introduced an unconditional Copyable conformance with an extension. It'll just be a bit more hidden since the extension isn't explicitly written.
+Hypothetical macros that would benefit from allowing such extensions haven’t yet been demonstrated, so I think we should not change this proposal to accommodate them.
+wadetregaskis:
+If S cannot be made Copyable even by an extension, then that is completely novel behaviour in the language (and IMO a much more complicated protocol conformance model than what we have now).
+Not really. It's already possible to write requirements that conflict with each other:
+protocol P {}
+func f<T>(_ t: T)
+where T == Int, T: P {}
+// error: no type for 'T' can satisfy both 'T == Int' and 'T : P'
+What's been proposed is that T: ~Copyable and T: Copyable conflict with each other if they completely overlap. Creating an exception for nominal types and their extensions actually is the special case that I think lacks justification for the additional confusion it will cause.
+
+---
+
+@kavon · 2024-03-19T00:02:28.574Z:
+hborla:
+No. For Sendable, it should be completely valid to explicitly say that a superclass does not have a Sendable conformance using ~Sendable, but add Sendable conformances to subclasses.
+I think this will work just fine and is orthogonal to the extension discussion.
+We already are proposing that inheritance of ~Copyable in protocols works basically as you describe for classes. That is, this would be legal:
+class Base: ~Sendable {}
+class Derived: Base, Sendable {}
+But this would be diagnosed as an error:
+class Base: Sendable {}
+class Derived: Base, ~Sendable {}
+
+---
+
+@wadetregaskis · 2024-03-19T03:15:15.889Z:
+kavon:
+struct S: ~Copyable {}
+extension S: P {}
+You'd think S is still noncopyable, right? Not if we loosen the error! If we had this:
+protocol P {}
+Yeah, fair point.  It's similar, actually, to how isolation constraints can be secretly applied through protocol conformances, and how actors have numerous problematic interactions of that nature with protocols broadly.  I certainly wish those didn't work that way; it's caused real problems for me and many others.
+That could be addressed (in this Copyable case) with the requirement to also explicitly conform to Copyable in the same extension where it conforms to a Copyable-requiring type - which I think genuinely is a reasonable approach, conceptually, and is what should be required more broadly for protocol conformance side-effects like this.  But I [now] concur it's also reasonable to discourage overriding ~Copyable (source-compatibility notwithstanding, I'd still prefer it start as a warning though).
+
+---
+
+@ellie20 · 2024-03-19T03:21:09.716Z:
+kavon:
+struct S: ~Copyable {}
+extension S: P {}
+You'd think S is still noncopyable, right? Not if we loosen the error! If we had this:
+protocol P {}
+It would be similarly problematic, I think, if we allowed this kind of "hidden" copyable conformance even if it were conditional:
+struct S<T>: ~Copyable {}
+extension S: P where T == Int {}
+// oops, accidentally made S conditionally copyable,
+// precluding the future addition of noncopyable fields in S
+Maybe we should require any conformance of a noncopyable type to Copyable, even if implicit, to explicitly name Copyable.
+struct S<T>: ~Copyable {}
+extension S: P, Copyable where T == Int {}
+This would also be a step towards letting protocols retroactively support noncopyable types, killing two birds with one stone.
+
+---
+
+@xwu · 2024-03-19T05:33:03.673Z:
+kavon:
+Suppose you see this:
+struct S: ~Copyable {}
+extension S: P {}
+You'd think S is still noncopyable, right? Not if we loosen the error! If we had this:
+protocol P {}
+then S becomes unconditionally copyable through that extension, because P inherits from Copyable (implicitly) and Copyable has no explicit requirements. That extension was obviously a mistake!
+This is where I think that my proposed alternative inference rule shines if applied across the board:
+If we always infer where Self: Copyable on extensions regardless whether of protocols or of concrete types (unless the extension is itself an explicit conformance to Copyable, of course, or suppresses the inference with where Self: ~Copyable), then the concern here is well addressed (and separable from the original issue being discussed of explicit Copyable conformances):
+extension S: P /* where Self: Copyable */ { }
+// error: 'S' is never 'Copyable'
+kavon:
+Then you must also permit this awful thing:
+struct S: ~Copyable, Copyable {}
+As they are equivalent rewritings.
+I'm not concerned about this at all. It is redundant like Equatable, Hashable is redundant, and if desired we can diagnose it for redundancy. But ultimately, this is a stylistic faux pas, and there are plenty of nauseating stylistic choices out there in Swift code upon which we do not bring down the hammer of a compiler error.
+kavon:
+hborla:
+No. For Sendable, it should be completely valid to explicitly say that a superclass does not have a Sendable conformance using ~Sendable, but add Sendable conformances to subclasses.
+I think this will work just fine and is orthogonal to the extension discussion.
+I would like us to be cautious about overfitting here to the two (relatively) recently introduced protocols which both have no implementation requirements.
+Just as we've said above that the concept of "marker protocols" now (regrettably) in hindsight seems to have been overfitted to Sendable, I worry that we are creating rules for ~ that do not generalize even as we've intimated that we'd like to use the same spelling down the road for suppressing inferred conformances to Equatable, Hashable, etc.
+Given a protocol like Copyable and a non-generic type, the distinction between "suppressing the default conformance" and the meta-requirement "requiring not conforming" is close to none for most purposes. This is in no small part because there isn't more than one way to conform—i.e., there is no implementation to give. It is easy, then, to say that the originally introduced semantics of ~Copyable in the prior proposal is equivalent to a meta-requirement and that it makes no sense to write struct S: ~Copyable and then extension S: Copyable.
+By contrast, given a protocol such as Codable, it would very much make sense for a type to want to suppress the inferred default conformance and to later, in an extension grouping all the implementation details, adopt a custom conformance. For that reason, it makes a great deal of difference whether struct T: ~Codable means (to the human reader—I am not suggesting that there cannot be a consistent set of rules to make the compiler DWIM) that T is simply suppressing the inferred default conformance or instead adopting a meta-requirement never to conform.
+
+---
+
+@wadetregaskis · 2024-03-19T05:40:43.473Z:
+xwu:
+By contrast, given a protocol such as Codable, it would very much make sense for a type to want to suppress the inferred default conformance and to later, in an extension grouping all the implementation details, adopt a custom conformance.
+That's part of what still bothers me - that there's no syntactic distinction between the two "classes" of protocols.  It requires the reader to know a priori, somehow, that this protocol behaves one way while that protocol behaves another.  That makes the language less intuitive (it's an arbitrary distinction that requires memorisation) and harder to learn (more complexity).
+Of course, it's not a big deal, as long as the set of 'weird' protocols is very small and changes infrequently, but it's not ideal.
+
+---
+
+@kavon · 2024-03-19T06:58:37.575Z:
+ellie20:
+Maybe we should require any conformance of a noncopyable type to Copyable, even if implicit, to explicitly name Copyable.
+struct S<T>: ~Copyable {}
+extension S: P, Copyable where T == Int {}
+This would also be a step towards letting protocols retroactively support noncopyable types, killing two birds with one stone.
+The design already limits Copyable conformances to only be conditional on conformances to Copyable, so this same-type requirement in particular isn't legal. But I get the general thing you're getting at here, so let me rephrase it as this:
+protocol P {}
+struct S<T>: ~Copyable {}
+extension S: P where T: Copyable {}
+We could say that this is an error, because conditional conformances for Copyable itself must not be implied, and instead be explicitly written in a separate extension, similar to what we have today for conditional conformances:
+protocol Q {}
+protocol P: Q {}
+struct S<T> {}
+extension S: P where T == String {}
+// error: conditional conformance of type 'S<T>' to protocol 'P' does not imply conformance to inherited protocol 'Q'
+// note: did you mean to explicitly state the conformance like 'extension S: Q where ...'?
+We have to allow a conditional conformance to P imply conformance to Q if the where clause only contains requirements to conform to Copyable, i.e.,
+struct S<T: ~Copyable> {}
+extension S: P where T: Copyable {}
+// S also conforms to Q
+in order to allow for progressive disclosure and the retrofitting of existing types to allow noncopyable values in it. Because that where T: Copyable is implicit in every extension of S unless you state T: ~Copyable again.
+But, we can make an exception to that if the implied conformance is for Copyable itself. Then, you need to write the extension out, so that there's no questions about when the type is Copyable:
+protocol Q {}
+protocol P: Q {}
+struct S<T: ~Copyable>: ~Copyable {}
+extension S: Copyable {} // conditional conformance to Copyable
+extension S: P {} // includes conditional conformance to Q, not Copyable.
+
+---
+
+@kavon · 2024-03-19T07:28:36.218Z:
+xwu:
+This is where I think that my proposed alternative inference rule shines if applied across the board:
+If we always infer where Self: Copyable on extensions regardless whether of protocols or of concrete types (unless the extension is itself an explicit conformance to Copyable, of course, or suppresses the inference with where Self: ~Copyable), then the concern here is well addressed (and separable from the original issue being discussed of explicit Copyable conformances):
+extension S: P /* where S: Copyable */ { }
+// error: 'S' is never 'Copyable'
+The S in this example is not generic, so if you meant where T: Copyable here, then this should not be an error. We have no other syntax for writing conditional conformances than extensions.
+~Copyable does not mean "never Copyable" in the proposed design. It means it's never unconditionally Copyable.
+xwu:
+kavon:
+Then you must also permit this awful thing:
+struct S: ~Copyable, Copyable {}
+As they are equivalent rewritings.
+I'm not concerned about this at all. It is redundant like Equatable, Hashable is redundant, and if desired we can diagnose it for redundancy. But ultimately, this is a stylistic faux pas, and there are plenty of nauseating stylistic choices out there in Swift code upon which we do not bring down the hammer of a compiler error.
+I've now given numerous examples that demonstrate that Copyable & ~Copyable is confusing, illogical, and debases the meaning of ~Copyable to a mere suggestion. It absolutely deserves to be an error from the outset and that cannot be hand-waved away as just stylistic. We surely must diagnose this as an error because Copyable is implied:
+protocol P {}
+struct S: P, ~Copyable {}
+So why should we have a special case to allow struct S: Copyable, ~Copyable {}?
+
+---
+
+@Dmitriy_Ignatyev · 2024-03-19T15:39:30.795Z:
+How can I declare a generic function that allows move-only (~Copyable) values and decline Copyable-values passed as and argument?
+The example from proposal:
+func identity<T: ~Copyable>(x: consuming T) { return x } {}
+This function accepts both Copyable and ~Copyable types. But how can I restrict it to move-only types?
+
+---
+
+@Dmitriy_Ignatyev · 2024-03-19T16:16:14.682Z:
+Another one confusing aspect is any ~Copyable. If I understand the proposal correctly, it is possible to assign to any ~Copyable variable both Copyable and ~Copyable values. But there are move only types which have different bahaviour and constraints, so I expect any ~Copyable variable can only contain move-only value, which might have deinit.
+
+---
+
+@kavon · 2024-03-19T16:28:47.845Z:
+Dmitriy_Ignatyev:
+func identity<T: ~Copyable>(x: consuming T) { return x } {}
+This function accepts both Copyable and ~Copyable types. But how can I restrict it to move-only types?
+You can't. What is the purpose of doing that? Generics are about stating the minimum requirements so that your function is maximally general. So there isn't a way in Swift to exclude values unless if it lacks a capability that you need. At best, you can rely on overloading to provide a specific implementation if it supports a capability that isn't strictly required:
+func identity<T: ~Copyable>(x: consuming T) -> T { return x }
+// Overload for 'identity' for Copyable values.
+func identity<T>(x: T) -> T { return x }
+Which brings up an interesting part of the design I'd love to hear people's thoughts about: overloading on Copyable.
+Dmitriy_Ignatyev:
+But there are move only types which have different bahaviour and constraints, so I expect any ~Copyable variable can only contain move-only value, which might have deinit.
+What are the behaviors and constraints that a Copyable type cannot support when treated as though it is ~Copyable?
+A move-only type is not required to have a deinit. So a value that supports copying, but isn't actually copied after being assigned to an any ~Copyable variable, isn't a problem. It will get a default value witness for destruction, just as if it were cast to Any.
+
+---
+
+@xwu · 2024-03-19T16:43:40.986Z:
+kavon:
+xwu:
+extension S: P /* where S: Copyable */ { }
+// error: 'S' is never 'Copyable'
+The S in this example is not generic, so if you meant where T: Copyable here, then this should not be an error. We have no other syntax for writing conditional conformances than extensions.
+Sorry, typo: I meant as I described in the paragraph above—where Self: Copyable. I did not mean to suggest that it is utterable, since S is non-generic; rather, I meant the notional application of that rule would dictate that this would be an error, and an extension would by that reasoning have to explicitly state Copyable conformance (or give up trying to conform). This would be because lack thereof would lead to an inferred, disallowed constraint (precisely because we'd be trying to extend a nongeneric type and a where clause cannot be applied).
+This is, admittedly, severe for unconditionally noncopyable types that are just being extended to add a method or something, so probably unworkable.
+kavon:
+So why should we have a special case to allow struct S: Copyable, ~Copyable {}?
+My argument is that we should not special case this whatsoever; whether this is allowed without any diagnostic, gives a warning, or gives an error should fall out of rules we agree on for actual, non-silly usages.
+What I was replying to was your argument earlier that a point against allowing extension S: ~Copyable was that if we allow it then we must also allow struct S: Copyable, ~Copyable, and that because the latter is silly it's a point against the former. Not so: I am saying that we ought to give no weight to this at all.
+
+---
+
+@Joe_Groff · 2024-03-19T16:47:23.136Z:
+Dmitriy_Ignatyev:
+Another one confusing aspect is any ~Copyable. If I understand the proposal correctly, it is possible to assign to any ~Copyable variable both Copyable and ~Copyable values. But there are move only types which have different bahaviour and constraints, so I expect any ~Copyable variable can only contain move-only value, which might have deinit.
+Copyable types also have deinits (that's how class references get released when a value goes away, for instance). You just can't write one explicitly (yet?).
+
+---
+
+@jeremyabannister · 2024-03-19T19:43:30.994Z:
+Dmitriy_Ignatyev:
+How can I declare a generic function that allows move-only (~Copyable) values and decline Copyable-values passed as and argument?
+I’m not fully up-to-speed with the new ownership keywords, but perhaps what you’d be looking for is not a requirement that the type be fundamentally non-copyable, but rather that the specific value that is passed as an argument to your function be owned exclusively by your function for the duration of its execution, which I think would be spelled something like this:
+func foo<T>(_ bar: consuming T) { }
+Can someone confirm or correct my spelling?
+P.S. I realize that it may be surprising that the signature above does not accept “move-only types” (i.e. ~Copyable) despite the parameter having explicitly renounced its need to copy the argument. Would it make sense for the consuming keyword to imply ~Copyable under certain appropriate circumstances such as this?
+Between the fact that 1) I’ve never used the new ownership keywords, 2) I’m not even 100% sure that consuming exists as such, and 3) I’m not personally familiar with any of the real motivating use cases for ~Copyable, I’m somewhat out of my depth on this issue and perhaps my critique is nonsensical… but I’m looking forward to finding out…
+
+---
+
+@Slava_Pestov · 2024-03-19T20:27:10.282Z:
+kavon:
+You can't. What is the purpose of doing that? Generics are about stating the minimum requirements so that your function is maximally general. So there isn't a way in Swift to exclude values unless if it lacks a capability that you need.
+Yep. Here's a thought experiment. In generics, the behavior of a type parameter T is defined entirely by things I know are true about T. For example, the only way that T can conform to Equatable is if this is a consequence of explicitly-stated requirements.
+So the knowledge that the concrete replacement type for T definitely does not conform to some protocol (Copyable, or Equatable, it doesn't matter) doesn't actually give you any new information about T! From inside the body of a generic function, it only matters if I can always prove that T is Copyable. Otherwise, it doesn't matter if T may be Copyable, or if it definitely is not Copyable; neither possibility leads to any consequences for T.
+
+---
+
+@beccadax · 2024-03-19T22:15:20.608Z:
+I didn't see much discussion of availability in the proposal. Can you have a non-conditional conformance with partial availability? Surely that, at least, would require a Copyable conformance in an extension.
+@available(dishwasherOS 1.0, *)
+public struct SpinnerMotor: ~Copyable {
+// In dishwasherOS 1, SpinnerMotor was implemented
+// with a non-copyable stored property...
+}
+@available(dishwasherOS 2.0, *)
+extension SpinnerMotor: Copyable {
+// But in dishwasherOS 2, that was replaced with a copyable
+// Int, so there's no reason new code can't copy it.
+}
+
+---
+
+@Slava_Pestov · 2024-03-19T23:20:25.342Z:
+beccadax:
+I didn't see much discussion of availability in the proposal. Can you have a non-conditional conformance with partial availability?
+More than likely not. To properly support available Copyable conformances, we would need the ability to perform some kind of dynamic check before we could copy a value, and we probably shouldn't go there at all. We should revise the proposal to explicitly disallow this.
+
+---
+
+@tshortli · 2024-03-20T00:39:21.283Z:
+Slava_Pestov:
+To properly support available Copyable conformances, we would need the ability to perform some kind of dynamic check before we could copy a value
+I'm having trouble following this. What are the circumstances in which the program would only copy the value conditionally at runtime? I imagine a conditionally available Copyable conformance working the same way any conditionally available conformance works. Availability checking would restrict use of the conformance to locations where it can be proven to be available. Any contexts in which the availability of the conformance is not proven would have to treat the value as non-copyable.
+
+---
+
+@wadetregaskis · 2024-03-20T00:54:06.596Z:
+jeremyabannister:
+P.S. I realize that it may be surprising that the signature above does not accept “move-only types” (i.e. ~Copyable) despite the parameter having explicitly renounced its need to copy the argument. Would it make sense for the consuming keyword to imply ~Copyable under certain appropriate circumstances such as this?
+consuming just means the receiving function takes ownership of the value, not that the value cannot be copied.  They're largely orthogonal, I think?
+I believe the value will in fact be copied if it's copyable and the caller still needs it - the callee receives only the copy (which it's given ownership of).
+consuming or borrowing allow the use of non-copyable types.  Which does make me wonder what the following is supposed to mean, because it seems invalid:
+func foo<T: ~Copyable>(_ bar: T) { … }
+…since how is the ABI supposed to be determined for this, as to whether the argument is borrowed or consumed?
+
+---
+
+@jeremyabannister · 2024-03-20T01:13:48.692Z:
+wadetregaskis:
+I believe the value will in fact be copied if it's copyable and the caller still needs it - the callee receives only the copy (which it's given ownership of).
+Hm, ok, well if this is true then I do think I'm missing some pieces of the conceptual puzzle. If we copy a value and pass the copy as an argument to a function, doesn't the function always "have ownership" of the copy? I thought the point of marking a parameter as consuming was that the value gets "used up" by the function and the callee is not allowed to "still need it".
+
+---
+
+@wadetregaskis · 2024-03-20T01:29:52.675Z:
+jeremyabannister:
+Hm, ok, well if this is true then I do think I'm missing some pieces of the conceptual puzzle. If we copy a value and pass the copy as an argument to a function, doesn't the function always "have ownership" of the copy? I thought the point of marking a parameter as consuming was that the value gets "used up" by the function and the callee is not allowed to "still need it".
+Right - if the caller doesn't need the value anymore, it can just pass it to the function without any copying.
+I guess I'm not certain, but I thought the final decision on consuming was that it does not require the caller to relinquish the original [copy] if it doesn't want to (unless the type is non-copyable).  I don't think a copy keyword is required at the callsite - I think it's implicit - but I could be wrong.  I remember that being discussed.
+
+---
+
+@Dmitriy_Ignatyev · 2024-03-20T02:03:49.637Z:
+kavon:
+What are the behaviors and constraints that a Copyable type cannot support when treated as though it is ~Copyable?
+I work a lot with state machines. A pattern with statically typed states become available with move-only types, here are some details and example: Typestate - the new Design Pattern in Swift 5.9 | Swiftology
+I want to create library which helps to work with states, and I want library to guide  users in a right way: use move only types, not Copyable types or classes.
+Another one reason is exit action – the action which is performed on state exit. It can be done in dinit which can be declared in move-only types and classes, but classes should be discouraged.
+
+---
+
+@kavon · 2024-03-20T02:33:33.463Z:
+I encourage everyone to give this proposal a test drive with a nightly toolchain and -enable-experimental-feature NoncopyableGenerics. Perhaps try to write a generic Maybe<T> type like Optional that is conditionally copyable and post your feedback!
+wadetregaskis:
+consuming or borrowing allow the use of non-copyable types. Which does make me wonder what the following is supposed to mean, because it seems invalid:
+func foo<T: ~Copyable>(_ bar: T) { … }
+…since how is the ABI supposed to be determined for this, as to whether the argument is borrowed or consumed?
+Here's what you'll get:
+test.swift:1:31: error: parameter of noncopyable type 'T' must specify ownership
+1 │ func foo<T: ~Copyable>(_ bar: T) {}
+│                               ├─ error: parameter of noncopyable type 'T' must specify ownership
+│                               ├─ note: add 'borrowing' for an immutable reference
+│                               ├─ note: add 'inout' for a mutable reference
+│                               ╰─ note: add 'consuming' to take the value from the caller
+
+---
+
+@kavon · 2024-03-20T02:58:22.339Z:
+I'd like to try and address some of the syntactic confusion I've seen in this discussion from a different angle. We have the expectation that the following assertion is always true:
+func comparing<T: Equatable>(_ t: T) {
+assert(t is any Equatable)
+}
+What trips people up is reading ~Copyable as "not Copyable". Because it means thinking this assertion is also always true:
+func moving<T: ~Copyable>(_ t: T) {
+assert(!(t is any Copyable))
+}
+But it is not. You can substitute both Copyable and non-Copyable types into moving. The assertion that is always true inside moving is assert(t is any ~Copyable), but it's trivally true for every type. It's like the new version of t is Any in the post-NoncopyableGenerics universe.
+The ~ makes people think "not", but it's actually a suppression, or "subtraction", of a requirement that is there by default.
+I wouldn't be opposed to moving towards -Copyable instead, to help nudge people to think subtraction instead of negation. It'd be intuitively read "minus Copyable". Yes, we'd have to probably deprecate the syntax from SE-390, which did allow ~Copyable in an inheritance clause. But that's probably for the better.
+Another alternative is to keep ~ but avoid using :, which people typically read as "is", and instead something like where T ~ Copyable to subtract or remove the Copyable requirement from generic parameter T.
+Thoughts?
+
+---
+
+@wadetregaskis · 2024-03-20T03:20:32.664Z:
+kavon:
+func moving<T: ~Copyable>(_ t: T) {
+assert(!(t is any Copyable))
+}
+To your prior point, wouldn't that need a consuming / borrowing / inout in there?
+kavon:
+I wouldn't be opposed to moving towards -Copyable instead, to help nudge people to think subtraction instead of negation. It'd be intuitively read "minus Copyable".
+For constraint clauses, I like the direction but I
+[... truncated at 150,000 chars ...]
+
+

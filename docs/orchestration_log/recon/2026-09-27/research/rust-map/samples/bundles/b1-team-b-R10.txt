@@ -1,0 +1,3149 @@
+=== ROW 103 | f004423 | https://iroh.computer/blog/iroh-0-97-0-custom-transports-and-noq | 2026-03-16 | domain-subframes ===
+iroh 0.97.0 - Custom Transports & noq - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.97.0 - Custom Transports & noqMarch 16, 2026 by dignifiedquire
+Welcome to a new release of iroh, a modular networking stack in Rust, for building direct connections between devices.
+You can now plug your own transport implementations into iroh, opening the door to bluetooth, WebRTC, and anything else you can dream up. We've also officially switched our QUIC implementation to noq, our fork of Quinn that's now its own project. And if you've ever wanted to embed a relay server directly into your application, now you can.
+Two important callouts
+1. Changes to Endpoint::builder and Endpoint::bind
+Endpoint::builder and Endpoint::bind now take a preset argument, making the relay server configuration explicit. To get the same behaviour as before, simply replace Endpoint::bind() with Endpoint::bind(presets::N0), and similarly with Endpoint::builder() becomes Endpoint::builder(presets::N0):
+2. Changes to Endpoint closing
+Starting with this release, the Endpoint no longer attempts to close connections gracefully when dropped. To gracefully close the endpoint, always await endpoint.close() before dropping the last instance of an endpoint or terminating your application.
+Here's the rundown:
+Custom Transports: Define your own transport implementations beyond UDP/IP
+noq: Our QUIC implementation is now a standalone project
+Embeddable Relay Server: RelayService is now public for library embedding
+Preset API: Simpler endpoint configuration with presets
+Customizable TLS Trust Roots: Control certificate verification for non-iroh TLS connections
+Address Filtering: Filter and reorder addresses published by address lookup services
+Endpoint Lifecycle Improvements: Better behavior on close and drop
+Improved Incoming Connection Info: More precise information for rate limiting and access control
+Portmapper Feature Gate: Portmapper can now be disabled via feature flags
+🔌 Custom Transports
+This release includes a new experimental feature: custom transports. Any unreliable datagram transport that can support a minimum packet size of 1200 bytes can be used as a custom transport for iroh.
+Using custom transports
+To use a custom transport, you just need to add a dependency to a custom transport crate and add the custom transport while building the endpoint. You will only be able to talk via the custom transport to endpoints that also have the transport enabled.
+Endpoint::builder()
+.add_custom_transport(my_transport)
+.bind().await?
+CopyCopied!
+Implementing custom transports
+Implementing a custom transport is more involved. You need to implement a number of traits for low level packet sending and receiving, choose a custom address id, and implement serialisation of your custom address into an opaque CustomAddr.
+Currently, we have a tor transport and a nym transport implemented. We will work with the community to provide transports such as bluetooth low energy (BLE).
+The tor transport is pretty simple and is a good starting point if you want to implement your own custom transport. Check out this blog post for details.
+Current status
+The ability to represent custom addresses is included in iroh, but the traits you need to implement or use custom transports need to be enabled using the unstable-custom-transports feature flag.
+As the name suggests, the custom transport API is unstable and will remain so for some time even after iroh 1.0 is released.
+There is a limited API to configure preferences for custom transports. This is an area that we expect to refine and improve in the future.
+Checkout PR #3845 for more details.
+📦 Hello, noq
+If you've been following along, you know that iroh has been built on a fork of the Quinn QUIC implementation. Over time, our fork diverged significantly as we added multipath support, QUIC NAT traversal, and other features that iroh needs.
+With this release, our fork has graduated into its own project: noq. This isn't just a rename - it reflects the reality that our QUIC implementation has its own direction and focus. All internal references have been updated from Quinn to noq, and types are now re-exported from noq directly.
+For most users, this is a search-and-replace change: anywhere you were using iroh_quinn or iroh_quinn_proto types, you'll now find them under noq and noq_proto.
+Checkout PR #4005 for more details.
+🏠 Embeddable Relay Server
+The iroh-relay crate has always let you run a standalone relay server, but what if you want to embed relay functionality directly into your own application? Now you can.
+RelayService is now public, and the relay internals have been refactored to be generic over stream types. This means you can integrate the relay server into your own axum application, adding relay capabilities alongside your existing HTTP endpoints. All the types you need for external integration are now public and documented.
+Thanks to Nicolas Luck for contributing this feature!
+Checkout PR #3832 for more details.
+🔐 Customizable TLS Trust Roots
+By default, iroh uses embedded WebPKI roots for TLS certificate verification on non-iroh connections (relay servers, pkarr, DNS-over-HTTPS). But sometimes you need more control - maybe you're running in an environment with custom CAs, or you want to use the operating system's trust store.
+The new CaRootsConfig struct gives you that control:
+// Use OS roots with an additional custom CA
+let endpoint = Endpoint::builder()
+.ca_roots_config(CaRootsConfig::system().with_extra_roots([my_ca_cert]))
+.bind()
+.await?;
+CopyCopied!
+Options include embedded WebPKI roots (the default), the operating system's roots, a custom list of roots, or any combination with additional extra roots. The insecure_skip_verify option is still available as CaRootsConfig::insecure_skip_verify(), gated behind the test-utils feature as before.
+Checkout PR #3973 for more details.
+🔍 Address Filtering for Address Lookup Services
+With custom transports come custom addresses, and you probably don't want to publish every address type on every address lookup service. DNS-based lookups have byte-size limits, and a bluetooth address isn't useful on a global DHT.
+The new AddrFilter type lets you control exactly which addresses each lookup service publishes:
+Endpoint::builder()
+.address_lookup(PkarrPublisher::n0_dns()
+.with_addr_filter(AddrFilter::new(|addrs| {
+addrs.iter()
+.filter(|a| !matches!(a, TransportAddr::Custom(_)))
+.cloned()
+.collect()
+})))
+.address_lookup(MyBluetoothLookup::new())
+.bind()
+.await?;
+CopyCopied!
+The AddrFilter runs before the addresses are passed to the lookup service. Some services may do additional filtering internally afterwards, but the AddrFilter always runs first.
+Checkout PR #3960 and PR #3987 for more details.
+🏗️ Endpoint Lifecycle Improvements
+We've made several improvements to how Endpoint behaves when closed or dropped:
+Sensible return values after close. Methods like Endpoint::address_lookup(), Endpoint::dns_resolver(), and Endpoint::socket() now return Result<_, EndpointError> instead of potentially returning stale values or panicking after the endpoint has been closed. A new EndpointError::Closed variant makes it easy to handle this case. We also added Endpoint::last_net_report() which returns the most recent NetReport as an Option.
+Explicit close is now required. The Endpoint no longer makes any best-effort attempt to close connections gracefully when dropped. If you drop an endpoint without calling Endpoint::close, resources are cleaned up immediately but connections will not be closed gracefully. To gracefully close the endpoint, always await endpoint.close() before dropping the last instance of an endpoint or terminating your application. An error will be logged if you forget.
+Relay connection stability. The relay server no longer kills existing connections when the same endpoint ID reconnects. Instead, the new connection becomes the active target for messages while the old connection is moved to an inactive state. When the active client disconnects, the latest inactive client is promoted back. This prevents the infinite reconnect loop that could occur previously.
+Checkout PR #3924, PR #3879, and PR #3921 for more details.
+📊 Improved Incoming Connection Info
+Incoming::remote_addr (renamed from remote_address) now returns an IncomingAddr enum instead of a raw socket address. Previously, relay connections exposed a synthetic IPv6 address that wasn't useful for making decisions. Now you get all available information about the incoming connection, making it easy to implement rate limiting or access control at the connection layer.
+Checkout PR #3949 for more details.
+🎛️ Preset API
+Endpoint::builder and Endpoint::bind now take a preset argument, making the relay server configuration explicit rather than hardcoded. Instead of the builder silently defaulting to the n0 relay servers, you now pass a preset:
+// Before
+let endpoint = Endpoint::bind().await?;
+// After
+let endpoint = Endpoint::bind(presets::N0).await?;
+CopyCopied!
+Endpoint::empty_builder and EndpointBuilder::empty now assume RelayMode::Disabled and take no arguments, making it clearer what you get when starting from a blank slate.
+Checkout PR #4014 for more details.
+🔒 Portmapper Feature Gate
+The portmapper is now behind a default feature flag. If you're using no-default-features, you'll no longer get the portmapper. This doesn't change any APIs, but will change functionality for builds that opt out of default features.
+Checkout PR #4011 for more details.
+📈 Path Watcher Stats Retention
+Connection::paths and ConnectionInfo::paths now return a PathWatcher, a named struct that still implements n0_watcher::Watcher. Stats for abandoned or closed paths are retained as long as there are active watchers subscribed. This means you won't lose visibility into path statistics just because a path was closed, which is useful for monitoring and debugging multipath connections.
+Note that PathInfo::stats and PathInfo::rtt now return Option, returning None if the underlying connection has been dropped.
+Checkout PR #3899 for more details.
+⚠️ Breaking Changes
+#4014 — Preset API
+Endpoint::builder and Endpoint::bind now take a preset argument
+Endpoint::empty_builder and EndpointBuilder::empty now assume RelayMode::Disabled and take no arguments
+#4011 — Portmapper feature gate
+Builds using no-default-features will no longer have the portmapper. This does not change APIs but will change functionality.
+#4005 — noq switch
+Types are now re-exported from noq. Internal names have been updated from quinn -> noq.
+#4003 — Crypto
+trait AeadKey is no longer publicly exposed
+trait HandshakeTokenKey now implements seal and open directly
+#3973 — TLS trust roots
+Removed iroh::endpoint::Builder::insecure_skip_cert_verify, use Builder::ca_roots_config(CaRootsConfig::insecure_skip_verify()) instead
+Removed iroh_relay::client::ClientBuilder::insecure_skip_cert_verify, use ClientBuilder::tls_client_config instead
+PkarrResolverBuilder::build and PkarrPublisherBuilder::build now take a tls_config: rustls::ClientConfig argument. If building via Endpoint::add_discovery or endpoint::Builder::discovery no change is needed since the TLS config is passed from the endpoint builder.
+#3960 — Address lookup
+DhtAddressLookupBuilder::include_direct_addresses removed. Use DhtAddressLookupBuilder::set_addr_filter instead.
+Trait IntoAddressLookup renamed to AddressLookupBuilder.
+#3949 — Incoming connections
+endpoint::Incoming::remote_address renamed to remote_addr, and now returns IncomingAddr.
+endpoint::Incoming::remote_address_validated renamed to remote_addr_validated.
+#3924 — Endpoint API
+Endpoint::address_lookup() now returns Result<&ConcurrentAddressLookup, EndpointError>
+Endpoint::dns_resolver() now returns Result<&DnsResolver, EndpointError>
+Endpoint::endpoint() now returns Result<&quinn::Endpoint, EndpointError>
+Endpoint::socket() now returns Result<Handle, EndpointError>
+Added Endpoint::last_net_report() -> Option<NetReport>
+Added EndpointError enum (with variant EndpointError::Closed)
+Added ConnectWithOptsError::EndpointClosed variant
+#3921 — Relay server
+iroh_relay::server::client::RunError variants changed
+#3916 — DNS module
+iroh::dns is now a re-export of iroh_relay::dns. This should not actually be breaking if you were using the public API.
+#3899 — Path watcher
+Connection::paths and ConnectionInfo::paths now return a PathWatcher
+PathInfo::stats and PathInfo::rtt now return Option
+#3879 — Endpoint drop behavior
+Behavioral change: Endpoint no longer makes any best-effort to close connections gracefully on drop. You must call Endpoint::close explicitly.
+🎉 The Road to 1.0
+With custom transports landed and noq standing on its own, iroh continues marching toward a stable 1.0. Just need to fix a few more bugs and API inconsistencies.
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.97.0.
+If you want to know what is coming up, check out the v0.98.0 milestone, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter, Mastodon, and Bluesky.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 105 | f004573 | https://github.com/tracel-ai/burn/pull/4813 | 2026-04-15 | domain-subframes ===
+Add native det (determinant) tensor operation
+
+---
+
+@softmaximalist · 2026-04-15T23:45:14Z:
+## Pull Request Template
+
+### Checklist
+
+- [x] Confirmed that `cargo run-checks` command has been executed.
+- [x] Made sure the book is up to date with changes in this PR.
+
+### Related Issues/PRs
+
+Closes [Add native det() (determinant) tensor operation #4609](https://github.com/tracel-ai/burn/issues/4609)
+
+### Changes
+
+- Implemented `linalg::det` tensor operation
+- Includes batch support and correct handling of singular matrices (returns det of 0)
+
+### Testing
+
+Added 31 tests cases that covers the base cases (1x1, 2x2, 3x3) as well larger tensors. The test cases also covers determinant properties, singular matrices, tensors with 1 or more leading batch dimensions, panic tests, etc. 
+
+
+---
+
+@codecov[bot] · 2026-04-16T01:17:28Z:
+## [Codecov](https://app.codecov.io/gh/tracel-ai/burn/pull/4813?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) Report
+:x: Patch coverage is `99.08759%` with `5 lines` in your changes missing coverage. Please review.
+:white_check_mark: Project coverage is 65.64%. Comparing base ([`4e54d46`](https://app.codecov.io/gh/tracel-ai/burn/commit/4e54d468c765c00c1eddb1067275e51227a58735?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai)) to head ([`3871a54`](https://app.codecov.io/gh/tracel-ai/burn/commit/3871a543c367449a4338a445a427286a4ea3f000?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai)).
+
+| [Files with missing lines](https://app.codecov.io/gh/tracel-ai/burn/pull/4813?dropdown=coverage&src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) | Patch % | Lines |
+|---|---|---|
+| [crates/burn-tensor/src/tensor/api/check.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/4813?src=pr&el=tree&filepath=crates%2Fburn-tensor%2Fsrc%2Ftensor%2Fapi%2Fcheck.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tdGVuc29yL3NyYy90ZW5zb3IvYXBpL2NoZWNrLnJz) | 89.36% | [5 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/4813?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+
+:x: Your project check has failed because the head coverage (65.64%) is below the target coverage (80.00%). You can increase the head coverage or adjust the [target](https://docs.codecov.com/docs/commit-status#target) coverage.
+
+<details><summary>Additional details and impacted files</summary>
+
+
+
+```diff
+@@            Coverage Diff             @@
+##             main    #4813      +/-   ##
+==========================================
++ Coverage   65.52%   65.64%   +0.12%     
+==========================================
+  Files        1149     1151       +2     
+  Lines      168368   168910     +542     
+==========================================
++ Hits       110321   110882     +561     
++ Misses      58047    58028      -19     
+```
+</details>
+
+[:umbrella: View full report in Codecov by Sentry](https://app.codecov.io/gh/tracel-ai/burn/pull/4813?dropdown=coverage&src=pr&el=continue&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).   
+:loudspeaker: Have feedback on the report? [Share it here](https://about.codecov.io/codecov-pr-comment-feedback/?utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).
+<details><summary> :rocket: New features to boost your workflow: </summary>
+
+- :snowflake: [Test Analytics](https://docs.codecov.com/docs/test-analytics): Detect flaky tests, report on failures, and find test suite problems.
+</details>
+
+---
+
+@softmaximalist · 2026-04-16T15:43:24Z:
+The following test case (which is not related to my PR) seems to have failed:
+`cube::kernel::select_assign::select_add_should_work_with_multiple_workgroups_3d_dim2`
+
+Leaving a comment so a maintainer can rerun the CI or take appropriate action. 
+
+---
+
+@softmaximalist · 2026-04-21T23:44:20Z:
+> Two tests worth adding if easy (happy to defer either):
+> 
+> 1. Mixed singular/non-singular batch through the LU branch. Shape `[B>=2, N>=4, N]` with one singular and one well-conditioned matrix, asserting only the singular entry returns 0. The current batched singular tests all have batch size 1 or hit the 3x3 fast path, so the `any_dim` + `mask_fill` reduction at det.rs:156-158 is never exercised with partial singularity.
+> 2. Explicit dtype round-trip for f16/bf16, asserting `det_tensor.dtype() == original_dtype`. The cast-back logic is duplicated across four return paths (lines 89, 99, 117, 164) and `into_data()` comparisons drop dtype, so CI would not catch one of those branches being removed.
+
+Added in 7546258
+
+
+
+---
+
+@Copilot · 2026-04-19T02:06:40Z:
+When `needs_upcast` is true (F16/BF16 inputs), this early-return path returns the upcasted result (F32) without casting back to the original dtype. The same issue applies to the 2x2 and 3x3 base-case early returns, so output dtype depends on matrix size. Consider ensuring every return path casts back to `original_dtype` when `needs_upcast` is set (e.g., compute into a local `final_det` and cast once at the end).
+
+---
+
+@Copilot · 2026-04-19T02:06:40Z:
+`original_dtype.into()` will panic for non-float dtypes (notably `DType::QFloat`), which is possible for default float tensors in Burn. If `det` is intended to support only real float dtypes, consider adding an explicit dtype check and failing via `TensorCheck`/`check!` with a clear error, or mapping quantized floats to an appropriate working float dtype instead of panicking.
+
+
+---
+
+@Copilot · 2026-04-19T02:06:40Z:
+Deriving `dtype` from `tensor.dtype().into()` introduces two concrete problems for pivot storage: (1) it will panic at runtime for `DType::QFloat` (since `FloatDType::from(DType)` panics on non-float), and (2) it can select `F16/BF16`, which cannot exactly represent row indices once the matrix dimension exceeds 2048—this will corrupt the pivot indices used later (e.g., row permutation application). It would be safer to store pivots/permutations in an integer tensor (preferred) or at least force a stable float dtype like `F32` regardless of input dtype, and cast only when needed for comparisons.
+
+
+---
+
+@Copilot · 2026-04-19T02:06:40Z:
+Deriving `dtype` from `tensor.dtype().into()` for the permutation tensor has two issues: it panics for `DType::QFloat` (conversion to `FloatDType` panics) and it may pick `F16/BF16`, which loses integer precision for pivot indices once dimensions exceed 2048. Since these pivots are later converted to `f32` and interpreted as row indices, rounding will produce incorrect permutations. Prefer storing pivots as an integer tensor or forcing `F32` pivots independent of input dtype.
+
+
+---
+
+@softmaximalist · 2026-04-19T18:47:03Z:
+Good point. While we don't have to worry about non-float dtypes since the input tensor has the type `Tensor<B, D>`, a quantized float tensor is still valid. Hence, I have added a tensor check to reject a quantized input tensor. 
+
+---
+
+@softmaximalist · 2026-04-19T19:22:13Z:
+The input tensor passed to `compute_lu_decomposition` will never be f16 or bf16 (due to the upcasting) or a quantized tensor (due to TensorCheck rejecting it). Hence, the det function should work fine. 
+
+The issues mentioned in the comment are relevant when the `linalg::lu` function is called directly on a quantized float tensor or on a tensor with f16 or bf16 dtype. This should be updated in a separate PR as it is not directly relevant to the current PR. 
+
+---
+
+@softmaximalist · 2026-04-19T19:22:34Z:
+The input tensor passed to `compute_lu_decomposition` will never be f16 or bf16 (due to the upcasting) or a quantized tensor (due to TensorCheck rejecting it). Hence, the det function should work fine. 
+
+The issues mentioned in the comment are relevant when the `linalg::lu` function is called directly on a quantized float tensor or on a tensor with f16 or bf16 dtype. This should be updated in a separate PR as it is not directly relevant to the current PR. 
+
+---
+
+@softmaximalist · 2026-04-19T20:48:52Z:
+Note that I added the following test case to test the new check in the det TensorCheck:
+```rust
+#[test]
+#[should_panic(expected = "The input tensor must have a real float dtype.")]
+fn test_det_quantized_tensor() {
+    let scheme = QuantScheme::default()
+        .with_value(QuantValue::Q8S)
+        .with_store(QuantStore::Native);
+
+    let device = Default::default();
+    let tensor = TestTensor::<3>::from_data([[[5.0]]], &device);
+    let qtensor = tensor.quantize_dynamic(&scheme);
+    let det_tensor = det::<TestBackend, 3, 2, 1>(qtensor);
+    let expected = TestTensor::<1>::from_data([5.0], &device);
+    let tolerance = Tolerance::default().set_half_precision_absolute(5e-3);
+    det_tensor
+        .into_data()
+        .assert_approx_eq::<FloatElem>(&expected.into_data(), tolerance);
+}
+```
+
+While this works fine when run by itself, it causes errors in many (previously passing) test cases when all the tests cases (including the new one above) are run in f16 using vulkan. Enabling backtrace gives the following output:
+
+```
+thread 'Device-4-0' (84876) panicked at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-29.0.1/src/backend/wgpu_core.rs:1952:22:
+wgpu error: Validation Error
+
+Caused by:
+  In Queue::write_buffer
+    Buffer with '' label is invalid
+
+
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: wgpu::backend::wgpu_core::default_error_handler
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-29.0.1/src/backend/wgpu_core.rs:687:5
+   3: wgpu::backend::wgpu_core::ErrorSinkRaw::handle_error_or_return_handler
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-29.0.1/src/backend/wgpu_core.rs:671:21
+   4: wgpu::backend::wgpu_core::ContextWgpuCore::handle_error_inner
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-29.0.1/src/backend/wgpu_core.rs:299:18
+   5: wgpu::backend::wgpu_core::ContextWgpuCore::handle_error_nolabel
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-29.0.1/src/backend/wgpu_core.rs:332:14
+   6: <wgpu::backend::wgpu_core::CoreQueue as wgpu::dispatch::QueueInterface>::write_buffer
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-29.0.1/src/backend/wgpu_core.rs:1952:22
+   7: wgpu::api::queue::Queue::write_buffer
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-29.0.1/src/api/queue.rs:158:20
+   8: cubecl_wgpu::compute::stream::WgpuStream::write_to_buffer
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-wgpu-0.10.0-pre.3/src/compute/stream.rs:403:18
+   9: cubecl_wgpu::compute::stream::WgpuStream::create_uniform
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-wgpu-0.10.0-pre.3/src/compute/stream.rs:378:14
+  10: cubecl_wgpu::compute::schedule::BindingsResource::into_resources
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-wgpu-0.10.0-pre.3/src/compute/schedule.rs:126:31
+  11: cubecl_wgpu::compute::stream::WgpuStream::enqueue_task
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-wgpu-0.10.0-pre.3/src/compute/stream.rs:121:43
+  12: <cubecl_wgpu::compute::schedule::ScheduledWgpuBackend as cubecl_runtime::stream::scheduler::SchedulerStreamBackend>::enqueue
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-wgpu-0.10.0-pre.3/src/compute/schedule.rs:141:16
+  13: cubecl_runtime::stream::scheduler::SchedulerMultiStream<B>::execute_schedules_interleave
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-runtime-0.10.0-pre.3/src/stream/scheduler.rs:248:21
+  14: cubecl_runtime::stream::scheduler::SchedulerMultiStream<B>::execute_streams
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-runtime-0.10.0-pre.3/src/stream/scheduler.rs:201:51
+  15: <cubecl_wgpu::compute::server::WgpuServer as cubecl_runtime::server::base::ComputeServer>::read
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-wgpu-0.10.0-pre.3/src/compute/server.rs:301:24
+  16: cubecl_runtime::client::ComputeClient<R>::do_read::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-runtime-0.10.0-pre.3/src/client.rs:103:51
+  17: <cubecl_common::device::handle::channel::ChannelDeviceHandle<S> as cubecl_common::device::handle::base::DeviceHandleSpec<S>>::submit_blocking::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:78:28
+  18: cubecl_common::device::handle::channel::ChannelDeviceHandle<S>::submit_inner::{{closure}}::{{closure}}::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:190:37
+  19: cubecl_common::stream_id::StreamId::executes
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/stream_id.rs:43:24
+  20: cubecl_common::device::handle::channel::ChannelDeviceHandle<S>::submit_inner::{{closure}}::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:190:25
+  21: cubecl_common::device::handle::channel::ChannelService::act_on::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:366:13
+  22: std::thread::local::LocalKey<core::cell::RefCell<T>>::with_borrow::{{closure}}
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/local.rs:724:26
+  23: std::thread::local::LocalKey<T>::try_with
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/local.rs:513:12
+  24: std::thread::local::LocalKey<T>::with
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/local.rs:477:20
+  25: std::thread::local::LocalKey<core::cell::RefCell<T>>::with_borrow
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/local.rs:724:14
+  26: cubecl_common::device::handle::channel::ChannelService::act_on
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:361:16
+  27: cubecl_common::device::handle::channel::ChannelDeviceHandle<S>::submit_inner::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:185:19
+  28: <core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panic/unwind_safe.rs:274:9
+  29: std::panicking::catch_unwind::do_call
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:581:40
+  30: __rust_try
+  31: std::panicking::catch_unwind
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:544:19
+  32: std::panic::catch_unwind
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panic.rs:359:14
+  33: cubecl_common::device::handle::channel::task::Task::init::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:463:39
+  34: core::ops::function::FnOnce::call_once
+             at /home/myusername/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5
+  35: cubecl_common::device::handle::channel::task::Task::run
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:481:13
+  36: cubecl_common::device::handle::channel::custom_channel::Server::execute_tasks
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:763:22
+  37: cubecl_common::device::handle::channel::custom_channel::Server::start
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:747:26
+  38: cubecl_common::device::handle::channel::custom_channel::DeviceClient::new::{{closure}}
+             at /home/myusername/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cubecl-common-0.10.0-pre.3/src/device/handle/channel.rs:611:28
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace
+```
+
+Hence, I have removed this test case for now. 
+
+---
+
+@antimora · 2026-04-21T14:39:58Z:
+This epsilon widening is the biggest concern in the PR, and it's a change to the public `linalg::lu` API semantics rather than to `det`.
+
+Before: `equal_elem(0.0)` replaced only exactly-zero pivots with 1.0. That substitution was safe because partial pivoting guaranteed the column below a zero pivot was also zero (which is what the comment on lines 365-367 still describes: `0.0 / 0.0 -> 1.0 / 1.0 = 1.0`, factorization stays well-defined).
+
+After: any `|pivot| <= 1e-7` is rewritten to 1.0. The invariant no longer holds: a well-conditioned matrix with a small-scale pivot (say 5e-8) still has nonzero entries below, and `update_kth_column` now divides them by 1.0 instead of 5e-8. `P * L * U` no longer reconstructs `A`, silently, for every caller of `linalg::lu`.
+
+The threshold is also wrong per-dtype: 1e-7 is coarse for F64 (which has ~1e-16 precision) and too tight for BF16.
+
+Since `det` upcasts f16/bf16 to f32 and already handles singularity via its own mask at det.rs:151-158, this widening isn't needed for this PR. Suggest reverting to `equal_elem(0.0)` here and keeping singularity handling inside `det`. If a wider guard is genuinely needed for `lu`, it deserves its own PR with dtype-aware epsilon, docstring coverage, and a regression test that asserts `P*L*U == A` for a nonsingular matrix with a small pivot.
+
+Also: the comment on lines 365-367 (`"pivot of exactly 0"`, `"all elements below it are also 0"`) is now stale and actively misleading with respect to what the code does.
+
+---
+
+@antimora · 2026-04-21T14:39:58Z:
+A few additions worth making to the docstring, since the function silently applies numerical behavior users can't see from the signature:
+
+1. The `# Panics` list should include the QFloat case (added in the new `TensorCheck::det` at check.rs:1403-1409). Right now a user hitting it gets a panic with no heads-up from the docs.
+
+2. The `# Performance Note` below says the function "relies on the LU decomposition function under the hood," but this is only true for N >= 4. The 1x1 / 2x2 / 3x3 paths use closed-form expressions. A reader optimizing tiny batched determinants may think they're paying for LU setup.
+
+3. No mention that F16/BF16 inputs are internally upcast to F32 and cast back (lines 75-82). The cast-back can underflow to zero for nonsingular matrices whose determinant falls outside F16's range (a 10x10 matrix of entries ~0.1 has det ~1e-10 -> F16 zero). Worth a short `# Numerical behavior` note so callers who care can stay in F32.
+
+4. No mention of the singular-matrix epsilon clamp at lines 151-158 (|diagonal| <= 1e-5 for F32, 1e-10 for F64 -> det forced to 0). These are absolute thresholds, so a well-scaled near-singular matrix with a legitimate small-but-nonzero determinant will return exactly 0 with no diagnostic. Worth documenting.
+
+---
+
+@antimora · 2026-04-21T14:39:58Z:
+After the upcast on lines 75-82, `tensor.dtype()` here can still be F32, F64, or Flex32. Flex32 silently falls into `_ => 1e-5`, which happens to be correct-ish since Flex32 is F32-precision, but it's easy to read this as unreachable-default rather than intentional coverage.
+
+Two options: (a) make it explicit with `DType::F32 | DType::Flex32 => 1e-5`, or (b) derive the epsilon from the `FloatDType`'s precision metadata so all float dtypes are handled uniformly. Either one keeps future readers from second-guessing whether the fallthrough is an oversight.
+
+---
+
+@antimora · 2026-04-21T14:39:58Z:
+Name says `_zero_row` but `s![.., .., 16]` with shape `[1, 20, 20]` indexes the last dim (columns), so this zeros column 16 of every matrix. Still yields a singular matrix so the assertion holds, but the name is misleading when grepping or debugging. Either rename to `_zero_column` or change the slice to `s![.., 16, ..]` to actually zero a row.
+
+---
+
+@antimora · 2026-04-21T14:45:21Z:
+Follow-up on this: `burn_std::FloatDType::finfo()` would be a strict improvement over the hardcoded constants here. It returns `f32::EPSILON` (~1.19e-7), `f64::EPSILON` (~2.22e-16), and importantly `f16::EPSILON` (~9.77e-4) for Flex32, so the fall-through case resolves itself naturally.
+
+```rust
+let eps = tensor.dtype().finfo().expect("float dtype").epsilon;
+let threshold = (n as f64).sqrt() * eps;
+```
+
+One caveat: raw machine epsilon isn't quite the right semantic for a singularity threshold, it's the intrinsic precision of the type. A threshold usually wants scaling: LAPACK-style is `N * max(|A|) * eps`. The fully scale-aware version would be `u_diag.abs().max() * (n as f64) * eps`, which also fixes the "matrix scaled by 1000x suddenly looks singular" failure mode the current absolute `1e-5` has.
+
+Even the plain `finfo().epsilon` (without scaling) is strictly better than the current constants though: self-documenting, dtype-correct, and Flex32 falls out for free.
+
+---
+
+@antimora · 2026-04-21T14:45:23Z:
+On whether to use `finfo` here instead: I'd say no. `finfo().epsilon` is still much larger than the "pivot with legitimate small scale" values that would get silently corrupted, so it has the same problem as `1e-7`, just per-dtype.
+
+`finfo().min_positive` (smallest normal, e.g. `f32::MIN_POSITIVE ≈ 1.18e-38`) would narrowly catch only denormal underflow without touching real pivots, but at that point `equal_elem(0.0)` is simpler and equally correct for the original NaN-avoidance goal. `finfo` fits well in `det`'s singularity mask (see the reply on det.rs:154), but the pivot-replacement here is better off staying exact-zero.
+
+---
+
+@softmaximalist · 2026-04-21T18:03:13Z:
+Good catch. The `test_det_3x3_singular_zero_row` test case has same issue. I will correct both to use `col`. 
+
+---
+
+@softmaximalist · 2026-04-21T23:40:46Z:
+Fixed in c91297e
+
+---
+
+@softmaximalist · 2026-04-21T23:41:30Z:
+Addressed in 6f1fedb
+
+---
+
+@softmaximalist · 2026-04-21T23:42:57Z:
+Fixed in 4e561a6
+
+---
+
+@softmaximalist · 2026-04-21T23:43:30Z:
+Fixed in c5cf318
+
+---
+
+@antimora · 2026-04-22T03:47:24Z:
+"with with" -> "with"
+
+---
+
+@laggui · 2026-04-22T12:00:03Z:
+```suggestion
+/// - The input is a quantized tensor with dtype `DType::QFloat`.
+```
+
+=== ROW 106 | f004581 | https://blog.cloudflare.com/network-performance-agents-week | 2026-04-17 | domain-subframes ===
+Agents Week: network performance update | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+This Post is Available in
+日本語
+한국어
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+AgentsAgents Week 2026Network Performance Update+2Show 2 more tags
+5 TagsShow 5 tags
+Post Tags
+AgentsAgents Week 2026Network Performance UpdatePerformanceRust
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+PerformanceRust
+AgentsAgents Week 2026Network Performance UpdatePerformanceRust
+April 17, 2026
+Agents Week: network performance update
+Lai Yi Ohlsen
+5 minute readCOPY URL
+This post is also available in 日本語 and 한국어.
+When it comes to the Internet, performance is everything. Every millisecond shaved off a connection is a better experience for the real people using the applications and websites you build. That's why, at Cloudflare, we measure our performance constantly and share updates on a regular basis.
+In our last performance post, published during Birthday Week 2025, we shared that Cloudflare was the fastest network in 40% of the largest 1,000 networks in the world. At the time, we noted a nuanced reading of that figure; we were competitive in many more networks, and the gaps were often notably small. But even so, we were not satisfied with 40%. By December 2025 (our most recent available analysis), we had become the fastest provider in 60% of the top networks. Here's how we got there, and what it means.
+How do we measure and compare network performance?
+Before diving into the results, let’s review how we collect the data. We start with the 1,000 largest networks in the world by estimated population, using APNIC's data as our source. These networks represent real users in nearly every geography, giving us a broad and meaningful picture of how Internet users experience the web.
+To measure performance, we use connection time, which is the time it takes for an end user's device to complete a handshake with the endpoint they're trying to reach. We chose this metric because it most closely approximates what users actually perceive as "Internet speed." It's not so abstract that it ignores real-world constraints like congestion and distance, but it's precise enough to give us actionable data. (We've previously written about why we favor this metric over alternatives.)
+We calculate our rankings using the trimean of connection times. The trimean is a weighted average of three values: the first quartile (25th percentile), the median (50th percentile), and the third quartile (75th percentile). This approach smooths out noise and outliers, giving us a cleaner signal about the typical user experience rather than an extreme case that might skew the picture.
+To capture this data, we rely on Real User Measurements (RUM). When users encounter a Cloudflare-branded error page, a small speed test runs silently in the background. The browser retrieves small files from multiple providers including Cloudflare, Amazon CloudFront, Google, Fastly, and Akamai and records how long each exchange takes. This gives us performance data directly from the user's browser, in their real-world network conditions. It's the difference between testing a car's top speed on a track versus watching how people actually drive on the highway.
+How did we improve?
+Historically we have shared how we’ve created new Cloudflare points of presence and reduced our end latency by simply getting more hardware closer to our users. Most recently, we deployed new locations in Constantine, Algeria; Malang, Indonesia; and Wroclaw, Poland. When we deployed our location in Wroclaw, our free users went from an average of 19ms round-trip time (RTT) to an average of 12ms round trip time (RTT), a 40% improvement. In Malang, Enterprise traffic went from a 39ms average RTT to a 37ms average RTT, a 5% improvement. Seeing our customers' experience improve, even if only by a couple of milliseconds, is great. But adding new locations alone doesn’t fully explain how we went from being #1 in 40% of networks to #1 in 60% of networks.
+The answer there has to do with improving how our network handles connections in software. By leveraging protocols like HTTP/3 and changing how we manage congestion windows, we can reduce processing time by milliseconds in code, in addition to the improvements on the wire. By improving CPU usage and memory usage in our software that handles fundamental actions like establishing connections, SSL/TLS termination, traffic management, and the core proxy that all requests flow through, we can make that software more efficient in its usage of resources across our global fleet of hardware. These ongoing efficiency gains result in better performance for you and your customers.
+Think of incoming connections to Cloudflare like toll booths on a highway. Lines can build up at toll booths if there aren’t enough toll booths, or if the booths themselves aren’t efficient at processing cars going through them. We’ve been constantly working to improve not only how our toll booths process incoming cars (the software improvements in connection handling), but also at improving how we send cars between available booths so that we can keep lines short and latency low.
+How do the results look today?
+As we noted above, by December, Cloudflare had become the fastest provider in 60% of the top networks, up from 40% when we last reported. Since Birthday Week in September 2025 we have steadily increased the networks where we are the fastest. Let’s break down the impact.
+This means that between September and December, we became the fastest in 40 additional countries and in 261 additional networks. We saw the biggest increase in the United States, where we are the fastest in 54 more ASNs.
+On average throughout December, we were 6ms faster than the next-fastest provider. As shown above, the line representing Cloudflare’s latency, or connection time, is consistently lower throughout December than the next fastest provider.
+A faster Internet is a better Internet
+Every percentage point in our network ranking represents real users who are able to connect to their website or application that much faster because of Cloudflare. But we also know that 60% isn't the ceiling. There are still networks where we're number two, sometimes by the smallest of margins. We see those gaps clearly, and we're working on them. We're committed to being the fastest provider across every network in the world.
+Follow our blog for more performance updates as we continue to make the Internet faster.
+On this page
+Discuss Online
+Related tags
+AgentsAgents Week 2026Network Performance UpdatePerformanceRust
+Follow on Social Media
+Cloudflare
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+This Post is Available in
+日本語
+한국어
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 107 | f004688 | https://blog.cloudflare.com/quic-death-spiral-fix | 2026-05-12 | domain-subframes ===
+When "idle" isn't idle: how a Linux kernel optimization became a QUIC bug | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+This Post is Available in
+日本語
+한국어
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+Congestion ControlDebuggingHTTP3+4Show 4 more tags
+7 TagsShow 7 tags
+Post Tags
+Congestion ControlDebuggingHTTP3NetworkingQUICQUICHERust
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+NetworkingQUICQUICHERust
+Congestion ControlDebuggingHTTP3NetworkingQUICQUICHERust
+May 12, 2026
+When "idle" isn't idle: how a Linux kernel optimization became a QUIC bug
+Esteban Carisimo and Antonio Vicente
+13 minute readCOPY URL
+This post is also available in 日本語 and 한국어.
+CUBIC, standardized in RFC 9438, is the default congestion controller in Linux, and as a result governs how most TCP and QUIC connections on the public Internet probe for available bandwidth, back off when they detect loss, and recover afterward. At Cloudflare, our open-source implementation of QUIC, quiche, uses CUBIC as its default congestion controller, meaning this code is in the critical path for a significant share of the traffic we serve.
+In this post, we’ll tell the story of a bug in which CUBIC's congestion window (cwnd) gets permanently pinned at its minimum and never recovers from a congestion collapse event.
+The story starts with a Linux kernel change aimed at bringing CUBIC into line with the app-limited exclusion described in RFC 9438 §4.2-12 — a fix to a real problem in TCP that, when ported to our QUIC implementation, surfaced unexpected behaviors in quiche. It has a happy ending: an elegant (near-)one-line fix that broke the cycle.
+CUBIC's logic in a nutshell
+Before we dive into the core problem, a quick refresher on Congestion Control Algorithms (CCAs) may help to set the stage.
+The central knob a CCA turns is the congestion window (cwnd): the sender-side cap on how many bytes can be in flight (sent but not yet acknowledged) at any moment. A larger cwnd lets the sender push more data per round trip; a smaller cwnd throttles it. Every loss-based CCA, CUBIC included, is ultimately a policy for how to grow cwnd when the network looks healthy and how to shrink it when it doesn't.
+In essence, CCAs aim to maximize data transfer by inferring the "available bandwidth" of the network; because no one wants to pay for a 1 Gbps subscription and only use a fraction of it. The family of loss-based algorithms, to which CUBIC belongs, operate on a fundamental premise: (1) if there is no packet loss, increase the sending rate (i.e. increase the bandwidth utilization); (2) if there is loss, loss-based algorithms assume that the network's capacity has been exceeded, and the sender must back off (i.e. decrease the bandwidth utilization).
+This logic is built on several assumptions that have been revisited over the years. However, we'll save that discussion for another time.
+The symptom: a test that fails 61% of the time
+Our investigation started with the report of unexpected failures in our ingress proxy integration test pipeline. This erratic behavior appeared in tests where CUBIC was evaluated in a scenario of heavy loss in the early part of the connection.
+Recovery after congestion collapse is an uncommon regime, but it is exactly the regime a congestion controller exists to handle. Most congestion control tests exercise the steady-state and growth phases of an algorithm; far fewer probe what happens at minimum cwnd, after the connection has been beaten down. Bugs in this corner of the state space are invisible in throughput dashboards, undetectable by static review, and only surface when you deliberately drive a CCA into it and watch whether it can climb back out — which is exactly what this test did.
+The simulated test setup includes the following details:
+Quiche HTTP/3 client and server running at locally (localhost)
+RTT = 10ms (set up in the configuration)
+A 10 MB file download over HTTP/3
+Using CUBIC congestion control
+With 30% random packet loss injected during the first two seconds
+After two seconds, loss stops entirely
+The test has a generous 10-second timeout to complete the download, which is expected to be completed in four or five seconds
+The expected behavior is straightforward: CUBIC should take some hits during the loss phase, reduce its congestion window, and once loss stops, steadily ramp up and finish the download well within the timeout. Instead, we observed in multiple 100-time runs that around 60% of our tests were not able to complete the download within the generous 10-second timeout.
+The anomaly: 999 state transitions with zero loss
+We instrumented quiche's qlog output with packet loss events and built visualizations to understand what was happening inside the congestion controller:
+Connection overview of a failing test. After T=2s, packet loss stops entirely — yet cwnd remains pinned at the minimum floor and the congestion state oscillates between recovery and congestion avoidance every ~14ms.
+After the two-second (2000 ms) mark, packet loss stops entirely. However, the number of bytes in flight remains flat, which contradicts the core logic of the CUBIC algorithm: in the absence of loss, apply more gas to increase throttle (more bytes in our world). This raises the question: if the network is no longer dropping packets, why is the congestion window failing to grow?
+When we zoom into that region, our analysis shows that CUBIC enters a rapid oscillation, shown in our plot as an extended recovery phase, between congestion avoidance state (the operational regime phase) and recovery state (the packet loss recovery state) — 999 transitions in approximately 6.7 seconds. That’s one transition every ~14ms — suspiciously close to the connection's RTT (10ms). Throughout this entire period, cwnd is locked at the minimum floor: 2700 bytes, or two full-size packets.
+Clearly something in CUBIC's logic is misinterpreting the state of the connection. The key clue is the oscillation period: ~14ms matches the RTT. Whatever is triggering the recovery/avoidance flip is happening once per round trip, in lockstep with connection's ACK clock; the self-clocking rhythm in which each round-trip's ACKs from the client trigger the server's next send. Because this is a download (server to client), the ACKs in question travel client to server, and CUBIC's state machine runs on the server side: every time those ACKs land, bytes_in_flight drops to zero and the server sends the next two-packet burst, which is what triggers the bug.
+To confirm this behavior was CUBIC-specific, we ran the same test with Reno, another member of the loss-based family but with a different growth rate. The results were conclusive: 100% pass rate, showing Reno recovered cleanly after the loss phase, and revealing that this is a CUBIC-related bug.
+Reno recovers cleanly after the loss phase ends at T=2s and completes the download by ~5s
+Tracing the root cause
+Loss-based algorithms have two pedals, gas and brake, with a difference in how they accelerate. Well, CUBIC comes with some extra features. Here we are going to focus on bytes_in_flight == 0.
+TCP CUBIC after idle (Linux, 2017)
+To understand the bug, we first need to understand the optimization it came from. In 2017,an issue was found with Linux kernel's CUBIC implementation. The commit message explains:
+The epoch is only updated/reset initially and when experiencing losses. The delta "t" of now - epoch_start can be arbitrary large after app idle as well as the bic_target. Consequentially the slope (inverse of ca->cnt) would be really large, and eventually ca->cnt would be lower-bounded in the end to 2 to have delayed-ACK slow-start behavior.
+This particularly shows up when slow_start_after_idle is disabled as a dangerous cwnd inflation (1.5 x RTT) after few seconds of idle time.
+The epoch is the reference timestamp CUBIC uses to anchor its growth curve: W_cubic(delta_t) is parameterized by delta_t = now - epoch_start, and the epoch is reset whenever CUBIC restarts its growth function — most notably after a loss event reduces cwnd. Between resets, delta_t grows monotonically with wall-clock time.
+When an application goes idle (stops sending) for a while and then resumes, the CUBIC growth function W_cubic(delta_t) computes delta_t as now - epoch_start, as illustrated in the figure below. Since the epoch wasn't updated during idle, delta_t is huge, producing an enormous target window — and CUBIC would immediately try to inflate cwnd to an unreasonable value.
+Jana Iyengar's initial fix was to reset `epoch_start` when the application resumes sending. But Neal Cardwell pointed out the flaw in that approach:
+…it would ask the CUBIC algorithm to recalculate the curve so that we again start growing steeply upward from where cwnd is now (as CUBIC does just after a loss). Ideally we'd want the cwnd growth curve to be the same shape, just shifted later in time by the amount of the idle period.
+The elegant solution, authored by Eric Dumazet, Yuchung Cheng, and Neal Cardwell, was to shift the epoch forward by the idle duration rather than resetting it. This preserves the shape of the CUBIC growth curve — just sliding it in time so that the algorithm picks up where it left off.
+The port to quiche (2020)
+When CUBIC was first implemented in quiche, this idle-period adjustment was ported. However, QUIC, which runs in the user space, doesn't have TCP's kernel-level CA_EVENT_TX_START callback. Instead, the quiche implementation checks for the idle condition inside on_packet_sent():
+// cubic.rs — on_packet_sent() (simplified)
+/// Updates the state when a packet is sent.
+fn on_packet_sent(&mut self, bytes_in_flight: usize, now: Instant, ...) {
+// If the sending burst is restarting (i.e., bytes_in_flight was zero before this send),
+// adjust the congestion recovery start time to account for the gap in sending.
+if bytes_in_flight == 0 {
+let delta = now - self.last_sent_time;
+self.congestion_recovery_start_time += delta;
+}
+// Record the time of this send event.
+self.last_sent_time = now;
+}
+Where it breaks: the QUIC difference
+The fix ported to quiche included a bug in the original kernel change which was fixed by a followup change to the kernel cubic module about a week later. The commit message for the second fix explains:
+tcp_cubic: do not set epoch_start in the future
+Tracking idle time in bictcp_cwnd_event() is imprecise, as epoch_start
+is normally set at ACK processing time, not at send time.
+Doing a proper fix would need to add an additional state variable,
+and does not seem worth the trouble, given CUBIC bug has been there
+forever before Jana noticed it.
+Let's simply not set epoch_start in the future, otherwise
+bictcp_update() could overflow and CUBIC would again
+grow cwnd too fast.
+As mentioned in the commit message, recovery start time is set during ACK processing, and the computation of the adjustment based on sent times can push the recovery start time into the future. This explains the oscillation between recovery and congestion avoidance seen on our test.  The trap only consistently triggers when every incoming ACK drives bytes_in_flight all the way to zero — which in practice means cwnd has collapsed to its minimum (two packets) and the application has data ready to send another full window the moment an ACK arrives. Outside this regime, bytes_in_flight == 0 is less likely to hold on every send, so it is less likely to trigger the bug.
+Why doesn't this also happen at connection start? The bug only triggers when the connection exits slow-start and switches over to congestion avoidance. Before exiting slow-start, congestion_recovery_start_time is not set, so the buggy branch in on_packet_sent has no recovery boundary to advance. During slow start CUBIC's cwnd grows by the same Reno-style ack-based rule shared by all loss-based CCAs — the cubic curve and its sensitivity to congestion_recovery_start_time only enter the picture once the connection is in congestion avoidance, meaning the trap needs three things at once: a real loss event to set the recovery boundary, congestion avoidance to be running, and cwnd collapsed to the two-packet floor.
+The self-perpetuating recovery trap. At minimum cwnd, every ACK cycle triggers the idle period adjustment with an inflated delta.
+At a minimum cwnd (two packets), the dynamics of the connection shift into a "death spiral" where the idle period optimization becomes a self-fulfilling prophecy. This trap operates in a continuous loop:
+Send and ACK packets: The sender transmits the entire two-packet window. After one RTT (~14ms), both packets are ACKed, causing bytes_in_flight to drop to zero.
+False idle detection: When the next burst is sent, on_packet_sent() sees bytes_in_flight == 0 and assumes the connection was idle, but it was congestion limited.
+Inflated delta: The calculation uses now - last_sent_time to determine the idle duration. When the congestion window (cwnd) is at its minimum, last_sent_time is the timestamp of the start of the previous RTT cycle. Therefore, the resulting delta is approximately 14ms (the connection's RTT + additional rounding errors). This RTT-sized delta is incorrectly applied as the "idle" time. The actual time the connection was idle (the processing gap between the last ACK arriving and the next packet being sent) is effectively 0. By measuring the full RTT instead of the true gap, the delta is inflated significantly, aggressively shifting the recovery start time forward, possibly into the future.
+Perceived recovery: Because the recovery start time is now in the future, the in_congestion_recovery() check returns true for every incoming ACK.  Processing of the next ACK exits recovery and sets the recovery start to the ACK time which is larger than last_sent_time, making it likely for the congestion controller to push the recovery time into the future when doing the next send.
+Stagnation: Since CUBIC skips cwnd growth for any packet perceived to be in a recovery period, the window remains pinned at two packets — ensuring the pipe drains completely on the next ACK and restarting the cycle.
+And this loop repeats for thousands of cycles until the accumulation of small deviations — from scheduler jitter and ACK processing variance — lets the <= boundary in in_congestion_recovery() slip behind the next packet's send time, breaking the cycle.
+The fix: measuring idle from the right moment
+Fixing the death spiral involves measuring the idle duration from when bytes_in_flight actually transitioned to zero (the last ACK processed) rather than the last packet sent.
+The code change
+Add last_ack_time timestamp to the CUBIC state.
+Update that timestamp when ACKs arrive.
+Use it for the idle delta computation:
+// cubic.rs — on_packet_sent()
+fn on_packet_sent(&mut self, bytes_in_flight: usize, now: Instant, ...) {
+// Check if the connection was idle before this packet was sent.
+if bytes_in_flight == 0 {
+if let Some(recovery_start_time) = r.congestion_recovery_start_time {
+// Measure idle from the most recent activity: either the
+// last ACK (approximating when bif hit 0) or the last data
+// send, whichever is later. Using last_sent_time alone
+// would inflate the delta by a full RTT when cwnd is small
+// and bif transiently hits 0 between ACK and send.
+let idle_start = cmp::max(cubic.last_ack_time, cubic.last_sent_time);
+if let Some(idle_start) = idle_start {
+if idle_start < now {
+let delta = now - idle_start;
+r.congestion_recovery_start_time =
+Some(recovery_start_time + delta);
+}
+}
+}
+}
+With the delta now reflecting the actual gap since the last ACK, the recovery boundary stops chasing the send time:
+Old code: boundary advances one RTT per cycle, always landing on or ahead of the next send.
+Fix: boundary barely moves; the next send lands ahead of it and cwnd grows.
+For genuinely idle connections, last_ack_time is far in the past and the same expression captures the full idle duration, the original epoch-shift behavior is preserved.
+Validation
+With the fix applied, the 100% pass rate of our quiche testing suite was restored.
+After the fix, cwnd grows along the expected CUBIC curve and the download completes in ~4-5 seconds.
+We don't worry about the losses at the end of the connection — that's expected because we fully utilized the router's allocated buffer. In other words, we are fully utilizing the available bandwidth in this test case.
+Takeaways
+"Idle" is harder to define than it sounds. Normal pipeline delays at small windows can look like idleness to simple checks.
+Minimum-cwnd dynamics are a unique corner case. The bug was invisible at high speeds and only triggered after severe loss.
+The fix was surprisingly small compared to the complexity of the behavior. After weeks of instrumenting qlogs and analyzing visualizations to find the root cause, the solution required changing just three lines of code. As we noted during the investigation: the effort to find the bug was massive, but the fix itself was basically one line of logic.
+The fix described in this post has been contributed to cloudflare/quiche, Cloudflare's open-source implementation of QUIC and HTTP/3. Our CCA efforts go beyond loss-based algorithms: we also use quiche’s modular congestion control design to experiment with and tune our model-based BBRv3 implementation, now enabled for a growing percentage of our QUIC deployments. Stay tuned for further updates on QUIC congestion control implementation and performance.
+If you're interested in congestion control, transport protocols, or contributing to open-source networking code, check out the quiche repository. We're always looking for talented engineers who love digging into problems like these, please explore our open positions.
+On this page
+Discuss Online
+Related tags
+Congestion ControlDebuggingHTTP3NetworkingQUICQUICHERust
+Follow on Social Media
+Cloudflare
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+This Post is Available in
+日本語
+한국어
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 108 | f004706 | https://github.com/leptos-rs/leptos/pull/4715 | 2026-05-19 | domain-subframes ===
+Further extend the axum API to support embedded files through `RustEmbed`.
+
+---
+
+@metatoaster · 2026-05-19T15:25:37Z:
+In this change I also added a couple other changes that was omitted due to how the setup didn't include a way to also include `favicon.ico` without the rest of the assets, as this is a feature with Lepto's `start-actix` template.
+
+Currently a draft as I haven't had time to finish up the service side of things and the tests.  I really want to get this in before 0.9 is actually out. At the very least get the favicon.ico in to make it more parity with what people expected with the previous fallback.
+
+---
+
+@metatoaster · 2026-09-12T14:43:33Z:
+CI _might_ fail or not depending on how `cargo-leptos` (well, `cargo`) builds the test server - if the frontend does finish first the embedding of the static files will be done correctly, otherwise it obviously can't be included when the site pkg isn't available.  Will need to change something, but for now I might change how that binary is built.
+
+---
+
+@metatoaster · 2026-09-13T07:00:29Z:
+I've cleaned up the potential for CI failures by building the frontend before the server, though I had to avoid using `cargo leptos build` for the server part directly due to `cargo-leptos` unconditionally removing `LEPTOS_SITE_ROOT` even for server builds, which obviously breaks everything when the frontend is ultimately needed.
+
+In the mean time this embed feature should be considered experimental, as the standard workflow using `cargo leptos build` currently cannot guarantee a correctly working build of a server binary with the frontend built in. If that issue is fixed (e.g. by providing a flag to do frontend then server, and/or fix the removal of `LEPTOS_SITE_ROOT` for server only builds), or that the build is done manually like how the test is currently set up, the resulting binary well have the frontend fully self-contained.
+
+---
+
+@gbj · 2026-09-18T19:24:44Z:
+https://github.com/leptos-rs/cargo-leptos/pull/682 for my humble attempt at a cargo-leptos fix
+
+---
+
+@gbj · 2026-09-18T17:57:51Z:
+No time like the present if you want to rename it :-) 
+
+---
+
+@gbj · 2026-09-18T18:06:15Z:
+I think this `impl` block needs an `SR` generic, otherwise it defaults to `SR = NoEmbedSiteRoot` and the builder methods aren't available for the embed mode? I assume it's just an oversight that didn't get flagged by the compiler because of the default generic. Worth checking for any other instances.
+
+---
+
+@gbj · 2026-09-18T18:08:55Z:
+Does this cause Windows problems? i.e., it looks to me like it's converting between URL paths and filesystem paths as strings, but if it's on Windows that's going to get you `\pkg\foo.js` instead of `/pkg/foo.js` 
+
+---
+
+@gbj · 2026-09-18T18:10:11Z:
+Not sure I understand this part -- why is it desirable that `robots.txt` 404 even if it's embedded?
+
+---
+
+@gbj · 2026-09-18T18:12:15Z:
+This adds `mime_guess` but I don't think the code actually uses it -- maybe stale? It appears in the workplace Cargo.toml and in the `integrations/axum` Cargo.toml but not in code except in the `hackernews_islands_axum` example
+
+---
+
+@gbj · 2026-09-18T18:13:56Z:
+`allow_missing = true` seems bad because it allows for a successful build → 404 rather than a build failure.
+
+---
+
+@metatoaster · 2026-09-19T00:27:45Z:
+Hence the line is commented out for the user facing documentation (so users of the documentation won't be suggested to do the bad thing); during testing (e.g. when a developer runs `cargo test` on their machine), the environment variable may not necessarily be present, but otherwise I do want the rest of the example code to be tested to pass.
+
+---
+
+@metatoaster · 2026-09-19T00:49:07Z:
+Yeah that should be removed, it was part of the naive implementation that I had previously done before realizing that `tower_service` introduced the `Backend` trait for `ServeDir` a bit over a month ago.
+
+---
+
+@metatoaster · 2026-09-19T01:01:37Z:
+Yeah my baby brained head failed to remember this (even though I've done it correctly before elsewhere), good catch, I'll rework this part.
+
+---
+
+@metatoaster · 2026-09-19T01:13:00Z:
+The default setup is limited in what is routed, only routes the site pkg and the favicon, much like the existing behavior of the usual integration provided by the `start_actix` template. There is another configuration option that should route the whole site root, but that is covered in the non-embedded case but I really should also include that with the embedded configuration to be comprehensive. Again this was an oversight when I can't remember my trains of thoughts when development was spread over too many weeks.
+
+---
+
+@metatoaster · 2026-09-19T12:26:42Z:
+Yeah good catch on that one, also no idea why I didn't make some of the methods not public, going to need to fill out some of these tests to figure out why I did what I did...
+
+Edit: Oh right, I didn't make the underlying mode public because this is configured elsewhere.
+
+---
+
+@metatoaster · 2026-09-19T12:59:20Z:
+Oh, wait, this part is interfacing with [`RustEmbed::get`](https://docs.rs/rust-embed/latest/rust_embed/trait.RustEmbed.html#tymethod.get), where both the [static](https://docs.rs/rust-embed-impl/8.12.0/src/rust_embed_impl/lib.rs.html#130) and [dynamic](https://docs.rs/rust-embed-impl/8.12.0/src/rust_embed_impl/lib.rs.html#213) implementation simply replace the Windows path separator `\` with `/` and proceed to do the lookup based on that.  It was designed for this specific use case.
+
+Also the path itself is provided by `ServeDir` to the backend so yeah there are some needless conversions here but largely unavoidable given the layers of abstractions involved, but at least we can now be sure this isn't a problem.
+
+---
+
+@metatoaster · 2026-09-20T06:39:24Z:
+Revisiting this review while I am not on a phone sitting outside somewhere: this specific case/limitation here is due to how this implementation limits the "scope" (in terms of the amount of files) being presented or routed to the end user, namely the approach is not a generic fallback handler but rather specific routes, and so resource at `LEPTOS_SITE_ROOT` may be embedded wholesale but only the pkg specific subroutes (plus the favicon) are actually routed.  Naturally the other configuration will be needed.
+
+Also, while continuing on this train of thought, I think it might also be beneficial to rather than exposing `RustEmbed` directly (albeit through a pub reexport), it might be good to introduce two new derive macro to cover both these cases and have the setup to automatically pick up on it.  This one I might have to think a bit more about how to best approach it.  Basically, rather than:
+
+```rust
+#[derive(Clone, Copy, Embed)]
+#[folder = "$LEPTOS_SITE_ROOT"]
+#[prefix = "/"]
+struct SiteRoot;
+```
+
+Which has the end user having to remember to include all of those very specific set of derive macros and attributes, this probably is much more preferable (actual name tbd):
+
+```rust
+// Embed just the site pkg.
+#[derive(EmbedLeptosSitePkg)]
+struct LeptosSitePkg;
+
+// Embed the whole site root.
+#[derive(EmbedLeptosSiteRoot)]
+struct LeptosSiteRoot;
+```
+
+Both will have other different private traits from which the config helper method may be implemented to do the correct thing for the relevant derive so that the correct sets of routes and/or fallback service may be set up on the underlying `axum::Router`.
+
+Naturally, this can come later, I don't want this additional work to block the release of 0.9.0 needlessly (e.g. if I can't find time again because the infant/toddler catches influenza again). Since the traits have been sealed we should have the flexibility to introduce additional setup method without causing a semver breaking change to include this addition, though I think I might need to better present the API for the generic `RustEmbed`, perhaps be a bit clear with the documentation as I do want to simply have the config builder call `.embed(...)` and the correct thing just happens.  Though I am not opposed to having `.embed_site_root()` and `.embed_site_pkg()`, too, as this also would help make it clear at a glance. Need to think about this more.
+
+---
+
+@gbj · 2026-09-25T17:44:02Z:
+Excellent, thanks for checking!
+
+---
+
+@gbj · 2026-09-25T17:44:20Z:
+Right! Makes sense.
+
+---
+
+@metatoaster · 2026-09-26T15:51:06Z:
+Now that I checked the generated docs, I noticed that I in fact need an extra space between the `##` to have the comment actually take effect, so still a good catch!
+
+---
+
+@metatoaster · 2026-09-26T16:10:26Z:
+This review highlighted the initial lack of manual setup from the default configuration, so it was good that this was picked up, and allowed me to fill out the documentation to reflect the counterparts of embed vs its filesystem counterpart.
+
+The default documented configuration is less optimized but allows the most flexibility, i.e. it works as similarly to the filesystem counterpart.  It should be possible to set up a `SiteRoot` using `RustEmbed` to include just the site pkg and the favicon, but it takes a lot more directives.  Though I should probably validate this with a test and include this also as an example added to the documentation for `.enable_embed_site_pkg`.
+
+=== ROW 111 | f004741 | https://iroh.computer/blog/iroh-1-0-0-rc-1 | 2026-05-27 | domain-subframes ===
+iroh 1.0.0-rc.1 - The last one - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 1.0.0-rc.1 - The last oneMay 27, 2026 by Friedel Ziegelmayer & Rüdiger Klaehn
+Welcome to iroh@1.0.0-rc.1, the last release candidate before 1.0.
+Since the first release candidate two weeks ago we collected feedback from you, fixed bugs, and made the (hopefully) last API adjustments we wanted to make before stabilizing. Unless something serious comes up, the next release is 1.0.
+📣 Call to the community
+This is the last release candidate before 1.0. If you're still on 0.35 and have been waiting for things to settle, please try this release and let us know if you hit any issues.
+🥊 Hard-NAT holepunching
+Until this release, iroh could holepunch when the client initiating the connection was behind a hard NAT (endpoint-dependent NAT mapping) and the server behind an easy NAT (endpoint-independent NAT mapping), but not the reverse. With this release, the asymmetric case where the server is behind a hard NAT also works.
+See noq#672 and #4254 for more details.
+🛣️ Configurable path selection
+For users building on top of custom transports, iroh now exposes a PathSelector trait that decides which path a connection uses.
+trait PathSelector {
+fn select(&self, ctx: PathSelectionContext<'_>) -> PathSelection;
+}
+CopyCopied!
+PathSelectionContext exposes the currently selected path and an iterator over PathSelectionData, which today contains the path address and stats. PathSelection is a newtype over Option<Addr>. Configure a selector via Endpoint::builder().path_selector(...).
+The trait and the new types are gated behind the unstable-custom-transports feature. Keep in mind that this means they are not covered by the 1.0 stability guarantees and may break in future releases.
+See #4232 for more details.
+🔐 Pluggable relay access control
+The relay's access control has been redesigned. The AccessConfig enum is gone, replaced by an AccessControl trait with on_connect and on_disconnect hooks. Each connection gets a ConnectionId that is passed to both callbacks.
+trait AccessControl {
+async fn on_connect(&self, req: &ClientRequest) -> Access;
+async fn on_disconnect(&self, id: ConnectionId);
+}
+CopyCopied!
+With the ConnectionId, an AccessControl implementation can track active connections and proactively disconnect clients when their access is revoked, via the new iroh_relay::server::clients::Clients::disconnect API. No need to wait for the client to make another request.
+The Bucket rate-limit primitive is now public, for embedders that mount the relay protocol via their own HTTP server (e.g. axum).
+See #4276 and #4242 for more details.
+⚡ Faster Endpoint::close
+Shutdown now skips the draining period when it can. Closing is near-instant when the peer already closed remotely, and roughly one RTT otherwise if there is no packet loss.
+Fixes #4201 in #4270.
+🧹 Stability fixes
+Remote state races — Two related bugs in the remote map could double-spawn RemoteStateActors or shut one down while ResolveRemote requests were still pending. Both fixed in #4271 and #4272.
+Path abandonment scope — Abandoning a path on one connection no longer abandons it on every other connection that shares the same address. Other connections will abandon it themselves if it's unusable. Fixed in #4284.
+Static musl builds — A CI fix forces non-PIE crt1.o so the static musl release binaries link again. Fixed in #4258.
+📐 FourTuple plumbing
+Internally the selected path is now tracked as a FourTuple (local + remote address) throughout both send and receive paths. The user-visible changes are small:
+IncomingLocalAddr has been renamed to LocalTransportAddr to reflect that it is used on both sides; the Relay variant is now a tuple variant.
+PathEvent variants are now #[non_exhaustive].
+Custom transport implementations get a new src: Option<&CustomAddr> argument on CustomSender::poll_send, matching the source-pinning the IP transport already supports.
+See #4273 and #4281 for more details.
+⚠️ Breaking Changes
+iroh
+removed
+iroh::endpoint::IncomingLocalAddr — renamed to LocalTransportAddr (#4273)
+changed
+iroh::endpoint::PathEvent variants are now #[non_exhaustive] (#4273)
+iroh::endpoint::transports::CustomSender::poll_send gains a src: Option<&CustomAddr> argument (#4281)
+added
+iroh::endpoint::transports::LocalTransportAddr (replaces IncomingLocalAddr); the Relay variant is now a tuple variant (#4273)
+iroh::endpoint::Builder::path_selector (#4232)
+under unstable-custom-transports: endpoint::transports::PathSelector, PathSelection, PathSelectionContext, PathSelectionData, FourTuple (#4232, #4281)
+iroh-relay
+removed
+iroh_relay::server::AccessConfig (enum) and iroh_relay::server::AccessCheck (type alias) — replaced by the AccessControl trait (#4276)
+iroh_relay::server::client::Client is no longer public; it had no public methods (#4276)
+changed
+iroh_relay::server::RelayConfig::access is Arc<dyn DynAccessControl> instead of AccessConfig. RelayService::new and iroh::test_utils::run_relay_server_with_access take the same type (#4276)
+iroh_relay::server::Access::Deny is now a struct variant Deny { reason: Option<String> }; Access is no longer Copy (#4276)
+iroh_relay::server::ClientRequest::new takes (EndpointId, ProtocolVersion, http::request::Parts), including the negotiated protocol version (#4276)
+iroh_relay::protos::handshake::SuccessfulAuthentication::authorize_if takes Access instead of bool (#4276)
+iroh_relay::server::client::Config::new takes (OnDisconnectGuard, RelayedStream, ProtocolVersion) instead of (EndpointId, RelayedStream, ProtocolVersion); the public Config::endpoint_id field is replaced by Config::guard (#4276)
+added
+iroh_relay::server::AccessControl, DynAccessControl, AllowAll, ConnectionId, OnDisconnectGuard (#4276)
+iroh_relay::server::streams::Bucket, Bucket::new, Bucket::consume are now public (#4242)
+iroh-base
+added
+iroh_base::SignatureParsingError is now re-exported (#4285)
+Deps
+Updated to noq@1.0.0-rc.1 (#4287)
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v1.0.0-rc.1.
+If you want to know what is coming up, check out the milestones, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter, Mastodon, and Bluesky.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 112 | f004804 | https://github.com/esp-rs/esp-hal/pull/5744 | 2026-06-15 | domain-subframes ===
+Create and use a new cacheline-aligned reference type
+
+---
+
+@bugadani · 2026-06-15T17:07:50Z:
+The goal of this PR is to make the *DmaBuf types take the cacheline-wrapped descriptors/buffers by default, and allow a safe validating, as well as an unsafe fallback option to construct them.
+
+The new reference type has safe cache operations and can represent data living in both internal RAM and PSRAM.
+
+This reference type will be the base of most of our DMA internals - it validates slices/descriptor lists, it can safely implement cache operations because of its invariants, and hopefully will allow us to have higher perf by avoiding unnecessary writebacks as well. It makes constructing buffers a bit less friendly, but that's hidden from us by the macros currently.
+
+This would have been part of #5728 but it's annoyingly big by itself.
+
+# Changelog
+
+## esp-hal/DMA
+
+- Added: `esp_hal::dma::aligned::{InternalMemory, DmaAlignedMut}` types.
+- Changed: DMA buffer types now take `DmaAlignedMut`-wrapped descriptor lists and buffers.
+
+
+---
+
+@bugadani · 2026-06-17T12:27:14Z:
+/hil full
+
+
+---
+
+@github-actions[bot] · 2026-06-17T12:27:47Z:
+Triggered **full** HIL run for #5744.
+
+Run: https://github.com/esp-rs/esp-hal/actions/runs/27688882332
+
+
+**Status update:** HIL (full) run is still in progress or status unknown.
+
+---
+
+@github-actions[bot] · 2026-06-17T13:04:55Z:
+Triggered **full** HIL run for #5744.
+
+Run: https://github.com/esp-rs/esp-hal/actions/runs/27691042282
+
+
+**Status update:** HIL (full) run is still in progress or status unknown.
+
+---
+
+@MabezDev · 2026-06-17T13:05:24Z:
+Not sure why the bot struggled here, HIL failed at the build stage, the tests need updating I think.
+
+---
+
+@bugadani · 2026-06-17T13:06:16Z:
+> Not sure why the bot struggled here, HIL failed at the build stage, the tests need updating I think.
+
+It's doing what I ask of it, I'm babysitting the process.
+
+---
+
+@Dominaezzz · 2026-06-15T21:09:39Z:
+"safely useable" is too vague and I feel it over promises a bit (from my perspective of safety/usable).
+
+Example of over promising, `Box<InternalMemory<[DmaDescriptor; 10]>, ExternalMemory>` is not safe to use.
+
+Side note, `InternalMemory` name kinda unfortunate because of `esp-alloc`.
+
+---
+
+@Dominaezzz · 2026-06-15T21:09:47Z:
+hidden?
+
+---
+
+@Dominaezzz · 2026-06-16T23:19:24Z:
+This a good candidate for `AsRef`/`AsMut`, `Borrow`/`BorrowMut` and/or `Deref`/`DerefMut`?
+
+---
+
+@Dominaezzz · 2026-06-16T23:29:10Z:
+Unless I'm missing something, there's nothing slice specific about this function's implementation. This could just be `pub fn new(ptr: &'a mut T) -> Result<Self, DmaBufError>`, and you don't need to special case slices.
+
+Or perhaps you want to erase the size by default, which `CoerceUnsized` would be the tool for but it's not stable yet.
+
+---
+
+@Dominaezzz · 2026-06-16T23:32:36Z:
+Typo?
+```suggestion
+    /// The caller must ensure that the reference is properly aligned for [`DmaAlignedMut`] and
+```
+
+---
+
+@Dominaezzz · 2026-06-16T23:37:21Z:
+This manual alignment stuff can be replaced with `InternalMemory` now right?
+
+---
+
+@Dominaezzz · 2026-06-16T23:41:19Z:
+How do you know the alignment is correct here?
+
+---
+
+@Dominaezzz · 2026-06-16T23:42:54Z:
+Maybe this PR isn't the place but these `*chunk_size` macros can go away now
+
+---
+
+@Dominaezzz · 2026-06-16T23:43:58Z:
+iirc this is typically called `into_inner` in `std`.
+
+---
+
+@bugadani · 2026-06-17T07:32:56Z:
+No, we need a PSRAM-type in esp-alloc
+
+---
+
+@bugadani · 2026-06-17T07:36:32Z:
+Wishy-washy, but a cache writeback is generally a safe operation as far as I can tell, and we don't call invalidate on these I think. So I think we're fine with the DmaDescriptor alignment in this type, at this time.
+
+---
+
+@bugadani · 2026-06-17T07:42:36Z:
+I don't see how, not yet anyway
+
+---
+
+@bugadani · 2026-06-17T07:43:20Z:
+Hmm I remember bumping into some "size is not known in compile time" errors but maybe I didn't try hard enough.
+
+---
+
+@bugadani · 2026-06-17T07:55:55Z:
+Aaaand, they're gone. I'd consider adding these traits that hand out DmaAlignedMut, but the mutable traits imply a shared DmaAligned object and at this point I'm not sure if we need that.
+
+=== ROW 113 | f004809 | https://spinframework.dev/blog/announcing-spin-4-0 | 2026-06-15 | domain-subframes ===
+Announcing Spin v4.0 | Spin Docs
+Spin
+Docs
+Get started building Wasm apps with Spin
+Spin Hub
+Browse example app code and templates
+Community Blog
+Stay up to date on Spin releases
+Toggle light/dark mode
+Star
+Spin Quickstart
+Announcing Spin v4.0
+By The Spin Project
+June 15, 2026
+The CNCF Spin project just released Spin v4.0.0, the first major release of Spin in over a year. This release delivers a production-grade, stable implementation of WASI Preview 3; rewrites Spin’s host APIs around async; adds build profiles; and introduces fine-grained capability inheritance for component dependencies.
+There’s a lot in this release, so this post is part release-notes and part tutorial. We’ll walk through each headline feature with a working example.
+WASI Preview 3: stabilized and supported long-term
+Async everywhere: Spin’s host interfaces are now async
+Build profiles
+Fine-grained capability inheritance for dependencies
+Targeting a deployment environment
+Shell completions
+Upgrading to Spin 4.0
+WASI Preview 3: stabilized and supported long-term
+WASI Preview 3 (WASIp3) is the next major revision of the WebAssembly System Interface. It brings first-class async, concurrent component exports, and significantly simpler WIT definitions to the component model. In practice, that means your components can handle multiple in-flight requests on a single instance, fan out concurrent I/O with plain await, and talk to host interfaces using idiomatic async code in each language.
+Spin 4.0 ships with the March 2026 release candidate of WASIp3, and we are committing to supporting it long-term. WASIp3 is now the default platform for new applications, and the Spin Rust, Python, and Go SDKs have all been updated to use it.
+If you followed along in Spin 3.5 and Spin 3.6, you’ve seen WASIp3 progress from “experimental, opt-in, might break between releases” to something ready for production use.
+What this means in practice:
+Concurrent, async component exports. A single component instance can service multiple in-flight requests concurrently, instead of one instance per request.
+One idiomatic story per language. Rust handlers are async fn using http / hyper types, and Python handlers are async def. Go handlers remain standard net/http, but now build with the standard Go toolchain (see below).
+WASIp2 components continue to run unchanged. The HTTP trigger speaks WASIp3 natively, and existing WASIp2 components keep working without changes.
+Here’s the new minimum-viable Rust HTTP component in 4.0:
+use spin_sdk::http::{IntoResponse, Request, Response};
+use spin_sdk::http_service;
+#[http_service]
+async fn handle(_req: Request) -> anyhow::Result<impl IntoResponse> {
+Ok(Response::builder()
+.status(200)
+.header("content-type", "text/plain")
+.body("Hello, Spin 4!".to_string())?)
+}
+A few things to notice:
+The handler is async fn. That’s not cosmetic, it’s a real WASIp3 async export. While this handler is awaiting I/O, Spin can dispatch another request into the same component instance.
+Request and Response are re-exports from the ecosystem http crate, so this code composes with Axum, Tower, http-body-util, and friends with no glue types.
+For a richer illustration of concurrent async exports, see the gRPC sample in the Spin repo.
+Python and Go
+The same story holds in Python and Go. The Python SDK exposes a single handle_request coroutine:
+from spin_sdk.http import Handler, Request, Response
+class HttpHandler(Handler):
+async def handle_request(self, request: Request) -> Response:
+return Response(
+200,
+{"content-type": "text/plain"},
+bytes("Hello from Python on WASIp3!", "utf-8"),
+)
+Build it with:
+componentize-py -w spin:up/http-trigger@4.0.0 componentize app -o app.wasm
+No more TinyGo
+On the Go side, the 4.0 release lines up with Go SDK v3, which drops the TinyGo requirement. Spin Go components now build with the standard Go toolchain (Go 1.25.5+) via componentize-go:
+package main
+import (
+"fmt"
+"net/http"
+spinhttp "github.com/spinframework/spin-go-sdk/v3/http"
+)
+func init() {
+spinhttp.Handle(func(w http.ResponseWriter, r *http.Request) {
+w.Header().Set("content-type", "text/plain")
+fmt.Fprintln(w, "Hello from Go on WASIp3!")
+})
+}
+func main() {}
+[component.hello-go.build]
+command = "go tool componentize-go build"
+If you’ve been writing Spin Go components against spin-go-sdk/v2 with TinyGo, this is the big one: standard Go, and no tinygo build -target=wasip1 -gc=leaking ... incantation.
+Concurrent outbound HTTP: the canonical demo
+Because component exports are async, you can now fan out concurrent I/O from inside a component. The old ceremony of spinning up an async runtime by hand is gone, just await futures:
+use futures::future::{select, Either};
+use spin_sdk::http::{EmptyBody, IntoResponse, Request, send};
+use spin_sdk::http_service;
+use std::pin::pin;
+#[http_service]
+async fn handle(_req: Request) -> anyhow::Result<impl IntoResponse> {
+let spin = pin!(content_length("https://spinframework.dev"));
+let book = pin!(content_length("https://component-model.bytecodealliance.org/"));
+let (winner, len) = match select(spin, book).await {
+Either::Left((len, _))  => ("Spin docs", len?),
+Either::Right((len, _)) => ("Component model book", len?),
+};
+Ok(format!("{winner} responded first, content-length = {len:?}\n"))
+}
+async fn content_length(url: &str) -> anyhow::Result<Option<u64>> {
+let req = Request::get(url).body(EmptyBody::new())?;
+let res = send(req).await?;
+Ok(res
+.headers()
+.get("content-length")
+.and_then(|v| v.to_str().ok())
+.and_then(|v| v.parse().ok()))
+}
+Both requests are in flight at once, inside a single Wasm instance, scheduled by Spin. That same instance may also be serving other requests concurrently. And because WASIp3 supports streaming response bodies, a handler can start writing its response before it’s finished computing the rest, something we’ll use in the next section.
+Heads up on global state
+Because a single instance can now serve multiple concurrent requests, instance-scoped “global” state is shared across in-flight requests. This is the same rule you already follow in Axum, Express, or Flask, but it’s a genuine shift from “one instance per request” if you’ve been writing Spin components against WASIp2 semantics. Audit any static, module-level, or OnceCell state and reach for per-request state or explicit synchronization where needed.
+Async everywhere: Spin’s host interfaces are now async
+WASIp3 unlocks async, but the benefit only lands if the host APIs your component calls are also async. A lot of Spin 4.0’s work happened here: we’ve asyncified Spin’s host interfaces so I/O-heavy handlers actually get concurrency instead of blocking the instance.
+In 4.0, the following interfaces are async from the guest’s perspective:
+Key-value: Store::open_default().await, store.get(key).await, store.set(key, value).await
+SQLite: Connection::open_default().await, connection.execute(...).await
+PostgreSQL: Connection::open(...).await, connection.query(...).await
+Redis (outbound and trigger): Connection::open(...).await, plus async Redis subscriber handlers
+Outbound HTTP: spin_sdk::http::send(req).await
+Here’s a Rust handler that runs a SQLite query and streams each row to the client as it arrives, using spin_sdk::wasip3::spawn:
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
+use http_body_util::StreamBody;
+use spin_sdk::http::{IntoResponse, Request, Response};
+use spin_sdk::http_service;
+use spin_sdk::sqlite::Connection;
+#[http_service]
+async fn handle(_req: Request) -> anyhow::Result<impl IntoResponse> {
+let db = Connection::open_default().await?;
+// A channel the spawned task will push body chunks into.
+let (mut tx, rx) = futures::channel::mpsc::channel::<Bytes>(1024);
+let rx = rx.map(|value| anyhow::Ok(http_body::Frame::data(value)));
+let response = Response::builder()
+.header("content-type", "application/x-ndjson")
+.body(StreamBody::new(rx))?;
+// Spawn a background Wasm task. It outlives `handle` returning.
+spin_sdk::wasip3::spawn(async move {
+let mut query_result = db
+.execute("SELECT id, name FROM users ORDER BY id", [])
+.await?;
+let id_idx = query_result.columns().iter().position(|c| c == "id").unwrap();
+let name_idx = query_result.columns().iter().position(|c| c == "name").unwrap();
+while let Some(row) = query_result.next().await {
+let id: i64 = row.get(id_idx).unwrap();
+let name: &str = row.get(name_idx).unwrap();
+let line = format!("{{\"id\":{id},\"name\":\"{name}\"}}\n");
+let _ = tx.send(line.into()).await;
+}
+query_result.result().await?;
+// Dropping `tx` closes the body stream.
+anyhow::Ok(())
+});
+Ok(response)
+}
+Spin starts streaming the response as soon as handle returns, and each row hits the client as soon as SQLite yields it, without buffering the full result set in memory. That’s a real win for time-to-first-byte and for large queries: you don’t have to wait for every row before the client starts receiving bytes.
+The same pattern is available in Python (via componentize_py_async_support.spawn) and Go (via plain go func() { ... }() goroutines).
+Build profiles
+Development tools often offer ways to build code in different ways for different purposes: for example, debug builds that favor diagnostic value over speed and size, or profiling builds that inject performance instrumentation. Spin 4.0 introduces named build profiles, so you can leverage those options in Wasm applications, for example, to define a debug or profile build of your application.
+You declare alternate profiles inline under each component, and select one at the command line:
+spin_manifest_version = 2
+[application]
+name = "sentiment-analysis"
+[component.sentiment-analysis]
+source = "target/spin-http-js.wasm"
+[component.sentiment-analysis.build]
+command = "npm run build"
+watch = ["src/**/*", "package.json", "package-lock.json"]
+# A `debug` profile for the sentiment-analysis component.
+[component.sentiment-analysis.profile.debug]
+source = "target/spin-http-js.debug.wasm"
+[component.sentiment-analysis.profile.debug.build]
+command = "npm run build:debug"
+# The `ui` component has no debug profile, it'll fall back to the default.
+[component.ui]
+source = { url = "https://.../spin_static_fs.wasm", digest = "sha256:..." }
+# The `kv-explorer` component pulls a pre-built debug build from a registry.
+[component.kv-explorer]
+source = { url = "https://.../spin-kv-explorer.wasm", digest = "sha256:..." }
+[component.kv-explorer.profile.debug]
+source = { url = "https://.../spin-kv-explorer.debug.wasm", digest = "sha256:..." }
+Now you can run the same manifest in two modes:
+# Production: every component uses its default build.
+$ spin up
+# Debug: every component that defines `debug` uses it; others fall back.
+$ spin up --profile debug
+Learn more in the Spin docs on build profiles.
+Fine-grained capability inheritance for dependencies
+Spin 3 introduced component dependencies, which let you use off-the-shelf Wasm components as libraries without having to write composition scripts or commands. Once you start using component dependencies like that, a natural concern is what capabilities those dependencies have, your application needs to connect to your database, but your regex matcher sure doesn’t.
+Spin 3 offered a partial solution where dependencies could be fully isolated, and Spin 4 improves on this by letting you manage dependency capabilities more selectively, on a dependency-by-dependency, capability-by-capability basis. This is the principle of least privilege, expressed in spin.toml, and it means you can hand out dependencies from across your organization, or from the registry, and grant them exactly the capabilities they need, and nothing more.
+Concretely, Spin 4 replaces the coarse dependencies_inherit_configuration toggle with a per-dependency inherit_configuration field that accepts three forms.
+1. Inherit everything — the dependency has access to all the capabilities of the main component:
+[component."infra-dashboard".dependencies]
+"acme:s3-client" = { version = "1.0.0", inherit_configuration = true }
+This is similar to dependencies_inherit_configuration = true in Spin 3, but scoped to just this dependency.
+2. Inherit nothing (the default):
+[component."infra-dashboard".dependencies]
+"acme:s3-client" = { version = "1.0.0", inherit_configuration = false }
+The dependency is fully isolated from the parent’s configuration, any capability import the component calls will return an error. Per-dependency isolation like this is itself new in Spin 4.
+3. Inherit a specific subset. This is the new power:
+[component."infra-dashboard"]
+allowed_outbound_hosts = ["https://s3.us-west-2.amazonaws.com"]
+key_value_stores      = ["my-key-value-cache"]
+[component."infra-dashboard".dependencies]
+"acme:s3-client" = { version = "1.0.0", inherit_configuration = ["allowed_outbound_hosts"] }
+Here acme:s3-client can make outbound HTTPS calls to the parent’s allowed hosts, enough to reach S3. But every other capability is denied. Specifically, the S3 client cannot see my-key-value-cache.
+For the full list of configuration keys you can inherit and how they map to WIT interfaces, see the Spin docs on component dependencies.
+Targeting a deployment environment
+Some Spin platforms ship custom templates and plugins tailored to that platform, for example, templates that use only the APIs available in the platform, plus the deployment plugin you need to ship to it. Spin 4.0 makes targeting one of these environments a single step with the new -E flag:
+$ spin new -E <environment>
+You don’t need to pre-install anything: Spin fetches the environment’s templates on demand, and installs any plugins the environment requires (typically a deployment plugin) at the same time. Your platform’s documentation will tell you the environment name to use.
+The same -E flag works when managing plugins directly, so you can list or install just the plugins associated with an environment:
+$ spin plugins list -E <environment>
+$ spin plugins install -E <environment>
+Learn more in the docs on creating an application for a specific deployment environment and installing plugins for a specific deployment environment.
+Shell completions
+Spin 4.0 can now generate shell command completions for bash and zsh. To enable them, run the following during shell startup (for example, in your .bashrc):
+source <(COMPLETE=bash spin maintenance generate-completions)
+For zsh, change the COMPLETE variable to zsh.
+Shell completions are a work in progress, and have a few known limitations:
+You do not get trigger option completions in spin up (which, unfortunately, includes a lot of options).
+You do not get spin up option completions on spin build --up or spin watch.
+You do not get completions for plugin commands.
+See the installation docs for more detail.
+Upgrading to Spin 4.0
+Install Spin 4.0 from spinframework.dev/install or grab a binary from the release page.
+Update your templates:
+spin templates install --git https://github.com/spinframework/spin --update
+Update the SDK your component uses:
+Rust: spin-sdk = "6.0" and target wasm32-wasip2 (WASIp2 and WASIp3 share the same binary target).
+Python: pull the latest spin-sdk and componentize-py into your virtualenv.
+Go: switch to github.com/spinframework/spin-go-sdk/v3 and use Go 1.25.5+ with go tool componentize-go build.
+Remove any executor = { type = "wasip3-unstable" } lines from your manifest, they’re no longer needed.
+Audit instance-scoped state. Concurrent in-flight requests on a single instance is now the default.
+For a full walkthrough, see the v4 quickstart and the updated language guides.
+Thank you
+Spin 4.0 is the work of a lot of people across a lot of organizations, contributors to Spin itself, to wasmtime, to wit-bindgen, to componentize-py, to the Spin Go SDK, and to the WASIp3 standardization effort in the Bytecode Alliance. Thank you, and thank you to the CNCF for continuing to support the project.
+Stay in touch
+Join us at weekly project meetings, say hi on the Spin CNCF Slack channel, and follow @spinframework on X.
+Ready to build? Head to the Spin quickstart, or browse the Spin Hub for inspiration.
+Copyright Spin a Series of LF Projects, LLC
+For website terms of use, trademark policy and other project policies please see
+https://lfprojects.org/policies/.
+GitHub
+Twitter
+Slack
+

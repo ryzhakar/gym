@@ -1,0 +1,2883 @@
+=== ROW 114 | f004905 | https://forums.swift.org/t/se-0538-disconnected/88361 | 2026-07-17 | domain-subframes ===
+SE-0538: Disconnected
+
+@hborla · 2026-07-17T23:26:09.469Z:
+Hello, Swift community!
+The review of SE-0538: Disconnected begins now and runs through July 31, 2026.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to me as the review manager by email or DM. When contacting the review manager directly, please put "SE-0538" in the subject line.
+Trying it out
+Toolchains with the latest implementation are currently available for macOS and Linux. The Windows toolchain is still building on the implementation PR.
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at:
+swift-evolution/process.md at main · swiftlang/swift-evolution · GitHub
+Thank you,
+Holly Borla
+Review Manager
+
+---
+
+@OneSadCookie · 2026-07-18T08:05:16.582Z:
++1 makes sense. I've been using this type a bit myself as a primitive for implementing higher-level constructs, and it is useful as such (though often let down in current Swift by the lack of support for noncopyable types in other parts of the language and library).
+My only nit is that I don't think take is the correct name for that API. We already have an API named take on Optional, which, importantly, leaves the container intact but empty. And I think we would consider adding e.g. takeAll() to RangeReplaceableCollection, consuming the contents but leaving an empty collection behind. This API does not do that.
+I think we do need a naming scheme for "consume a noncopyable type and return the pieces it's conceptually composed of" — it does keep coming up as a natural design pattern. But perhaps consume or similar is the correct name for it, rather than take.
+
+---
+
+@mattie · 2026-07-18T09:59:27.061Z:
+This type is going to be useful and I'm in favor of it.
+During the pitch, I brought up a concern. The naming of this type moves the mechanisms of region-based isolation into the formal terminology that programmers need to use to understand the concurrency system. Not in a particularly aggressive way. You do not have to think hard about what "disconnected" means to use this. And moreover, this is a fairly advanced tool.
+But, reading through the comment docs for the type, again, makes me wonder if there are alternative terms/concepts that could be used to model the same underlying behaviors. I want to stress that I'm concerned only about names and metaphors.
+If this new terminology begins to show up in more places, especially diagnostics, I think we need to be absolutely sure this is appropriate for all levels of Swift user. I am, in particular, very skeptical that a distinction between "domains" and "regions" will be clarifying to people with less experience. I'm not certain there is a better approach. But it feels to me like it could be worth exploring.
+
+---
+
+@aviva · 2026-07-20T23:20:29.909Z:
+Big +1 for adding a type like this, it seems very natural and useful. I can't envision RBI permitting the UniqueDeque case without a type like this.
+I agree with @OneSadCookie that take may not be the best name, I like consume.[1] The doc comment for take even describes it as consuming the wrapper, which implies it would be an intuitive choice. It is a little longer though. consume is already a contextual keyword, but it describes the same operation as this method, so maybe that's ok? Potentially confusing. We should decide what we call the "remove and destroy" method on noncopyable types and be consistent.
+I think this proposal's type name and mechanism forces us to decide how we feel about regions in the model of concurrency developers need to understand, so the rest of my review focuses on that. Maybe discussion of this should be its own thread, but I think we need to resolve it to commit to a name here.
+I'm unconvinced that Disconnected is the right name. I agree with @mattie that we may be able to avoid talking about regions to have a type like this, and also feel that it could be valuable to do so (I'll come back to this). I think it is possible, although strained, to try to explain Disconnected only in terms of isolation; a type is "disconnected" when it doesn't have any references into or out of an isolation? Disconnected would be a state, rather than a kind of region. This isn't as cohesive with our other non-region concurrency language, but there is a path here that doesn't require naming regions. I think this is rather confusing to explain though.
+I do not think that a concept being used in previous language evolution proposals is sufficient justification for it to be introduced as a developer facing type. There are lots of academic words (covariance!) we use in evolution documents that would make Swift feel unapproachable to developers. Today, we only surface 'region' in extremely narrow cases, and my understanding is that we intentionally do not name it in diagnostics and userdocs. SE-0414 did not suggest we would need to use these concepts in diagnostics or mental models:
+NOTE: While this proposal contains rigorous details that enable the compiler to prove the absence of data races, programmers will not have to reason about regions at this level of detail. The compiler will allow transfers of non-Sendable values between isolation domains where it can prove they are safe and will emit diagnostics when it cannot at potential concurrent access points so that programmers don't have to reason through the data flow themselves.
+SE-0414
+Unless we are reframing concurrency in terms of regions, I would argue for Sent.[2] I don't agree with this rationale in the proposal against Sent:
+sending describes a property of values at function boundaries (a transfer event), not a stable region state. A wrapper that simply holds a value living in a disconnected region is not mid-transfer, so naming the type after the transfer event would misrepresent what the wrapper is.
+In my opinion, this is only an argument against naming the type Sending (gerund). Sent (past participle) is certainly a stable state, a thing has been sent. Even initializing this type requires sending the initial value, such that it "has been" sent to put it into the wrapper. It is being sent to wherever you pass it! This leaves us with a very coherent, linguistically grouped set of answers for "how to send this type" that do not require making regions developer facing:
+Sendable types are always "able to be sent" and so can be sent freely!
+a sending parameter or return value is contextually able to be sent, because it was made unavailable in the isolation it came from.
+A value wrapped in Sent<T> has already been made unavailable in the isolation it came from, so it is able to be sent further.
+Sent does not reflect the internal compiler understanding as well as Disconnected, but I think including it in this family might be worth it. If we choose Sent we could rename take to receive (as in, receive the sent value). I know disconnected is seen as a term of art, but I don't think we are required to use the most theoretically correct term in developer facing types if another choice makes the language easier to learn.
+Coming back to why we should (maybe) avoid describing things in terms of regions; as @mattie says, concurrency is already really complicated! Even though regions are the internal model, we are not obligated to surface it, and if we can explain things with the terms we already have our language will be simpler to use and teach if we can show restraint here. If we can't explain things with the terms we have, then this would be very frustrating and we should reframe things in terms of regions. I see two decent futures (and a bad one) for the developer facing story here:
+Everything is defined in terms of regions
+Isolations are named regions based on annotations (global actor isolation) and types (actor instances) as well as scopes (tasks). However, there are also unnamed, flow sensitive regions that the compiler pessimistically determines to allow more code to compile. We would say Sendable allows a type to be shared between arbitrary regions (or maybe "isolation regions", but I feel this muddles everything). non-Sendable types can only be sent between regions if they are disconnected. Sometimes the compiler can prove values are disconnected and allow you to send them between regions, even though they aren't Sendable or sending. You can also wrap your value in Disconnected to ensure this is the case.
+Everything is defined in terms of regions, so Disconnected makes sense.
+We continue defining things in terms of isolation
+An isolation protects its contents. Isolation comes from annotations (global actors), types (actor instances), and scopes (tasks). Sendable allows a type to be shared between arbitrary isolations. non-Sendable types can only be sent between isolations if they have no references / dependencies to or from other values in their current isolation, which the compiler will check for you. Once a non-Sendable value has been sent, it isn't available in its old isolation. You can use the sending annotation to require this to be the case for a parameter or a return value. You can also send a non-Sendable value into Sent<T> to lose access to it in the current isolation, but store it in a Sendable wrapper that you can take it out of in another isolation later. In this world, regions don't exist as far as the developer is concerned.
+Developers don't see regions, so Disconnected is weirder than Sent in this world.
+Both!
+We could have isolation be the 'simple concurrency' and regions be the 'advanced concurrency' and not commit to a developer exposed relationship between the two of them. I'd prefer either of the above to this. It's easier to teach and understand a single, consistent story. We want a consistent way to talk about why sharing non-Sendable state is wrong, and sending it is only wrong sometimes. Whether we can talk about that in a satisfying way without regions isn't settled, but I'll try to steelman what diagnostics for that can look like below.
+How could we explain RBI errors without saying 'region'
+@Jon_Shier brought up a misleading diagnostic (ty!) in the pitch thread (where RBI pessimistically rejects code) that is roughly:
+class NS { // something non-Sendable
+var count = 0 // 🚨 ahhh! shared mutable state!
+}
+func myScope() { // block of code, many more lines in actual programs (making these relationships less obvious to the developer)
+let one = NS()
+let two = NS() // two non-Sendable values, right now in separate regions
+someOperation(one, two) // compiler must merge those regions due to lack of type level information about 'someOperation', in case these values are mutated to reference each other
+Task { one.count += 1 } // the region containing 'one' and 'two' is sent into this task
+// the region containing 'one' and 'two' is no longer accessible
+two.count += 2 // compiler must diagnose this as illegal, since the region containing 'two' is no longer accessible
+//  ^ this mutation could also mutate 'one', which would be a data race
+}
+// compiler does not know based on the signature if these parameters mix / entangle / become dependent!
+// it would prevent changing the body of functions if we inferred this quality, so we must assume the worst
+func someOperation(_ left: NS, _ right: NS) {
+// what if left was mutated to hold a reference to right?
+}
+We get here because Swift doesn't statically enforce mutable xor aliased for reference types.[3] I agree that the diagnostic we give today is actively misleading for many reasons, but the part I think is most interesting; how do we justify why this is not allowed to the developer? The argument made in the pitch was that regions are already exposed since pessimistic merging is the reason this isn't accepted, and we need to expose it more to diagnose that well. We could speculate on a (maybe unrealistically?) "good" diagnostic that describes things in terms of regions, and even gives them temporary names:
+Diagnostic that describes regions
+func myScope() {
+let one = NS()
+//  ^ note: 'one' defined here in region 'a
+let two = NS()
+//  ^ note: 'two' defined here in region 'b
+someOperation(one, two)
+// ^ note: regions 'a and 'b must be merged into 'c after 'someOperation' since values in 'a and 'b may have become connected
+Task { one.count += 1 }
+// ^ note: sending 'one' into task-isolated region sends region 'c
+two.count += 2
+// ^ error: 'two' is in 'c which is no longer accessible
+}
+func someOperation(_ left: NS, _ right: NS) {
+// ^ note: 'someOperation' could mutate parameters to reference each other
+}
+This reads somewhat like a Rust lifetime error, because RBI is a system that pessimistically determines region membership / connectivity (potential to reference) via flow analysis (which is reminiscent of lifetime relationships).[4] But I don't think we need to talk about regions, or name what region these types are stored in to justify this error:
+func myScope() {
+let one = NS()
+//  ^ note: 'one' defined here
+let two = NS()
+//  ^ note: 'two' defined here
+someOperation(one, two)
+// ^ note: 'one' and 'two' may reference each other after 'someOperation'
+Task { one.count += 1 }
+// ^ note: 'one' may reference or be referenced by 'two', and is sent into task-isolated scope here
+//   note: 'two' is sent here to prevent a data race
+two.count += 2
+// ^ error: 'two' cannot be accessed after being sent
+}
+func someOperation(_ left: NS, _ right: NS) {
+// ^ note: 'someOperation' could mutate parameters to reference each other
+}
+This diagnostic could use some new term (dependency? entangled?) to be more terse, or frame the problem differently, but my point is that we can explain the issue without reformulating the developer facing concurrency model in terms of regions. RBI is "just" the internal mechanism the compiler uses to accept additional, provably race free code. If we can explain the errors that RBI leads to (since there are cases which are simply unsafe and must be diagnosed) clearly, and in ways that help developers understand how to fix them, without invoking regions, I think we should do that and avoid naming any types in ways that only make sense in terms of regions. Such diagnostics still make sense when read with knowledge of regions (potential reference forces merging), but don't require understanding them.
+Note that this diagnostic does introduce a new idea, this concept of "potential to reference", to the concurrency system (this is part of the definition of regions from SE-0414). I'd argue the problem with developer facing regions is explaining how they are different from isolation, which is which and when. Programmers already think about references / dependencies and when they are safe (like for avoiding retain cycles). You could say this renames regions as a friendlier thing--but I think that's fine, and potentially how we can square the need to diagnose these cases clearly with a model that is easy to teach. We will need language for why "regions" are merged, but maybe it isn't regions...
+Having said all that, I'm really open to the possibility that surfacing regions is the way forward on these issues; I just want to make sure we consider that thoroughly first.
+Speculative musing about lifetimes and RBI annotations
+What if we had region annotations? I'd like to briefly highlight that, since regions and lifetimes talk about similar questions (do these values share dependency) from different perspectives, they share a deep correspondence and we may be able to express any interesting RBI annotations as lifetime dependencies (if we allow them on copyable types):
+@_lifetime(left: copy left, right: copy right) // left and right will not alias! this can't actually be expressed today, and doesn't make sense on the values we allow lifetimes on right now.
+func someOperation(_ left: NS, _ right: NS) {
+// left and right will not depend on each other, since signature promises no reference is taken
+}
+In a sentence, lifetime dependency implies RBI aliasing / referencing potential, but mutual lifetime independence requires non-aliasing / non-referencing.
+Putting the non-aliasing / non-referencing 'promise' in the type system allows RBI to avoid merging the two regions. I think it would probably be bad for progressive disclosure to tie regions and lifetimes, but my point is that even if you think we want RBI annotations, we may be able to express them as dependencies (lifetimes are just how we add dependency relation to function and data types in Swift) and avoid complicating concurrency with the concept of regions.
+I thought about connect and derivatives but I think it's more confusing than clarifying. ↩︎
+Suggested by @pyrtsa in the pitch thread, ty! ↩︎
+A very fancy RBI could determine that NS can't store a reference to another NS or any of its potential fields with reference semantics, but ignore that (or consider NS to be a library type) ↩︎
+I also just like lifetimes. ↩︎
+
+---
+
+@j-f1 · 2026-07-22T00:58:27.286Z:
++1 to everything Aviva said! To add on a couple of things:
+If the type is called Sent, then how about calling the take method send()?
+var deque = UniqueDeque<Sent<NonSendable>>()
+deque.append(Sent(NonSendable()))
+guard let element = deque.popFirst()?.send() else { return }
+Task { print(element) }
+I’m not fully convinced that this is a clearer term than consume() but it fits in a little better with the fact that the return type is sending Foo.
+And I think the error messages you proposed would be extremely helpful in debugging RBI/sendability issues — today, I am very often stumped because some random piece of code has an error with no clear justification.
+
+---
+
+@John_McCall · 2026-07-22T07:16:59.213Z:
+Speaking for myself, I like the name Disconnected. I don’t think you need to know region analysis in order to get this; disconnectedness is fundamentally just a statement about the object graph, which is both pretty intuitive and very easily visualized. (It’s also something we already expect programmers working with classes to have a handle on, e.g. because of reference cycles.
+
+---
+
+@aviva · 2026-07-22T22:45:38.388Z:
+j-f1:
+If the type is called Sent, then how about calling the take method send()?
+I think send is a little confusing, since the value is already sent (that's how it got inside the container). You could call the initializer send, but we don't really need to label this initializer. The return type being sending is (afaik) reiterating to the compiler that it's still in a disconnected region and can be sent across isolation boundaries.
+If Sent, my personal opinion is receive or consume [1] > take.
+If Disconnected, consume > take.
+John_McCall:
+Speaking for myself, I like the name Disconnected. I don’t think you need to know region analysis in order to get this; disconnectedness is fundamentally just a statement about the object graph, which is both pretty intuitive and very easily visualized.
+I agree that "disconnected is a state a value can have within the object graph" is a concept a programmer could understand without regions (my 'may reference' diagnostic example is describing the lack of that state). Right now though, the proposal has the doc comment below teaching it via regions, so it's not neutral on Disconnected (isolation region) vs Disconnected (a state in the object graph). I'm being pedantic,[2] but I think those are different things for how we teach concurrency even if we choose Disconnected.
+/// A wrapper that holds a value in a disconnected isolation region.
+///
+/// A value of `Disconnected<Value>` lives in a disconnected region: it has no
+/// references to or from any other isolation region. That guarantee lets you
+/// store such values in generic containers and later transfer them across
+/// isolation boundaries without losing the information that the value was
+/// in a disconnected region.
+///
+/// ## What is a disconnected region?
+/// ...
+The detailed design has the full doc comment at the top, with an (in my opinion) great explanation of regions and how this fits into them. The implication though is that you do need to know about region analysis to understand this type, at least as part of this proposal.
+@John_McCall, do you think the term of art value / conceptual value outweighs the linguistic grouping value? What about for a type that isn't being taught in terms of regions?
+contingent on us feeling like this is the word we want to use for this operation on noncopyable types... ↩︎
+since RBI regions are regions in the object graph ↩︎
+
+---
+
+@John_McCall · 2026-07-22T23:22:34.547Z:
+Documentation is certainly something we could just change. I would not want this to be taught using regions.
+I'm happy to acknowledge that there's value in sticking to some kind of "sending"-related name. I don't think Sent<> is a good choice, though. The statement that the value was sent in the past doesn't seem to capture either what happened to it or how it can continue to be used. If anything, the value is now in the same currently-in-transit state as sending parameters and results and ought to have the same name. Sending<> is probably the best option in this vein if we can come to terms with it just differing from the keyword by case.
+
+---
+
+@Dmitriy_Ignatyev · 2026-07-23T08:49:24.135Z:
+John_McCall:
+Sending<> is probably the best option
+Beyond being clearer, Sending<> is also shorter and more consistent with the existing sending annotation already used in function signatures. This alignment between the type and the parameter/result annotation helps build a natural and intuitive mental model: values flow through sending boundaries, and Sending<T> is simply the container that carries them across.
+I've recently needed to use Disconnected in typed throw contexts where the closure signature must be written explicitly, for example in closures passed to functions like withUnsafeMutablePointer(to:):
+func foo<Result, E>(...) throws(E) -> sending Result {
+... = bar() { argName throws(E) -> (Bool, Sending<Result>) in
+// ...
+}
+}
+Sending<Result> would be much more understandable. The naming makes the flow obvious: you receive a Sending<Result>, consume its value and return a sending Result.
+The mental mapping from Sending<Result> to sending Result is intuitive and reinforces Swift's existing concurrency vocabulary.
+
+---
+
+@jamieQ · 2026-07-23T12:12:02.268Z:
+I agree with others that a type of this general form has utility, particularly for enabling the sending annotation to be preserved through storage within containers and properties.
+I also agree that take() doesn't seem like quite the right name, given the proposed semantics and how Optional.take() works. The UniqueBox evolution proposal occurred fairly recently and chose consume() with this justification, which seemingly also applies here.
+swap(newValue:) also reads a bit oddly to me.
+The type is a "simple" wrapper that has a single stored value, so any mutating operation presumably affects that value in some way. Given that, the argument label "newValue" is arguably overly verbose. If distinguishing that the underlying "value" is the thing being "swapped" seems valuable, then perhaps that should be pulled out into the function name. These alternatives seem like improvements to me:
+var d = Disconnected(...)
+d.swap(with: x)
+d.swap(to: x)
+d.swapValue(with: x)
+d.swapValue(to: x)
+But, stepping back a bit, the naming choice of "swap" also seems a bit questionable... the prior art with which I'm familiar in Swift are the global function swap(_:_:) and the collection-based swapAt(_:_:). Both of these take two explicit arguments of the same type and exchange them (or the underlying data to which they correspond), which doesn't seem perfectly analogous to what's going on here (semantically we're replacing a stored value within a container and returning the old value). The stdlib has an exchange(_:with:) function which has a slightly closer shape. Perhaps something involving the word "exchange" or "replace" would be better (it appears Rust has a "replace")?
+var d = Disconnected(...)
+d.exchange(with: x)
+d.exchangeValue(with: x)
+d.replace(with: x)
+d.replaceValue(with: x)
+To summarize, writing all this out makes me feel there are two primary questions about the proposed naming choices for this method:
+Should the word "value" appear in the function name, or for basic "box" types such as this, is the language direction to rely on argument labels instead.
+Given precedent, should a term other than "swap" be chosen.
+Disconnected as the type's name seems okay, but I'm sympathetic to concerns that it surfaces implementation jargon that may not be particularly helpful or explained well in any extant documentation (though the proposed comments in the implementation PR do seem quite good!).
+Personally I think Swift already suffers a bit from having so many terms involving negations (non-copyable, non-escapable, non-sendable, non-isolated...). This pushes you to first understand whatever the "core" terminology is, and then negate it in some manner. In this case that's sort of more confusing than usual because the implied state of "connected-ness"[1] isn't really a formalized notion that's directly exposed in the language AFAIK. That said, I haven't yet thought of a clearly better alternative, and the fact the term arises in graph theory and sort of conveys the right general connotation is a point in its favor.
+Sent<T> seems worse to me, mostly because it does not align with my mental model of what the state of being "sent" means in region analysis. "Sent" to me implies that the one-shot ability to transfer a non-sendable value between isolation domains has already happened. But with the proposed API, placing a value within a Sent<T> wrapper does not semantically "send" it in that sense and so the value is not "sent" IMO. The property we're preserving is some latent ability to be sent at some future point. The natural-seeming name for something like that would, I think, be "sendable", but obviously that one is out of the picture. Perhaps we could retain something like "sendable" but express that it's a one-time-only sort of variation... "UniqueSendable<T>", "SendOnce<T>", or something along those lines?
+I don't entirely understand the motivation for housing the type in the synchronization module rather than in the concurrency module. Personally that's not where I would expect to find it if I hadn't read any of this discussion.
+Using a non-copyable type here seems it may be necessary, but this also means the type will suffer from some usability issues IMO. For instance, consider a variation of the motivating example – we have a deque and we want to process all its elements in parallel, in some way which requires the elements to retain their sending-ness. We wish to use structured concurrency to simplify our lives. We might try to write something like this:
+open class NS {}
+func useSending<T>(_: sending T) {}
+func drain(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+grp.addTask { useSending(next.take()) } // 🛑
+// error: noncopyable 'next' cannot be consumed when captured by an escaping closure or borrowed by a non-Escapable type
+}
+}
+}
+That doesn't work because the non-copyable types can't be consumed in an escaping closure, so we try another variant:
+// Okay, maybe we need to take the values out of the wrapper before
+// using them in the child tasks?
+func drain2(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+let val = next.take()
+grp.addTask { useSending(val) } // 🛑
+// error: sending 'val' risks causing data races
+}
+}
+}
+But that approach seems to lose the property that Disconnected is designed to preserve. With sufficient fiddling, we find that the following alternatives will work:
+// I guess a mutable binding works... but what if we can't reconstruct a new value?
+func drain3(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while var next = dq.popFirst() {
+grp.addTask { useSending(next.swap(newValue: NS())) } // ✅
+}
+}
+}
+// I suppose I could... write my own box?
+func drainCustomBox(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+final class SendOnce<T> {
+private var v: Disconnected<T>?
+init(_ t: consuming sending T) { self.v = .init(t) }
+func consume() -> sending T { v.take()!.take() }
+}
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+let myBox = SendOnce(next.take())
+grp.addTask { useSending(myBox.consume()) } // ✅
+}
+}
+}
+But at that point... will people have just given up and opted out instead?
+// That seems pretty convoluted... I guess I could just opt-out.
+func resignedDrain(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+nonisolated(unsafe) let val = next.take()
+grp.addTask { useSending(val) } // ✅
+}
+}
+}
+I'm not sure if there's actionable design feedback to be drawn from this, but I am curious if there are ways to make things work more nicely when escaping closures are involved.
+Or should we say "non-disconnected-ness"  ↩︎
+
+---
+
+@NotTheNHK · 2026-07-23T13:19:26.367Z:
+jamieQ:
+That doesn't work because the non-copyable types can't be consumed in an escaping closure
+This is the primary motivation behind the swap method. As things stand, we can't use a consuming method in such cases yet. I do wonder whether, if we renamed take to consume(), for instance, we could make take available only when Value is optional (or should take always be available?) and make it a mutating method that replaces the value with nil. For example, we did something similar here.
+
+---
+
+@rayx · 2026-07-23T15:21:25.615Z:
+I like the Sending<> name John suggested. I found Sent a bit confusing,  for a similar reason to what John mentioned.
+aviva:
+If we choose Sent we could rename take to receive (as in, receive the sent value).
+I think receive works great with the metaphor.
+PS: I like the original Disconnected name too. Is it really a goal to not expose isolation region to users? I'm quite sure that the term "task isolated" appears in some diagnostics.
+
+---
+
+@NotTheNHK · 2026-07-23T15:36:20.675Z:
+rayx:
+I'm quite sure that the term "task isolated" appears in some diagnostics.
+Not anymore: [rbi] Replace "task-isolated" with "code in the current task" in diagnostics by gottesmm · Pull Request #89552 · swiftlang/swift · GitHub. I guess this is another reason for Sending<Value>.
+
+---
+
+@QuinceyMorris · 2026-07-23T17:49:24.847Z:
+In natural language, "sending" is an attribute of the thing that's doing the sending, rather than of the thing being sent, unlike "disconnected" which could reasonably applied to either, though perhaps with a slight change in connotation.
+The sending keyword works, barely, in function parameters because it's the function call — or perhaps the caller's region — that's doing the sending. It's not creating a "sending" value, and IIUC it's not even creating a Sending<> value, if SE-0538 were accepted with that terminology, is it?
+IIUC, the "disconnected" concept presented in SE-0538 is more like transiting than sending. However, I don't think anyone would be happy about choosing a spelling-unrelated word such as "transiting", or anything else I could think of. (That would put this back in inout vs borrowing territory.)
+Given that disconnected values and disconnected regions could co-exist in the Swift Conceptual Universe without contradiction, but "sending" values embody a sort of self-contradiction, I'd advocate sticking with Disconnected<>, FWIW.
+Incidentally, although "disconnected" is very much the computer science/graph theory word for this sort of thing, "unconnected" is perhaps the better English word for the idea of not-being-connected. If my Mac gets disconnected from a network, it's generally a different thing than my Mac being unconnected.
+
+---
+
+@j-f1 · 2026-07-23T18:11:09.698Z:
+Sending<> also has the benefit of matching Inout<>, which already differs from its corresponding keyword by case. as discussed below it was renamed MutableRef
+
+---
+
+@grynspan · 2026-07-23T18:19:21.222Z:
+I like Sending or Sent. Disconnected feels… disconnected from the existing terminology.
++1 to the overall feature.
+Edit:
+John_McCall:
+Sending<> is probably the best option in this vein if we can come to terms with it just differing from the keyword by case.
+@Sendable and sending differ in case already, as do actor and Actor, class and AnyObject… I think there's plenty other prior art there.
+
+---
+
+@John_McCall · 2026-07-23T18:28:10.613Z:
+j-f1:
+Sending<> also has the benefit of matching Inout<>, which already differs from its corresponding keyword by case.
+We did not accept Inout<>; it's MutableRef<>.
+
+---
+
+@nkbelov · 2026-07-23T19:56:37.440Z:
+I could also envision this being called SendingCell because the take/swap semantics are precisely the same as offered by Rust's Cell — and there's a _Cell in the stdlib already underpinning the Mutex implementation, which I could imagine becomes de-underscored at some point with similar semantics as well.
+
+---
+
+@glessard · 2026-07-23T20:12:11.231Z:
+Good addition! I have no particular opinion about the type name, but I do about swap and take.
+UniqueBox has established consume() as the name for exactly that operation, and it applies better that take(), a name we already use for a mutating operation of Optional, rather than a consuming one.
+As for swap, the shape of other functions of that name in the standard library is swap(&a, &b) -> Void; the better analog is the top-level exchange<T>(_: inout T, with: consuming T) -> T. We didn't need such a function for UniqueBox because it can provide a mutable accessor to its stored value (usable with the top-level function). exchange could also be called replace, but we already have exchange.
+
+---
+
+@rayx · 2026-07-24T03:02:52.604Z:
+I find a corner case where Sending is more accurate than Disconnected. First, let's see SE-0430 (sending parameter and result values). It chose sending rather disconnected. That makes sense to me because a Sendable value can be passed to a sending parameter and the value doesn't need to be in disconnected region. I think the same applies in this case. While the proposed type isn't intended to wrap a Sendable value, there is nothing in its implementation preventing user from doing that. Since the type's init takes a consuming sending parameter, it's fine to pass a Sendable class instance to it and continue to access that instance in the original isolation. In this specific scenario Disconnected is an inacurrate name.
+EDIT: I should add that while many APIs changes their parameters from Sendable to sending after SE-0430, it's unlikely to happen in this case. So the two cases are similar but not exactly the same.
+
+---
+
+@ibex · 2026-07-24T08:41:00.270Z:
+Sorry about the learner question
+I am reading the proposal, and I couldn't resist trying the example in the Motivation section.
+Why does this code compile, despite the example in the Motivation section says otherwise?
+@main
+enum Driver {
+static func main() async {
+await test ()
+}
+}
+struct UniqueDeque<Element: ~Copyable>: ~Copyable {
+func append(_ element: consuming Element) {  }
+func popFirst() -> Element? { nil }
+}
+final class NS {
+var fubar: Int = 1024
+}
+@concurrent
+func test () async {
+var deque = UniqueDeque<NS>()
+deque.append(NS())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) // Error: Element is assumed to be in the same isolation region as uniqueDeque
+}
+}
+I have these Xcode settings:
+Strict Concurrency Checking: Complete
+Region Based Isolation: Yes
+Motivation
+Region-based isolation enables transferring non-Sendable values across isolation boundaries when the value is in a disconnected region. The sending parameter and result annotation from SE-0430 allows functions to explicitly require disconnected values at function boundaries. However, sending cannot be preserved through stored properties, collection types, or generic containers.
+Consider a queue implementation that stores elements to be processed across isolation boundaries. As an example, let's look at a hypothetical UniqueDeque:
+struct UniqueDeque<Element: ~Copyable>: ~Copyable {
+func append(_ element: consuming Element) { ... }
+func popFirst() -> Element? { ... }
+}
+One use-case might be to use UniqueDeque to append non-Sendable disconnected values and when popping an element send it to a different isolation region.
+var deque = UniqueDeque<NonSendable>()
+deque.append(NonSendable())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) // Error: Element is assumed to be in the same isolation region as uniqueDeque
+}
+To make this work we would need to consume the element in append and return it from popFirst as sending; however, this would significantly limit this type for other important use-cases where users want to store non-Sendable but not disconnected elements.
+
+---
+
+@FranzBusch · 2026-07-24T13:42:48.915Z:
+Thanks everyone for the support so far and the healthy discussion around the naming of the type and the methods.
+I agree that the proposed consume() instead of take() and exchange() instead of swap() follow existing precedence and I'm happy to change those.
+On the type name, I personally still think that Disconnected is best name for this type and can be understood without region isolation. As John put it above this is about a wrapper around a value that is disconnected from any other value. Having helped many people through compiler diagnostics I also feel like disconnected is the more natural way to describe what is happening.
+Think about explaining the problem of the code in the motivation:
+var deque = UniqueDeque<NonSendable>()
+deque.append(NonSendable())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) // Error: Element is assumed to be in the same isolation region as uniqueDeque
+}
+When explaining this to someone I normally describe like this: The Task closure is marked as sending since a task defines its own isolation region so all values passed to it must be disconnected from any other value to send it to the task's region. Since element is returned from the deque.popFirst() method the compiler connects both of them together.
+I find it very hard to use any of the names of the send-family of words to describe the above. Having said that I would love to see more discussion around the type name.
+jamieQ:
+Using a non-copyable type here seems it may be necessary, but this also means the type will suffer from some usability issues IMO. For instance, consider a variation of the motivating example – we have a deque and we want to process all its elements in parallel, in some way which requires the elements to retain their sending-ness. We wish to use structured concurrency to simplify our lives. We might try to write something like this:
+Without using ~Copyable here the type would not be sound. The problems around task group usage you illustrate are unrelated to this type and a general language limitation due to the lack of "call-once" closures. Today the compiler must assume that any closure can be called multiple times which means that nested closures such as the withTaskGroup { group.addTask {} } requires you to first transfer the disconnected value into the first closure so that it can be send into the child task's closure. Hopefully, we will gain the concept of "call-once" closures at some point which will make the use of Disconnected in these cases unnecessary. Until then Disconnected provides a manual yet unergonomic solution in these cases. Importantly, even if we get "call-once" closures there are still many important cases for a Disconnected type.
+ibex:
+Why does this code compile, despite the example in the Motivation section says otherwise?
+@concurrent
+func test () async {
+var deque = UniqueDeque<NS>()
+deque.append(NS())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) *// Error: Element is assumed to be in the same isolation region as uniqueDeque*
+}
+}
+This compiles because the deque and the element are in local scope and neither of those are used after the Task {}. So the compiler can reason that the entire region is send into the task's closure. If you add a simple deque.append(NS()) after the Task {} you will get an error since the element was send to the task but wasn't disconnected.
+
+---
+
+@rayx · 2026-07-24T15:56:02.385Z:
+FranzBusch:
+The Task closure is marked as sending since a task defines its own isolation region so all values passed to it must be disconnected from any other value to send it to the task's region.
+Nitpick: "be disconnected from any other value" isn't accurate because it's OK that a value is referenced by other values but all values are moved together. You are certainly aware of that. You chose a simple way to describe it because it's quite verbose to describe it accurately without introducing isolation region concept to the user. IMO isolation region is a nice abstraction and I really doubt one can explain disconnected in a concise way without using the term.
+
+---
+
+@mattie · 2026-07-24T16:12:53.285Z:
+While I am really starting to come around to the name "Disconnected" again, I also think it really isn't too bad to describe what's going on without "region". Here's how @aviva did it:
+non-Sendable types can only be sent between isolations if they have no references / dependencies to or from other values in their current isolation, which the compiler will check for you.
+
+---
+
+@rayx · 2026-07-24T17:05:08.732Z:
+Yes, that's a nice definition. Does it mean we'll introduce a new term "disconnected" and use it in user-facing documents (for example, when explaining what kind of values can be passed to sending parameter)?
+
+---
+
+@John_McCall · 2026-07-24T17:45:01.471Z:
+rayx:
+Nitpick: "be disconnected from any other value" isn't accurate because it's OK that a value is referenced by other values but all values are moved together.
+In graph-theoretic terms, it’s an (otherwise-) disconnected subgraph of the graph of non-copyable non-sendable values.
+Note that isolated storage (in the sense of being directly declared as actor-isolated, like by being an isolated property of an actor or having a global actor attribute) has a special role in this graph: we consider isolated edges to a value to prevent disconnectedness, but isolated edges from a value do not connect the subgraphs.
+
+---
+
+@jamieQ · 2026-07-24T18:40:48.874Z:
+John_McCall:
+it’s an (otherwise-) disconnected subgraph of the graph of non-copyable values.
+Do you mean "non-sendable" values?
+
+---
+
+@John_McCall · 2026-07-24T18:42:26.494Z:
+Oops, yes, fixed.
+
+---
+
+@rauhul · 2026-07-24T20:06:45.501Z:
+would this pattern:
+var deque = UniqueDeque<NS>()
+deque.append(NS())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) *// Error: Element is assumed to be in the same isolation region as uniqueDeque*
+}
+be better served with an explicit sending(unchecked) keyword for the particular value the developer wants to send across regions?
+e.g.
+Task { [sending(unchecked) element] in
+print(element)
+}
+later if the compiler learns about @once closures then it could flag this particular sending(unchecked) as redundant
+
+---
+
+@mlemoine · 2026-07-25T02:32:20.157Z:
+What about SendableRef<T>? Both MutableRef<T> and SendableRef<T> would describe a slightly different level of "exclusive access".
+
+---
+
+@rayx · 2026-07-25T04:16:03.948Z:
+John_McCall:
+we consider isolated edges to a value to prevent disconnectedness, but isolated edges from a value do not connect the subgraphs.
+Thanks for the explanation! I for one didn't think of this scenario at all.
+rauhul:
+Task { [sending(unchecked) element] in
+print(element)
+}
+IMO the issue with this approach is that it doesn't prevent the user from doing this:
+Task { [sending(unchecked) element] in
+print(element)
+}
+Task { [sending(unchecked) element] in
+print(element)
+}
+In this sense Disconnected is a safe way to use nonisolated(unchecked).
+
+---
+
+@Dmitriy_Ignatyev · 2026-07-25T09:52:52.437Z:
+mlemoine:
+What about SendableRef<T>? Both MutableRef<T> and SendableRef<T> would describe a slightly different level of "exclusive access".
+Term Ref describe a reference to a region of memory, which is not the case here. Something likeSendableCell or SendingBox can be used as alternatives.
+
+---
+
+@ibex · 2026-07-26T00:07:07.360Z:
+After reading the proposal and the related ones, I do think that Disconnected is a fitting name: it hints at what the type achieves. Besides, it is short and sounds sweet.
+
+---
+
+@hborla · 2026-08-25T15:47:46.618Z:
+Thanks everyone for the insightful review discussion! I enjoyed reading through how everyone thinks about disconnected regions and values, the relationship between region isolation and the object graph of non-Sendable values, etc.
+The LSG decided that the proposal is accepted with modifications:
+[Accepted with modifications] SE-0538: Disconnected Announcements
+Hello, Swift Evolution!
+The review of SE-0538: Disconnected has concluded, and the Language Steering Group decided that the proposal is accepted with modifications.
+The review discussion was generally positive on the need to guarantee that non-Sendable values are disconnected when storing them, e.g. in collections or as stored properties. The critical feedback focused on the naming of the Disconnected type and whether programmers should need to understand the concepts behind region-based isola…
+Holly Borla
+Review Manager
+
+=== ROW 115 | f004947 | https://blog.cloudflare.com/open-sourcing-our-privacy-proxy-cli | 2026-07-27 | domain-subframes ===
+We’re open sourcing our privacy proxy CLI | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+Better InternetHTTP3Internship Experience+4Show 4 more tags
+7 TagsShow 7 tags
+Post Tags
+Better InternetHTTP3Internship ExperienceOpen SourcePrivacyQUICRust
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+Open SourcePrivacyQUICRust
+Better InternetHTTP3Internship ExperienceOpen SourcePrivacyQUICRust
+July 27, 2026
+We’re open-sourcing our privacy proxy CLI
+Hannah Wang, Ben Yang, and Fisher Darling
+8 minute readCOPY URL
+Debugging privacy-preserving protocols is hard. Oblivious HTTP has several different steps across four different parties, not to mention binary HTTP encoding and details spread across many draft RFCs. We've taken what we've learned operating protocols like Oblivious HTTP at the scale of millions of requests per second, and wrapped it up in a nice, clean CLI tool — that we are open-sourcing today.
+We call it our privacy-client, or pvcli. We’re releasing it under the Apache-2.0 License, and it is open for contributions.
+Here’s a single line of code that executes a full Oblivious HTTP request with a relay, gateway and origin. Don't worry if you don't know what that means, we'll cover it below.
+pvcli --ohttp \
+--first-hop https://relay-cloudflare.ohttp.info \
+--proxy https://gateway.ohttp.info \
+-X POST \
+--header "content-type: application/json" \
+--data '{"test":1}' \
+https://target.ohttp.info/anything
+We’ll explain why we built this tool, and show just how handy it can be.
+Why privacy protocols can be hard to debug
+Let’s take a closer look at our motivation for creating pvcli. Over time, the Privacy team’s product suite and customer base grew. We added products like Privacy Proxy and Privacy Gateway, which power Apple’s Private Relay, Microsoft’s Edge Secure Network VPN, Flo Health’s Anonymous Mode, and more. With it came an increasing amount of special customer requirements, domain knowledge, and complexity. As a result, we saw increased friction in development and incident response.
+To see this in action, let’s look at how one of our products implements Oblivious HTTP, also known as OHTTP. First, a quick primer. OHTTP provides users with a privacy guarantee: no one can know both who made a request and what they’re requesting. To achieve this, OHTTP requires two servers, a relay and a gateway, operated by two non-colluding parties.
+Below is a sequence diagram of OHTTP, where our customer owns the relay and Cloudflare owns the gateway. At a high level, OHTTP can be broken down into these steps:
+Client gets public key from the gateway.
+Client encrypts the request and sends it to the relay.
+Relay removes “who” the client is from the encrypted request, and sends it to the gateway.
+Gateway decrypts the request, and sends it to the target.
+Target processes the request, and sends a response to the gateway.
+Gateway encrypts the response, and sends it to the relay.
+Relay sends the encrypted response to the client.
+Client decrypts, and gets the plaintext response.
+It involves quite a bit of back-and-forth, as you can see:
+Each step is a potential point of failure that we have to consider while debugging!
+In particular, we saw certain kinds of problems when debugging OHTTP.
+Customers asked for ways to test the live system from their end, and we often wrote one-off, custom clients for our customers specific deployments.
+Figuring out which step caused an issue was time-consuming. Was the root cause a bug in our system or our customer’s system?
+Examining raw bits was tedious and highly prone to human error. OHTTP builds on binary HTTP, which is a binary encoded HTTP request. Anytime we needed to check the binary encoding, we were painstakingly going through raw bits.
+As a result, we decided to place all of our privacy protocols in one tool. It has a clean interface that’s already familiar, displays every single step of the protocol in order, and is flexible enough to support new protocols and architectures.
+To see the difference this makes, let’s see an OHTTP debugging scenario — before and after pvcli.
+Debugging without pvcli
+Say we operate an OHTTP relay that sits in front of a customer's gateway. The customer has asked us to do an end-to-end test with a request:
+POST /anything HTTP/1.1
+Host: target.ohttp.info
+Content-Type: application/json
+{"test":1}
+Recall the OHTTP steps from earlier. The first step is to fetch the public key from the gateway. We use curl to fetch it from the customer gateway and get this back:
+0029550020b9bb667e2230dc01c6d6cc047f94a1083beb185c63e50ec09f7692a5a083254000040001000104a9280041c8321a49d6196fc82c05f48dc7a8c6fc24b15b60ae2685ca17810fc3b5424ee70265149236f254b832bf1f333fb899aac62709839a5aae3363f3133c35213323db18a9a490edb0a9f76728af0206e5754bdae82270b7978fc3226c015344f20b60dba799d6c9695a60ca16bf675625b6071f6cac844e08968a0970ec63cc8c6a900af2ca2eb279cc5248c3f09ed5140f9e3aa0a7b055adfa862e1552c5656e2691c2378442d2131ed5b863e9183fb161821ee0c923ec51b7864df068ca2b5470590736a6e01ae2194e84c46165b25d082b9df2d15ac1da785081c899166bb93a8c0865938380aa2012a26d745320b4c7e5a941eb8976a4534ac2cc9c9c99ccb5403dbe480d032ba4ca8a116564...[SNIP]
+That’s a big binary string in hex. To make sense of it, we look at OHTTP RFC 9458 §3 and parse it manually:
+0029 is 41 in decimal, telling us this public key entry has 41 bytes associated with it.
+55 is the public key ID.
+0020 identifies the asymmetric encryption method we can use. In this case, DHKEM(X25519, HKDF-SHA256).
+b9bb667e2230dc01c6d6cc047f94a1083beb185c63e50ec09f7692a5a0832540 is the public key.
+0004 tells us there are 4 bytes of symmetric cryptographic IDs that follow.
+0001 and 0001 identify the symmetric encryption methods we can use: HKDF-SHA256 and AES-128-GCM.
+We repeat this process for however many public keys are in the binary string.
+Next, we convert our original HTTP request into binary HTTP, referencing RFC 9292. We manually craft the binary with the help of some bespoke scripts:
+0204504f5354056874747073117461726765742e6f687474702e696e666f092f616e797468696e670c636f6e74656e742d74797065106170706c69636174696f6e2f6a736f6e0a757365722d6167656e740c6665727265742f302e312e30000a7b2274657374223a317d2000
+We verify each field:
+02 means it's an indeterminate-length request
+04504f5354 is POST
+056874747073 is https
+117461726765742e6f687474702e696e666f is target.ohttp.info
+and so on
+Finally, we form a wrapper HTTP request that will hold our OHTTP request. To do so, we spend some more time writing another makeshift script that encrypts the binary HTTP request in the manner OHTTP specifies, using the public key from earlier. We create a header, which is the concatenation of public key ID, asymmetric encryption method ID, and symmetric encryption method IDs. Then, we concatenate header and encrypted binary HTTP request, resulting in:
+5500200001000164f03cef18f625f1dcd9fb26aa802081196bd6d7ba225bf60d3ba65f4f669d59f22d4d37dfd1e45ac9d5097bd7d8e186576ebff850509b5708fe1dbe4c88a7b93b95d153ee203382979063603fb1759bcc41049ac40950f80564de9d45fe8aa4e24259e313da4768b469bbb03037b9b0c34ae5f1b65dea09b8d25f2d5bb4833b68d516a3b19f0265841d5f23a11e74a8d17a04b616e888dd60f147
+We put those bytes into the body of our wrapper HTTP request, and send it to our relay. We get back a response.
+malformed request
+What does that mean? We reach out to the customer to ask if they can share logs from their gateway. In the meantime, we double-check the bits we've crafted. The decoded public keys look fine. The binary HTTP request... Oh! We see:
+...0a 7b2274657374223a317d 20 00 <- spaces added for human readability
+BHTTP is length prefixed. That means we specify a length (0x0a is 10 in decimal), and then 10 bytes follow. But here, 11 bytes follow. There is an extra 20 before the 00. 20 represents a space character, so we must have accidentally added that when building the body. We remove the extra character, resend, and it works!
+Debugging with pvcli
+With pvcli, all of that is now a single command:
+pvcli -vvv --ohttp \
+--first-hop https://relay-cloudflare.ohttp.info \
+--proxy https://gateway.ohttp.info \
+-X POST \
+--header "content-type: application/json" \
+--data '{"test":1}' \
+https://target.ohttp.info/anything
+It handles all the binary parsing and encrypting for us, and prints logs in case we want to dive deeper:
+TRCE Full decoded client config: ClientConfig { key_configs: [KeyConfig {
+key_id: 85,
+key: PublicKey { kem_id: X25519HkdfSha256, bytes: b9bb667e...0832540 },
+symmetric_algorithms: [(HkdfSha256, AesGcm128)] },
+...
+] }
+...
+DEBG Creating POST request to https://target.ohttp.info/anything
+DEBG Parsed URI: scheme: Some("https"), host: Some("target.ohttp.info"), port: None, path: /anything
+TRCE Building request with headers: ["content-type: application/json", "User-Agent:pvcli/0.1.0"], body: Some(b"{\"test\":1}")
+...
+TRCE BHTTP encoded request bytes, hex: 0204504f5354056874747073117461726765742e6f687474702e696e666f092f616e797468696e670c636f6e74656e742d74797065106170706c69636174696f6e2f6a736f6e0a757365722d6167656e740b7076636c692f302e312e30000a7b2274657374223a317d00
+...
+TRCE Encrypted request bytes, hex: 5500200001000164f03cef18f625f1dcd9fb26aa802081196bd6d7ba225bf60d3ba65f4f669d59f22d4d37dfd1e45ac9d5097bd7d8e186576ebff850509b5708fe1dbe4c88a7b93b95d153ee203382979063603fb1759bcc41049ac40950f80564de9d45fe8aa4e24259e313da4768b469bbb03037b9b0c34ae5f1b65dea09b8d25f2d5bb4833b68d516a3b19f0265841d5f23a11e74a8d17a04b616e888dd60f147
+What used to be a fragile process — involving manipulating bits, gluing together scripts, and referencing long RFCs — is now one command.
+What pvcli can do
+To install:
+# install rust if not already installed
+curl https://sh.rustup.rs -sSf | sh
+# install pvcli
+cargo install --git https://github.com/cloudflareresearch/pvcli
+pvcli takes a lot of inspiration from curl. We designed it with the “principle of least surprise” in mind. As a result, a lot of the arguments are the same as curl’s! Try a quick GET request to our cdn-cgi endpoint:
+pvcli https://cloudflare.com/cdn-cgi/trace
+pvcli --http3 https://cloudflare.com/cdn-cgi/trace
+If you’re curious about what is happening under the hood, you can use -v to get detailed logs:
+# more logs
+pvcli -v --http3 https://cloudflare.com/cdn-cgi/trace
+# even more logs
+pvcli -vvv --http3 https://cloudflare.com/cdn-cgi/trace
+Now, about that OHTTP command from earlier: you use --ohttp to tell pvcli to construct an OHTTP request. You pass in the relay as the --first-hop and the gateway as the --proxy. The target will be an echo server, so you can see what the target would see. In this command, we filled in the arguments with a relay, gateway, and target from ohttp.info.
+pvcli -vvv --ohttp \
+--first-hop https://relay-cloudflare.ohttp.info \
+--proxy https://gateway.ohttp.info \
+-X POST \
+--header "content-type: application/json" \
+--data '{"test":1}' \
+https://target.ohttp.info/anything
+# abridged output below
+...
+{
+"request": {
+"method": "POST",
+"url": "https://target.ohttp.info/anything",
+"headers": {
+"content-length": "10",
+"content-type": "application/json",
+"user-agent": "pvcli/0.1.0",
+"x-ohttp-gateway": "true"
+},
+"body": {
+"test": 1
+}
+},
+"cf": {
+"ip": "Unknown",
+"country": "Unknown",
+"colo": "Unknown",
+"asn": "Unknown",
+"asOrganization": "Unknown"
+},
+"message": "Hello from Lilo's OHTTP target!",
+...
+Try running the command yourself!
+We’ve encountered many cases where we wanted to pass headers to the relay, rather than the target. You are able to do that with --first-hop-header:
+pvcli -vvv --ohttp \
+--first-hop https://relay-cloudflare.ohttp.info \
+--first-hop-header "authorization: Bearer relay-token" \
+--proxy https://gateway.ohttp.info \
+-X POST \
+--header "content-type: application/json" \
+--data '{"test":1}' \
+https://target.ohttp.info/anything
+Similarly, we’ve also had cases where we wanted to authenticate to the relay with mTLS, to ensure that the correct client is talking with the correct relay. To do that, you can use --first-hop-client and --first-hop-key.
+pvcli -vvv --ohttp \
+--first-hop https://relay-cloudflare.ohttp.info \
+--first-hop-client ./relay-client.pem \
+--first-hop-key ./relay-client.key \
+--proxy https://gateway.ohttp.info \
+-X POST \
+--header "content-type: application/json" \
+--data '{"test":1}' \
+https://target.ohttp.info/anything
+And it just works. Need to test a full Oblivious HTTP request with a relay, a gateway, arbitrary headers, and mTLS? Or perhaps only request through a gateway? Or maybe you just want to see the OHTTP key configuration? pvcli can do it with a single command, debugging included.
+Why build our own tool?
+There are some great tools for OHTTP that already exist. Martin Thomson’s Rust implementation and Chris Wood’s Go implementation were incredibly helpful when we built out our original OHTTP implementation a few years ago. But pvcli is not only focused on OHTTP. We’re looking to add as many privacy-preserving protocols as we can to the tool. So while there are other OSS tools out there for debugging OHTTP, nothing combines OHTTP, CONNECT proxying, MASQUE and Privacy Pass (coming soon) all in one place.
+Contribute to pvcli
+Oblivious HTTP is an amazing protocol, and we would love to see you use it. We hope that this tool helps people debug OHTTP and write their own OHTTP implementations.
+We are accepting contributions! To get started, clone the repo at https://github.com/cloudflareresearch/pvcli, and submit a pull request.
+If you're looking for ways to contribute, here are some things on our to-do list. For MASQUE, we plan to add support for proxying TCP over HTTP/3, and UDP and/or IP over HTTP/2 and HTTP/3. For OHTTP, we plan to support post-quantum cryptography, add timing/latency information, support Chunked OHTTP, and improve logging.
+Contact us if you are interested in using Cloudflare’s OHTTP Relays and Gateways.
+On this page
+Discuss Online
+Related tags
+Better InternetHTTP3Internship ExperienceOpen SourcePrivacyQUICRust
+Follow on Social Media
+Cloudflare
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 116 | f004960 | https://iroh.computer/blog/authenticated-relays | 2026-07-30 | domain-subframes ===
+Protect your relays - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Protect your relaysJuly 30, 2026 by Rae McKelvey
+When two devices can't get a direct connection, a relay carries the
+connection so data still flows. If the relay accepts anyone, then anyone who
+learns its URL can push traffic through it. And they will learn it: it ships
+inside every client you distribute and it's visible
+to anyone watching a connection get established.
+Because of this, we've decided that managed relays on Iroh Services are now
+authenticated by default. Only endpoints carrying a token issued by your
+project's API key can use them.
+There's nothing to switch on. If you already connect through the
+iroh_services preset, your endpoints authenticate themselves.
+One caveat: this is the default for relays deployed from June 2026 onward. If
+you deployed a relay before then, it stays open, so nothing breaks for the
+endpoints already using it. To turn it on, head to your relay's
+authentication settings under Relays > Settings.
+The problem: a relay URL is a credential you can't revoke
+Someone finds your relay URL in a public repo, a client bundle, or a screenshot,
+and starts spamming your infrastructure until it falls over.
+You spent effort spinning up your own relay, but someone else's traffic still
+competes with yours. A relay has finite bandwidth and finite connection slots,
+whether it's a box you're renting, a VM under your desk, or capacity you're
+paying us for, and whoever else found the URL is now using it.
+If you run your own relays, you can build your own authentication scheme -- iroh
+is unopinionated about that. But if you're using our managed relays, until this month we didn't
+give you a way to easily control access. Now we have shipped the first piece of
+the authentication puzzle -- API keys. You can issue, rotate, and delete them without limits.
+These are the same API keys you already use to push metrics, so if you're on
+Iroh Services you have one.
+Deploy a dedicated relay, free for 30 days.
+How it works
+Every relay connection starts with an HTTP handshake, the same one that upgrades
+to the websocket. Authentication travels in a standard header:
+Authorization: Bearer
+CopyCopied!
+The token is a signed capability token. It carries four things:
+who issued it: your project's API key
+who it's for: the public key of the endpoint presenting it
+what it grants: permission to use the relay, and nothing else
+when it expires: can be set to a short time window, so if it is compromised it can't be used for long
+When an endpoint connects, iroh's relay handshake first proves the endpoint
+actually owns its key. It does this for every connection, authenticated or not.
+Then the relay checks the token: is the signature valid, is it unexpired, does
+it grant relay use, is it addressed to this exact endpoint, and was it issued by
+one of your project's API keys? If every answer is yes, the endpoint is
+admitted.
+Two properties fall out of this that we like.
+A leaked URL is harmless. Without a token issued by your API key, dialing it gets you nothing.
+A leaked token enables connections, but not impersonations. The token is addressed to one specific endpoint's public key, so presenting it from a different endpoint fails: the handshake would still have to prove ownership of that endpoint's secret key, which the token alone does not give you.
+Revocation follows the same path. Your API key is the identity the relay
+recognizes, so rotating or deleting a key stops honoring tokens it issued, and
+connections riding those tokens are dropped.
+Connecting an endpoint
+You don't assemble any of this by hand. The iroh_services preset mints the token from your API secret and attaches it to every relay connection for you. Building an authenticated endpoint is the same few lines you would write anyway:
+use iroh::Endpoint;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+let preset = iroh_services::preset()
+.relays(["https://us-east1.your-project.iroh.link"])?
+.api_secret_from_env()? // reads IROH_SERVICES_API_SECRET
+.build()?;
+// The endpoint now reaches your managed relays, authenticated.
+let endpoint = Endpoint::bind(preset).await?;
+Ok(())
+}
+CopyCopied!
+Your API secret never leaves your process. The preset uses it to derive a
+relay-scoped token, and that derived token is what travels to the relay. Point
+.relays(...) at the relay URLs from your project dashboard, set
+IROH_SERVICES_API_SECRET, and that's it.
+What's next
+Today, each endpoint gets the same capabilities. In the future, we'll add the
+ability to mint tokens with different scopes, so you can grant some endpoints
+more permissions than others. Additionally, we will be allowing you to revoke
+access to endpoints individually, and an API to do all of this outside of the
+dashboard. If any of this sounds interesting to you, please reach out on
+Discord and let us know.
+If you're running relays today, deploy at least two in different regions so one
+region going down doesn't strand your endpoints. The managed relays guide
+walks through the full setup.
+Questions, or want to talk through your relay setup? Join us on Discord or
+schedule a call with us. We love to
+talk about relays, and we want to make sure you get the most out of them.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 117 | f004993 | https://bevy.org/news/bevys-sixth-birthday | 2026-08-10 | domain-subframes ===
+Bevy's Sixth Birthday
+News
+Main Menu
+Post
+A Year of Milestones
+A Year By The Numbers
+Things I'm Proud Of
+There Is Always Room For Improvement
+Did We Learn From Last Year?
+Can @cart Predict The Future?
+The Next Year of Bevy
+Getting Started
+Learn
+News
+Community
+Foundation
+Assets
+Examples
+Donate
+A Year of Milestones
+A Year By The Numbers
+Things I'm Proud Of
+There Is Always Room For Improvement
+Did We Learn From Last Year?
+Can @cart Predict The Future?
+The Next Year of Bevy
+Bevy's Sixth Birthday
+Posted on August 10, 2026 by Carter Anderson  (   @cart   cartdev  )
+Hey! @cart here (Bevy's creator and Project Lead). It is crazy to say it, but Bevy is six years old now!
+As is tradition, I will take this as a chance to reflect on the past year and outline our hopes and dreams for the future. If you're curious, check out Bevy's First, Second, Third, Fourth, and Fifth birthday posts.
+I highly encourage Bevy developers and community members to write their own Bevy's Sixth Birthday reflection posts. Just publish your post somewhere (and to social media if you want) and link to it here. One month from now, we will do a "Reflecting on Bevy's Sixth Year" rollup post that aggregates these in one place. This is our chance as a community to celebrate our wins, identify improvement areas, and calibrate our path for the next year.
+For those who don't know, Bevy is a refreshingly simple data-driven game engine and app framework built in Rust. Bevy is also free and open source forever! You can grab the full source code on GitHub. We have a Quick Start Guide. You can check out Bevy Assets for a library of community-developed plugins, crates, games, and learning resources.
+This is all made possible by the Bevy Foundation's generous donors. If you enjoy Bevy, please consider supporting our work! Every donation goes directly toward improving Bevy for everyone, and we are drastically underfunded for our ambitions.
+A Year of Milestones #
+August 25: Bevy Merch
+We launched our new Bevy Merch store so Bevy developers can show their support. Note that we only make $3 on each sale ... the primary purpose of the store is to allow people to rep Bevy out in the wild, not to be a funding source.
+September 30: Bevy 0.17
+We landed Solari / Raytraced Lighting, Improved Observers / Events, core Bevy UI Widgets, Bevy Feathers, Rust Hotpatching, Light Textures, DLSS, Tilemap Chunk Rendering, Web-hosted Asset Loading, Reflect Auto-Registration, Frame Time Graphs, UI Gradients, Raymarched Atmosphere, Virtual Geometry, BVH Culling, and more!
+December 10: Bevy Metrics
+Thanks to our generous donors and François' efforts, we landed an automated metrics system that runs on every Bevy commit, tracking Bevy's runtime performance, compile times, and binary sizes over time. This has helped us catch a ton of regressions and will be a key piece of infrastructure for us going forward.
+January 13: Bevy 0.18
+We landed Atmosphere Occlusion and PBR Shading, Generalized Atmospheric Scattering Media, Solari Improvements, PBR Shading Fixes, Font Variations, Automatic Directional Navigation, Fullscreen Materials, Cargo Feature Collections, First Party Camera Controllers, and more!
+February 7: Bevy Jam #7
+The seventh official Bevy game jam! 310 people joined, 64 people submitted games, and people left 1,331 ratings. The theme was Extremely Incohesive Fever Dream, and the participants really took that to heart. The delightfully chaotic (and surprisingly complete) PvF won. You should check it out!
+April 1: Bavy Jam #1
+To celebrate April Fools we had our first ever Bavy Jam, with no warning and a 24 hour duration to test BSN before it released. Developers had to use Bevy's main branch to build something rat themed :)
+June: Bevy hit 6,000,000 downloads on crates.io!
+June 19: Bevy 0.19
+We landed Next Generation Scenes/ BSN, Render Bigger Scenes Faster, Contact Shadows, More Feathers Widgets, Text Input, Richer Text, App Settings, Post Processing Effects, Improved Skinned Mesh Culling, and more!
+August 10: Bevy is now six years old!
+A Year By The Numbers #
+1,527 unique Bevy contributors on GitHub (up from 1,291)
+47,529 GitHub stars (up from 40,900)
+5,189 forks on GitHub (up from 4,429)
+16,415 pull requests (12,501 merged) on GitHub (up from 12,928 prs and 9,795 merged)
+9,348 issues (6,373 closed) on GitHub (up from 7,829 and 5,316 closed)
+13,543 commits on GitHub (up from 10,831)
+1,830 GitHub Discussions (up from 1,684)
+501 Bevy Assets (plugins, crates, games, apps, and learning materials) (up from 442)
+6,656,483 downloads on crates.io (up from 2,753,203)
+23,359 Bevy Discord members (up from 21,985)
+6,906 community #showcase entries in the Bevy Discord (up from 5,697)
+3,751,524 messages in the Bevy Discord (up from 2,836,825)
+Note that for consistency and clarity all of these numbers are given in "absolute totals", as that is how they are generally reported. For example, we now have 47,529 total GitHub stars ... the number you will see in our repo. I've included the totals as reported last year as well, which can be used to calculate the change in the numbers since last year.
+Things I'm Proud Of #
+I always try not to repeat myself here, but note that I am still extremely proud of the things I outlined in Bevy's First, Second, Third, Fourth, and Fifth) birthday posts.
+BSN #
+This year we finally landed BSN: Bevy's next generation scene system:
+This was a massive step forward for Bevy's usability. It enables developers to quickly and easily spawn composable, inheritable, interrelated hierarchies of ECS entities and components in a templated, dependency and asset-aware way (some engines call these "prefabs" instead of "scenes"). Developers can compose BSN within their Rust code using the bsn! macro, or they can define it in asset files (the .bsn asset format should land on Bevy main soon).
+BSN is also a key piece of Bevy's UI story going forward. UI developers (especially outside of the engine space) expect a certain level of ergonomics that raw Rust cannot provide. With BSN, composing UI in Bevy has never been easier!fn button() -> impl Scene {
+bsn! {
+Node { width: px(200), height: px(100) }
+on(|press: On<PointerPress>| info!("pressed!"))
+Children [
+Text("Button")
+]
+}
+}
+Unlike other popular UI frameworks, BSN is a general purpose ECS-powered data layer, equally useful for game logic, general purpose app logic, and UI logic.
+BSN is pivotal for the upcoming Bevy Editor, which will be a normal Bevy app built on top of Bevy UI + BSN. The Bevy Editor will also compose BSN assets via a visual scene editor.
+I'm really happy to see people enjoying BSN in the wild. Exofactory's developer saved 7,364 lines of code after porting their spawning code to BSN. BSN was a multi-year project for me and finally getting "real world" value out of it feels so good.
+I'll let the blog post explain the BSN details, but this is an exciting time to be a Bevy dev!
+Bevy UI #
+Bevy's UI story came a long way this year. In addition to landing BSN, we landed our "core Bevy UI widgets", which are behavior-only "style-less" widgets, intended to be used as the shared baseline for styled / higher level widgets. Add the Button widget to your entity, and it starts behaving like a button, with button events, press and hover states, keyboard shortcuts, and accessibility features!fn button() -> impl Scene {
+bsn! {
+Button
+Node { width: px(200), height: px(100) }
+on(|activate: On<Activate>| {
+info!("Button activated!")
+})
+}
+}
+We landed buttons, checkboxes, radio buttons, lists, scroll areas / scroll bars, sliders, modal dialogs, menus, and popovers. We also finally landed an upstream text input widget:
+Bevy UI now also supports gradients, per-side UI border colors, text background colors, automatic directional navigation, font variations like strikethroughs, underlines, weights, and ligatures, variable font properties, and better font selection.
+Things are starting to get quite functional in Bevy UI land!
+Bevy Feathers #
+We also landed Bevy Feathers early this year (led by Talin), and then significantly evolved and expanded it throughout the year. Bevy Feathers is our opinionated "dev tools" widget set, which builds on the "core Bevy UI widgets" mentioned above.
+We're using these widgets to build the Bevy Editor, in addition to things like an ECS inspector, debug menus, etc.
+Bevy Rendering Devs Go Hard #
+This year was packed with renderer work. We landed and evolved Solari, our experimental real-time raytraced renderer (led by Jasmine):
+This was a MASSIVE year for GPU-driven rendering (led by @pcwalton). On modern hardware, Bevy can now handle huge scenes; drawing millions of entities at playable framerates. Our new bevy_city example is a great real world test. It procedurally generates a city with (by default) 55,000 entities (including moving cars) and it can render at 60fps! This requires no special "performance" APIs, just the standard easy-to-use data-driven Bevy APIs.
+We've also started landing "renderer unification" work. Bevy's 3D rendering is quite advanced at this point, and we'd like our 2D renderer to share the same infrastructure and benefit from all of the work we've done.
+A few days ago we fully adopted WESL shaders (migrating away from our custom-built WGSL dialect). WESL extends WGSL to support modules / imports and first class conditional compilation. It has a native Rust toolchain which builds "by default" with no specialized configuration, and we can deploy it "anywhere". We've been collaborating closely with the WESL team to shape the specification and ensure it is a great fit for Bevy.import package::{color::palette, shape::star};
+import lygia::{draw::fill::fill, generative::snoise::snoise2};
+import env::u;
+@fragment
+fn main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+let uv = pos.xy / u.resolution;
+var sdf = star(pos.xy, u.resolution);
+@if(noise)  // conditions at runtime or build time
+sdf += snoise2(uv * 8.0 + u.time) * 0.15;
+let shape = fill(sdf, 0.6);
+return vec4f(palette(uv, u.time) * shape, shape);
+}
+The current baseline implementation is a marked improvement over the old Bevy shader experience, but this is just the beginning. They're in the process of building out features like generics, which will allow us to make high level Bevy material shaders much more accessible than they currently are. We're aiming to have a unique "best of all worlds" cohesive implementation that makes the easy stuff easy, without hiding the details away from the tinkerers (in classic Bevy fashion).
+We also landed a ton of renderer features: our virtual geometry ("nanite") implementation got BVH culling, we landed DLSS support, contact shadows, physically based screen space reflections, rectangular area lights, light textures, real-time filtered environment maps, vastly improved our atmosphere rendering, and fixed some of the "PBR rendering quirkiness" that has plagued us for awhile.
+Jackdaw: The Community-Driven Bevy Editor Experiment #
+This year we continued to lay the foundations for the Bevy Editor upstream. While we did this, members of the Bevy community (led by @jbuehler23) started using these foundations (BSN, Bevy Remote Protocol, Bevy UI, Bevy Feathers) to build out a functional Bevy Editor prototype called Jackdaw. Jackdaw is becoming dangerously functional:
+It already has a visual BSN scene editor, ECS inspection, undo/redo, a dynamic plugin / extension loading system, a material system, terrain editing, a project manager / creator, and geometry editing tooling.
+They've done a great job of mapping the space and exercising Bevy's foundations in practice. Once we land a couple more foundational pieces upstream (such as Assets as Entities and .bsn asset support), we'll spin up the Bevy Editor Working Group, where I plan on focusing my attention on guiding upstream Bevy Editor development, collaborating with the Jackdaw devs to take the best ideas from Jackdaw and finally for real this time build Bevy's official editor.
+Bevy Metrics #
+Tracking performance, compile time, and binary size regressions in a game engine is critical. Historically, we have done this manually "as needed". Thanks to our generous donors and François' efforts, we landed Bevy Metrics: an automated metrics system that runs on every Bevy commit, tracking Bevy's runtime performance, compile times, and binary sizes over time. This has already helped us catch a ton of regressions and will be a key piece of infrastructure for us going forward.
+Bevy Project Goals #
+Bevy development is very "ad hoc". Each individual works on what they want to, when they want to. It has historically been hard to track what is currently going on in the project, what our priorities are, what our priorities aren't, and where project leadership is currently focusing their attention. This created a lot of unnecessary tension, as contributors would often spend months building something, only to hit a wall because they built the "wrong" thing, or because project leadership didn't have the time to give the contributor's effort the attention it needed to be shepherded upstream. Additionally, Bevy community members (and people interested in Bevy) often asked for a "roadmap", and we'd say "we don't have one" and "that is not how we do things here".
+This year I formulated and enacted the light-weight Bevy Project Goals system, which aims to give us the tools we need to prioritize work and collaborate on that work together (check out our Contributor Guide for details). The community can propose new Goals, and we discuss those proposals on a weekly basis to decide if we want to approve, deny, or postpone them. It also allows members of project leadership (the Project Lead ... me, SMEs (Subject Matter experts), and Maintainers) the ability to "staff" Goals, which provides a signal to the community that this Goal is "fast tracked" and will receive immediate attention and stewardship.
+This allows leadership to be honest about its capacity (we can't "staff" everything at once) and its priorities (there are some things we must focus on, and some things we should not focus on).
+This is notably not a "roadmap". We aren't meaningfully planning the order of future steps ahead of time. We are just communicating the current state of things. This is also not authoritative. The Bevy community is still free to build whatever it pleases, whenever it pleases. We just now have a way to collectively decide our direction and create the necessary contribution on ramps and infrastructure to collaborate (ex: Working Groups).
+I am personally very happy with Goals (especially their current iteration), and believe they were an important missing piece of our workflow. The rollout wasn't quite as smooth as it should have been (which I'll touch on in the next section).
+Real Projects™ Using Bevy #
+This year we had a ton of new Bevy usage, with some exciting Steam releases, demos, and non-game apps.
+Toroban: an infinitely wrapping puzzle game, was released on Steam.
+Exofactory: a factory building game in a chill open world, made significant progress and had a ton of interesting devlogs.
+Jarl: a fantasy colony simulation game is running playtests at the moment.
+Polders, a historical Dutch city builder, continued to make significant progress this year.
+Wee Boats The chill multiplayer boaty honk game, now has a demo on steam!
+Sven is building a spaceflight simulation game
+Foresight (one of Bevy's biggest sponsors) is using Bevy to build Foresight Spatial Engine (already used in production) and SpatialDrive a database built for interacting with and visualizing 3D time series data.
+Nominal: is building hardware test apps for real-time automation, analysis, and data capture at the edge.
+Gob Johnson's Downhill Marmalade: a fast-paced slalom 'em up fantasy roguelite, released on Steam.
+Simulo, a multiplayer 2D physics sandbox, released on Steam.
+Insanio: an autobattler where you send misfits into vehicular combat, released on Steam.
+Court Wizard: A roguelite where you cast spells to defend the kingdom, was released on Steam.
+Willcaster: a game where you guide an ordinary frog on your magical game board, helping him with your spells, was announced on Steam.
+Unhaunter: the paranormal investigation simulator, made a lot of progress this year.
+One Planet: a political strategy game where you take on climate change, was announced on Steam.
+Design Once: a "design for manufacture" and simulation platform, was released. It uses Bevy as the renderer!
+bevy_awesome_prod has even more cool projects!
+There Is Always Room For Improvement #
+The Goal System Rollout #
+The initial rollout and framing of Bevy Project Goals caused some (well-founded) concern and anxiety in the community, as it was phrased in a way that made it feel "dictatorial". One of my Goals for the system was to establish "boundaries". Historically, our process (and lack thereof) organically created a culture of "build first, then yell for attention until you get it". Leadership was constantly derailing itself from its priorities to shepherd whatever happened to land on our doorstep, and this created situations such as continually promising that the Bevy Editor was a priority, yet it never manifesting over the course of many ... many years. That particular case is a complicated, multi-dimensional problem, but prioritizing the upstreaming of arbitrary unrelated work was a big piece of the problem.
+This culture bred toxicity in a number of ways. It created resentment in me whenever a new (very cool) thing landed on our doorstep that pulled me away from the work that I strongly believed Bevy needed. It created burnout and feelings of betrayal in contributors when their work was left unreviewed indefinitely. It created disillusionment in the wider community when critical foundational pieces (such as BSN) dragged on for years (that particular case is also multi-dimensional ... I could have pushed my work publicly years earlier and embraced public community development rather than polishing it slowly on my own).
+These were fundamentally problems of communication. Project leadership only has so many hours in the day. We have the right (and responsibility) to choose how we want to spend them. What the project desperately needed was a way to communicate them.
+Project Goals were initially framed in a way that focused on that. Preventing working from being done that wasn't "aligned" or "prioritized". Working Groups could only be created for efforts that were currently "staffed" by leadership. Goals were only "active" if they were "staffed", and "unstaffed" Goals were "inactive". While I do think this type of prioritization is necessary to a degree, it was ham-fisted and didn't properly respect Bevy's "organic development culture".
+We've (very recently) adopted a looser approach. "Staffed" and "unstaffed" are the states (rather than "active" and "inactive"). Working Groups can be formed for any "approved" Goal, even if it is not currently staffed. I believe this strikes the right balance. The community can propose work and collaborate on anything that is approved. We can provide these people with the centralized collaboration infrastructure they need (Working Groups), and they can make progress with or without us. However "staffing" still serves as a signal to the community as to where we are directing our focus, so it can set its expectations accordingly.
+AI Policy #
+AI has been a constant stressor on the Bevy community this year. We adopted a strict "no-AI" policy this year, which solved many problems but created many others (including fostering toxic witch hunts, incentivizing lying to maintainers, enforcement was a hard / impossible task). We are all very tired and emotionally raw.
+@alice-i-cecile has been working with the community (including me) to draft a new policy. I'm pretty anti-AI myself, I don't use it in my development workflows (I love my craft and don't have much interest in outsourcing it), and I am deeply concerned about the risks of AI adoption when it comes to fostering a community of competent engine developers. I think the new policy strikes the correct balance for our community. We haven't released a new policy yet (we are still working on it) and we aren't interested in starting a wider public conversation at the moment (aka: a conversation outside of the Bevy community). But I am optimistic that we are soon to be on the right track.
+The Bevy Foundation is (Still) Under-Funded #
+I outlined three paths to improve this last year: proactive fundraising, revenue generating services, and continuing to build the engine to make it more attractive and extend our reach. I didn't meaningfully do either of the first two this year. I did focus heavily on building out Bevy's foundations this year and avoiding sidetracking, and I think we are verging on a level of capability and elegance that will attract developers and funding in greater volumes. I don't think I should be focused on proactive fundraising or revenue generating services until the Bevy technology platform has reached a certain level of completeness, as that is where my competency lies, and I don't feel particularly comfortable evangelizing while there are still key pieces of the puzzle in flight.
+We need more full time developers so we can move faster. We need to pay our existing developers baseline salaries that encourage them to stay (rather than the ~54% paycut relative to the baseline that we are paying them today). Please help us!
+Did We Learn From Last Year? #
+It is important for organizations (and leaders) to learn from their mistakes. Here is my list of "improvement areas" from last year's birthday post, followed by how I think we handled them this year:
+BSN Should Have Landed Faster
+I believe the core issue here (@cart developing in isolation for extended periods until things are "good enough" in my eyes) has largely been addressed. BSN development over the past year has been iterative and public. My work on Assets as Entities has evolved in the open and iteratively. I've been making lots of targeted, small, but high value changes to various parts of the engine that I've been wanting to for awhile, with instant feedback loops with the community. I do daily status updates so people can track what I'm currently working on. I'll try my hardest not to slip back in to old patterns, but I'm pretty happy with how things have played out recently. I'm curious to hear what everyone else thinks about this!
+The Bevy Foundation is Under-Funded
+I discussed this above. This is still a problem! Please support our work by donating to the Bevy Foundation!
+Can @cart Predict The Future? #
+In last year's birthday post I made some predictions for the next year. Let's see how I did!
+BSN
+We landed BSN. Score!
+Reactivity Ecosystem
+Bevy does have a reactivity ecosystem! There are BSN reactive impls like bevy_reactor and Jasmine's (rough / quick) reactive BSN experiment. There is also haalka, which uses "functional reactive programming" to produce its own (non-BSN, but Bevy-native) data API.
+We haven't yet converged on the correct upstream implementation, but I suspect this will happen within the year now that Bevy UI, Feathers, and BSN are all in a pretty solid place.
+Core / Standard UI Widgets
+We landed these! Another win!
+Baseline Editor Platform
+We did not land a baseline editor platform upstream. As mentioned above, we have made solid progress on the foundations. The ECS Inspector working group has a functional inspector implementation. Jackdaw has successfully prototyped what an editor platform could look like. We made significant, tangible, usable progress toward the goal this year. I have been saying "Bevy Editor next year" for many years now. You probably shouldn't trust me when I say it is close now. But we now have the scene system, the UI system, the editor widget library, the asset system, the remote protocol, the design language and mockups, a proven dynamic plugin loading model, and an extremely functional prototype. Additionally, we finally have a Project Lead who has run out of prerequisites to block editor progress on (well ... after Assets as Entities, but that is wrapping up now). We are well positioned to break ground. That is our (and my) next and overriding priority. We can do this!
+The Next Year of Bevy #
+The Bevy Community and I take a relatively organic and reactive approach to developing Bevy. It doesn't make sense to outline a long list of "plans" when that isn't really how development works in practice.
+That being said, here are some of my personal hopes, dreams, and personal priorities for the next year of Bevy:
+Assets as Entities: This is what I'm currently working on (with @andriyDev). It is a key piece of the editor story, as we need to be able to express complex, nested, templated assets in BSN + the Bevy Editor, and Assets as Entities is what will allow that to happen, as BSN expresses complex, nested, templated entities. It will also vastly simplify our asset system internals, make asset events "observable / react-able", and generally make assets feel more cohesive with the rest of Bevy.
+.bsn Asset Format: BSN landed with bsn! macro support. It also landed with "runtime" support for scene assets. It didn't land with the actual .bsn asset loader. The Bevy Editor will produce .bsn files, so this is a necessary piece to land. There is a draft PR for this out, although it needs some work. We should be able to land this shortly!
+Upstream Bevy Editor MVP: We need this. You want this. We have proven implementations. We have prioritized progress at the cost of pretty much everything else. We are very, very close now.
+Reactivity Ecosystem: As mentioned above, we have explored the space, we have built the other prerequisites. I'm relatively confident we can land something this year, but I'm personally prioritizing showing upstream progress on the Bevy Editor. Reactivity is likely a part of the final UI / Editor story, but I don't think we should block on it.
+Excellent Shader and Material Workflows: We've been focused on modernizing the renderer and landing foundational pieces like WESL. However this has come at the cost of more user-facing shader / custom material complexity. Once the initial "2D / 3D renderer unification" work lands, I think we need to pivot our focus toward the user facing experience / lowering the accessibility bar of custom material shaders. @tychedelia has big plans for this space and I can't wait to see where this lands. WESL is a solid start, and should serve as a foundation for this work (especially as it evolves).
+We have plenty of other work in the pipeline, but I'm once again choosing to keep this very focused this year to convey my personal priorities.
+One last reminder that Bevy community members should write their own Bevy Birthday blog posts. Submit them here!
+If any of this excites you, we would love your help! Check out our code on GitHub and start participating in the Bevy Community.
+Also please consider donating to The Bevy Foundation to ensure we can continue building and leading this wildly ambitious project. The more funds we have, the more we can scale Bevy development!
+To many more years of Bevy!
+- @cart
+The cute Bevy birds in this post are strongly inspired by Ed Duck's delightful Bevy bird design
+
+=== ROW 118 | f004997 | https://github.com/esp-rs/esp-hal/pull/6096 | 2026-08-11 | domain-subframes ===
+esp-hal API docs
+
+---
+
+@bjoernQ · 2026-08-11T12:34:57Z:
+This tries to improve the esp-hal API docs consistency.
+
+I assume this will end up in a lot of bike-shedding which ideally should result in additions to the DEVELOPER-GUIDELINES.md to (not only) help LLMs in pre-reviewing changes.
+
+
+
+---
+
+@bugadani · 2026-08-11T12:39:59Z:
+:+1: I would also propose mandating some standard we should follow, like ASD-STE100 Simplified Technical English, so that the _style_ of the prose is also consistent, and free of any flowery nonsense.
+
+---
+
+@bjoernQ · 2026-08-11T14:06:54Z:
+Honesty I haven't checked every change but generally I think I like it
+
+
+---
+
+@bugadani · 2026-08-11T15:05:28Z:
+Should the efuse bit changes be excluded from this PR? :)
+
+---
+
+@bjoernQ · 2026-08-11T15:07:11Z:
+> Should the efuse bit changes be excluded from this PR? :)
+
+Good question - I was about to exclude it since it's generated but on the other hand it ends up as API docs _and_ we don't re-gen it over and over again (at least for now) 🤔 
+
+
+
+---
+
+@bjoernQ · 2026-08-11T15:08:05Z:
+FYI I made some more additions to the rules and will apply them later in a separate commit so we can see if those changes make things better or worse
+
+
+---
+
+@bjoernQ · 2026-08-12T13:12:50Z:
+Interesting how many "typos" the LLM introduced - maybe using a different model would help 🤔 
+
+
+---
+
+@MabezDev · 2026-08-12T13:34:07Z:
+I think to get this merged we need a few things:
+
+* We must declare what model we run this with. Each model has its own interpretation of the rules and its own "taste". To get consistent results, we should use the same model, and make a conscious choice when we upgrade.
+  * My first thought to try was, what happens if I check out this PR and tell an agent to fixup the docs according to the rules: spoiler alert, a different model will rework a lot of things according to its taste. Fortunately you can limit the taste side by adding a prompt instruction like "Only change things that don't meet the guidelines." which brings me onto the next point.
+* We need to declare the prompt we run with this, changes to the wording will produce (sometimes subtly) different results.
+* Finally, we should run these updates in a clean env, like in a nightly (well, probably weekly or monthly update, but overnight) workflow. I noticed that some of my machine local AGENTS.md rules were being applied by the run, which may make sense now, but not a good idea long term.
+
+---
+
+@bugadani · 2026-08-12T13:36:48Z:
+> We must declare what model we run this with. Each model has its own interpretation of the rules and its own "taste"
+
+Simplified Technical English pretty much removes taste from the equation, it limits vocabulary and grammar, too.
+
+---
+
+@bjoernQ · 2026-08-12T15:07:44Z:
+Closed in favor of #6111
+
+---
+
+@bugadani · 2026-08-12T09:00:30Z:
+this should be reverted IMO, we treat struct names as code
+
+---
+
+@bjoernQ · 2026-08-12T10:17:08Z:
+I'm not even sure what this is trying to say:
+
+<img width="530" height="382" alt="image" src="https://github.com/user-attachments/assets/e5d9417a-69b4-41c0-88f6-066da1037b90" />
+
+or well - on main it actually makes a bit more sense (besides the heading)
+
+<img width="512" height="314" alt="image" src="https://github.com/user-attachments/assets/7f40823c-ab10-481c-8416-6af52a493544" />
+
+But - it's redundant since it's visible as "Trait Implementation" on the struct - also we probably should prefer a code example for the inherent API 🤔 
+
+
+---
+
+@playfulFence · 2026-08-12T12:21:59Z:
+```suggestion
+    /// Returns whether sampling is done
+```
+
+---
+
+@playfulFence · 2026-08-12T12:22:17Z:
+```suggestion
+    /// Returns whether sampling is done
+```
+
+---
+
+@playfulFence · 2026-08-12T12:23:00Z:
+```suggestion
+    /// Returns whether the timer has been configured
+```
+
+---
+
+@playfulFence · 2026-08-12T12:23:45Z:
+```suggestion
+    /// Returns whether the timer has been configured.
+```
+notice the period
+
+---
+
+@playfulFence · 2026-08-12T12:24:54Z:
+```suggestion
+    /// Returns whether the `loopcount` interrupt bit is set.
+```
+
+---
+
+@playfulFence · 2026-08-12T12:25:38Z:
+```suggestion
+    /// Returns whether the interrupt is set.
+```
+
+---
+
+@playfulFence · 2026-08-12T12:26:20Z:
+```suggestion
+    /// Finishes the calculation (if not already) and copies result to output.
+```
+
+---
+
+@playfulFence · 2026-08-12T12:27:18Z:
+```suggestion
+/// For low level use, where none of the pre-made buffers really fit.
+```
+
+---
+
+@playfulFence · 2026-08-12T12:27:47Z:
+```suggestion
+    /// Starts and waits for a conversion on the specified pin and returns the
+```
+
+---
+
+@playfulFence · 2026-08-12T12:28:09Z:
+```suggestion
+    /// Starts one-time sampling
+```
+
+---
+
+@playfulFence · 2026-08-12T12:28:31Z:
+```suggestion
+    /// Checks transmission status and writes new data to the hardware if
+```
+
+---
+
+@playfulFence · 2026-08-12T12:30:49Z:
+I think here it should be "sleep" indeed 😅 
+
+```suggestion
+    /// Sleep entry configures the pad as the low-power path requires, and keeps the pull
+```
+
+---
+
+@playfulFence · 2026-08-12T12:31:19Z:
+Same?
+
+```suggestion
+    /// Sleep entry disconnects the pads that no hold keeps, on the chips that need that step to
+```
+
+---
+
+@playfulFence · 2026-08-12T12:31:55Z:
+```suggestion
+/// Sleep timing parameter configuration (pmu_sleep_param_config_t).
+```
+
+---
+
+@playfulFence · 2026-08-12T12:33:00Z:
+I think all of these `Wait` -> `Waits` should be reverted, it's `Wait Cycle`
+
+---
+
+@playfulFence · 2026-08-12T12:33:24Z:
+```suggestion
+/// Wait cycles for other hardware blocks to stabilize.
+```
+
+---
+
+@playfulFence · 2026-08-12T12:36:14Z:
+Nitpick, but maybe should be we should add the word to the end of the sentence here, feels like it was cut off. "Matches the configured value/configuration", something like that
+
+---
+
+@playfulFence · 2026-08-12T12:37:08Z:
+```suggestion
+    /// need to be initialized, only after that peripheral should be used.
+```
+
+---
+
+@playfulFence · 2026-08-12T12:37:26Z:
+not related to your activity though, just noticed that 😅 
+
+---
+
+@playfulFence · 2026-08-12T12:38:46Z:
+```suggestion
+    /// Set the corresponding eFuse to permanently disable the ROM bootloader messages.
+```
+
+---
+
+@playfulFence · 2026-08-12T13:07:42Z:
+Just a question, but is it in line with the requirements?
+shouldn't it be like "[Error] when.." or something?
+
+---
+
+@playfulFence · 2026-08-12T13:08:08Z:
+```suggestion
+# Errors
+```
+
+---
+
+@playfulFence · 2026-08-12T13:12:57Z:
+Should we specify what error/enum exactly in `Errors` section? (same question/suggestion for the rest of these sections in this file)
+
+---
+
+@playfulFence · 2026-08-12T13:13:58Z:
+Same - shouldn't we follow error name + condition pattern here too?
+
+---
+
+@playfulFence · 2026-08-12T13:15:47Z:
+```suggestion
+    /// Clears region 0 monitoring interrupt on main core.
+```
+
+to match the neighbours
+
+---
+
+@playfulFence · 2026-08-12T13:17:43Z:
+```suggestion
+/// may vary in range 1.0..=1.2 V. Currently this method is used as a fallback
+```
+
+just to fix it since we're here
+
+---
+
+@bugadani · 2026-08-12T13:21:02Z:
+we need spell- and grammar checking in ci
+
+---
+
+@bugadani · 2026-08-12T13:22:36Z:
+haha thank you for that
+
+=== ROW 119 | f005000 | https://github.com/bytecodealliance/wasmtime/pull/14128 | 2026-08-12 | domain-subframes ===
+feat: implement PartialEq/Eq/Hash for Func
+
+---
+
+@smarcd · 2026-08-12T17:14:28Z:
+Adds a host-only inverse to Instance::debug_function for debugging tools that need to serialize a same-instance funcref as a Wasm function index. The lookup never exposes VM pointers and returns None when guest debugging is disabled or the function is not part of the instance.\n\nTests cover private functions, imports, an unrelated host function, and disabled guest debugging.
+
+---
+
+@github-actions[bot] · 2026-08-12T19:03:40Z:
+#### Subscribe to Label Action
+
+cc @cfallin, @fitzgen
+
+<details>
+This issue or pull request has been labeled: "cranelift", "cranelift:meta", "cranelift:module", "isle", "wasmtime:c-api", "wasmtime:docs"
+
+Thus the following users have been cc'd because of the following labels:
+
+* cfallin: isle
+* fitzgen: isle
+
+To subscribe or unsubscribe from this label, edit the <code>.github/subscribe-to-label.json</code> configuration file.
+
+[Learn more.](https://github.com/bytecodealliance/subscribe-to-label-action)
+</details>
+
+---
+
+@pchickey · 2026-08-12T20:45:11Z:
+It looks like a bunch of commits from the 47 release branch got included in your PR branch for some reason - can you please rebase this cleanly on main?
+
+---
+
+@alexcrichton · 2026-08-13T13:55:31Z:
+Could you detail your use case a bit more here? This is a pretty powerful debugging capability which also sort of inherently can't be efficient (e.g. the linear search here) and may also not hold up in future possible refactorings. Given the cost of supporting such an API I'd like to better understand the intended use case.
+
+---
+
+@smarcd · 2026-08-13T14:25:50Z:
+This is for a host-side debugging workflow. The debugger captures an instance’s private mutable state at a breakpoint/checkpoint, then materializes that state into an isolated Store so it can inspect or continue the snapshot without mutating the original execution.
+
+This is deliberately not production runtime functionality. The path is only enabled with guest debugging, runs at debug snapshot boundaries rather than during normal execution, and is allowed to trade efficiency for a small, well-contained API.
+
+The specific need for debug_function_index is that function references are store-local. To restore a captured table/global funcref in the isolated debugging store, the debugger needs to serialize the same-module function identity as an index and resolve it through debug_function in the destination instance.
+
+---
+
+@cfallin · 2026-08-13T14:34:17Z:
+> The specific need for debug_function_index is that function references are store-local. To restore a captured table/global funcref in the isolated debugging store, the debugger needs to serialize the same-module function identity as an index and resolve it through debug_function in the destination instance.
+
+But given that the implementation here is linear in the number of functions, your whole-store snapshot is going to run in quadratic time overall, which does not seem workable for anything semi-large. I'll second Alex's point that "linear search for this function" is not something we want to support.
+
+I could see a `Func::eq` implementation making sense (because the primitive is harder to argue against -- it may be independently useful); if we also had `Func::hash`, then you could build a hashtable of funcrefs to defining instance and index within that instance in a single linear pass, then rename through that hashtable -- asymptotically better. I am not sure if I'm missing anything that would prevent us from providing `Func::eq` though (@alexcrichton ?).
+
+
+
+---
+
+@smarcd · 2026-08-13T15:49:36Z:
+Fair point, and I think it's addressable without needing `Func::eq`/`Func::hash` — the actual complaint is the O(n) work per lookup (and thus the O(n²) whole-store cost), not the shape of the API. I pushed a rewrite that makes `debug_function_index` itself O(1) instead of scanning every function.
+
+Both an instance's imported-function table and its defined-function funcref table are contiguous, fixed-stride arrays at statically known `VMContext` offsets, so a `VMFuncRef` pointer's position in either array is computable directly via pointer arithmetic instead of a linear scan:
+
+- Imported functions are indexed by `FuncIndex` directly, so that's a direct offset computation.
+- Defined ("escaped") functions are indexed by a compact `FuncRefIndex`. That index is *not* assigned in `FuncIndex` order (slots are handed out in the order functions are discovered to escape during translation — e.g. export declaration order — not declaration order), so resolving it back to a `FuncIndex` needs an explicit reverse table rather than arithmetic or a binary search.
+
+That reverse table only depends on compiled module metadata, not on any particular `Instance`, so it's built once, lazily, and cached on `Module` — shared by every `Instance` and every debug snapshot of that module, rather than rebuilt per lookup or per instance. So a whole-store snapshot doing this once per captured funcref is now O(n) total (amortized), not O(n²).
+
+Added a regression test (`debug_function_index_with_non_monotonic_escape_order`) that deliberately scrambles escape order via a table `elem` segment, to pin down that the reverse table is actually used correctly rather than assuming escape order tracks function-index order.
+
+Also took the opportunity to rebase cleanly on main per @pchickey's comment above.
+
+
+---
+
+@cfallin · 2026-08-13T15:57:51Z:
+I think that is still the sort of complexity that we would rather not take on if we don't have to: it makes the code more entangled (we now have a dependency on the vmctx layout; if the scheme ever needs to change we are now more restricted because we need to provide this property), and it's just a lot of delicate logic.
+
+For reference, the "debug" variants of accessors have geneally been simple O(1) holes in the encapsulation, where under-the-hood Wasmtime already has the appropriate private accessors. This is a whole lot of new functionality instead for a niche use-case.
+
+Is there a reason that `Func::eq` / `Func::hash` and then an external implementation of your snapshot/clone algorithm couldn't work?
+
+---
+
+@smarcd · 2026-08-13T16:10:07Z:
+That's a fair concern — coupling to `VMContext`'s internal layout is more entanglement than this is worth. I dropped `debug_function_index` and pushed `Func::eq`/`Func::hash` instead, per your suggestion.
+
+`Func` now implements `PartialEq`/`Eq`/`Hash` as pointer-identity equality (same store, same underlying `VMFuncRef`). Comparing/hashing only reads the `StoreId` and the raw pointer bits — no dereference, no dependency on `VMContext` offsets, no assumptions about `FuncRefIndex` assignment order.
+
+With that, our debugger can build the `Func -> index` map itself: walk the instance's function index space once with the existing `Instance::debug_function`, insert each `(Func, index)` pair into a `HashMap`, and invert a captured funcref through that map at snapshot time. Same result as `debug_function_index`, but the O(n) work (and any layout assumptions) live in our code instead of wasmtime's.
+
+Added a regression test (`debug_function_identity_round_trips_through_a_caller_built_map`) that builds exactly that map over a module whose functions are placed into a table out of index order, to make sure the identity is real pointer/store identity and not something that only happens to work when escape order matches function-index order.
+
+Much smaller diff now — just the two trait impls and a test.
+
+
+---
+
+@smarcd · 2026-08-13T17:04:52Z:
+Done: title renamed, doc comment trimmed, test moved to `tests/all/func.rs` and simplified to fetch-multiple-ways equality (name, `exports()`, table).
+
+One flag: `Eq` doesn't hold across an import/export boundary between two instances (each instance copies its own `VMFunctionImport` record, so the pointer differs even though it calls the same code). Left the test scoped to one instance. Let me know if cross-instance identity was actually expected (can compare through to the underlying code/vmctx pointer instead if so).
+
+
+---
+
+@cfallin · 2026-08-13T17:28:44Z:
+Hmm, that's actually somewhat surprising API behavior, IMHO -- equality (and hashing) *should* hold when a `Func` refers to the same function within a store, regardless how it's reached.
+
+I think this means we need to take a `Store` borrow so we can safely reach inside the raw pointers. That means we can't implement the `Eq` and `Hash` traits literally -- we need to provide separate methods on the `Func` for this. I'd imagine something like `Func::is_same(&store, &f1, &f2)` or similar. cc @alexcrichton for thoughts on this as well since it's a fairly conspicuous API surface...
+
+
+
+---
+
+@smarcd · 2026-08-13T17:43:55Z:
+Agreed, and that tracks with what I found — pushed `Func::is_same(store, a, b)` and `Func::identity_key(store)` in place of the trait impls.
+
+Both take a store borrow and dereference into the `VMFuncRef`'s own identity (`vmctx`, `wasm_call`, `array_call`) rather than comparing the wrapper pointer's own address, so they see through the import/export copy: the underlying entry points and `vmctx` are identical across instances even though each instance holds its own `VMFunctionImport` record at a different address. `identity_key` returns an opaque `Hash + Eq` value for `HashMap` use, consistent with `is_same`.
+
+Extended the test to cover the case that broke last time: a function imported into a second instance and re-exported from there now correctly reports `is_same` and equal `identity_key`.
+
+
+---
+
+@alexcrichton · 2026-08-13T21:00:35Z:
+This seems reasonable to me, yeah, thanks! I'd probably go ahead and throw the type index into the hashed key as well to be safe, although it's probably not strictly necessary either
+
+---
+
+@smarcd · 2026-08-14T05:14:00Z:
+Checked `wasm_call` before committing to it: it's `None` for a host `Func::wrap` until that `Func` is later paired with a module that has a matching trampoline, and it's filled in **in place** at that point (confirmed with a throwaway probe: `None` before instantiation, `Some(..)` after).
+
+That's two problems for using it alone as the key:
+- Two never-imported host functions both read `wasm_call = None`, so they'd collide.
+- Even a single `Func`'s key would change over the store's lifetime as it flips `None → Some`, which breaks `HashMap` use outright, not just an occasional collision.
+
+`array_call` doesn't have either issue (always present, never mutates), so I kept `(vmctx, array_call)` and folded in `type_index` per Alex - dropped `wasm_call` instead of keeping only it.
+
+Also fixed the regression test along the way: it wrapped two *different* `|| {}` closures to check that distinct host functions aren't `is_same`, but two separate closure expressions are two distinct Rust types, so that assertion happened to pass for the wrong reason (different `array_call`, not different `vmctx`). Now wraps the same closure value twice, so `array_call` is shared and only `vmctx` discriminates, plus a new test asserting `identity_key` is stable across the `wasm_call` transition.
+
+
+---
+
+@smarcd · 2026-08-14T18:36:30Z:
+Done.
+
+---
+
+@cfallin · 2026-08-13T16:48:58Z:
+No need for this narrative paragraph -- we generally don't have comments describing very specific single use-cases like this, nor a comparison to an alternative that used to (or in this case, never did) exist in the code.
+
+The bit about shallow equality is also self-evident and probably not needed (a reasonable user would not expect `f1 == f2` to, say, prove equivalence of two different algorithms).
+
+The paragraph below about only comparing raw pointer bits is fine (a pseudo "safety comment" even though there's no literal unsafe block) I think.
+
+---
+
+@cfallin · 2026-08-13T16:51:24Z:
+This unit test is fairly excessive -- again the narrative comment is unnecessary, and the test itself is testing the actual Wasmtime functionality in a fairly baroque way. All we really need to test is that `f1 == f2` works when functions are fetched in different ways and/or carried through imports/exports between modules in the store, etc (and likewise for the hash value). Can you do that instead, and put it alongside other tests of the `Func`-related APIs rather than in `debug`?
+
+---
+
+@cfallin · 2026-08-13T21:38:19Z:
+It's probably sufficient to return just the `wasm_call` field here: each exported function will have the two entry points but either one will uniquely identify the function.
+
+---
+
+@cfallin · 2026-08-14T16:56:43Z:
+No need for the narrative comment here (which bits are exported, etc) -- that's also something we can easily change if needed.
+
+Better to explain *why we choose these keys*. We include vmctx to disambiguate statically-same functions from different instances of its module; we include the array-call pointer because it's always present and there is one per separate function; and we include the type-index as insurance to ensure that we disambiguate functions based on their Wasm-level signatures.
+
+=== ROW 120 | f005050 | https://spinframework.dev/blog/announcing-spin-4-1 | 2026-08-26 | domain-subframes ===
+Announcing Spin v4.1 | Spin Docs
+Spin
+Docs
+Get started building Wasm apps with Spin
+Spin Hub
+Browse example app code and templates
+Community Blog
+Stay up to date on Spin releases
+Toggle light/dark mode
+Star
+Spin Quickstart
+Announcing Spin v4.1
+By The Spin Project
+August 26, 2026
+The CNCF Spin project just released Spin v4.1.0.
+Back in Spin 4.0 we shipped a
+production-grade implementation of WASI Preview 3 built on the March 2026 release
+candidate, and committed to supporting it long-term. That commitment just got a lot easier
+to make: WASIp3 is final, and Spin 4.1 runs on it.
+On top of that foundation, 4.1 adds composable HTTP middleware, written as ordinary Wasm
+components and built on the async streaming WASIp3 gives us. There’s also async MySQL,
+service chaining for WASIp3 components, and a set of connection limits and telemetry
+improvements for folks running Spin in production.
+WASI Preview 3 is final
+HTTP middleware
+Async MySQL, with streaming rows
+Service chaining across WASIp2 and WASIp3
+Target environments
+A heads-up on WAGI
+Running Spin in production
+Upgrading to Spin 4.1
+WASI Preview 3 is final
+WASI 0.3.0 is done. After the March 2026 release candidate that shipped in Spin 4.0,
+WASIp3’s interfaces are finalized, and Spin 4.1, running on Wasmtime 48, speaks it
+natively.
+If you’re already on Spin 4.0, the good news is that this is a non-event for your
+applications. Spin 4.1 supports both the final 0.3.0 interfaces and the
+0.3.0-rc-2026-03-15 snapshot, so components you built against 4.0 keep running exactly as
+they did. You can see both in the spin:up@4.1.0 world:
+package spin:up@4.1.0;
+world http-trigger {
+include platform;
+export wasi:http/handler@0.3.0;
+}
+world platform {
+include wasi:cli/imports@0.2.6;
+include wasi:cli/imports@0.3.0-rc-2026-03-15;
+include wasi:cli/imports@0.3.0;
+import wasi:http/outgoing-handler@0.2.6;
+import wasi:http/client@0.3.0-rc-2026-03-15;
+import wasi:http/client@0.3.0;
+// ...
+}
+And as always, WASIp2 components continue to run unchanged: wasi:cli/imports@0.2.6 and
+wasi:http/outgoing-handler@0.2.6 are right there in the platform world. There’s even a new
+http-rust-p2 template if you have a reason to stay on WASIp2 for a while.
+A big thank you to everyone in the Bytecode Alliance who carried WASIp3 across the finish
+line. It’s been a long road from “experimental, opt-in, might break between releases” in
+Spin 3.5 to a finished standard, and Spin is much better for it.
+HTTP middleware
+Here’s the headline feature, and it’s one we’ve wanted for a long time.
+Every web framework you’ve ever used has a middleware story: a way to slot auth, logging,
+compression, header rewriting, or rate limiting in front of your handler without tangling it
+up in your business logic. Spin 4.1 brings that same idea to Wasm components, as an
+ordinary, sandboxed component instead of a proxy bolted on in front of your app.
+You declare a middleware chain right on your HTTP trigger:
+[[trigger.http]]
+route = "/..."
+component = "api-server"
+dependencies.middleware = [
+{ component = "auth", inherit_configuration = ["allowed_outbound_hosts"] },
+{ component = "cors" }
+]
+Requests flow outermost to innermost: auth, then cors, then your api-server
+component. Responses flow back out the other way. It’s the same middleware pipeline pattern
+used by frameworks like Express or ASP.NET, except every layer here is an independently
+compiled, independently sandboxed Wasm component that you can build, test, version, and
+publish on its own.
+The contract is just wasi:http/handler
+There’s no special Spin middleware API to learn. A middleware component imports and
+exports the same interface your application component exports:
+interface handler {
+handle: async func(request: request) -> result<response, error-code>;
+}
+Spin wires the chain together automatically because every link speaks the same interface.
+A middleware is just a handler that happens to call the next one, which means middleware
+and application components are the same kind of thing: an ordinary component you can
+publish to a registry and drop into anyone’s chain.
+Writing one: touching the request
+Here’s a middleware that fetches a random animal fact and attaches it as a request header,
+from the new examples/http-middleware
+sample:
+#[http_service]
+async fn add_animal_fact_header(
+request: Request,
+) -> Result<Response, spin_sdk::wasip3::http::types::ErrorCode> {
+let animal_fact_response =
+spin_sdk::http::get("https://random-data-api.fermyon.app/animals/json").await?;
+let animal_fact_json = animal_fact_response.into_body().bytes().await?;
+let animal_fact: AnimalFact = serde_json::from_slice(&animal_fact_json).unwrap();
+let (mut parts, body) = request.into_parts();
+parts.headers.append(
+"animal-fact",
+HeaderValue::from_str(&animal_fact.fact).unwrap(),
+);
+let request = Request::from_parts(parts, body);
+spin_sdk::http::next(request).await
+}
+spin_sdk::http::next(request) is your “call the next handler” primitive. The interesting
+part is that calling it is optional. If you don’t call it, you’ve short-circuited the
+chain: nothing behind you ever sees the request, and your response goes straight back to the
+client. That’s all an auth middleware is:
+#[http_service]
+async fn require_token(request: Request) -> anyhow::Result<impl IntoResponse> {
+let authorized = request
+.headers()
+.get("authorization")
+.is_some_and(is_valid_token);
+if !authorized {
+return Ok(Response::new(401, "unauthorized"));
+}
+Ok(spin_sdk::http::next(request).await?)
+}
+Writing one: transforming the response, without buffering
+This is the part where WASIp3 really earns its keep: because bodies are stream<u8> and
+handlers are async func, a streaming transform is just a loop. Under WASIp2, doing the same
+thing meant buffering the whole body in memory or hand-rolling a state machine to pump it
+through.
+#[http_service]
+async fn yell_it(request: Request) -> anyhow::Result<impl IntoResponse> {
+let response = spin_sdk::http::next(request).await?;
+let (parts, body) = response.into_parts();
+let mut body_stm = body.stream();
+let (mut tx, transformed_body) = spin_sdk::http::body::stream();
+spin_sdk::wasip3::spawn(async move {
+while let Some(chunk) = body_stm.next().await {
+let Ok(chunk) = chunk else { break; };
+let text = String::from_utf8_lossy(chunk.as_ref());
+let bytes = bytes::Bytes::from_owner(text.to_uppercase().into_bytes());
+if tx.send(bytes).await.is_err() { break; }
+}
+});
+Ok(Response::from_parts(parts, transformed_body))
+}
+The response headers go back to the client immediately, and the body is transformed chunk by
+chunk on a spawned task, using the same spin_sdk::wasip3::spawn pattern we used for
+streaming SQLite rows in the 4.0 post.
+No buffering: the same middleware works just as well on a 4 KB JSON payload as on a 4 GB
+stream.
+Middleware doesn’t get a free pass on capabilities
+Suppose the api-server component is allowed to call your token endpoint:
+[component.api-server]
+allowed_outbound_hosts = ["https://tokens.example.com"]
+The auth middleware in front of it can reach that endpoint only because api-server
+grants it that capability, and only because the trigger says
+inherit_configuration = ["allowed_outbound_hosts"]. Middleware gets no ambient authority.
+This is exactly the fine-grained capability inheritance that landed in Spin 4.0 for
+component dependencies, now applied to middleware. If you want a middleware to reach a
+capability, list it explicitly in inherit_configuration; otherwise leave it out and the
+middleware gets nothing.
+Hosts have to opt in
+When you deploy an application that uses middleware, it matters whether the host you deploy
+it to actually knows how to run middleware, and a host built on an older version of Spin
+might not. Spin’s distribution format makes sure of this: a host that can’t run middleware
+rejects the application up front with a clear error, rather than quietly running it without
+the security layer you carefully placed in front.
+Async MySQL, with streaming rows
+Spin 4.0 asyncified key-value, SQLite, PostgreSQL, Redis, and outbound HTTP. MySQL was the
+one that didn’t make it. In 4.1, it does:
+resource connection {
+open: static async func(address: string) -> result<connection, error>;
+query: async func(statement: string, params: list<parameter-value>)
+-> result<tuple<list<column>, stream<row>, future<result<_, error>>>, error>;
+execute: async func(statement: string, params: list<parameter-value>) -> result<_, error>;
+}
+query hands you column metadata right away, plus a stream<row> and a trailing future
+for any error hit partway through. You can start processing rows before MySQL has finished
+producing them, and a big result set no longer has to fit in guest memory all at once. It’s
+the same streaming story PostgreSQL got in 4.0.
+Service chaining across WASIp2 and WASIp3
+Local service chaining, where one component calls another over
+http://other-component.spin.internal without ever leaving the host, now works for WASIp3
+components, and it works across the P3/P2 boundary. A WASIp3 component can chain to a
+WASIp2 component and vice versa, so you can migrate a multi-component application one piece
+at a time instead of all at once.
+Target environments
+Spin 4.0 introduced spin new -E <environment> for targeting a specific deployment platform.
+Spin 4.1 builds on that.
+There’s a new command for seeing and refreshing what’s available:
+$ spin targets list      # list known target environments
+$ spin targets update    # refresh the list from the master catalogue
+You can set a default so you don’t have to type -E forever:
+$ export SPIN_NEW_DEFAULT_ENVIRONMENT=<environment>
+Environments can also constrain more than WIT worlds. An environment can declare which
+key-value stores, SQLite databases, or AI models it actually provides, and spin build will
+tell you before you deploy:
+Component api-server can’t run in environment spin-up because it requires the
+my-database key-value store which the environment does not support
+A heads-up on WAGI
+Spin 4.1 begins printing a deprecation warning for WAGI components, and the WAGI examples
+have been removed from the repository. Your WAGI components will keep running: this is the
+start of a gradual, managed deprecation, not a break. WAGI is a pre-component-model
+compatibility shim and we’d like to retire it, so if you’re still running WAGI components,
+now’s a good time to plan a move to a proper Wasm component.
+Running Spin in production
+The rest of this post is for the folks running Spin rather than writing for it.
+Connection limits and backpressure
+Spin has always been careful about what an application is allowed to talk to. It’s been
+less opinionated about how much. A single app could exhaust a host’s resources through
+outbound HTTP, PostgreSQL, MySQL, Redis, MQTT, or raw sockets, each with its own independent
+notion of “unlimited.”
+Spin 4.1 adds connection limits across all of those, configured in your runtime config:
+[outbound_networking]
+max_total_connections = 500    # global ceiling across every outbound kind
+max_socket_connections = 100   # raw wasi-sockets specifically
+[outbound_http]
+max_connections = 200
+[outbound_pg]
+max_connections = 50
+[outbound_redis]
+max_connections = 50
+If you’re using [outbound_http] max_concurrent_requests, it still works but is now
+deprecated in favor of max_connections. See the upgrade notes below for one subtlety
+to watch for when you migrate.
+Sharper telemetry
+Spin’s metrics now go straight to the OpenTelemetry SDK instead of being routed through
+tracing events, so they’re cheaper to emit and behave the way your OTel tooling expects.
+Spin has also switched to opentelemetry-semantic-conventions for attribute names instead
+of hand-rolled strings, so Spin’s telemetry now lines up with the rest of your observability
+stack out of the box.
+If you’ve built dashboards or alerts against Spin’s OpenTelemetry attribute names, see the
+upgrade notes below.
+Upgrading to Spin 4.1
+Install Spin 4.1 from spinframework.dev/install or
+grab a binary from the
+release page.
+Update your templates:
+spin templates install --git https://github.com/spinframework/spin --update
+That’s it for app developers. Applications built for Spin 4.0, including WASIp3 components
+built against the March release candidate, run on 4.1 unchanged.
+And if you want to try middleware, the fastest path is the example in the repo:
+$ git clone https://github.com/spinframework/spin
+$ cd spin/examples/http-middleware
+$ spin build --up
+If you’re operating Spin, two things are worth a look:
+In your runtime config file, replace [outbound_http] max_concurrent_requests with
+max_connections, remembering that 0 now means no connections rather than one.
+Re-check any dashboards or alerts built on Spin’s OpenTelemetry attribute names, which now
+follow the OTel semantic conventions.
+Thank you
+Spin 4.1 is the work of contributors across a lot of organizations: to Spin itself, to
+wasmtime, to wit-bindgen, to the SDKs, and to the WASIp3 standardization effort in the
+Bytecode Alliance that reached 0.3.0 in this cycle. Thank you all, and thank you to the CNCF
+for continuing to support the project.
+A special welcome to @TheRayquaza and
+@carsonfarmer, who both made their first contributions in
+this release, and congratulations to @alexcrichton on
+joining as a Spin maintainer.
+Stay in touch
+Join us at weekly
+project meetings,
+say hi on the Spin CNCF Slack channel,
+and follow @spinframework on X.
+Ready to build? Head to the Spin quickstart, or
+browse the Spin Hub for inspiration.
+Copyright Spin a Series of LF Projects, LLC
+For website terms of use, trademark policy and other project policies please see
+https://lfprojects.org/policies/.
+GitHub
+Twitter
+Slack
+
+=== ROW 121 | f005053 | https://spinframework.dev/blog/component-composition-spin-4-0 | 2026-08-27 | domain-subframes ===
+Component Composition with Spin 4.0 | Spin Docs
+Spin
+Docs
+Get started building Wasm apps with Spin
+Spin Hub
+Browse example app code and templates
+Community Blog
+Stay up to date on Spin releases
+Toggle light/dark mode
+Star
+Spin Quickstart
+Component Composition with Spin 4.0
+By Thorsten Hans
+August 27, 2026
+Thanks to the WebAssembly Component Model we can stitch together multiple WebAssembly Components. Reusing Wasm Components boosts developer velocity dramatically while language barriers vanish. In this hands-on article, I’ll explain how you can compose Wasm Components using Spin 4.0.
+What You Need To Follow Along
+I’ll try to keep things as simple as possible. That’s why we’ll implement both components using Rust, resulting in the following - short - list of requirements:
+Rust (version 1.97.2 or newer)
+The wasm32-wasip2 target for Rust (rustup target add wasm32-wasip2)
+Spin CLI (version 4.0.2 or newer)
+What We’ll Build
+For the sake of this article, we’ll implement a simple Spin application which will respond to incoming HTTP POST requests. We’ll validate the payload sent as part of the request and classify the importance of the message provided. The classification will be returned back to the callee as classification property on a JSON object.
+We’ll implement the classification itself as a self-contained Wasm component. The entire HTTP-related code and control flow remains in the bounds of the top-level Wasm Component created by Spin CLI as part of creating the project itself.
+Scaffolding The Spin Application
+Creating a new application with Spin is as easy as executing spin new. We provide the desired template (http-rust) using the -t flag along with the application name and accept defaults for remaining template parameters by adding the -a (or --accept-defaults) flag:
+spin new -t http-rust -a composition-demo
+# move into the composition-demo folder
+cd composition-demo
+Creating The classifier Wasm Component
+Instead of creating the classifier Wasm component using cargo new and customizing the Cargo.toml, I’ll use a custom template for Spin which I’ve created a few days ago.
+To install the template, use this command:
+spin templates install \
+--git https://github.com/ThorstenHans/spin-headless-components
+Once done, you can add the classifier component to the composition-demo application using spin add:
+spin add -t headless-rust classifier -a
+Using the headless-rust template gives you the following advantages:
+✅  Seamless integration with spin build
+✅ wit-bindgen added as dependency
+✅  Binding generation macro in place
+✅  WIT world Skeleton
+✅ Proper crate configuration
+A Quick Sanity Check
+If you’re following along, the contents of the composition-demo folder should now look like this:
+.
+├── Cargo.toml
+├── classifier
+│   ├── Cargo.toml
+│   ├── src
+│   │   └── lib.rs
+│   └── wit
+│       └── world.wit
+├── spin.toml
+└── src
+└── lib.rs
+Matches yours? Good! If not, try to check the commands you executed and ensure, you’ve used the same templates as I did.
+Defining The WIT World
+Let’s get moving! We’ll start by changing the contents of ./classifier/wit/world.wit and make our component export the classify  interface as part of the classifier world:
+package thorstenhans:components@0.1.0;
+interface classify {
+enum classification {
+urgent,
+neutral,
+relaxed
+}
+classify: func(input: string) -> classification;
+}
+world classifier {
+export classify;
+}
+If you’ve never worked with WIT before, consider reading this section of the WebAssembly Component Model book.
+Implementing The classifier
+With the WIT world being defined, we can move on and provide the actual implementation.
+If your IDE or code editor has proper Rust tooling installed, you should already see a bunch of errors being reported as part of the ./classififer/src/lib.rs file. This is because we’ve changed the WIT world and wit-bindgen already regenerated the binding code behind the scenes.  If your environment does not report any errors yet, you might wanna run spin build in the composition-demo folder which will try to re-compile both components.
+Okay, let’s now address the broken implementation of the classifier component:
+use crate::bindings::exports::thorstenhans::components::classify::{
+Classification, Guest,
+};
+mod bindings {
+wit_bindgen::generate!({
+path: "wit/world.wit",
+});
+use super::ClassifierComponent;
+export!(ClassifierComponent);
+}
+struct ClassifierComponent;
+impl Guest for ClassifierComponent {
+fn classify(input: String) -> Classification {
+return match input.to_lowercase() {
+x if x.contains("urgent") ||
+x.contains("asap") ||
+x.contains("immediately") => {
+Classification::Urgent
+}
+x if x.contains("later") ||
+x.contains("whenever") ||
+x.contains("someday") => {
+Classification::Relaxed
+}
+_ => Classification::Neutral,
+};
+}
+}
+Running spin build once again, it should complete successfully, indicating that you’ve just created a working Wasm Component 🎉.
+Defining The Component Dependency In spin.toml
+Looking at the Spin application, there is one additional modification we’ve to apply in spin.toml, before we could look at the code of our HTTP-triggered Spin component.
+We’ve to specify the classifier component as a dependency of the composition-demo component itself. This is done by adding a new table to the application manifest:
+# existing spin.toml...
+[component.composition-demo.dependencies]
+"thorstenhans:components@0.1.0" = {
+path = "./classifier/target/wasm32-wasip2/release/classifier.wasm"
+}
+Binding Generation - Again 🤘🏼
+Obviously, we need some kind of glue code within the composition-demo component as well. The Spin SDK streamlines this process as we don’t have to use the macro defined by underlying wit-bindgen.
+Instead all we’ve to do is adding the spin_sdk::dependencies!(); macro call in src/lib.rs. Personally, I prefer having it immediately before the service definition:
+use spin_sdk::http_service;
+spin_sdk::dependencies!();
+#[http_service]
+// ...
+You know the play! Run a spin build again and It will generate the bindings for the composition-demo component based on the dependency we added to our application manifest earlier.
+Using the classifier
+As our interface exports a function called classify, we can bring that one straight into scope and use it. We’ll hardcode a value for now, ensure it compiles, before we take care of the HTTP related stuff:
+use crate::thorstenhans::components::classify::{
+classify, Classification
+};
+spin_sdk::dependencies!();
+#[http_service]
+async fn handle_composition_demo(_req: Request) -> anyhow::Result<impl IntoResponse> {
+let classification = match classify("Buy Milk ASAP!") {
+Classification::Urgent => "Urgent".to_string(),
+Classification::Relaxed => "Relaxed".to_string(),
+Classification::Neutral => "Neutral".to_string(),
+};
+Ok(Response::builder()
+.status(200)
+.header("content-type", "text/plain")
+.body(classification))
+}
+Finishing The composition-demo Implementation
+Let’s first add serde and serde_json:
+cargo add serde -F derive
+cardo add serde_json
+Here the final code for the composition-demo component. We’ll iterate over some of the additions below:
+use serde::{Deserialize, Serialize};
+use spin_sdk::http::body::IncomingBodyExt;
+use spin_sdk::http::{IntoResponse, Json, Method, Request, Response, StatusCode};
+use spin_sdk::http_service;
+use crate::thorstenhans::components::classify::{
+classify, Classification
+};
+spin_sdk::dependencies!();
+#[derive(Deserialize)]
+pub(crate) struct RequestModel {
+pub message: String
+}
+#[derive(Serialize)]
+pub(crate) struct ResponseModel {
+pub classification: String
+}
+#[http_service]
+async fn handle_composition_demo(req: Request) -> anyhow::Result<impl IntoResponse> {
+if req.method() != Method::POST {
+return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+}
+let Ok(bytes) = req.into_body().bytes().await else {
+return Ok(StatusCode::BAD_REQUEST.into_response());
+};
+let Ok(payload) = serde_json::from_slice::<RequestModel>(&bytes) else {
+return Ok(StatusCode::BAD_REQUEST.into_response());
+};
+if payload.message.is_empty() {
+return Ok(StatusCode::BAD_REQUEST.into_response());
+}
+let classification = match classify(&payload.message) {
+Classification::Urgent => "Urgent".to_string(),
+Classification::Relaxed => "Relaxed".to_string(),
+Classification::Neutral => "Neutral".to_string(),
+};
+let res_payload = ResponseModel { classification };
+Ok(Json(res_payload).into_response())
+}
+In the final implementation, we’ve added:
+RequestModel and ResponseModel to create struct instances from incoming HTTP request payloads and to produce the desired response payload as JSON
+We’ve validated incoming request payloads before we hand the actual data over to the classifier component.
+If requests use methods other than POST, we return a 405
+The classification is now provided as response payload using proper content-type header
+Testing The Application
+Finally, we can test our Spin application by running it on our local machine with spin up:
+spin up --build
+Here a bunch of curl requests for testing purposes, along with their responses:
+# an urgent message
+curl -XPOST -d '{"message": "Buy milk today"}' \
+-H 'content-type:application/json' \
+localhost:3000
+# {"classification":"urgent"}
+# a relaxed message
+curl -XPOST -d '{"message": "Someday we should buy milk"}' \
+-H 'content-type:application/json' \
+localhost:3000
+# {"classification":"relaxed"}
+# a neutral message
+curl -XPOST -d '{"message": "Buy milk"}' \
+-H 'content-type:application/json' \
+localhost:3000
+# {"classification":"neutral"}
+Grab The Source Code
+As always, the entire sample is available on GitHub as well. You can find the Git repo at thorstenhans/component-composition-spin.
+Recap
+Component composition in Spin 4.0 makes stitching together decoupled WebAssembly components feel remarkably smooth:
+Scaffolding: Using the custom Spin template (headless-rust`), you can quickly add dedicated sub-components without huge manual configuring efforts.
+Interface Definitions: WIT files remain the single source of truth—defining clean exports (like our classify interface) that cross component boundaries seamlessly.
+Component Dependencies: Setting [component.composition-demo.dependencies] in spin.toml allows keeping track of dependencies at a central place
+Auto-generated Glue Code: Calling spin_sdk::dependencies!() eliminates the friction of manually adding binding macros, pulling imported interfaces straight into scope.
+By decoupling the core classification logic into its own Wasm component, we kept the HTTP control flow lean, standard, and easy to maintain—all powered by the WebAssembly Component Model. 🚀
+Copyright Spin a Series of LF Projects, LLC
+For website terms of use, trademark policy and other project policies please see
+https://lfprojects.org/policies/.
+GitHub
+Twitter
+Slack
+

@@ -1,6 +1,6 @@
 # Batch 2 preparation — Rust map
 
-Preparer: r-batch2-prep, 2026-09-28. Prime directive: one bar for the whole batch, fixed before the first read. Every prompt a batch-2 agent reads is fixed by the sha256 below. The four changed prompts are headed "Frozen for batch 2 (2026-09-28)". No extraction, content judgment, edits under `maps/`, or git commands were used.
+Preparer: r-batch2-prep, 2026-09-28. Prime directive: one bar for the whole batch, fixed before the first read. Every prompt a batch-2 agent reads is fixed by the sha256 below. Every changed or new prompt is headed "Frozen for batch 2 (2026-09-28)". No extraction, content judgment, edits under `maps/`, or git commands were used.
 
 ## 1. Frozen prompt set (sha256, 2026-09-28)
 
@@ -11,9 +11,10 @@ Preparer: r-batch2-prep, 2026-09-28. Prime directive: one bar for the whole batc
 | `prompts/t3-fill.md` | rewritten, frozen | see § 6 |
 | `prompts/t4-merge.md` | rewritten, frozen | see § 6 |
 | `prompts/t4-fill-resolve.md` | rewritten, frozen | see § 6 |
-| `prompts/t3-claim.md` | unchanged | `f49c0bc7776d5b27b1c6a06a9939270635158f458d7588177642e42970c72eb2` |
-| `prompts/t3-voice.md` | unchanged | `2fba53298fb6e7cb3e545030ca3d7f1a0e92f563c2248941e6b6389d9a5701ae` |
-| `prompts/t3-args.md` | unchanged | `fe4ca684777f1a92e63c7ad659d66c6be5a962a60473833ce7e9d8be59090315` |
+| `prompts/t3-claim.md` | file names batch-scoped, frozen | see § 6 |
+| `prompts/t3-voice.md` | file names batch-scoped plus one scope line, frozen | see § 6 |
+| `prompts/t3-args.md` | chunk names batch-scoped, frozen | see § 6 |
+| `prompts/t5-compile.md` | new, frozen | see § 6 |
 | `prompts/t1-frame.md`, `t1-union.md` | not used in batch 2 | — |
 
 ## 2. Changes and their grounds
@@ -43,19 +44,24 @@ Preparer: r-batch2-prep, 2026-09-28. Prime directive: one bar for the whole batc
 | S2 | Frame preparation moved from an inline script into `scripts/map/prepare_frame.py`, with the same rules plus `window=in` and `--drop` | `scripts/map/prepare_frame.py` | `samples/batch-1.md` lines 7–47 |
 | S3 | Tests: batch 1 re-drawn from seed 1786744536, matching both team files byte for byte; `prepare_frame.py` reproduces `frame-b1-input.csv`; by-class quotas; census gate | `scripts/map/test_sample.py`, `test_census.py` | `samples/batch-1.md` line 5 |
 | F1 | swift-interop: 169 forums.swift.org rows dropped by a title-and-path rule | `frame/frame-swift-fix.md`, `frame-swift-fix-drop.csv` | `slice-1-review.md` lines 29, 123, target (3) |
+| P20 | Compile prompt: transcription in four stages (A entities and fill checks, B Voice pass, C Claim pass, D Arguments), each ending in a verbatim `check_map.py` run. `fill/checks-b2.csv` becomes `MAP/checks/<subject>.yaml` records. Existing Position summaries and tags are never overwritten; differences go to the lead. | `prompts/t5-compile.md` | lead dispatch 2026-09-28 item 4; `fable-plan.md` line 141; `compile/compile-b1.md` (batch 1's stages and mechanical rules, reused by name: `normalize_date`, `truncate_quote`, `classify_kind`, `slugify`); `check_map.py` lines 81–91, 189–191 (checks keyed by entity id; `agree` or a non-unresolved `resolution`) |
+| P21 | Verification and argument outputs batch-scoped (`claims-final-b{n}.csv`, `voices-calibration-b{n}.md`, chunk names `b{n}-NN`). Without this, batch 2's adjudication would read batch 1's chunk files and overwrite `claims-final.csv`. | `prompts/t3-claim.md`, `t3-voice.md`, `t3-args.md` | the batch-1 prompts' fixed names (`t3-claim.md` adjudication, `t3-voice.md` calibration audit) |
+| S4 | Sampler `--replace`: swaps listed rows for a draw from the same (language, hint, class) cell, excluding every row the team has drawn or had replaced. It is seeded and logged in `batch-n-team-T-replaced.csv`. The by-class draw now writes `batch-n-team-T-cells.csv`, recording which cell drew each row. | `scripts/map/sample.py`; `test_sample.py` | `fable-plan.md` line 111 ("re-sampled by the script"); lead dispatch 2026-09-28 item 2 |
+| R1 | Prefetch: book-class rows are fetched as whole books (mdBook `print.html`, tried at the URL and up to two parent directories, else a table-of-contents crawl, now also through chapter-entry URLs and unquoted links). A rustcc.cn page that shows its comment section and footer passes below the 1,500-character floor. A book with no chapters is unreachable. YouTube rows get language-matched subtitles and 20 s spacing; a row answered with 429 gets its second, last try after a 600 s window. Client redirects written with reversed or unquoted meta attributes are followed. | `scripts/research/cache.py` | lead dispatch 2026-09-28 item 3; `slice-1-review.md` line 125; `audit-b1-third.md` line 132; `prefetch-b1.md` line 22 |
+| R2 | Paywall list extended with pragprog.com, rheinwerk-verlag.de, dpunkt.de, pluralsight.com, udemy.com, coursera.org, educative.io, oreilly.com | `cache.py` PAYWALLED_DOMAINS | owner ruling in `prefetch-b1.md` lines 20, 26 (paywalled domains not attempted), applied to publisher and paid-course hosts |
 | D1 | Batch 2 drawn: en core, ml, desktop-cli-ui, embedded, wasm at 18; the 9 zh cells with ≥ 18 rows at 18; uk and de as whole-language cells at 20 | `samples/batch-2.md` | `slice-1-review.md` line 123, targets (1), (5), (6); the lead's dispatch |
 
-Test run, 2026-09-28: `uv run --with pytest pytest scripts/map/` gave 7 passed (6 sampler, 1 census). pytest is not a project dependency; `--with` adds it for the run only.
+Test run, 2026-09-28: `uv run --with pytest pytest scripts/map/` gave 8 passed (7 sampler, including `--replace`; 1 census); `uv run --with pytest pytest scripts/research/test_cache.py` gave 6 passed. pytest is not a project dependency; `--with` adds it for the run only.
 
 ## 3. Batch 2 size
 
-292 rows per team, 584 in all, 445 distinct frame ids (139 drawn by both teams).
+After replacements: 289 rows per team, 578 in all, 442 distinct frame ids (136 drawn by both teams). Every row has cached text (§ 8).
 - en: 90 per team.
 - zh: 162 per team.
 - uk: 20 per team.
-- de: 20 per team.
+- de: 17 per team. The de books class had no row left for its three unreachable rows.
 
-Seed `1311957526`. Details are in `samples/batch-2.md`.
+Draw seed `1311957526`; replacement seeds `1511926367`, `1284475788` and `621279008`. Details are in `samples/batch-2.md`.
 
 ## 4. Agent runs, projected end to end
 
@@ -71,7 +77,7 @@ Batch 2 projection. The Claim count scales batch 1's 771 Claims per 396 rows, ab
 
 | stage | base runs | basis |
 |---|---|---|
-| extraction | 40 | ⌈292/15⌉ = 20 per team (`fable-plan.md` line 108) |
+| extraction | 40 | ⌈289/15⌉ = 20 per team (`fable-plan.md` line 108) |
 | census fix | 2 | one fresh extractor per team. Batch 1's third-pass flag rate (1/47, 1/33; § 7) on about 130 nothing-new rows per team gives ≤ 3 flags each |
 | audit | 2 | one per team: about 13 nothing-new re-reads, every drop, 20 Claims |
 | merge + merge check | 2 | P12 |
@@ -79,8 +85,8 @@ Batch 2 projection. The Claim count scales batch 1's 771 Claims per 396 rows, ab
 | Voices | 5 | batch 1: 399 ids in 5 runs; zh, uk and de add mostly new ids |
 | fills + resolve | 14 | batch 1's 8 runs for 772 Claims, scaled to about 12; resolver 1; fresh blind check 1 |
 | arguments | 5 | batch 1: 4 |
-| compile | 1 | |
-| base total | 79 | |
+| compile | 3 | stages A, B+C, D of `t5-compile.md`, one resumed agent per stage |
+| base total | 81 | |
 
 Contingent runs, each fixed in advance by the frozen rules:
 - audit send-back: +21 per failed team (20 extractors and a re-audit). Batch 1 failed both teams on pass 1 and pass 2.
@@ -88,21 +94,24 @@ Contingent runs, each fixed in advance by the frozen rules:
 - census at batch 1's first-pass flag rate (23%, 39%; § 7) instead of its third-pass rate: +6 (30–50 flagged rows per team, 3–4 fix runs each instead of 1).
 - merge check < 90%: +2.
 
-Worst case: 79 + 42 + 24 + 2 + 6 = 153.
+Worst case: 81 + 42 + 24 + 2 + 6 = 155.
 
 Runs per unseen Question cannot be projected honestly. It depends on how many new canonical Questions batch 2 yields, and the English second draw and the first non-English draw have no yield history. Batch 1 gives about 4 seen Questions per run (399 from about 100 runs). After batch 2, compute runs ÷ (canonical ids in `merge-b2/crosswalk-b2.csv` absent from `merge-v3/crosswalk-b1.csv`).
 
 ## 5. What batch 2 cannot fix
 
-Prerequisites outside this preparer's scope, still open before the first read:
-- **No re-sample mode.** The plan says unreachable rows are re-sampled by the script (`fable-plan.md` line 111), but `sample.py` has no such mode, and the files read here do not record whether batch 1's unreachable rows (A 10, B 3, `slice-1-review.md` line 9) were replaced. The draw holds 3 (team a) and 5 (team b) paywalled book pages. Until a mode exists, those rows stay unread.
-- **Prefetch.** Chapter enumeration for books and docs sites, and a retry window for yt-dlp (`slice-1-review.md` line 125), belong to `scripts/research/`, outside this preparer's code scope. P6 makes an extractor mark a front page unreachable rather than read, but only the bundler can fetch the chapters. 23–25 youtube.com rows per team face the 429 risk (`prefetch-b1.md` line 22).
-- **Compile.** Compile has no prompt file. Its dispatch must turn `fill/checks-b2.csv` into `MAP/checks/` records, or validator rule 4 still gates nothing. The validator's 417 FAILs (`slice-1-review.md` line 53) are compile- and verify-side and untouched.
+Prerequisites closed by the lead's dispatch of 2026-09-28 (items 2–4):
+- **Replacement.** 8 paywalled book rows and 16 prefetch-unreachable rows were replaced, or dropped when their cell was empty (S4, `samples/batch-2.md` § Replacements).
+- **Compile.** `prompts/t5-compile.md` turns `fill/checks-b2.csv` into `MAP/checks/` records (P20). The validator's 417 FAILs (`slice-1-review.md` line 53) stay until stages B and C.
+- **Prefetch.** Done; results in § 8.
+
+Still open:
+- **Bundler.** `scripts/research/bundle.py` and `books.py` hard-code batch 1: `samples/batch-1-team-*.csv`, `prefetch-b1-status.csv`, frozen slice numbers. Batch 2's extractors need a batch-2 bundle, and these scripts need a batch parameter before they can cut one. `bundle.py` also drops any text under 1,500 characters as thin, which would drop the 67 whole-but-short rustcc.cn pages the cache now accepts (R1). It needs the same `COMPLETE_PAGE_MARKERS` exemption. This is outside the dispatch's code scope (`cache.py` only).
 
 Limits of the design that the numbers should be read against:
 - **Strata that get no second English batch.** web, distributed, decentralized-iroh, frontend, cloud-workers and swift-interop are not drawn as English cells. The first four get zh-only reads plus incidental English rows through secondary hints (en web 17–18 rows per team). cloud-workers and swift-interop get almost nothing. `estimate.py` part 2 counts the batches present in a stratum's crosswalk rows, whatever cell drew them, so it can PASS for a stratum no batch-2 cell targeted. Read part 2 against `samples/batch-2.md`.
 - **Languages pooled in one estimate.** Language is a reporting dimension (`fable-plan.md` line 34, OP2), so `estimate.py` pools zh and en captures per stratum. zh reads are a first batch and en reads a second, so catchability differs by language inside one estimate, which Chapman assumes away.
-- **Class balancing makes inclusion unequal.** Rows in small classes are drawn close to whole: zh frontend 18 of 19 and 18 of 18; de 20 of 32. Frame ids drawn by both teams rose to 139 of 292 per team (en 28/90, zh 86/162), against 17/198 in batch 1. A shared source gives both teams the same Questions, which raises m and lowers N̂, a bias toward closure. Batch 1 already showed the effect: one shared book carried 11 of 51 two-team Questions (`slice-1-review.md` line 31). `estimate.py` cannot separate recaptures from shared sources. Report m with shared-source-only recaptures removed beside it before any stratum is called closed; this needs an `estimate.py` column not written here.
+- **Class balancing makes inclusion unequal.** Rows in small classes are drawn close to whole: zh frontend 18 of 19 and 18 of 18; de 20 of 32. Frame ids drawn by both teams rose to 139 of 292 per team in the draw (en 28/90, zh 86/162), and 136 of 289 after replacements, against 17/198 in batch 1. A shared source gives both teams the same Questions, which raises m and lowers N̂, a bias toward closure. Batch 1 already showed the effect: one shared book carried 11 of 51 two-team Questions (`slice-1-review.md` line 31). `estimate.py` cannot separate recaptures from shared sources. Report m with shared-source-only recaptures removed beside it before any stratum is called closed; this needs an `estimate.py` column not written here.
 - **zh newsletter links.** Hint-less zh rows go to core under batch 1's rule. weekly-newsletter-links is 64–65 of 162 zh rows per team, because it dominates the small zh cells (wasm: 25 of 28 frame rows). Class balancing caps it inside core but not in cells where it is most of the pool.
 - **uk GitHub repos.** 7 of 20 uk rows per team are GitHub repos: code, never a Claim (rule 3). Expect mostly no-decision rows.
 - **swift-interop.** The drop rule reads titles and paths. Any Rust Position in the body of a dropped Swift thread is lost; seven audited threads found none. 43 rows remain, and swift-interop is not drawn in batch 2.
@@ -120,24 +129,41 @@ Limits of the design that the numbers should be read against:
 | `prompts/t3-fill.md` | `adc6e95dde30dd758309c1131f49c727d2cc92a26ca9db90ed424cc3b8f2935d` |
 | `prompts/t4-merge.md` | `ab889f51cb8dfb4754c7c9dd9abc84c6791591386b35525b5c4f22bfd71f6002` |
 | `prompts/t4-fill-resolve.md` | `5e787782a02abee09cb67af24f130c9f0b35e01b0a5adb9a4360cfa9f8eabb1e` |
-| `scripts/map/sample.py` | `f8c3be0c9ee4d3a6a5a51058ff8aa4b23364085dd5479efaddbc3e714b64eda5` |
+| `prompts/t3-claim.md` | `7d5e9099c9d6c565337d4a16959f70152016b1267b3da7b3bce2a8b3ed86d62b` |
+| `prompts/t3-voice.md` | `7a6220e807ef3db5c69bd251a1f68f75cdb83320537f14e9c0406a0a953e5e9f` |
+| `prompts/t3-args.md` | `9ea1fd96ebc5d9c88f21989f2bf4948c2cf0286363f1195e974df8cf40840835` |
+| `prompts/t5-compile.md` | `2b7f87b841dd6621f748e4b2440b9269648398e412b72db2e4e6f4e4dcbdb096` |
+| `scripts/map/sample.py` | `ca417b208aa5258c321fbb04c42fb08c8c2484e6038a8ed911e0545cb7c7cc9f` |
 | `scripts/map/prepare_frame.py` | `1a60c0ae220928e660cfce38d3fe84a727564f50352a915f67ccb3afe5cc8ec9` |
 | `scripts/map/census.py` | `e4aa9fded74a38cd62aa777a5372fa995e704a87abe15ac2286580c8ad441409` |
-| `scripts/map/test_sample.py` | `d2d56241c1057aa5ee258d72911c96bc85fa4d0d884e96032edfe59e1e957cb1` |
+| `scripts/map/test_sample.py` | `e9a3acf9c9b66fc83cc824d8827f71182e827a69ba18ab1f11fc6bbb0c32369d` |
 | `scripts/map/test_census.py` | `b9ac74c7e617d09cbba82ed07ab87598b2118d47d5e271bf59b6cdeca8cd5860` |
+| `scripts/research/cache.py` | `ba0e6cfb0c4fdc073261867b99dc2558768698da8b2c34276561a9464715aaf6` |
+| `scripts/research/test_cache.py` | `c497b57302eb8dbb94bf48e7a8c9d147596f94babc6c9a1bfe06067fff793f97` |
 | `frame/frame-swift-fix.md` | `687f5592b865c3c740668efe99db866d7e89ac55aedc73cb2b4ee4818b8d6686` |
 | `frame/frame-swift-fix-drop.csv` | `2c79632e3437b8b71c54464b79ca4ced1977b2af47549d23fc02317213165e6f` |
 | `samples/frame-b2-input.csv` | `17204ed5e3889715cd612ddf541411297b66597d6bdb2577b0699c38f78cf72d` |
 | `samples/cells-b2.csv` | `5db7b3eaeca222acebf22ae19f3cc1c0b8d4546a2750e16ee74222c914e0ea09` |
-| `samples/batch-2-team-a.csv` | `b6953c2821d64a02db709b28daff2a1df475edc3140515a86a937c3e4c5311b1` |
-| `samples/batch-2-team-b.csv` | `0171e9a737d619750c6044effd215d672f899ce1bbd2f4223edfe434e36360d1` |
-| `samples/batch-2.md` | `e913c9cfdc7eb12566fac93209fd8fa439cca1c1b75b40f35872d0430ec5c73c` |
+| `samples/batch-2-team-a.csv` | `0b81a50a7f3fc15609d93b0023bcf70e91ee3c6ac77cd1d4245d97b2aba2e02f` |
+| `samples/batch-2-team-b.csv` | `ab11cb46b70798634f7c6f0b004453d278effc1b3aabf9e696490f44d428137f` |
+| `samples/batch-2-team-a-cells.csv` | `5341242e4345f27757dd3408930b3372a9ff5c5e22c4890faeac5c799cdb2844` |
+| `samples/batch-2-team-b-cells.csv` | `6ceefe5ee86bd3ae6b8eb4bd83d4c213f063bad7010cdde11c00e65d7bb4b8e3` |
+| `samples/batch-2-team-a-replaced.csv` | `88e85b01185a763d5e36c500bef0f7be41a282585d03800a5cc724ce128b144a` |
+| `samples/batch-2-team-b-replaced.csv` | `1da8febf1f2fe3279556e6ff81a025550833a50883c05b44fdbbb1737159ac93` |
+| `samples/replace-b2-r1.csv` | `02491fae284b21fc187990de82231f4245e4895c6cd26ff0406aca546a8b1395` |
+| `samples/replace-b2-r2.csv` | `71512afd160c0cb25ca0ed4dfb63e2076a20e7834f33cd61eb3679d501ffc26c` |
+| `samples/replace-b2-r3.csv` | `068d3630a8d6825b5ec9354db28d48e76f9b2fcb3ae8ae305e974cce60bc6bcf` |
+| `samples/prefetch-b2-input.csv` | `92d5f85244b1624e5556048e0586a60fd67143f30a31d7a19442f48105f0e128` |
+| `samples/prefetch-b2-rerun.csv` | `ca1a85b744a3c1aed13a719fa398961e70c7a16df3d54a21a3e79ca688223ea3` |
+| `samples/prefetch-b2-replacements.csv` | `492945083074a37a93c4f71cef312a8d41a42d75f37d86fb0b1686662b21e686` |
+| `samples/prefetch-b2-status.csv` | `a6db44611d6b7d5d9bb9a7b8f160061a51f0a014affe8226140ecdffa89d97ae` |
+| `samples/batch-2.md` | `698e1be9abbb18ce3d45623cdc9b6b79a4ee3fefeadb55a59b49f0b0dc0cec89` |
 
-`batch-2-prep.md` itself is not hashed here.
+`batch-2-prep.md` itself is not hashed here. The draw's original team files (before replacements) were `b6953c28…` (a) and `0171e9a7…` (b); `samples/batch-2.md` gives the commands that re-derive the current files from them.
 
 ## 7. Census calibration on batch 1 (lead ruling 2026-09-28)
 
-The lead allowed the census to run over `team-{a,b}/extract-b1-*.md` and `readlog-b1-*.csv`. Only counts and matched reason lines were read.
+The lead allowed the census to run over `team-{a,b}/extract-b1-*.md` and `readlog-b1-*.csv`. Only counts and matched reason lines were read. Word matching is a gate, not the audit. It stops reasons that state the forbidden ground in its usual words before the audit draws. Whether a Nothing-new row hides a Position is decided only by the audit's re-read.
 
 **Method.** Batch 1's reasons use the old formats: `### Nothing new` followed by text, a bare "Nothing new. Reason:", and "Not applicable" blocks. `census.py` as written flags all of them for a missing `reason-code:`, which is the intended format gate for batch 2. To calibrate the phrase test alone, a throwaway parser took the text of every Nothing-new block per section and applied the pattern to it.
 - first pass: every file except `-sR*` and `-sT*`;
@@ -169,3 +195,27 @@ The parser counts every block, so its denominators run higher than the auditor's
 - The auditor's census was itself a phrase match, never published as a pattern, so agreement on counts is not agreement on rows. Only the 5 named rows are checkable.
 - A reason can rest on the forbidden ground in words the pattern does not list, and pass.
 - The throwaway parser is not `census.py`'s parser, because the formats differ. `census.py`'s own parser is tested only on the batch-2 format (`test_census.py`).
+
+## 8. Prefetch, batch 2 (2026-09-28)
+
+`uv run python scripts/research/cache.py fetch-csv samples/prefetch-b2-input.csv samples/prefetch-b2-status.csv`, run over the 442 distinct ids of the 290-row draw; then the re-run and replacement passes below. The status file is append-only: the last line per id wins, as `bundle.py` reads it.
+
+| pass | rows | fetched or cached | failed |
+|---|---|---|---|
+| main run (html first, YouTube last, 20 s apart) | 442 | 360 | 82 |
+| re-run of rows failed by this preparer's own gates, not by the site (`prefetch-b2-rerun.csv`): 67 whole rustcc.cn pages under the length floor, 4 books entered at a chapter page | 71 | 70 | 1 (rust-lernen.de: a publisher page with no chapter text) |
+| replacements of round 3 (`prefetch-b2-replacements.csv`) | 13 | 13 | 0 |
+
+Final state: every one of the 578 row-draws (289 per team) has cached text.
+
+Failed rows, each after its two genuine tries, were replaced in round 3:
+- YouTube: 4 answered HTTP 429 on both tries, the second after the 600 s window; 1 has no subtitles (f015639, a conference trailer).
+- Dead or unreachable hosts: polyfight.io (DNS), legendofworlds.com (TLS), a 404 at blog.sheerluck.dev, and a 403 at phoronix.com. No Wayback snapshot existed for any of them.
+- Short pages under the floor on both html and Wayback: trynova.dev (804 chars) and ralfj.de/minirust-talk (903 chars). Both may be whole short pages; the floor treats them as stubs, as batch 1's did (`prefetch-b1.md` § Dropped).
+
+Final routes: html 292, yt-dlp-subs 32 (plus replacements), discourse-json 25, gh-api-thread 24, wayback 18, book-print 15, gh-api-repo 15, browser 4, lobsters-json 3, book-crawl 2.
+
+Limits:
+- The rustcc.cn exemption tests that a page rendered whole (comment section and footer present), not that it holds anything.
+- A `book-print` result found at a parent directory is that directory's book. For a chapter URL inside a larger site, that may be a wider book than the row named (lang-team design notes came back as the whole lang-team book).
+- Transcripts are YouTube auto-captions: their locators are `[mm:ss]` markers every 60 s, and names and code in them are often garbled.

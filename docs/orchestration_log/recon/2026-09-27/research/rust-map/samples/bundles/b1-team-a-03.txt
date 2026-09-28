@@ -1,0 +1,2735 @@
+=== ROW 45 | f002226 | https://forums.swift.org/t/se-0451-raw-identifiers/75602 | 2024-10-24 | domain-subframes ===
+SE-0451: Raw identifiers
+
+Hi everybody. Review for SE-0451: Raw identifiers begins now and runs through November 7th, 2024.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to the review manager. When contacting the review manager directly, please keep the proposal link at the top of the message.
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at https://github.com/apple/swift-evolution/blob/main/process.md.
+Thank you for contributing to Swift's evolution!
+Joe Groff
+Review Manager
+
+---
+
+A quick mini-review, without deep consideration:
+The rationale makes sense, both parts (descriptive idents and algorithmically generated idents). This is useful enough to modify the language.
+The general approach is sensible, and the syntax is reasonable.
+I say +1! (Readers may choose to interpret that exclamation point as either emphasis or factorial.)
+One concern: part of the rationale is to allow programmatic synthesis of identifiers with arbitrary contents. This proposal as it stands does not fully accomplish that goal; I'm slightly concerned about accepting it:
+without escape characters, and
+with the prohibition on operator-char-only identifiers.
+For example, the proposal mentions turning raw filenames / paths into identifiers. Filenames can contain newlines, and +* is a valid filename. Both are unlikely to occur in practice, but both are possible.
+This means that code that transforms filenames (or other arbitrary strings) into Swift identifiers would still need to dance around Swift’s syntactic rules and invent some ad hoc, nonstandard escaping scheme (or otherwise police allowed characters in its emitted identifiers). While this proposal would reduce the number of characters that require ad hoc escaping, it would not eliminate the need for such ad hoc escaping altogether. The proposal therefore does not significantly reduce burden for code that synthesizes identifiers.
+It seems to me that raw identifiers ought to offer the simple, uniform promise that:
+any string is allowed, given a standard escaping scheme that is part of Swift’s syntax and not part of the identifier itself, and
+the specific contents of the raw identifier will never create semantic differences.
+Those two principles imply that:
+`foo\nbar`() or some equivalent should be allowed, and
+Int.`+` should refer to a regular identifier named +, just as Int.`foo` refers to a regular identifier named foo.
+I understand the desire not to complicate the proposal with this esoteric problem, and accepting it as an incremental step makes sense; thus my +1. However, the proposal does seem incomplete as it stands if synthesizing arbitrary identifiers is in fact an ultimate goal.
+
+---
+
+I am in favor of this proposal.
+I have hit many of the pain points mentioned in the proposal before:
+Having written Kotlin before, writing test names using raw identifiers was really nice. It makes test names more readable and easier to name, removing the burden of having to force a test description into a valid identifier.
+I have also run into enums with cases that should naturally start with e.g. a number. The option of using raw identifiers would be welcome here.
+I have a package plugin that generates code to embed some resources. Being able to generate identifiers much more freely without having to try to transform input into valid identifiers would also be very welcome here.
+The test name use case in particular makes this feature worth including in the language for me. The other applications are a nice bonus on top.
+While this feature may slightly increase the burden on language and tooling developers, many more developers would profit from it and the proposal makes a good case for why the burden on tooling would hopefully be manageable.
+To @Paul_Cantrell's point, could some of the remaining escaping pain for code generation maybe be alleviated by a small utility package in that area?
+Something that could be queried for the set of disallowed characters, used to test if a given string is a valid raw identifier and maybe even offers one or more basic transformations to turn an arbitrary string into a valid raw identifier.
+The proposal could discuss such a package as a future direction or call on the community to develop such functionality.
+
+---
+
+Since Swift Testing is one of the motivators for this proposal, I think it's important to note that we will not be able to provide support for this feature immediately. The testing team is in favour of adding this feature, but adoption/support won't be automatic.
+I discussed the proposal with @allevato off-forum and we determined that, for Swift Testing to support it, we may also need runtime changes so that we can correctly construct fully-qualified type names and/or function names that use this feature. We don't know at this point if those runtime changes will be backwards-compatible with older versions of Apple's platforms.
+Paul_Cantrell:
+Those two principles imply that:
+``foo\nbar() or some equivalent should be allowed, and
+If escape sequences are supported, we will need to make sure that swift-syntax correctly handles them, and that they do not accidentally allow for the use of a backtick in an identifier (which would make parsing a fully-qualified type name impossible.)
+
+---
+
+Just chatted with @Joe_Groff as well. The demangling problem is a tough nut to crack especially when you consider the need to remain backwards-compatible with older Apple OS releases.
+One possible solution would be to encode the leading and trailing backticks in these names when mangling them so that they would simply automatically be present on demangling regardless of the OS version you're using. We could solve the problem of ambiguous string representations at the same time.
+Interior backticks still pose a problem, but so long as round-tripping the demangled names isn't necessary, we could insert some invisible combining Unicode character next to the backtick code point so that, when decoded to a Swift string, they would present as distinct Characters from the leading/trailing backticks.
+We would need to ensure that these encoding changes only occur for symbol names that would be invalid otherwise. If I write:
+struct `MyStruct` {}
+That's valid today without raw identifiers, so it should still mangle as simply MyStruct. I think.
+
+---
+
+grynspan:
+The demangling problem is a tough nut to crack especially when you consider the need to remain backwards-compatible with older Apple OS releases.
+Older runtimes already can't handle names with symbols/whitespace in them, I don't think needing to be backwards compatible is possible here.
+
+---
+
+grynspan:
+One possible solution would be to encode the leading and trailing backticks in these names when mangling them so that they would simply automatically be present on demangling regardless of the OS version you're using. We could solve the problem of ambiguous string representations at the same time.
+That's an interesting idea! I can explore that in the implementation.
+This would be a minor change in principle to the proposal, which currently states
+In both cases, the backticks are not considered part of the identifier; they only delimit the identifier from surrounding tokens.
+I think it would be the case that if the identifier cannot be spelled in source code without the backticks, and if the mangling of the symbol also includes the backticks (and thus round-tripping it preserves the backticks), then as far as both the user and the runtime are concerned, the backticks are part of the identifier. I don't think that's problematic, though, since it's solving a real issue.
+Interior backticks still pose a problem, but so long as round-tripping the demangled names isn't necessary, we could insert some invisible combining Unicode character next to the backtick code point so that, when decoded to a Swift string, they would present as distinct Characters from the leading/trailing backticks.
+This seems like something we can punt on for the time being, since the proposal as written forbids interior backticks in an identifier. (But if it were to be accepted with that as a change, we'd need to handle it.)
+We would need to ensure that these encoding changes only occur for symbol names that would be invalid otherwise.
+This should also be straightforward; the implementation has a function that checks whether an identifier must be escaped in any context (as opposed to escaped keywords, which only need to be escaped in certain unqualified contexts), so the mangler could use that to check whether it needs to affix literal backticks to the string before mangling it.
+
+---
+
+Alejandro:
+Older runtimes already can't handle names with symbols/whitespace in them, I don't think needing to be backwards compatible is possible here.
+I suspect that it's not so much that they can't, more that they don't, and will just render whatever identifier the demangler gives them verbatim. So if the verbatim demangling includes enough delimiting/escaping of raw identifiers to make them distinguishable from existing identifiers, that should be enough for old runtimes to do close enough to the right thing for new code running against an old runtime to be able to cope.
+
+---
+
+I mean, it seems from the demangler's perspective it just fails at demangling these things:
+$swift demangle --tree-only
+$s1A3A CV
+<<NULL>> CV
+
+---
+
+Alejandro:
+I mean, it seems from the demangler's perspective it just fails at demangling these things:
+That's unfortunate and would mean Swift Testing will not be able to adopt this feature unless it is gated on a minimum deployment target (i.e. the compiler won't accept a raw identifier on an Apple platform without a high-enough minimum target version.)
+
+---
+
+That particular example isn't a valid mangled identifier even under the new rules. Literal spaces would never appear in a mangled identifier; since they aren't identifier-safe ASCII characters, they would get punycoded. There are some examples in the implementation PR's tests:
+$ xcrun swift-demangle '_$s4test0014foospace_ntJBbyyF'
+_$s4test0014foospace_ntJBbyyF ---> test.foo space() -> ()
+The version of swift-demangle that I'm running here is from Xcode, so it doesn't have (or need) support for raw identifiers. If we inserted the punycode-encoding of literal backticks into the mangling, they would be printed back out as well.
+
+---
+
+I thought that maybe we could use punycode here, but I thought we could only do that for non-ASCII. If we can pull that off for everything then
+
+---
+
+Alejandro:
+I thought that maybe we could use punycode here, but I thought we could only do that for non-ASCII. If we can pull that off for everything then
+What I found out while implementing the proposal was that the mangler was already set up to punycode anything that isn't identifier-safe ASCII. So that part is already done, even before this proposal touched anything. The only case I had to adjust it for was identifiers starting with a digit, which were round-tripping incorrectly. (But if we add backticks to these identifiers, that will even solve the round-tripping issue for identifiers with leading digits in a backwards-compatible way.)
+
+---
+
+It's a -1 from me.
+The swift-testing examples in particular are not at all compelling, and IMO actually the opposite.
+I think that swift-testing has made some strange design decisions. Test suites can become very large and complex, and adding some descriptive prose is clearly a good thing - just as we do in our library and application code as those codebases grow.
+But the thing is, we already have a system designed specifically for this kind of prose -- documentation comments. Our documentation infrastructure is excellent these days, so why does swift-testing seem to encourage the use of every other mechanism?
+First it's string parameters to the macro:
+@Test("square returns x * x")
+func squareIsXTimesX() {
+#expect(square(4) == 4 * 4)
+}
+Now it's suggested that we change it to this:
+@Test func `square returns x * x`() {
+#expect(square(4) == 4 * 4)
+}
+Honestly, both of these look bad to me, and the second one looks even worse. Choosing function names that contain spaces and special characters confusable with executable code is such an obvious bad practice that I would never use this myself, and would ban it from every codebase where I have the authority to do so.
+Sorry, but it's just not readable and could easily be actively harmful.
+As an alternative:
+/// Tests that ``square`` returns `x * x`.
+///
+@Test func testSquare() {
+#expect(square(4) == 4 * 4)
+}
+That is way more readable, easily scales to multiple lines, allows complex formatting, tables, etc, not to mention links to other functions and types in the project. The way documentation comments work, the first line is already considered a "summary" which can be used in test output or the Xcode sidebar.
+I can't understand why we go through these contortions for a not-excellent result, when we have a truly excellent and class-leading documentation engine just sitting there.
+I have sympathy for the Bazel use-case, but I'd rather that be addressed by a more targeted proposal. The other motivating use-cases (non-alphabetic identifiers) are not, by themselves, significant enough to be worth addressing IMO.
+
+---
+
+allevato:
+The only case I had to adjust it for was identifiers starting with a digit, which were round-tripping incorrectly.
+Oddly enough, I ran into this exact issue as well.
+
+---
+
+Personally, I agree with you that the testing use-case is ugly and I’d much prefer documentation comments and normally-named functions. But that’s just a matter of style and the Bazel and enum cases are compelling enough to me that I don’t think we should prevent people from using raw identifiers if they so choose, assuming that the implementation doesn’t cause issues in other places (which it doesn’t seem like it does).
+
+---
+
+Personally, the only example that feels useful to me is the one where you can make identifiers (especially enum cases) that start with a digit.
+But then the proposal says you have to always quote them even after a dot, and to me this makes it worse than current workarounds using a letter or underscore prefix. The proposal explains this is to avoid ambiguity in a tuple, but most types aren't tuples and it'd be easy to disallow digit-only names in a tuple.
+About tuples… Everywhere in the language it's always been the case that y.a is the same as y.`a`. So it comes as a big surprise that y.0 could be something different from y.`0`. Please don't allow this, we don't need this confusion. Example from proposal:
+let a = (5, `0`: 10)
+let b = y.0    // z <- 5
+let c = y.`0`  // z <- 10
+
+---
+
+I think I'm also a -1 on this, for the same reasons that @Karl and @michelf laid out. Every proposed use for this seems ugly compared to alternatives using currently allowed syntax.
+
+---
+
+michelf:
+About tuples… Everywhere in the language it's always been the case that y.a is the same as y.`a` . So it comes as a big surprise that y.0 could be something different from y.`0`. Please don't allow this, we don't need this confusion. Example from proposal:
+let a = (5, `0`: 10)
+let b = y.0    // z <- 5
+let c = y.`0`  // z <- 10
+I'm sympathetic to this, but there's a fundamental distinction here. The reason that y.a and y.`a`  are treated identically is specifically because a is a valid identifier. Requiring the use of backticks around 0 in this situation is important signal that conveys to the reader "the 0 here does not mean what it normally means".
+The opposite argument could just as easily be made that it's a big surprise that x.for and f(for: x) are allowed when for.x and f(x: for) are not. We simply don't find it confusing now because we've grown accustomed to those rules.
+It's also quite unlikely that anyone would write code like the one in that specific example, which only serves to show how the rules are chosen to avoid collisions. When discussing changes like this to parsing/lookup, we must consider extreme edge cases like this and how they fit into the larger system. If we chose the rule that a.0 could mean the same as a.`0` , then we'd still have a different set of rules that we need to define (which do we choose if there are two possible meanings?).
+But the existence of such examples is not an encouragement for folks to write code that looks like that, just as the fact that Swift allows emoji and other obscure Unicode characters is not an encouragement to have those permeate a codebase. History has shown that even with those tools, most developers are able to use them wisely and only when necessary, and I have every reason to expect that the same would hold true here.
+
+---
+
+allevato:
+I'm sympathetic to this, but there's a fundamental distinction here. The reason that y.a and y.a  are treated identically is specifically because a is a valid identifier. Requiring the use of backticks around 0 in this situation is important signal that conveys to the reader "the 0 here does not mean what it normally means".
+The problem is I've always seen the 0 in a.0 as an identifier. Just like you can have a.default where default becomes an identifier,  with a.0 the 0 also becomes an identifier for the field. Perhaps this is not how the compiler parses things internally, but that's how I model it in my head when reading such code.
+Allowing unquoted identifiers that start with a digit (when after a dot) would make enum cases that start with a digit actually convenient at the point of use. It would also allow a struct to mimic the API of a tuple, which could be useful when refactoring. Whereas a.0 and a.`0` meaning different things is much less useful, in addition to being confusing. Maybe it makes things more consistent in some interpretation of the language, but not in mine.
+
+---
+
+IMO, it's not that inconsistent. Tokens that start with a number would have to be escaped in normal use anyway to prevent the compiler from interpreting it as a number:
+let `0` = 5
+let x = 0   // x == 0
+let y = `0` // y == 5
+The above example isn't that different from:
+let tuple = (0, `0`: 5)
+let x = tuple.0   // x == 0
+let y = tuple.`0` // y == 5
+With that being said, I strongly agree that non-tuple types (where there wouldn't be any ambiguity) should be allowed to use numeric members without escaping them.
+The proposal argues that we need to escape numeric members in order to prevent confusion between indexed and labeled tuple members, but that's not a concern for non-tuple types. Is anyone going to get confused by a statement like this?
+let color = Color(hue: .red, variant: .100)
+Forcing all uses of numeric members to be escaped adds unnecessary clutter and hinders the usefulness of this proposal. I think that we should allow unescaped numeric members whenever practical.
+
+---
+
++1000 for the proposed syntax:
+@Test func testSquare()  {
+It is so much clearer.
+
+---
+
+That's the current syntax!
+
+---
+
+In general, I would support this proposal, though I do not like the proposed Swift testing amendments.
+I recently was doing some trig work in swift/SwiftUI, and found that instead of writing Angle(radians: 2*Double.pi) , I wanted to create a static extension on Angle, that would let me write Angle.360 , or given type inference, .360 to refer to an angle of 360 degrees. Similarly for 90, 180, 270.
+So I support the idea of being able to define the extension as
+extension Angle {
+static let `180` = Angle(radians: Double.pi)
+}
+I would want to use it without the backticks.
+I also would prefer not to use backticks when referencing enum cases. Perhaps disallow use of raw identifiers in tuples, since this seems a far more rare use case?
+
+---
+
+Oops.I missed the /// comments above it. If those could be picked up automatically, (similarly to how the Xcode quick help functions do?), then that would be great.
+
+---
+
+Karl:
+As an alternative:
+/// Tests that ``square`` returns `x * x`.
+///
+@Test func testSquare() {
+#expect(square(4) == 4 * 4)
+}
+disc0infern0:
+Oops.I missed the /// comments above it. If those could be picked up automatically, (similarly to how the Xcode quick help functions do?), then that would be great.
+I've been trying to figure out how to approach this suggestion. I would emphasize really quickly here that this proposal is not about adding a feature to Swift Testing per se—it's just that Swift Testing could benefit from it if it's implemented.
+It is already perfectly valid to write what you have here, and it should compile as-is, but you still need to name the function under the comment, and we've gotten feedback that this is not as ergonomic as it could be and that it would be nicer if a test function could just have a single name. That doesn't then imply that @allevato's proposal here is the only option (or the best option or the worst option, for that matter.)
+Comments are not part of the syntax tree in Swift and do not contribute to the name of a symbol. Even if they did in this instance (and from a technical standpoint, it's not impossible for us to make @Test consume those comments), it wouldn't solve Swift Testing's problem, nor would it solve the other problems this proposal is intended to address.
+
+---
+
+1-877-547-7272:
+With that being said, I strongly agree that non-tuple types (where there wouldn't be any ambiguity) should be allowed to use numeric members without escaping them.
+Treating members of tuples and members of non-tuple types differently actually introduces more inconsistency when you start peeling back the edges. To say that you can write this:
+struct S { var `0`: Int }; let s = S(); _ = s.0
+enum E { case `0` }; _ = E.0
+But then force the tuple use case to add backticks for disambiguation:
+let x = (a: 1, `0`: 2); _ = x.`0`
+...would be unlike any lookup rules currently in the language, because whether an identifier needs to be escaped or not is a decision made purely on its position in the syntax tree, not based on any type information.
+If we wanted to have that rule, then are we restricting it to wholly numeric identifiers? We have to require backticks for member access in some cases because non-identifier characters would otherwise be ambiguous. For example,
+enum BillboardTop100 { case `99 Luftballoons` }
+_ = BillboardTop100.99 Luftballoons  // " " is confusable with token delimiting
+_ = BillboardTop100.`99 Luftballoons`  // ok
+enum AspectRatio { case `16:9` }
+_ = AspectRatio.16:9  // ":" is confusable with ternary colon
+_ = AspectRatio.`16:9`  // ok
+enum Version { case `15.0` }
+_ = Version.15.0  // `.` is confusable with member access
+_ = Version.`15.0`  // ok
+extension WestCoast { enum Rapper { case `2Pac` } }
+_ = WestCoast.Rapper.2Pac  // not entirely numeric, but not confusable
+So as far as I can tell, the requested rule would be "for tuple types, raw identifiers must always be escaped by backticks to distinguish them from element indices; for non-tuple types, raw identifiers may not be escaped if they start with an identifier character or a digit and otherwise only contain identifiers characters and digits."  That's a mouthful, and it would have wide-ranging consequences for the implementation of the compiler and other tooling.
+The proposal instead offers a simpler rule: "raw identifiers must always be escaped by backticks".
+I certainly understand the aesthetic reasons behind the request, but optimizing for something so subjective isn't particularly a goal here, and carving out such narrow special exceptions would actually harm the understanding and usage of the feature. That being said, there's nothing in the proposal that specifically closes the door to that space being explored in the future, either.
+
+---
+
+As someone who has written extremely long unit test function names, because I like to be very descriptive, i find this change way more readable over camelCase long function names.
+However I hope we can restrict this per module, like unit test targets because I would really hope people would not use this in regular function names as that would negatively impact readability in my opinion.
+
+---
+
+I think this is a very useful thing to do, and the testing rationale is a very strong motivation IMHO.
+This actually enables one of the "styles" that ScalaTest has offered since a while, and look as this in ScalaTest [1]:
+class SetSpec extends RefSpec {
+object `A Set` {
+object `when empty` {
+def `should have size 0` {
+assert(Set.empty.size == 0)
+}
+}
+}
+}
+That's pushing it a bit further, but the basic idea to:
+@Test
+func `empty Set: should have size 0`() { }
+Small side note is that we could also allow
+// @Test
+// var `empty Set: should have size 0` { }
+to avoid the "hanging" () at the end there... but perhaps that's only bothering me and it't too big of a deal.
+I should also bring up another example from my previous work-life where we used this Scala feature of `` quoting to great effect. The Akka HTTP library I worked on used this to model headers and content explicitly, to great effect:
+// akka-http (scala)
+// https://tools.ietf.org/html/rfc7232#section-3.2
+object `If-None-Match` extends ModeledCompanion[`If-None-Match`] {
+val `*` = `If-None-Match`(EntityTagRange.`*`)
+def apply(first: EntityTag, more: EntityTag*): `If-None-Match` =
+`If-None-Match`(EntityTagRange(first +: more: _*))
+}
+val `application/java-archive`                                                  = abin("java-archive", NotCompressible, "jar", "war", "ear")
+val `application/javascript`                                                    = awoc("javascript", "js")
+val `application/json`                                                          = awfc("json", HttpCharsets.`UTF-8`, "json")
+val `application/json-patch+json`                                               = awfc("json-patch+json", HttpCharsets.`UTF-8`)
+val `application/merge-patch+json`                                              = awfc("merge-patch+json", HttpCharsets.`UTF-8`)
+val `application/problem+json`                                                  = awfc("problem+json", HttpCharsets.`UTF-8`)
+val `application/grpc+proto`                                                    = abin("grpc+proto", NotCompressible)
+This is very nice in practice because we then don't have to reinvent "weird spellings" and making weird upper-lower-snake-or-something-else constants, but can use the exact spellings a specification uses, which is really nice for reading and mapping the code to actual rutime
+Long story short, I think this is a worthy extension to the language! I've been missing it here and there, and I'm really happy to see it come to Swift now :-)
+[1] ScalaTest
+
+---
+
+I am against this proposal and do not see any tangible benefits - the syntax for both defining and using raw identifiers is undesirable. As others have said, if it were down to me I would not allow this to be used in any codebase I was responsible for.
+The redundancy in swift-testing functions is indeed a mild annoyance, it would be great to find a solution to this, but this isn't it. -1 from me.
+
+---
+
+I have carefully re-read the original proposal and the new version. I don't believe any of the original reasons for rejection have been overcome by circumstances or the amendments. This adds syntactic complexity to the language — particularly in reading code — that is not justified by the mild benefits.
+The technical detail that the declaration let `foo bar baz` creates the identifier foo bar baz and not `foo bar baz` is irrelevant to a user of the language, because they have to read and write the backticks everywhere anyways. As a specific and concrete example, this does not in fact allow us to create enum cases with leading digits, because using the identifier always requires a leading backtick in the source: expressions like let code = HTTPStatus.403 and .failure(code: .403) are still invalid. The use case of allowing leading digits in property names is a worthy goal, and I don't believe that this proposal achieves it satisfactorily.
+Similarly, the distinctions of meaning between escaped identifiers and raw identifiers are too fine. A reader's brain is often forced to act like a compiler at the semantic level; making them puzzle over syntax as well is an unnecessary extra burden. The marginal utility of writing a tuple like (a: Int, `0`: Bool) does not warrant the awareness of language minutia then required by reading the use sites t.`0` vs. t.0.
+I believe this proposal should be rejected, again.
+
+---
+
+Could we not resolve this by banning duplicate labels in tuples? E.g. (a: 1, `0`: 2) would be invalid, thus avoiding the conflict. This would also make the .0 syntax that tuples use less magical.
+
+---
+
+I don't see why numeric identifiers need to be back-ticked on use at all. We shouldn't allow tuples to have both an unnamed first field and a named `0` field at the same time (or more generally an unnamed field with an index of N and a named N should not both exist on the same tuple).
+
+---
+
+I am in favor of raw identifiers, mostly for tests. Also, they can be useful for interoperability with other systems (languages, databases, …) that allow a different identifier syntax than Swift.
+I don’t think they will be used much in regular code as the ` backtick character is less convenient than the common camelCase. So, most other code should be unaffected by this change. The `identifier` syntax exists already and this just makes it more useful.
+
+---
+
+No matter what is decided upon, it will still be annoying that there are now different rules depending on the structure of the identifier. Currently:
+You can use backticks to make an identifier that matches a Swift keyword, but don't need them at the usage site.
+Tuples don't need backticked-int-dot-syntax, because implementation/legacy reasons.
+If allowed there would be more "exceptions" people would have to consider:
+You can make (almost) any string an identifier, as long as it's backticked.
+If a number, you don't need backticks at the usage site.
+If not a number, you will need backticks at the usage site.
+Obviously the last 2 exceptions might not make it. Inconsistency within the language is a bit annoying and having to know which X rule to apply in Y situation is even more annoying when writing.
+I almost wish instead digits were allowed as identifier heads. The issue of "confusing with integers" is also annoying ... but self choosing. The only area I see that being an issue is if a digit-only identifier is in scope and I wish instead the compiler emitted a warning, or potentially an error, that this would cause confusion with integers and offer remedies (explicit self, maybe force backticked for local variables). This is not an issue for dot syntax usages.
+https://docs.swift.org/swift-book/documentation/the-swift-programming-language/summaryofthegrammar#Lexical-Structure
+There sure are some weird Unicode characters allowed in identifiers. TIL. /aside
+I think the proposal puts too much on the testing example. As said above, there are other cleaner to write/read mechanisms to document tests. Where I see this as the most powerful is in tooling, auto-generated values, or domain-specific code like in the HTTP example. However this lands, there will be opinionated micro/macro style guides for its usage. I personally will probably never use this unless it is really^really^really better over other methods.
+So, I support it. This will obviously make its way into frameworks but I see its potential in tooling efforts that have been made, or yet to be made, for the language. I can live with some backticks in certain places, even if it’s annoyingly inconsistent.
+
+---
+
+I want to support this proposal because it is useful for metaprogramming that is covered in "Naturally non-alphabetic identifiers" and "Code generators and FFI".
+You may often use directly Swift identifiers rather than dictionaries for kind of performance reason or for some other reason.
+Examples which come to my mind are:
+Use Case 1: Identifiers starting with numerics
+// List of path extensions
+enum PathExtension: String, Sendable {
+case `123` = "123"
+case `3dml` = "3dml"
+case `3ds` = "3ds"
+case `3g2` = "3g2"
+case `3gp` = "3gp"
+case `7z` = "7z"
+case aab = "aab"
+case aac = "aac"
+// Other cases follow
+}
+Use Case 2: Identifiers containing punctuations
+// The map of Unicode scalars in "Po" category
+enum OtherPunctuation: String, Sendable {
+// This (U+FE50) is allowed in current Swift.
+case `﹐` = "Small Comma"
+// This (U+00A1) is not allowed in current Swift.
+case `¡` = "Inverted Exclamation Mark"
+// :
+// :
+}
+However, as someone said, I also tend to think such identifiers containing whitespaces or punctuations should be limited to internal use. (Not limited by the language but recommended by the guideline?)
+
+---
+
+Your post caused me to consider something else, which I think is quite important.
+The reason the Swift grammar limits characters to the set it does is not solely to make parsing easier - it is also for security. Even the Unicode consortium does not recommend that languages accept all characters everywhere: UTS#55 Source Code Handling.
+Source code, that is, plain text meant to be interpreted as a computer language, poses special security and usability issues that are absent from ordinary plain text. The reader (who may be the author or a reviewer) should be able to ascertain some properties of the underlying representation of the text by visual inspection, such as:
+the extent of lexical elements within the text;
+the nature of a lexical element (comment, string, or executable text);
+the order in memory of lexical elements;
+the equivalence or inequivalence of identifiers.
+The potential presence in source code of characters from many writing systems, including ones whose writing direction is right-to-left, can make it difficult to ensure these properties are visually recognizable. Further, the reader may not be aware of these sources of confusion. These issues should be remedied at multiple levels: as part of computer language design, by ensuring that editors and review tools display source code in an appropriate manner, and by providing diagnostics that call out likely issues.
+Accordingly, this document provides guidance for multiple levels in the ecosystem of tools and specifications surrounding a computer language. Section 3, Computer Language Specifications, is aimed at language designers; it provides recommendations on the lexical structure, syntax, and semantics of computer languages.
+This is explored in more depth in UAX#31 Identifiers and Syntax.
+The formal syntax provided here captures the general intent that an identifier consists of a string of characters beginning with a letter or an ideograph, and followed by any number of letters, ideographs, digits, or underscores. It provides a definition of identifiers that is guaranteed to be backward compatible with each successive release of Unicode, but also adds any appropriate new Unicode characters.
+The formulations allow for extensions, also known as profiles. That is, the particular set of code points or sequences of code points for each category used by the syntax can be customized according to the requirements of the environment. Profiles are described as additions to or removals from the categories used by the syntax. They can thus be combined, provided that there are no conflicts (whereby one profile adds a character and another removes it), or that the resolution of such conflicts is specified.
+And of course, it wouldn't be Unicode if it didn't come with a table, of which characters are allowed in which positions. These are the ID_* and XID_* family of properties, which we even make available in Unicode.Scalar.Properties - isIDStart | Apple Developer Documentation
+They document some standard profiles, such as for allowing mathematical symbols and emojis. In theory we could extend it with our own profiles, but any extra characters we allow should be considered carefully.
+Anyway, compare that with the set of characters allowed by the proposal:
+A raw identifier may contain any valid Unicode characters except for the following:
+The backtick (```) itself, which termintes the identifier.
+The backslash (\), which is reserved for potential future escape sequences.
+Carriage return (U+000D) or newline (U+000A); identifiers must be written on a single line.
+The NUL character (U+0000), which already emits a warning if present in Swift source but would be disallowed completely in a raw identifier.
+All other non-printable ASCII code units that are also forbidden in single-line Swift string literals (U+0001...U+001F, U+007F).
+This seems extremely broad. In particular, it seems to allow isolated combining characters (which may combine with the surrounding text when rendered in an editor) and the Unicode line separator (U+2028), which is explicitly called out in UTS#55 because even though compilers tend not to recognise it as a newline (including the Swift compiler), editors may render it as one:
+The Unicode Standard encompasses multiple representations of the New Line Function (NLF). These are described in Section 5.8, Newline Guidelines, in [Unicode], as well as in Unicode Standard Annex #14, Line Breaking Algorithm [UAX14].
+An opportunity for spoofing can occur if implementations are not consistent in the supported representations of the newline function: multiple logical lines can be displayed as a single line, or a single logical line can be displayed as multiple lines.
+For instance, consider the following snippet of C11, as shown in an editor which conforms to the Unicode Line Breaking Algorithm:
+// Check preconditions.
+if (arg == (void*)0) return -1;
+If the line terminator at the end of line 1 is U+2028 Line Separator, which is not recognized as a line terminator by the language, the compiler will interpret this as a single line consisting only of a comment; to a reviewer, the program is visually indistinguishable from one that has a null check, but that check is really absent.
+
+---
+
+Karl:
+This seems extremely broad. In particular, it seems to allow isolated combining characters and the Unicode line separator (U+2028), which is explicitly called out in UTS#55 because even though compilers tend not to recognise it as a newline (including the Swift compiler), editors may render it as one:
+This is an excellent point! While I made an adjustment to the proposal after the pitch that forbade an identifier from consisting of only whitespace (which does capture U+2028 and U+2029), that didn't go so far as to forbid the use of those separators in an identifier if it contained other non-whitespace. Just as we currently ban the ASCII line separators from raw identifiers, I think it would be perfectly reasonable (and proper) to extend that to include those Unicode code points as well, essentially matching what the standard library implements in Character.isNewline.
+
+---
+
+I am all for the idea of having these sorts of raw identifiers, namely for tests, but I agree with some of the other posters here expressing concerns about security & ugliness. For tests, could this be covered by a variant of the @Test macro?
+@Test("2 * 2 evaluates to 4") {
+#expect(2 * 2 == 4)
+}
+
+---
+
+As @grynspan mentioned above, this is not a swift-testing feature proposal, so major changes to how swift-testing declares tests are out of scope here. The swift-testing use case is just used to illustrate one of many places where the feature would provide a benefit, specifically without having to make significant design changes to other libraries.
+(I'll add, however, that in my opinion, removing the test function name entirely would only serve to make the testing experience worse. One of the benefits of this proposal is that the test description becomes the name of the test, meaning that there is a single description/symbol that appears in all backtraces, UIs, debugger views, etc. The proposed syntax would remove the need to "name the test twice", but the tooling must still conjure up a name for that thing, and that name would be completely hidden from users and tooling.)
+
+---
+
+Karl:
+This seems extremely broad. In particular, it seems to allow isolated combining characters (which may combine with the surrounding text when rendered in an editor)
+I'm not against your point, but just in case, let me say Swift already allows some isolated combining characters in identifiers.
+Quote from "Identifiers" section in TSPL:
+Grammar of an identifier
+identifier → identifier-head identifier-characters ?
+...
+identifier-head → U+3004–U+3007, U+3021–U+302F, U+3031–U+303F, or U+3040–U+D7FF
+...
+U+3040–U+D7FF contains U+3099(COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK) which is a combining character.
+For example, "\u{304B}\u{3099}" == "\u{304C}"  is true in Swift.
+Note that U+3099 is different from U+309B(KATAKANA-HIRAGANA VOICED SOUND MARK) which is not a combining character.
+Executing the following command on your terminal (zsh)
+% echo "let \u3099 = 0; print(\u3099)" | swift repl
+will put out the result 0.
+Swift seems not to normalize identifiers
+echo "let \u304B\u3099 = 0; let \u304C = 1; print(\u304B\u3099 == \u304C)" | swift repl
+is executed successfully and prints "false".
+
+---
+
+Regardless, that comment was wonderfully illustrative.
+
+---
+
+the way i see it, this proposal was crafted to support two realistic use cases:
+defining identifiers (usually enum cases) that start with a digit
+enum CompressionEngine
+{
+case `7z`
+}
+enum HTTPStatus
+{
+case `2xx`
+case `3xx`
+case `4xx`
+case `5xx`
+}
+embedding natural language strings in function names for test identification
+@Test func `square returns x * x` ()
+{
+}
+there are a few other problems - like preserving spellings from other languages (e.g. box-shadow), or encoding file paths (e.g. myapp/extensions/widget/common/utils) - that feel conceptually adjacent and are roped in as additional motivations, but wouldn’t actually be solved by this proposal, as it is not possible to completely eliminate the need to transform input strings into Swift identifiers, and there are also a few other things this proposal would enable, such as including unusual punctuation in identifiers (e.g. 16:9). but to me that just isn’t anywhere near as motivating as the leading digit use case.
+for #2, i feel that working this into the macro system, where the macro could mangle a name based on a string input, makes more sense than enabling all special characters in all identifiers. for #1, leading digits, we don’t need a new delimiter, because it is already unambiguous.
+
+---
+
+Interesting. We should revisit which code-points are allowed in identifiers at some point (it's possible our grammar definitions predate a lot of this advice). It would technically be source-breaking, but actual breakage should be limited to questionable identifiers (such as you demonstrated, single combining characters and the like) that probably qualify as "actively harmful" to continue supporting.
+Ideally, no identifiers (raw or standard) should interact typographically with their surrounding text.
+Rust is ahead of us here. It does not allow U+3099 to be used as an identifier:
+// Rust:
+fn main() {
+let ゙ = 42;
+println!("Hello, {}",  ゙);
+}
+-------------
+error: unknown start of token: \u{3099}
+--> src/main.rs:2:9
+|
+2 |     let ゙ = 42;
+|         ^
+error: unknown start of token: \u{3099}
+--> src/main.rs:3:28
+|
+3 |     println!("Hello, {}",  ゙);
+|                            ^
+error: expected pattern, found `=`
+--> src/main.rs:2:11
+|
+2 |     let ゙ = 42;
+|          ^ expected pattern
+What's more, the Rust compiler even includes confusable detection:
+// Swift:
+func visitScope() {}
+// Cyrillic small letter 'o'
+func visitScоpe() {}
+// No warnings or errors
+// Rust:
+fn visitScope() {}
+fn visitScоpe() {}
+-------------
+warning: found both `visitScope` and `visitScоpe` as identifiers, which look alike
+--> src/lib.rs:2:4
+|
+1 | fn visitScope() {}
+|    ---------- other identifier used here
+2 | fn visitScоpe() {}
+|    ^^^^^^^^^^ this identifier can be confused with `visitScope`
+|
+= note: `#[warn(confusable_idents)]` on by default
+warning: the usage of Script Group `Cyrillic` in this crate consists solely of mixed script confusables
+--> src/lib.rs:2:4
+|
+2 | fn visitScоpe() {}
+|    ^^^^^^^^^^
+|
+= note: the usage includes 'о' (U+043E)
+= note: please recheck to make sure their usages are indeed what you want
+= note: `#[warn(mixed_script_confusables)]` on by default
+Confusable detection is something we can get from ICU, although it is sometimes helpful to augment it with custom rules. I made an example package a while ago which uses ICU and some custom rules from Chromium to spoof-check Unicode domain names from Swift.
+
+---
+
+typo? 0451-escaped-identifiers.md
+case ColorVariant {
+
+---
+
+Fixed. Thank you!
+
+---
+
+taylorswift:
+for #1, leading digits, we don’t need a new delimiter, because it is already unambiguous.
+There definitely are situations where it's ambiguous. Since enum cases are static members, they can be referenced without any leading qualification or punctuation in static contexts:
+enum E {
+case a
+static let oldNameForA = a  // ok
+static var oldNameForA2: E { a }  // ok
+}
+So, if we swap those out for numeric identifiers, we'd have:
+enum E {
+case `123`  // or case 123??
+static let oldNameForA = 123  // ok, but incorrectly inferred to be Int
+static var oldNameForA2: E { 123 }  // error: type mismatch, Int != E
+}
+Certainly, changing the language's type checking rules to allow bare integer literals to be treated as identifiers is not a path we want to go down, so there do still exist situations where we either need to (1) escape these identifiers or (2) qualify them with a type. I'm of the opinion that forcing only a specific subset identifiers to be qualified based on their spelling is a worse landing point than requiring them to be consistently escaped wherever they're used. (Even if we were to decide that we could elide the backticks for something like E.123, we could still permit E.`123`  just as we permit both E.for and E.`for` .)
+
+---
+
+I might be reading too much into the comment, but I think Taylor is proposing something like "allow identifiers that start with a digit, so long as they contain at least one non-digit," which I think removes the ambiguity that you pointed to.
+
+---
+
+That would still be conflicting with octal, binary, and hexadecimal literals.
+
+---
+
+What about 1_000 and 0xFF?
+
+---
+
+the list of numeric literal patterns has been pretty stable, and i don’t anticipate that we would add more bases, so the rule could just be “anything that doesn’t already look like an integer literal”
+
+---
+
+Just to make sure I'm clear on your suggestion regarding identifiers/numbers then, which of these is it?
+An identifier can start with a digit if it doesn't look like a numeric literal, and identifiers that look like numeric literals are forbidden because there is no way to spell them
+An identifier can start with a digit if it doesn't look like a numeric literal, but backticks can be used to escape identifiers that would otherwise look like a numeric literal; e.g., case `0x0`
+Something else?
+
+---
+
+for me, #1 would cover most of my envisioned use cases, but i suspect if it went through evolution people might ask for a way to escape the names in #2, so that’s probably where we would end up.
+the commitment that we’re making is we won’t be able to add support for more bases in the future (e.g. 0zXYZ) and regex syntax highlighters won’t handle these very well, but those seem like relatively minor costs.
+
+---
+
+tl;dr Overall I'm neutral on the proposal, but the swift-testing example is a bad idea.
+I know this is not about adding this to swift-testing, but as a heavy swift-testing adaptor, I'd like to add my perspective to the general idea proposed here. I think sentence-named test cases are not a good idea (and thus example to this proposal), even in the current swift-testing.
+Function names are easily recognizable and, for tests at least, often unique identifiers. We use them all the time and everywhere for navigation, searching, analysis, and more. My favorite feature: you can double-click them to select them quickly. They are common and understood across system boundaries. While Xcode might make the use of sentences nice, I have my doubts for everything else.
+To illustrate: our CI runs on Gitlab. When a test run fails, I view the log, where it says something like:
+Failing tests:
+MathTests.square2EvaluatesTo4()
+I select the name, command-tab to Xcode, hit Command-O and paste the name. How would this work with the sentence names? In the "okay" scenario, the log would contain the sentence (with backticks?):
+Failing tests:
+MathTests.`2 * 2 evaluates to 4`()
+That would be fiddly to select, I cannot double-click, but might just be fine. What I fear is that we'll see mangled names there. Maybe not in the log, but everywhere else in the interface. Something like (the mangled name is just something copied from above):
+Failing tests:
+MathTests._$s4test0014foospace_ntJBbyyF()
+Does Xcode's Quick Open support mangled names? Can anybody actually recognize or even read them? I don't.
+In a log or a trace, identifiers stick out, sentences blend it. Camelcased identifiers are easy to spot, many small words look like debug output.
+Let's not forget backtraces from swift-testing are already completely incomprehensible at times and more mangling certainly won't make it better.
+I recognize this is purely a practical and ergonomic argument, but ergonomics are important to me and make me faster and more efficient at what I do. And that's why think sentence identifiers are a bad idea in general (and we're not using them in our code).
+
+---
+
+Many, many languages have evolved additional numeric literals over the course of their history. I would strongly oppose adding bare identifiers that would lock out that option.
+
+---
+
+The only start with numeric identifiers I'd want are the exactly .N forms that tuple indexes use. And I wouldn't even mind if they were restricted to only be generated by macros. I just don't want to have to backtick them on every use.
+
+---
+
+I am personally in favor of this; I think our profession should move beyond parsing/editing text syntax, and this feels like a tiny baby step towards that direction.
+A quick reading of the proposal text has raised some nitpicking questions for me, mostly related to Unicode versioning:
+The proposal allows any "valid Unicode character" (with a handful of explicitly enumerated exceptions). What precisely does that mean? Most importantly, will Unicode scalars with unassigned code points be considered valid? (Under what version of Unicode?)
+The proposal disallows identifiers that solely consist of characters with the White_Space property. What version of Unicode is going to be used to make that determination? Is there a path to upgrading to newer versions of Unicode, or are we going to get forever stuck on a legacy one?
+When do two raw identifiers resolve to the same identity? Do they need to be composed of precisely the same scalars, or is there a normalization algorithm?
+E.g., is this going to be an error, or will the two names below be considered distinct?
+let `foo;bar`: Int // U+003B SEMICOLON
+let `foo;bar`: Int // U+037E GREEK QUESTION MARK
+If there is a normalization scheme, what is it? (Does it follow the Unicode spec? Which version? Is there an upgrade path?)
+I think it's a shame that we can't use \u{37e} escapes in this context (yet).
+
+---
+
+Some of the rules proposed would help with MMIO interface generation for embedded - some registers will start with leading numeric values (or for that matter be purely numeric). As others have stated it is a bit unfortunate for this proposal not letting those be typed w/o having backticks.
+
+---
+
+lorentey:
+The proposal allows any "valid Unicode character" (with a handful of explicitly enumerated exceptions). What precisely does that mean? Most importantly, will Unicode scalars with unassigned code points be considered valid? (Under what version of Unicode?)
+The version of Unicode that would be used would be the tables compiled into the standard library, since the parser is now written in Swift. Disallowing unassigned code points seems like the most obvious choice; it wouldn't allow a code point that we might need to forbid later for some reason. The only real risk I can see is that code using an assigned-in-the-future code point would not be able to be compiled with an older parser, which seems like a reasonable restriction (similar to how code using other new language features obviously can't be compiled with an older compiler).
+The proposal disallows identifiers that solely consist of characters with the White_Space property. What version of Unicode is going to be used to make that determination? Is there a path to upgrading to newer versions of Unicode, or are we going to get forever stuck on a legacy one?
+This is an interesting question, because Unicode also defines the Pattern_White_Space property which is guaranteed to be stable/immutable and contains a subset of White_Space (plus LTR/RTL markers). Given that, it would also be worth considering the following formulation:
+The only whitespace characters permitted in a raw identifier are characters with the Pattern_White_Space property, except for those that are line/paragraph separators.
+A raw identifier may not consist of only whitespace characters as it is defined above.
+I'm somewhat hesitant to carve out arbitrary exceptions like this if it makes the rules harder to understand (and to implement, for things like regex-based tooling that may want to match these), but since Pattern_White_Space is immutable and we'd only be subtracting from it, we're left with an extremely small and manageable set: \u{0020}, \u{200E}, and \u{200F}. So maybe that would be OK.
+When do two raw identifiers resolve to the same identity? Do they need to be composed of precisely the same scalars, or is there a normalization algorithm?E.g., is this going to be an error, or will the two names below be considered distinct?
+let `foo;bar`: Int // U+003B SEMICOLON
+let `foo;bar`: Int // U+037E GREEK QUESTION MARK
+If there is a normalization scheme, what is it? (Does it follow the Unicode spec? Which version? Is there an upgrade path?)
+I agree that confusables and normalization are important considerations, but it's worth noting that we have these issues today with regular identifiers. Latin Capital A and Greek Capital Alpha are both valid but separate identifiers in Swift, as would be something like Ä written as a single code point vs. with combining diacritics. I think we should address them holistically, but not necessarily as part of this proposal.
+
+---
+
+Overall, I'm not in favor of this change.
+As others have said, I find the test naming motivation anti-compelling; its inclusion, more than anything, leads me to believe we should not accept this. If Swift Testing really wants to have fancy English-like test names, it should be able to do that as part of the Test macro. We don't need to extend the language for that.
+In my mind, the real motivation for this is to allow properties, cases, and methods to start with numbers, so you can do things like .480p, HTTPStatus.200, and so on.
+This proposal does not allow for that. Instead, it's allowing for these declarations to begin with backticks, which is not the same thing as allowing them to begin with numbers.
+Therefore, I do not want this. Either let me start the declarations with numbers, or I'll just keep working around the limitation in other ways. I don't want more exceptions to the grammar.
+
+---
+
+allevato:
+The version of Unicode that would be used would be the tables compiled into the standard library, since the parser is now written in Swift
+I don’t think this is true. The new lexer doesn’t use String and I don’t think it uses any of the stdlib’s Unicode tables. Instead has its own logic for classifying Unicode characters (swift-syntax/Sources/SwiftParser/Lexer/UnicodeScalarExtensions.swift at main · swiftlang/swift-syntax · GitHub and swift-syntax/Sources/SwiftParser/CharacterInfo.swift at main · swiftlang/swift-syntax · GitHub)
+
+---
+
+Is there any reason not to access Unicode.Scalar.Properties and similar APIs from the lexer? It seems like there would be nothing that prevents us from asking whether a scalar is assigned, unless that's purely a policy decision?
+
+---
+
+YOCKOW:
+Swift seems not to normalize identifiers
+echo "let \u304B\u3099 = 0; let \u304C = 1; print(\u304B\u3099 == \u304C)" | swift repl
+is executed successfully and prints "false".
+Indeed, generated resource identifiers in Xcode preserve the decomposed representation from the Apple file system. So that Ä is generated as A + ¨.
+
+---
+
+The swift grammar does not reference any Unicode properties; it is specified as a list of specific code-points.
+I suggested above that we should look at revisiting this and bringing it in to alignment with the latest advice from Unicode. This would use scalar properties:
+The formal syntax provided here captures the general intent that an identifier consists of a string of characters beginning with a letter or an ideograph, and followed by any number of letters, ideographs, digits, or underscores. It provides a definition of identifiers that is guaranteed to be backward compatible with each successive release of Unicode, but also adds any appropriate new Unicode characters.
+This advice allows for profiles with targeted exceptions - e.g. allowing identifiers to start with underscores, or allowing them to start with digits (that seems like it would be a popular change):
+The formulations allow for extensions, also known as profiles. That is, the particular set of code points or sequences of code points for each category used by the syntax can be customized according to the requirements of the environment. Profiles are described as additions to or removals from the categories used by the syntax.
+Concretely, I'm suggesting that we reformulate the existing grammar as one of these "profiles", and take the opportunity to check that our definitions are not too broad (e.g. identifiers shouldn't be allowed to start with a combining character).
+Then, I would suggest that instead of allowing any Unicode characters, "raw" identifiers could use an expanded profile, for instance allowing whitespace and other specific characters typically discouraged in identifiers.
+
+---
+
+-1 for exactly the same reasons @davedelong mentioned above. I specifically want to reiterate:
+davedelong:
+In my mind, the real motivation for this is to allow properties, cases, and methods to start with numbers, so you can do things like .480p, HTTPStatus.200, and so on.
+And It feels like a miss to not solve this problem.
+I personally dont have an issue using import `foo/bar/module`, but I can't imagine wanting to ever to use an api that makes pervasive use of these identifiers.
+I hope no one ever would do this, but an API like  func `plus 1`(x: Int) - > Int is horribly obnoxious in my mind.
+Additionally, I think the meta-effects on the ecosystem will not be great.
+It's very annoying to use `` double ticks `` in markdown to monospace code using these identifiers.
+I also foresee many random parsers around the web will struggle to handle the identifiers and overall quality of swift visual styling will suffer.
+
+---
+
+allevato:
+Is there any reason not to access Unicode.Scalar.Properties and similar APIs from the lexer? It seems like there would be nothing that prevents us from asking whether a scalar is assigned, unless that's purely a policy decision?
+In my opinion the main reason is that we want these tables to be stable and not be dependent on the Unicode tables of the Swift compiler that was used to build the new Swift compiler.
+
+---
+
+ahoppen:
+In my opinion the main reason is that we want these tables to be stable and not be dependent on the Unicode tables of the Swift compiler that was used to build the new Swift compiler.
+That's a fair point now, but is it a sustainable position long-term? If we do ever want to add normalization/confusables support for identifiers at some point in the future, the parser (and the rest of the compiler) will eventually need to use Unicode properties or other Unicode APIs in some fashion.
+
+---
+
+I think that’s a discussion we can have but I don’t think this review thread is the right place to have that conversation.
+
+---
+
+allevato:
+The version of Unicode that would be used would be the tables compiled into the standard library, since the parser is now written in Swift.
+That feels like a choice we might regret, as it splits the language into multiple parallel dialects. On Apple's platforms, the Swift Standard Library (and the Unicode tables therein) ship as part of the operating system. If the parser uses the same Unicode implementation as the stdlib, then the same compiler binaries will exhibit different behavior based on the version of the OS they're running on.
+ahoppen:
+I don’t think this is true. The new lexer doesn’t use String and I don’t think it uses any of the stdlib’s Unicode tables. Instead has its own logic for classifying Unicode characters
+That sounds like the right thing to do!
+allevato:
+Disallowing unassigned code points seems like the most obvious choice; it wouldn't allow a code point that we might need to forbid later for some reason.
+That sounds like a good plan.
+Caveat: If we let the stdlib dictate what code points are considered assigned, then the set of accepted characters will be decided by the version of the host OS that builds the code, not the version of Swift implemented by the compiler. That feels bad to me.
+allevato:
+I'm somewhat hesitant to carve out arbitrary exceptions like this if it makes the rules harder to understand (and to implement, for things like regex-based tooling that may want to match these), but since Pattern_White_Space is immutable and we'd only be subtracting from it, we're left with an extremely small and manageable set: \u{0020}, \u{200E}, and \u{200F}. So maybe that would be OK.
+Yes, that would make the rules eminently clear.
+"Regex-based tooling" raises some alarm bells for me, for the same reason as above. I think it would be a mistake to allow Swift code to fail to build (or to let their behavior change) because somebody upgrades their build environment's OS.
+allevato:
+I agree that confusables and normalization are important considerations, but it's worth noting that we have these issues today with regular identifiers.
+This was a clarifying question. I did not mean to hint that the two foo;bar spellings above should be the same (nor different) -- I think the behavior should be explicitly stated, though, as it has direct ABI stability implications.
+Not doing any normalization whatsoever avoids issues with Unicode versioning, which I believe is a clear benefit.
+If Swift itself will not set rules, the rational thing to do is probably for each project to set up strict policies about what sets of characters they are willing to accept within their source code, and what subset of that they feel acceptable to expose on their ABI surface.
+
+---
+
+lorentey:
+On Apple's platforms, the Swift Standard Library (and the Unicode tables therein) ship as part of the operating system. If the parser uses the same Unicode implementation as the stdlib, then the same compiler binaries will exhibit different behavior based on the version of the OS they're running on.
+This is a good point. The first solution that comes to mind would be to effectively "freeze" the current ranges of unassigned code points by hardcoding them into the parser, and anything added to the Unicode standard later on wouldn't be available until the compiler was explicitly updated to support it. The number of contiguous ranges of unassigned code points is quite large, but other than that I can't think of a technical reason it wouldn't work.
+I suspect that we're still going to have a reckoning with this kind of problem in the future if we want to support things like normalization, unless the answer to that (and maybe it is) is also that the parser must maintain its own copies of the Unicode data that it needs to perform those operations.
+"Regex-based tooling" raises some alarm bells for me, for the same reason as above. I think it would be a mistake to allow Swift code to fail to build (or to let their behavior change) because somebody upgrades their build environment's OS.
+To clarify, what I meant here was that the reduced set of valid whitespace characters would simplify tools like regex-based syntax highlighting and the sort; nothing specifically related to building the code itself.
+
+=== ROW 46 | f002236 | https://blog.cloudflare.com/elephants-in-tunnels-how-hyperdrive-connects-to-databases-inside-your-vpc-networks | 2024-10-25 | domain-subframes ===
+Elephants in tunnels: how Hyperdrive connects to databases inside your VPC networks | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+Cloudflare WorkersDeep DiveDeveloper Platform+5Show 5 more tags
+8 TagsShow 8 tags
+Post Tags
+Cloudflare WorkersDeep DiveDeveloper PlatformHyperdrivePostgresRustSQLWebSockets
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+HyperdrivePostgresRustSQLWebSockets
+Cloudflare WorkersDeep DiveDeveloper PlatformHyperdrivePostgresRustSQLWebSockets
+October 25, 2024
+Elephants in tunnels: how Hyperdrive connects to databases inside your VPC networks
+Andrew Repp, Emilio Assunção, and Abhishek Chanda
+11 minute readCOPY URL
+With September’s announcement of Hyperdrive’s ability to send database traffic from Workers over Cloudflare Tunnels, we wanted to dive into the details of what it took to make this happen.
+Hyper-who?
+Accessing your data from anywhere in Region Earth can be hard. Traditional databases are powerful, familiar, and feature-rich, but your users can be thousands of miles away from your database. This can cause slower connection startup times, slower queries, and connection exhaustion as everything takes longer to accomplish.
+Cloudflare Workers is an incredibly lightweight runtime, which enables our customers to deploy their applications globally by default and renders the cold start problem almost irrelevant. The trade-off for these light, ephemeral execution contexts is the lack of persistence for things like database connections. Database connections are also notoriously expensive to spin up, with many round trips required between client and server before any query or result bytes can be exchanged.
+Hyperdrive is designed to make the centralized databases you already have feel like they’re global while keeping connections to those databases hot. We use our global network to get faster routes to your database, keep connection pools primed, and cache your most frequently run queries as close to users as possible.
+Why a Tunnel?
+For something as sensitive as your database, exposing access to the public Internet can be uncomfortable. It is common to instead host your database on a private network, and allowlist known-safe IP addresses or configure GRE tunnels to permit traffic to it. This is complex, toilsome, and error-prone.
+On Cloudflare’s Developer Platform, we strive for simplicity and ease-of-use. We cannot expect all of our customers to be experts in configuring networking solutions, and so we went in search of a simpler solution. Being your own customer is rarely a bad choice, and it so happens that Cloudflare offers an excellent option for this scenario: Tunnels.
+Cloudflare Tunnel is a Zero Trust product that creates a secure connection between your private network and Cloudflare. Exposing services within your private network can be as simple as running a cloudflared binary, or deploying a Docker container running the cloudflared image we distribute.
+A custom handler and generic streams
+Integrating with Tunnels to support sending Postgres directly through them was a bit of a new challenge for us. Most of the time, when we use Tunnels internally (more on that later!), we rely on the excellent job cloudflared does of handling all of the mechanics, and we just treat them as pipes. That wouldn’t work for Hyperdrive, though, so we had to dig into how Tunnels actually ingress traffic to build a solution.
+Hyperdrive handles Postgres traffic using an entirely custom implementation of the Postgres message protocol. This is necessary, because we sometimes have to alter the specific type or content of messages sent from client to server, or vice versa. Handling individual bytes gives us the flexibility to implement whatever logic any new feature might need.
+An additional, perhaps less obvious, benefit of handling Postgres message traffic as just bytes is that we are not bound to the transport layer choices of some ORM or library. One of the nuances of running services in Cloudflare is that we may want to egress traffic over different services or protocols, for a variety of different reasons. In this case, being able to egress traffic via a Tunnel would be pretty challenging if we were stuck with whatever raw TCP socket a library had established for us.
+The way we accomplish this relies on a mainstay of Rust: traits (which are how Rust lets developers apply logic across generic functions and types). In the Rust ecosystem, there are two traits that define the behavior Hyperdrive wants out of its transport layers: AsyncRead and AsyncWrite. There are a couple of others we also need, but we’re going to focus on just these two. These traits enable us to code our entire custom handler against a generic stream of data, without the handler needing to know anything about the underlying protocol used to implement the stream. So, we can pass around a WebSocket connection as a generic I/O stream, wherever it might be needed.
+As an example, the code to create a generic TCP stream and send a Postgres startup message across it might look like this:
+/// Send a startup message to a Postgres server, in the role of a PG client.
+/// https://www.postgresql.org/docs/current/protocol-message-formats.html#PROTOCOL-MESSAGE-FORMATS-STARTUPMESSAGE
+pub async fn send_startup<S>(stream: &mut S, user_name: &str, db_name: &str, app_name: &str) -> Result<(), ConnectionError>
+where
+S: AsyncWrite + Unpin,
+{
+let protocol_number = 196608 as i32;
+let user_str = &b"user\0"[..];
+let user_bytes = user_name.as_bytes();
+let db_str = &b"database\0"[..];
+let db_bytes = db_name.as_bytes();
+let app_str = &b"application_name\0"[..];
+let app_bytes = app_name.as_bytes();
+let len = 4 + 4
++ user_str.len() + user_bytes.len() + 1
++ db_str.len() + db_bytes.len() + 1
++ app_str.len() + app_bytes.len() + 1 + 1;
+// Construct a BytesMut of our startup message, then send it
+let mut startup_message = BytesMut::with_capacity(len as usize);
+startup_message.put_i32(len as i32);
+startup_message.put_i32(protocol_number);
+startup_message.put(user_str);
+startup_message.put_slice(user_bytes);
+startup_message.put_u8(0);
+startup_message.put(db_str);
+startup_message.put_slice(db_bytes);
+startup_message.put_u8(0);
+startup_message.put(app_str);
+startup_message.put_slice(app_bytes);
+startup_message.put_u8(0);
+startup_message.put_u8(0);
+match stream.write_all(&startup_message).await {
+Ok(_) => Ok(()),
+Err(err) => {
+error!("Error writing startup to server: {}", err.to_string());
+ConnectionError::InternalError
+}
+}
+}
+/// Connect to a TCP socket
+let stream = match TcpStream::connect(("localhost", 5432)).await {
+Ok(s) => s,
+Err(err) => {
+error!("Error connecting to address: {}", err.to_string());
+return ConnectionError::InternalError;
+}
+};
+let _ = send_startup(&mut stream, "db_user", "my_db").await;
+With this approach, if we wanted to encrypt the stream using TLS before we write to it (upgrading our existing TcpStream connection in-place, to an SslStream), we would only have to change the code we use to create the stream, while generating and sending the traffic would remain unchanged. This is because SslStream also implements AsyncWrite!
+/// We're handwaving the SSL setup here. You're welcome.
+let conn_config = new_tls_client_config()?;
+/// Encrypt the TcpStream, returning an SslStream
+let ssl_stream = match tokio_boring::connect(conn_config, domain, stream).await {
+Ok(s) => s,
+Err(err) => {
+error!("Error during websocket TLS handshake: {}", err.to_string());
+return ConnectionError::InternalError;
+}
+};
+let _ = send_startup(&mut ssl_stream, "db_user", "my_db").await;
+Whence WebSocket
+WebSocket is an application layer protocol that enables bidirectional communication between a client and server. Typically, to establish a WebSocket connection, a client initiates an HTTP request and indicates they wish to upgrade the connection to WebSocket via the “Upgrade” header. Then, once the client and server complete the handshake, both parties can send messages over the connection until one of them terminates it.
+Now, it turns out that the way Cloudflare Tunnels work under the hood is that both ends of the tunnel want to speak WebSocket, and rely on a translation layer to convert all traffic to or from WebSocket. The cloudflared daemon you spin up within your private network handles this for us! For Hyperdrive, however, we did not have a suitable translation layer to send Postgres messages across WebSocket, and had to write one.
+One of the (many) fantastic things about Rust traits is that the contract they present is very clear. To be AsyncRead, you just need to implement poll_read. To be AsyncWrite, you need to implement only three functions (poll_write, poll_flush, and poll_shutdown). Further, there is excellent support for WebSocket in Rust built on top of the tungstenite-rs library.
+Thus, building our custom WebSocket stream such that it can share the same machinery as all our other generic streams just means translating the existing WebSocket support into these poll functions. There are some existing OSS projects that do this, but for multiple reasons we could not use the existing options. The primary reason is that Hyperdrive operates across multiple threads (thanks to the tokio runtime), and so we rely on our connections to also handle Send, Sync, and Unpin. None of the available solutions had all five traits handled. It turns out that most of them went with the paradigm of Sink and Stream, which provide a solid base from which to translate to AsyncRead and AsyncWrite. In fact some of the functions overlap, and can be passed through almost unchanged. For example, poll_flush and poll_shutdown have 1-to-1 analogs, and require almost no engineering effort to convert from Sink to AsyncWrite.
+/// We use this struct to implement the traits we need on top of a WebSocketStream
+pub struct HyperSocket<S>
+where
+S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+inner: WebSocketStream<S>,
+read_state: Option<ReadState>,
+write_err: Option<Error>,
+}
+impl<S> AsyncWrite for HyperSocket<S>
+where
+S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+match ready!(Pin::new(&mut self.inner).poll_flush(cx)) {
+Ok(_) => Poll::Ready(Ok(())),
+Err(err) => Poll::Ready(Err(Error::new(ErrorKind::Other, err))),
+}
+}
+fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+match ready!(Pin::new(&mut self.inner).poll_close(cx)) {
+Ok(_) => Poll::Ready(Ok(())),
+Err(err) => Poll::Ready(Err(Error::new(ErrorKind::Other, err))),
+}
+}
+}
+With that translation done, we can use an existing WebSocket library to upgrade our SslStream connection to a Cloudflare Tunnel, and wrap the result in our AsyncRead/AsyncWrite implementation. The result can then be used anywhere that our other transport streams would work, without any changes needed to the rest of our codebase!
+That would look something like this:
+let websocket = match tokio_tungstenite::client_async(request, ssl_stream).await {
+Ok(ws) => Ok(ws),
+Err(err) => {
+error!("Error during websocket conn setup: {}", err.to_string());
+return ConnectionError::InternalError;
+}
+};
+let websocket_stream = HyperSocket::new(websocket));
+let _ = send_startup(&mut websocket_stream, "db_user", "my_db").await;
+Access granted
+An observant reader might have noticed that in the code example above we snuck in a variable named request that we passed in when upgrading from an SslStream to a WebSocketStream. This is for multiple reasons. The first reason is that Tunnels are assigned a hostname and use this hostname for routing. The second and more interesting reason is that (as mentioned above) when negotiating an upgrade from HTTP to WebSocket, a request must be sent to the server hosting the ingress side of the Tunnel to perform the upgrade. This is pretty universal, but we also add in an extra piece here.
+At Cloudflare, we believe that secure defaults and defense in depth are the correct ways to build a better Internet. This is why traffic across Tunnels is encrypted, for example. However, that does not necessarily prevent unwanted traffic from being sent into your Tunnel, and therefore egressing out to your database. While Postgres offers a robust set of access control options for protecting your database, wouldn’t it be best if unwanted traffic never got into your private network in the first place?
+To that end, all Tunnels set up for use with Hyperdrive should have a Zero Trust Access Application configured to protect them. These applications should use a Service Token to authorize connections. When setting up a new Hyperdrive, you have the option to provide the token’s ID and Secret, which will be encrypted and stored alongside the rest of your configuration. These will be presented as part of the WebSocket upgrade request to authorize the connection, allowing your database traffic through while preventing unwanted access.
+This can be done within the request’s headers, and might look something like this:
+let ws_url = format!("wss://{}", host);
+let mut request = match ws_url.into_client_request() {
+Ok(req) => req,
+Err(err) => {
+error!(
+"Hostname {} could not be parsed into a valid request URL: {}",
+host,
+err.to_string()
+);
+return ConnectionError::InternalError;
+}
+};
+request.headers_mut().insert(
+"CF-Access-Client-Id",
+http::header::HeaderValue::from_str(&client_id).unwrap(),
+);
+request.headers_mut().insert(
+"CF-Access-Client-Secret",
+http::header::HeaderValue::from_str(&client_secret).unwrap(),
+);
+Building for customer zero
+If you’ve been reading the blog for a long time, some of this might sound a bit familiar.  This isn’t the first time that we’ve sent Postgres traffic across a tunnel, it’s something most of us do from our laptops regularly.  This works very well for interactive use cases with low traffic volume and a high tolerance for latency, but historically most of our products have not been able to employ the same approach.
+Cloudflare operates many data centers around the world, and most services run in every one of those data centers. There are some tasks, however, that make the most sense to run in a more centralized fashion. These include tasks such as managing control plane operations, or storing configuration state.  Nearly every Cloudflare product houses its control plane information in Postgres clusters run centrally in a handful of our data centers, and we use a variety of approaches for accessing that centralized data from elsewhere in our network. For example, many services currently use a push-based model to publish updates to Quicksilver, and work through the complexities implied by such a model. This has been a recurring challenge for any team looking to build a new product.
+Hyperdrive’s entire reason for being is to make it easy to access such central databases from our global network. When we began exploring Tunnel integrations as a feature, many internal teams spoke up immediately and strongly suggested they’d be interested in using it themselves. This was an excellent opportunity for Cloudflare to scratch its own itch, while also getting a lot of traffic on a new feature before releasing it directly to the public. As always, being “customer zero” means that we get fast feedback, more reliability over time, stronger connections between teams, and an overall better suite of products. We jumped at the chance.
+As we rolled out early versions of Tunnel integration, we worked closely with internal teams to get them access to it, and fixed any rough spots they encountered. We’re pleased to share that this first batch of teams have found great success building new or refactored products on Hyperdrive over Tunnels. For example: if you’ve already tried out Workers Builds, or recently submitted an abuse report, you’re among our first users!  At the time of this writing, we have several more internal teams working to onboard, and we on the Hyperdrive team are very excited to see all the different ways in which fast and simple connections from Workers to a centralized database can help Cloudflare just as much as they’ve been helping our external customers.
+Outro
+Cloudflare is on a mission to make the Internet faster, safer, and more reliable. Hyperdrive was built to make connecting to centralized databases from the Workers runtime as quick and consistent as possible, and this latest development is designed to help all those who want to use Hyperdrive without directly exposing resources within their virtual private clouds (VPCs) on the public web.
+To this end, we chose to build a solution around our suite of industry-leading Zero Trust tools, and were delighted to find how simple it was to implement in our runtime given the power and extensibility of the Rust trait system.
+Without waiting for the ink to dry, multiple teams within Cloudflare have adopted this new feature to quickly and easily solve what have historically been complex challenges, and are happily operating it in production today.
+And now, if you haven't already, try setting up Hyperdrive across a Tunnel, and let us know what you think in the Hyperdrive Discord channel!
+On this page
+Discuss Online
+Related tags
+Cloudflare WorkersDeep DiveDeveloper PlatformHyperdrivePostgresRustSQLWebSockets
+Follow on Social Media
+Cloudflare
+Andrew Repp
+Abhishek Chanda
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 47 | f002243 | https://github.com/tracel-ai/burn/pull/2426 | 2024-10-26 | domain-subframes ===
+Feat/2361 segmentation mask
+
+---
+
+## Pull Request Template
+
+### Checklist
+
+- [x] Confirmed that `run-checks all` script has been executed.
+- [ ] Made sure the book is up to date with changes in this PR.
+
+_TODO_: Should add a new example to [dataset](https://burn.dev/burn-book/building-blocks/dataset.html) illustrating `new_segmentation_with_items()` method for the `ImageFolderDataset`.
+
+### Related Issues/PRs
+
+- [Issue 2361](https://github.com/tracel-ai/burn/issues/2361)
+
+### Changes
+
+Implemented necessary components for `SegmentationMask` to be used with `ImageFolderDataset`.
+
+### Testing
+
+Tests mimic the tests of the multilabel classification. New images have been added to the `tests/data` directory. These images are small 8 x 8 pixel images created with a python script.
+
+
+---
+
+## [Codecov](https://app.codecov.io/gh/tracel-ai/burn/pull/2426?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) Report
+Attention: Patch coverage is `93.12977%` with `9 lines` in your changes missing coverage. Please review.
+> Project coverage is 82.81%. Comparing base [(`6fe3ff5`)](https://app.codecov.io/gh/tracel-ai/burn/commit/6fe3ff5ac8691e4bfabdff020abdfba0c23a9f14?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) to head [(`e9cb8d3`)](https://app.codecov.io/gh/tracel-ai/burn/commit/e9cb8d3bb4942486c2e044a445a0239bc01f2ed0?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).
+> Report is 65 commits behind head on main.
+
+| [Files with missing lines](https://app.codecov.io/gh/tracel-ai/burn/pull/2426?dropdown=coverage&src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) | Patch % | Lines |
+|---|---|---|
+| [crates/burn-dataset/src/vision/image\_folder.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/2426?src=pr&el=tree&filepath=crates%2Fburn-dataset%2Fsrc%2Fvision%2Fimage_folder.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZGF0YXNldC9zcmMvdmlzaW9uL2ltYWdlX2ZvbGRlci5ycw==) | 93.12% | [9 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/2426?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+
+<details><summary>Additional details and impacted files</summary>
+
+
+```diff
+@@            Coverage Diff             @@
+##             main    #2426      +/-   ##
+==========================================
+- Coverage   84.88%   82.81%   -2.08%     
+==========================================
+  Files         769      809      +40     
+  Lines       98557   104320    +5763     
+==========================================
++ Hits        83660    86391    +2731     
+- Misses      14897    17929    +3032     
+```
+
+</details>
+
+[:umbrella: View full report in Codecov by Sentry](https://app.codecov.io/gh/tracel-ai/burn/pull/2426?dropdown=coverage&src=pr&el=continue&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).   
+:loudspeaker: Have feedback on the report? [Share it here](https://about.codecov.io/codecov-pr-comment-feedback/?utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).
+
+
+---
+
+Thanks for taking the lead on this 😄 
+
+I've been busy with the latest release but I should be able to review the changes this week!
+
+---
+
+> Thanks for taking the lead on this 😄
+> 
+> I've been busy with the latest release but I should be able to review the changes this week!
+
+I'm happy to get it started and become a regular contributor in the future, but I don't think this PR is ready to merge. I'd be happy to take any suggestions and keep working on it including:
+- additional example in burn book
+- as part of a larger UNet example (model is the easy part; data is notoriously difficult!)
+
+---
+
+> I'm happy to get it started and become a regular contributor in the future, but I don't think this PR is ready to merge.
+
+No worries! In this case, I converted this to a draft PR and when you're ready just mark it as ready for review and/or ping me 🙂 
+
+
+> I'd be happy to take any suggestions and keep working on it including:
+> - additional example in burn book
+> - as part of a larger UNet example (model is the easy part; data is notoriously difficult!)
+
+That would be awesome! If you want to keep it simple for the current PR, I would start with the dataset implementation. Then, the examples can be added in follow-up PRs 👍 
+
+
+
+---
+
+For completeness, the python code used to generate the new images and masks is below:
+
+```python
+"""
+Synthetic Image Segmentation Generation
+"""
+from typing import List, Tuple
+from pathlib import Path
+import numpy as np
+import matplotlib.pyplot as plt
+import cv2
+
+def save_image_to_text_file(image: np.ndarray, filename: Path) -> None:
+    """Saves an image as a text file with pixel values."""
+    with open(filename, 'w') as file:
+        for row in image:
+            file.write(' '.join(str(pixel) for pixel in row) + '\n')
+
+def rgb_to_grayscale(rgb: Tuple[int, int, int]) -> int:
+  """Converts a list of RGB values to its grayscale equivalent.
+
+  Args:
+    rgb: A list of RGB values in the range 0 - 255; [R, G, B].
+
+  Returns:
+    An integer representing the grayscale intensity.
+  """
+  return int(np.round(0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]))
+
+def checkerboard_pattern(
+    height:int,
+    width:int,
+    color1:Tuple[int, int, int],
+    color2:Tuple[int, int, int]) -> tuple[np.ndarray, np.ndarray]:
+    # Initialize the source image with zeros
+    source_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+    # Initialize the mask with zeros
+    mask = np.zeros((height, width, 3), dtype=np.uint8)
+    m1 = 1  #rgb_to_grayscale(color1)
+    m2 = 2  #rgb_to_grayscale(color2)
+    # Let's create a checkerboard pattern
+    for i in range(height):
+        for j in range(width):
+            if (i + j) % 2 == 0:
+                source_image[i, j] = color1
+                mask[i, j] = (m1, m1, m1)
+            else:
+                source_image[i, j] = color2
+                mask[i, j] = (m2, m2, m2)
+    return source_image, mask
+
+def random_distribution_2colors(
+    height:int,
+    width:int,
+    color1:Tuple[int, int, int],
+    color2:Tuple[int, int, int],
+    random_seed:int = 42) -> tuple[np.ndarray, np.ndarray]:
+    # Initialize the source image with zeros
+    source_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+    m1 = 1  #rgb_to_grayscale(color1)
+    m2 = 2  #rgb_to_grayscale(color2)
+    np.random.seed(random_seed)  # For reproducibility
+    random_mask = np.random.choice([m1, m2], size=(height, width))
+    for i in range(height):
+        for j in range(width):
+            if random_mask[i, j] == m1:
+                source_image[i, j] = color1
+            else:
+                source_image[i, j] = color2
+    mask = np.empty_like(source_image)
+    mask[:, :, 0] = random_mask
+    mask[:, :, 1] = random_mask
+    mask[:, :, 2] = random_mask
+
+    return source_image, mask
+
+def random_distribution_3colors(
+    height:int,
+    width:int,
+    color1:Tuple[int, int, int],
+    color2:Tuple[int, int, int],
+    color3:Tuple[int, int, int],
+    random_seed:int = 42) -> tuple[np.ndarray, np.ndarray]:
+    # Initialize the source image with zeros
+    source_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+    np.random.seed(random_seed)  # For reproducibility
+    m1 = 1  #rgb_to_grayscale(color1)
+    m2 = 2  #rgb_to_grayscale(color2)
+    m3 = 3  #rgb_to_grayscale(color3)
+    random_mask = np.random.choice([m1, m2, m3], size=(height, width))
+    for i in range(height):
+        for j in range(width):
+            if random_mask[i, j] == m1:
+                source_image[i, j] = color1
+            elif random_mask[i, j] == m2:
+                source_image[i, j] = color2
+            else:
+                source_image[i, j] = color3
+    mask = np.empty_like(source_image)
+    mask[:, :, 0] = random_mask
+    mask[:, :, 1] = random_mask
+    mask[:, :, 2] = random_mask
+
+    return source_image, mask
+
+
+if __name__ == "__main__":
+    # Define image dimensions
+    IMAGE_HEIGHT, IMAGE_WIDTH = 8, 8
+
+    # Define colors in RGB
+    CRIMSON = (220,20,60)
+    TEAL = (0,128,128)
+    AQUA = (0,255,255)
+    TURQUOISE = (64,224,208)
+    MAGENTA = (255,0,255)
+    ORCHID = (218,112,214)
+    BURLY_WOOD = (222,184,135)
+
+    # Generate checkerboard pattern
+    image_chkr, mask_chkr = checkerboard_pattern(
+        height=IMAGE_HEIGHT,
+        width=IMAGE_WIDTH,
+        color1=CRIMSON,
+        color2=AQUA
+    )
+    image_rnd2, mask_rnd2 = random_distribution_2colors(
+        height=IMAGE_HEIGHT,
+        width=IMAGE_WIDTH,
+        color1=MAGENTA,
+        color2=TEAL,
+        random_seed=42  # For reproducibility
+    )
+    image_rnd3, mask_rnd3 = random_distribution_3colors(
+        height=IMAGE_HEIGHT,
+        width=IMAGE_WIDTH,
+        color1=TURQUOISE,
+        color2=ORCHID,
+        color3=BURLY_WOOD,
+        random_seed=42  # For reproducibility
+    )
+
+    # ----- Save the results to disk ---
+    results_path = Path(__file__).parent.parent.joinpath('results8x8')
+    assert results_path.exists(), "The results directory does not exist. Please create it."
+    # Save the image and mask to disk as PNG files
+    # NOTE: opencv uses the convention Blue,Green,Red on reads and writes.
+    #       convert RGB to BGR, which then gets written out in RGB (strangeness....)
+    image_chkr = cv2.cvtColor(image_chkr, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(results_path.joinpath("image_checkerboard.png"), image_chkr)
+    cv2.imwrite(results_path.joinpath("mask_checkerboard.png"), mask_chkr)
+    image_rnd2 = cv2.cvtColor(image_rnd2, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(results_path.joinpath("image_random_2colors.png"), image_rnd2)
+    cv2.imwrite(results_path.joinpath("mask_random_2colors.png"), mask_rnd2)
+    image_rnd3 = cv2.cvtColor(image_rnd3, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(results_path.joinpath("image_random_3colors.png"), image_rnd3)
+    cv2.imwrite(results_path.joinpath("mask_random_3colors.png"), mask_rnd3)
+
+    # Save the mask array data to a column-delimited text file
+    mask_chkr = mask_chkr[..., 0]  # Convert 3D mask to 2D
+    save_image_to_text_file(mask_chkr, results_path.joinpath("mask_checkerboard.txt"))
+
+    mask_rnd2 = mask_rnd2[..., 0]  # Convert 3D mask to 2D
+    save_image_to_text_file(mask_rnd2, results_path.joinpath("mask_random_2colors.txt"))
+
+    mask_rnd3 = mask_rnd3[..., 0]  # Convert 3D mask to 2D
+    save_image_to_text_file(mask_rnd3, results_path.joinpath("mask_random_3colors.txt"))
+```
+
+---
+
+Suggested changes made with a few comments and questions:
+- For the current implementation, we will only consider segmentation masks that are images and assume all channels are the same, i.e. a greyscale image where each pixel value corresponds to a single class.
+- A new function was created `fn image_path_to_pixel_depth` which was copied from the `PathToImageDatasetItem::map()` function for input images. This has lead to **duplicated code** which I haven't addressed (not wanting to modify anything outside the segmentation scope).
+- The last line of the method `pub fn new_segmentation_with_items(_)` calls `Self::with_items(_)` which creates an `InMemoryDataset`. As @laggui pointed out, this could be problematic for large images or large datasets. I'm not sure what the solution is here.
+
+---
+
+It's still unclear to me at which point in the training workflow the image and annotation will be transformed to burn::tensor::Tensor<B, 4, Float> with shape [batch_size, 3, height, width] and burn::tensor::Tensor<B, 4, Int> with shape [batch_size, 1, height, width], respectively.
+
+---
+
+> It's still unclear to me at which point in the training workflow the image and annotation will be transformed to burn::tensor::Tensor<B, 4, Float> with shape [batch_size, 3, height, width] and burn::tensor::Tensor<B, 4, Int> with shape [batch_size, 1, height, width], respectively.
+
+That is usually implemented in the `Batcher` (see [this example](https://github.com/tracel-ai/burn/blob/main/examples/custom-image-dataset/src/data.rs#L52-L105) as reference). Though now that tensors are `Sync` it could also be done when retrieving a single item in the dataset, and the batcher would only concatenate the tensors.
+
+/edit: you can also check out [this post](https://burn.dev/blog/building-blocks-dataset/) which details the workflow
+
+=== ROW 48 | f002271 | https://github.com/sycamore-rs/sycamore/pull/752 | 2024-11-03 | domain-subframes ===
+Support query parameters in routes
+
+---
+
+closes: #130 
+also fixes bug that when going from a url with hash to a url with no hash (and with the same path) it causes a reload of the whole site (it was probably there before i started coding new features but i don't know for sure)
+
+---
+
+## [Codecov](https://app.codecov.io/gh/sycamore-rs/sycamore/pull/752?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs) Report
+Attention: Patch coverage is `0%` with `111 lines` in your changes missing coverage. Please review.
+> Project coverage is 71.32%. Comparing base [(`eb134c8`)](https://app.codecov.io/gh/sycamore-rs/sycamore/commit/eb134c886609d95e9877e28f14c9323edc8a170a?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs) to head [(`35a7cb9`)](https://app.codecov.io/gh/sycamore-rs/sycamore/commit/35a7cb9d1ca23d07c9e7a6fa384b63b7839cbaea?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs).
+> Report is 1 commits behind head on main.
+
+| [Files with missing lines](https://app.codecov.io/gh/sycamore-rs/sycamore/pull/752?dropdown=coverage&src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs) | Patch % | Lines |
+|---|---|---|
+| [packages/sycamore-router/src/router.rs](https://app.codecov.io/gh/sycamore-rs/sycamore/pull/752?src=pr&el=tree&filepath=packages%2Fsycamore-router%2Fsrc%2Frouter.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs#diff-cGFja2FnZXMvc3ljYW1vcmUtcm91dGVyL3NyYy9yb3V0ZXIucnM=) | 0.00% | [111 Missing :warning: ](https://app.codecov.io/gh/sycamore-rs/sycamore/pull/752?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs) |
+
+<details><summary>Additional details and impacted files</summary>
+
+
+```diff
+@@            Coverage Diff             @@
+##             main     #752      +/-   ##
+==========================================
+- Coverage   72.35%   71.32%   -1.03%     
+==========================================
+  Files          45       45              
+  Lines        6557     6648      +91     
+==========================================
+- Hits         4744     4742       -2     
+- Misses       1813     1906      +93     
+```
+
+</details>
+
+[:umbrella: View full report in Codecov by Sentry](https://app.codecov.io/gh/sycamore-rs/sycamore/pull/752?dropdown=coverage&src=pr&el=continue&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs).   
+:loudspeaker: Have feedback on the report? [Share it here](https://about.codecov.io/codecov-pr-comment-feedback/?utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=sycamore-rs).
+
+
+---
+
+I couldn't find web tests for the router and i'm not sure if u want me to add them to sycamore web tests or create new web tests in sycamore-router (or not write tests at all), (i manually tested it at least)
+
+---
+
+> I couldn't find web tests for the router and i'm not sure if u want me to add them to sycamore web tests or create new web tests in sycamore-router (or not write tests at all), (i manually tested it at least)
+
+I'm not actually sure how to create web tests in this case since navigating will take you away from the generated wasm test page and thus stop the test. It would be nice if we could find a way to test this but for now this is fine I think.
+
+---
+
+personally i would test this with an e2e test using [selenium](https://crates.io/crates/thirtyfour) (at my previous job (softwareag, working student) that is all i did)
+
+---
+
+> personally i would test this with an e2e test using [selenium](https://crates.io/crates/thirtyfour) (at my previous job (softwareag, working student) that is all i did)
+
+Yeah something like that would work but that probably belongs in another PR. I was hoping to get e2e tests for all the examples as well so we could just e2e test the router example for this case.
+
+---
+
+i just realized i accidentally deleted the functions from my previous pr (prob during merge or stash pop)
+
+---
+
+Ok I'm running into something a little weird where the query parameter seems to require two page navigations for it to be reset.
+
+
+https://github.com/user-attachments/assets/27735240-3f61-4a1b-ab6d-edc2036efa73
+
+I'm trying to figure out why now...
+
+
+
+---
+
+Ah got it. It's because we're calling `pathname.set` before calling the history API, causing everything to be delayed by one.
+
+---
+
+I also updated the order in the naviagte_* fuctions which essentially have the same logic as the click handler. Eventually, it would be a good idea to refactor this a bit to remove the duplicate logic.
+
+=== ROW 49 | f002300 | https://github.com/DioxusLabs/dioxus/pull/3195 | 2024-11-11 | domain-subframes ===
+Restore manganis optimizations
+
+---
+
+This PR will restore the bulk of manganis with a slightly different serialization approach. It also restores all of the documentation that was removed in #2779. Instead of parsing the builder inside of the macro and serializing that into json, this PR serializes the builder directly. This should make it easier to add new asset types to manganis and make the macro significantly more flexible.
+
+Previously the macro would only accept literals, now it will be able to accept any const type:
+```rust
+const ASSET: Asset = asset!("/assets/image.png");
+const OPTIONS: ImageAssetOptions = ImageAssetOptions::new().with_format(ImageFormat::Avif);
+const AVIF_ASSET: Asset = asset!("/assets/image.png", OPTIONS);
+
+```
+
+The path itself still needs to be a literal string so we can validate and hash the contents at compile time, but the rest of the settings are just const rust
+
+closes #3229
+
+---
+
+I tried testing this on Windows 10 and I got this behavior:
+- trying to use a folder asset and it errors with access denied
+- assets are optimized and the optimized assets are placed in my top-level assets folder (nothing about assets in the target folder)
+- the link returned by manganis for use in `img` src/`document::Link` is weird/doesn't work: 
+```
+http://127.0.0.1:8080/assets///?\C:\Users\Darka\Documents\Projects\DioxusLabs\temp\web-manganis-test-3195\assets\main-e6ddccc1e64cc12d.css=
+```
+
+---
+
+> I tried testing this on Windows 10 and I got this behavior:
+> 
+> * trying to use a folder asset and it errors with access denied
+> * assets are optimized and the optimized assets are placed in my top-level assets folder (nothing about assets in the target folder)
+> * the link returned by manganis for use in `img` src/`document::Link` is weird/doesn't work:
+> 
+> ```
+> http://127.0.0.1:8080/assets///?\C:\Users\Darka\Documents\Projects\DioxusLabs\temp\web-manganis-test-3195\assets\main-e6ddccc1e64cc12d.css=
+> ```
+
+All of those issues should be fixed now (tested on windows 11). There was a path separator issue in manganis on windows
+
+---
+
+> it would be nice if the serialized bytes were valid json but I get how the const_serialize can't do that in a general case.
+
+I think that is possible, but it would require a lot more logic to parse and format strings and numbers at compile time. I'm not sure how that would effect compile times, but it could be worth exploring in the future
+
+I don't love having a bespoke serialization format. https://github.com/jamesmunns/postcard is a much simpler well defined serialization format that might be easier to target than json. I think it is pretty similar to what we are currently generating
+
+---
+
+> All of those issues should be fixed now (tested on windows 11). There was a path separator issue in manganis on windows
+
+I still have all the same issues on the latest commit except the folder asset now panics as todo during the CLI's asset stage
+
+---
+
+> * assets are optimized and the optimized assets are placed in my top-level assets folder (nothing about assets in the target folder)
+> * the link returned by manganis for use in `img` src/`document::Link` is weird/doesn't work:
+
+Can you share the code you used that causes those issues with the latest version? This code works as I would expect on windows:
+```rust
+use dioxus::prelude::*;
+
+fn main() {
+    launch(|| {
+        let asset = asset!("/assets/img.png");
+        rsx! {
+            img {
+                src: "{asset}"
+            }
+        }
+    })
+}
+```
+
+---
+
+@ealmloff https://github.com/DogeDark/manganis-3195
+
+---
+
+> @ealmloff https://github.com/DogeDark/manganis-3195
+
+Thanks, that example is working now as well. I was testing windows on desktop where path separator in the CLI is the same as the target platform path separator. WASM has unix path separators so it was stripping the wrong path when cross building to web
+
+---
+
+> Thanks, that example is working now as well.
+
+I can confirm, it works!
+
+=== ROW 50 | f002341 | https://iroh.computer/blog/relay-down-a-post-mortem | 2024-11-19 | domain-subframes ===
+Relay outage: A post-mortem - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Relay outage: A post-mortemNovember 19, 2024 by Arqu
+Ensuring best practices
+At n0 we strive to be a great engineering company across our entire organisation. With that in mind, the time for our first post mortem has come! For over a year we had no outages on our publicly hosted infrastructure (iroh-relay & iroh-dns-server) outside of scheduled maintenance.
+So what happened?
+On November 5th ’24 we had a global outage on our relay nodes which started with degraded performance in some regions around 11:00 GMT and transitioned to a full outage by 17:00 GMT. The outage was discovered and reported internally by 22:50 GMT and resolved at 23:01 GMT. The outage affected establishing new connections where hole-punching was required, but did not affect existing connections between nodes or connections where a direct connection is possible without hole-punching.
+The core issue: the outage was relayed (pun intended) very late to the team. And while we have engineers with significant SRE and Ops experience we had not yet prioritised setting up our own best practices.
+Core challenges
+This incident highlighted several systemic vulnerabilities in our infrastructure:
+Delayed Detection: The traffic spike wasn’t noticed for nearly 12 hours, a critical gap that could have mitigated the issue if addressed sooner.
+Insufficient Capacity Planning/Management: The Asia node was underpowered, and there were no mechanisms to dynamically scale or shed load.
+Inefficient Logging: Unbounded log growth caused cascading disk failures, exacerbating the outage.
+Resolving the issue
+Immediate fixes:
+Scale Up Nodes: We quadrupled the capacity to make sure we have ample breathing room
+Cleared Logs: Freed up disk space by deleting excessive logs and reducing verbosity.
+Restarted services: The individual relays were restarted in series and observed as they ramped up connections
+Short-Term improvements:
+Re-enabled alerting on our public relays to provide early warnings for traffic spikes and node health.
+Migrated the Asia node to a higher-capacity server.
+What Went Well
+Despite the challenges, several positive outcomes emerged:
+Our infrastructure handled a peak of 100,000 concurrent connections before failing.
+We onboarded nearly 1 million new nodes during the event.
+The team rallied quickly, stabilising the system in under 10 minutes once aware of the issue.
+We started the good practice of doing post-mortems!
+The Nitty Gritty
+While the top level report of what happened is accurate, the actual root cause was deeper. The exact cause of events was:
+Load increased
+Memory usage grew more than it should with the number of connections and never went down
+Once getting to critical levels, connections started failing which produced excessive logging
+Excessive logging filled up disk space and prevented further self-healing of the deployment
+The excessive logging and disk space issues were a fairly easy fix, we limited the log size and put a more aggressive log rotation schedule in place. The memory issues were a much bigger problem as the memory kept accumulating and never got freed (😱 Rust’s memory safety guarantees do not mitigate memory leaks).
+The Following 2 Weeks
+Our clean up work did not stop that day. We had a thorough session to evaluate next steps for handling the next 10x spike on our public infrastructure.
+Made a plan to implement load shedding mechanics
+Started mapping out a path on how to dynamically update relay maps
+Onboarded more folks to the “ops side of things” at n0
+Set up much more exhaustive metrics and alerting
+Wrote a load simulation test and profiled our relays which helped uncovered not one but two places where we leaked tokio tasks and threads and fixed them promptly (https://github.com/n0-computer/iroh/pull/2915 & https://github.com/n0-computer/iroh/pull/2924)
+Relay-ted thoughts
+It’s scary how a small bump in traffic can have such a hard impact on your services. Another unnerving thing is how cascading failures happen in ways you didn’t anticipate. Nevertheless, the primary issue is fixed and we have protections in place to prevent them in the future. We now have alerts that cut through the noise of normal notifications to inform us about the status of our relays and can react preemptively. Finally, having proper load testing of our infrastructure is really important in understanding possible failure modes.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 51 | f002347 | https://github.com/bevyengine/bevy/pull/16455 | 2024-11-21 | domain-subframes ===
+Basic filtering examples for users of the bevy_log.
+
+---
+
+# Objective
+
+Give users a quick example on how to control logging so they can filter out library logs while reading their own
+This is intended to fix issue #15957.
+
+## Solution
+
+Added some examples
+
+## Testing
+
+I created project and tested the examples work
+
+###
+This is purely a documentation change.
+
+
+
+
+---
+
+**Welcome**, new contributor!
+
+  Please make sure you've read our [contributing guide](https://bevyengine.org/learn/contribute/introduction) and we look forward to reviewing your pull request shortly ✨
+
+---
+
+Formatting fixed and merging :) In the future, you probably want to create a new branch on your fork of Bevy for each PR, so you can have multiple active at once. This PR is based off your `main` .
+
+---
+
+> Formatting fixed and merging :) In the future, you probably want to create a new branch on your fork of Bevy for each PR, so you can have multiple active at once. This PR is based off your `main` .
+
+Great thank you :), in future I will try to write stuff in a word processor, we spent too much time fixing grammar.
+Usually it's the spelling errors being marked that prompts me to check the grammar.
+Maybe I will use an LLVM, only reason I didn't is it doesn't respect markdown format.
+
+Noted about fork!
+
+ 
+
+---
+
+LLVM will help with compiling code. An LLM is what you're looking for 😉
+
+I think you can ask the LLM to write the result in a markdown code block.
+
+---
+
+> LLVM will help with compiling code. An LLM is what you're looking for 😉
+> 
+> I think you can ask the LLM to write the result in a markdown code block.
+
+I just put my message as input and it didn't pick that LLVM was a typo lol.
+
+---
+
+CI [is reporting](https://github.com/bevyengine/bevy/actions/runs/12281242758/job/34269629725?pr=16455) a couple simple problems :)
+
+---
+
+CI is still failing: let us know if you need a hand with anything?
+
+---
+
+There seem to be 2 problems causing CI to be unhappy. The first is formatting, which can easily be fixed with:
+
+```sh
+cargo fmt --all
+```
+
+This will reformat your code! The second issue is with the code blocks you added. We require all code blocks to be valid Rust, since we treat them as unit tests as well. In your case, it looks like your code blocks are missing import statements.
+
+```rust
+// Missing imports
+App::new().run();
+```
+
+```rust
+use bevy_app::App;
+
+// Now compiles!
+App::new().run();
+```
+
+You can check imports locally by running:
+
+```sh
+cd crates/bevy_log
+cargo test
+```
+
+Let me know if you need help / clarification!
+
+---
+
+I am aware from good internet for a while, I will do when I return, otherwise anyone is welcome to do it.
+
+
+---
+
+@alice-i-cecile  Passed all CI now!
+
+---
+
+My review is really just nits. Looks good overall!
+
+---
+
+Looks like suggestions mean another cargo fmt is needed.
+
+As soon as you feel you have done, I will run it again
+
+
+---
+
+ran cargo fmt should work now
+
+=== ROW 52 | f002356 | https://github.com/zed-industries/zed/issues/21062 | 2024-11-22 | domain-subframes ===
+Deno Language Server doesn't work with brackets in filename
+
+---
+
+### Check for existing issues
+
+- [X] Completed
+
+### Describe the bug / provide steps to reproduce it
+
+Deno's web app framework "Fresh" uses [file-based routing](https://fresh.deno.dev/docs/concepts/routing), similar to Nextjs. So in order to create a dynamic route, you create a file with square brackets in the name. E.g. `blog/[slug].tsx`
+
+When using Zed, it seems the language server does not work in any of these files. None of the language-server intelligence features work, and saving a file (with format_on_save) does not format the file, it throws the following error in the status bar:
+```
+Formatting failed: failed to format via language server: unexpected character at index 34. Click to see logs.
+```
+Logs:
+```
+2024-11-22T09:57:38.924075-05:00 [ERROR] failed to format via language server
+
+Caused by:
+    unexpected character at index 34
+2024-11-22T09:57:39.185874-05:00 [WARN] Generic lsp request to deno failed: unexpected character at index 34
+2024-11-22T09:57:39.18688-05:00 [ERROR] unexpected character at index 34
+```
+
+Note: Unclear if this is a Zed issue or Deno LSP issue... I posted here because I assume the Deno Language Server works with other tools, e..g VS Code seems to work fine with these files.
+
+### Reproduce
+
+1. You can create a whole Fresh project using [these](https://fresh.deno.dev/docs/getting-started/create-a-project) instructions, or simply initialize a Deno project and create a file with brackets:
+
+  ```
+  deno init
+  touch \[slug\].ts
+  ```
+2. Configure Deno with the extension and project settings described [here](https://zed.dev/docs/languages/deno)
+3. Open the project in Zed. Observe that when editing `[slug].ts` none of the language server features work.
+
+### Environment
+
+Zed: v0.162.5 (Zed)
+OS: macOS 15.1.0
+Memory: 16 GiB
+Architecture: aarch64
+
+### If applicable, add mockups / screenshots to help explain present your vision of the feature
+
+_No response_
+
+### If applicable, attach your Zed.log file to this issue.
+
+<details><summary>Zed.log</summary>
+
+<!-- Click below this line and paste or drag-and-drop your log-->
+```
+2024-11-22T10:04:44.064274-05:00 [WARN] Generic lsp request to deno failed: unexpected character at index 28
+2024-11-22T10:04:44.069489-05:00 [ERROR] unexpected character at index 28
+2024-11-22T10:04:44.245233-05:00 [WARN] Generic lsp request to deno failed: unexpected character at index 28
+2024-11-22T10:04:44.245702-05:00 [ERROR] unexpected character at index 28
+2024-11-22T10:04:44.488342-05:00 [WARN] Generic lsp request to deno failed: unexpected character at index 28
+2024-11-22T10:04:44.488796-05:00 [ERROR] unexpected character at index 28
+2024-11-22T10:04:44.666697-05:00 [WARN] Generic lsp request to deno failed: unexpected character at index 28
+2024-11-22T10:04:44.667181-05:00 [ERROR] unexpected character at index 28
+2024-11-22T10:04:44.847615-05:00 [WARN] Generic lsp request to deno failed: unexpected character at index 28
+2024-11-22T10:04:44.847916-05:00 [ERROR] unexpected character at index 28
+2024-11-22T10:04:44.968886-05:00 [WARN] Generic lsp request to deno failed: unexpected character at index 28
+2024-11-22T10:04:44.969372-05:00 [ERROR] unexpected character at index 28
+```
+<!-- Click above this line and paste or drag-and-drop your log--></details>
+
+
+---
+
+For reference, just found a similar issue in Deno's repo: https://github.com/denoland/deno/issues/26098
+They confirmed it was an issue with the editor (Helix in this case).
+Seems the solution in that case was to percent-encode the filenames.
+
+---
+
+Just to add a bit of context that very much confused me while looking into this:
+
+TLDR:
+As per LSP spec it is definitely incorrect that zed emits brackets instead of percent encoded brackets. Zed does so because the URL crate does not strictly adhere to the same spec when serializing URLs. It is debatable whether that is a bug on their side, or simply an implementation choice.
+
+In my opinion zed should upgrade `lsp-types` to use the `fluent-uri` crate, however I am sure that there was a reason behind forking `lsp-types` and not upgrading to `fluent-uri`, which would be helpful to know.
+
+### Zed Stuff
+Zed uses a a [fork of `lsp-types`](https://github.com/zed-industries/lsp-types/tree/zed-main-no-url-changes) to represent LSP Commands, and serde to serialize them to the wire, as can be seen here: 
+https://github.com/zed-industries/zed/blob/57dfaa63caf1c0834d6d9fd3a1f9c8ad3e0ee29c/crates/lsp/src/lsp.rs#L1088-L1094
+The `TextDocumentIdentifier` is populated from the file path, as can be seen here
+https://github.com/zed-industries/zed/blob/57dfaa63caf1c0834d6d9fd3a1f9c8ad3e0ee29c/crates/project/src/lsp_store.rs#L1521-L1523
+
+---
+
+### Spec Stuff
+The [LSP Spec](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#basicJsonStructures) says that the uri should follow RFC3986.
+RFC3986 defines a [Path Segments](https://datatracker.ietf.org/doc/html/rfc3986#section-3.3) as consisting of `pchar`s which are defined as
+```
+pchar         = unreserved / pct-encoded / sub-delims / ":" / "@"
+sub-delims    = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
+unreserved    = ALPHA / DIGIT / "-" / "." / "_" / "~"
+```
+Angle brackets are not in the list of allowed characters. (They can be found in `gen-delims` which are `reserved`) 
+```
+gen-delims    = ":" / "/" / "?" / "#" / "[" / "]" / "@"
+```
+Upstream `lsp-types` uses [`fluent-uri`](https://crates.io/crates/fluent-uri) which states that it implements RFC3986 and prevents brackets from ever occuring inside a URI.
+
+[Zed's fork of `lsp-types`](https://github.com/zed-industries/lsp-types/tree/zed-main-no-url-changes) uses (at least in the branch that is used in current zed main) the [url](https://docs.rs/url/2.0.0/url/index.html) crate, which does not implement RFC3986, but instead the [whatwg url-standard](https://url.spec.whatwg.org) which as far as I can tell currently doesn't make any statements about whether brackets are allowed or not.
+
+
+---
+
+For what it's worth, I would like to be able to use valid characters for my filesystem in my filenames. This is biting me right now. Is there any kind of workaround in the meantime?
+
+---
+
+Bug is still reproducible. Dynamic pages in Fresh (for example) that rely on specific naming convention lose all LSP hints and autocompletion.
+
+---
+
+I’m also experiencing this issue in Zed. Whenever I use files like `[slug].tsx`, I get the following error:
+ ```
+Caused by:
+    unexpected character at index 61
+2025-05-25T09:55:55-04:00 WARN  [project::lsp_store] Code Lens via deno failed: unexpected character at index 61
+2025-05-25T09:55:55-04:00 WARN  [project::lsp_store] Get code actions via deno failed: unexpected character at index 61
+2025-05-25T09:55:55-04:00 ERROR [project] Code Lens via deno failed: unexpected character at index 61
+2025-05-25T09:55:55-04:00 ERROR [project] Get code actions via deno failed: unexpected character at index 61
+
+ ```
+> Renaming the file to `slug.tsx` makes everything work normally. This seems to be specific to Zed when handling files with brackets.
+
+---
+
+This is also an issue with Biome LSP
+- https://github.com/biomejs/biome/issues/6231
+- https://github.com/biomejs/biome-zed/issues/110
+
+---
+
+Yeah watching this issue cuz Biome on zed forces the CLI to use v2 instead of v1, and now the v2 also breaks the ability to discover bracket-named folders
+
+---
+
+> Biome on zed forces the CLI to use v2 instead of v1
+
+As mentioned in the [comment](https://github.com/biomejs/biome-zed/pull/102#issuecomment-2986334927) here, the latest Biome extension technically still works with Biome CLI v1, just that we can no longer use the `--config-path` option.
+
+As long as you have the biome CLI installed in your codebase, it will always use the CLI in your `node_modules` instead of the global.
+
+---
+
+@bhb603 Maybe it would be helpful if the title of this issue gets updated to reflect that this affects more than just Deno users.
+
+---
+
+I'm also still experiencing this on Zed 0.192.5 - I don't believe it is an issue with Biomejs (package I'm using for linting/formatting) because Vscode doesn't have this issue (the file I have issues with in Zed formats and lints perfectly fine in Vscode). Would love to create a PR for this if anyone could give me a direction on where to start.
+
+---
+
+> Would love to create a PR for this if anyone could give me a direction on where to start.
+
+As far as i know, my comment above regarding the url/fluent-url crate in zed's lsp-types fork is still current.
+
+Zed's uses a fork of the lsp-types crate for communicating with the LSP and that for uses a crate for serialising and encoding the urls. Upstream lsp-types uses fluent-url which correctly implements url encoding according to the LSP spec. Zeds fork uses the url crate, which doesn't encode brackets.
+
+
+---
+
+> Upstream lsp-types uses fluent-url which correctly implements url encoding according to the LSP spec. Zeds fork uses the url crate, 
+
+`lsp-types | fluent-uri` does not come with an encoding by its own. The community fork `tower-lsp-server` has an implementation: 
+https://github.com/tower-lsp-community/tower-lsp-server/blob/main/src/uri_ext.rs
+
+One of my old issues on `fluent-uri`: https://github.com/yescallop/fluent-uri-rs/issues/34
+
+I do not know about the custom `lsp-types` implementation of `zed`. Looks like there is nothing similar to what the community fork did
+
+---
+
+bump
+
+---
+
+This bug is the same on oxc. 
+* https://github.com/oxc-project/zed-oxc/issues/15
+
+---
+
+Currently my workaround for formatter-related issues is by providing external command like this:
+
+```json
+"formatter": {
+  "external": {
+    "command": "node_modules/@biomejs/biome/bin/biome",
+    "arguments": ["format", "--stdin-file-path={buffer_path}"]
+  }
+}
+```
+
+This only solves the formatter as a workaround, you still cannot see the linter though, but I guess it can handle the issue until we have proper fixes from zed @suxiaoshao 
+
+---
+
+I’m wondering if there’s anything we can do to help escalate this issue. It’s currently blocking me from trying out some LSPs (e.g., biome@v2, oxc, etc.).
+
+I had considered digging into it myself, but ideally, it would be helpful to understand what custom modifications the Zed team made to their fork of lsp-types.
+
+---
+
+If you're affected by this issue, please give the original post a 👍 to get it ranked higher on the [issue list](https://github.com/zed-industries/zed/issues/5393) 
+
+---
+
+This issue becomes quite bloated and starts to hide a very good comment, which I want to highlight: https://github.com/zed-industries/zed/issues/21062#issuecomment-2575843623
+
+There are some good related comments to this, but this is the core: Zed uses a fork of a library and neither fork, nor the original seem to properly deal with the brackets case.
+
+So, to fix this, we should deal with the path conversions on a library level (ideally, by extending the current fork with more functionality so we do not change too many things at once) and update that library in Zed.
+
+I do not think there should be any direct changes to Zed's code like https://github.com/zed-industries/zed/pull/35746 but maybe wrong and curious to read why cannot we deal with this issue in the library alone.
+
+---
+
+I created a pull request that should fix this by updating the serialization used in lsp-types. This does not require any changes in Zed itself, only using the updated crate.
+
+It can be tested with this repro: https://github.com/kirick13/zed-oxc-bug. 
+
+
+
+---
+
+A good point raised in https://github.com/zed-industries/lsp-types/pull/6#issuecomment-3237575829 
+
+> This only deals with percent encoding brackets.
+> What about other characters, which should percent encoded too, according to RFC 3986?
+> https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#uri
+
+that should be simple to fix in https://github.com/zed-industries/lsp-types the very same way https://github.com/zed-industries/lsp-types/pull/6 did it + a library bump in Zed.
+

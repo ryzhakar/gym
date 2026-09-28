@@ -1,0 +1,2833 @@
+=== ROW 160 | f007973 | https://developerlife.com/2023/02/20/guide-to-nom-parsing | 2024-06-26T00:00:00 | individual-blogs;twir-links ===
+Build with Naz : Comprehensive guide to nom parsing | developerlife.com
+AI & LLM
+Android
+Concurrency
+CLI
+CS
+Database
+DI
+Frontend
+Hardware
+IntelliJ
+Kotlin
+Linux
+MP
+Misc
+Node
+Productivity
+React-Native
+React
+Rust
+Server
+State-Management
+Stories
+Testing
+TypeScript
+TUI
+Web
+Nazmul Idris
+About Us
+Authors
+Build with Naz : Comprehensive guide to nom parsing
+Feb 20, 2023
+∙ Nazmul Idris
+Hi, I'm
+Nazmul,
+an ex-Googler, r3bl_tui maintainer, SWE, entrepreneur, designer, leader,
+TaiChi-er, racer, storyteller.
+I
+leadership, authenticity, play, hope,
+,
+, &
+,
+😃.
+Introduction
+Getting to know nom using lots of examples
+Related video
+Hex color code parser
+What does this code do, how does it work?
+The Parser trait and IResult
+Main parser function that calls all the other parsers
+The hex segment parser, comprised of nom combinator functions, and IResult
+Generalized workflow
+Why can’t we parse “🔅#2F14DF”?
+Better error reporting when things go wrong
+Other examples
+Simple CSS syntax parser
+Simple natural language parser
+Markdown parser
+References
+Build with Naz video series on developerlife.com YouTube channel
+Introduction #
+This tutorial and video are a comprehensive guide to parsing with nom. We cover the basics
+of parsing and how to use nom to parse a string into a data structure. And more complex
+topics like human readable error reporting, and building up complex parsers. We will
+create a variety of different examples ranging from parsing simple CSS like syntax to a
+full blown Markdown parser.
+For more information on general Rust type system design (functional approach rather than
+object oriented), please take a look at this paper
+by Will Crichton demonstrating Typed Design Patterns with Rust.
+Getting to know nom using lots of examples #
+nom is a parser combinator library for Rust. You can write small
+functions that parse a specific part of your input, and then combine them to build a parser that
+parses the whole input. nom is very efficient and fast, it does not allocate memory when parsing if
+it doesn’t have to, and it makes it very easy for you to do the same. nom uses streaming mode or
+complete mode, and in this tutorial & code examples provided we will be using complete mode.
+Roughly the way it works is that you tell nom how to parse a bunch of bytes in a way that matches
+some pattern that is valid for your data. It will try to parse as much as it can from the input, and
+the rest of the input will be returned to you.
+You express the pattern that you’re looking for by combining parsers. nom has a whole bunch of these
+that come out of the box. And a huge part of learning nom is figuring out what these built in
+parsers are and how to combine them to build a parser that does what you want.
+Errors are a key part of it being able to apply a variety of different parsers to the same input. If
+a parser fails, nom will return an error, and the rest of the input will be returned to you. This
+allows you to combine parsers in a way that you can try to parse a bunch of different things, and if
+one of them fails, you can try the next one. This is very useful when you are trying to parse a
+bunch of different things, and you don’t know which one you are going to get.
+Related video #
+If you like to consume content via video, then you can watch this video that covers the same content
+as this article, but in a live coding format.
+You can get the source code for the examples in this
+repo.
+Hex color code parser #
+Let’s dive into nom using a simple example of parsing
+hex color codes.
+//! This module contains a parser that parses a hex color
+//! string into a [Color] struct.
+//! The hex color string can be in the following format `#RRGGBB`.
+//! For example, `#FF0000` is red.
+use std::num::ParseIntError;
+use nom::{
+bytes::complete::*, combinator::*, error::*, sequence::*, IResult, Parser
+};
+#[derive(Debug, PartialEq)]
+pub struct Color {
+pub red: u8,
+pub green: u8,
+pub blue: u8,
+}
+impl Color {
+pub fn new(red: u8, green: u8, blue: u8) -> Self {
+Self { red, green, blue }
+}
+}
+/// Helper functions to match and parse hex digits. These are not
+/// [Parser] implementations.
+mod helper_fns {
+use super::*;
+/// This function is used by [map_res] and it returns a [Result]
+/// not [IResult].
+pub fn parse_str_to_hex_num(input: &str) ->
+Result<u8, std::num::ParseIntError>
+{
+u8::from_str_radix(input, 16)
+}
+/// This function is used by [take_while_m_n] and as long as it
+/// returns `true` items will be taken from the input.
+pub fn match_is_hex_digit(c: char) -> bool {
+c.is_ascii_hexdigit()
+}
+pub fn parse_hex_seg(input: &str) -> IResult<&str, u8> {
+map_res(
+take_while_m_n(2, 2, match_is_hex_digit),
+parse_str_to_hex_num,
+)(input)
+}
+}
+/// These are [Parser] implementations that are used by
+/// [hex_color_no_alpha].
+mod intermediate_parsers {
+use super::*;
+/// Call this to return function that implements the [Parser] trait.
+pub fn gen_hex_seg_parser_fn<'input, E>() ->
+impl Parser<&'input str, u8, E>
+where
+E: FromExternalError<&'input str, ParseIntError> +
+ParseError<&'input str>,
+{
+map_res(
+take_while_m_n(2, 2, helper_fns::match_is_hex_digit),
+helper_fns::parse_str_to_hex_num,
+)
+}
+}
+/// This is the "main" function that is called by the tests.
+fn hex_color_no_alpha(input: &str) -> IResult<&str, Color> {
+// This tuple contains 3 ways to do the same thing.
+let it = (
+helper_fns::parse_hex_seg,
+intermediate_parsers::gen_hex_seg_parser_fn(),
+map_res(
+take_while_m_n(2, 2, helper_fns::match_is_hex_digit),
+helper_fns::parse_str_to_hex_num,
+),
+);
+let (input, _) = tag("#")(input)?;
+let (input, (red, green, blue)) =
+tuple(it)(input)?; // same as `it.parse(input)?`
+Ok((input, Color { red, green, blue }))
+}
+#[cfg(test)]
+mod tests {
+use super::*;
+#[test]
+fn parse_valid_color() {
+let mut input = String::new();
+input.push_str("#2F14DF");
+input.push('🔅');
+let result = dbg!(hex_color_no_alpha(&input));
+let Ok((remainder, color)) = result else { panic!(); };
+assert_eq!(remainder, "🔅");
+assert_eq!(color, Color::new(47, 20, 223));
+}
+#[test]
+fn parse_invalid_color() {
+let result = dbg!(hex_color_no_alpha("🔅#2F14DF"));
+assert!(result.is_err());
+}
+}
+You can get the source code for the examples in this
+repo.
+What does this code do, how does it work? #
+Please note that:
+This string can be parsed: #2F14DF🔅 ✅.
+However, this string can’t 🔅#2F14DF 🤔.
+So what is going on in the source code above?
+The Parser trait and IResult #
+The key concept in nom is the Parser trait which is implemented for any FnMut that accepts an
+input and returns an IResult<Input, Output, Error>.
+If you write a simple function w/ the signature
+fn(input: Input) -> IResult<Input, Output, Error> then you are good to go! You just need to
+call parse() on the Input type and this will kick off the parsing.
+Alternatively, you can just call the nom tuple function directly via
+nom::sequence::tuple(...)(input)?. Or you can just call the parse() method on the tuple
+since this is an extension function on tuples provided by nom.
+IResult is a very important type alias. It encapsulates 3 key types that are related to
+parsing:
+The Input type is the type of the input that is being parsed. For example, if you are
+parsing a string, then the Input type is &str.
+The Output type is the type of the output that is returned by the parser. For example, if
+you are parsing a string and you want to return a Color struct, then the Output type is
+Color.
+The Error type is the type of the error that is returned by the parser. For example, if
+you are parsing a string and you want to return a nom::Err::Error error, then the Error
+type is nom::Err::Error. This is very useful when you are developing your parser
+combinators and you run into errors and have to debug them.
+Typically we are dealing with complete parsers which are character based. These are reflected
+in the functions that we import from nom. It is pretty common to see the 'input lifetime
+parameter used in functions that are parsers. This way slices of the input can be returned
+from the parser without having to Clone or allocate memory.
+Here’s an example of this:
+pub fn parse_hex_seg<'input, E /* thread this generic type down */>(
+input: &'input str,
+) -> IResult<&'input str, u8, E>
+where
+E: ParseError<&'input str> + ContextError<&'input str>
+{ /* code */ }
+Main parser function that calls all the other parsers #
+The intermediate_parsers::hex_color_no_alpha() function is the main function that
+orchestrates all the other functions to parse an input: &str and turn it into a
+(&str, Color).
+The tag combinator function is used to match the # character. This means that if the input
+doesn’t start with #, the parser will fail (which is why 🔅#2F14DF fails). It returns the
+remaining input after #. And the output is # which we throw away.
+A tuple is created that takes 3 parsers, which all do the same exact thing, but are written
+in 3 different ways just to demonstrate how these can be written.
+The helper_fns::parse_hex_seg() function is added to a tuple.
+The higher order function intermediate_parsers::gen_hex_seg_parser_fn() is added to the
+tuple.
+Finally, the map_res combinator is directly added to the tuple.
+An extension function on this tuple called parse() is called w/ the input (thus far). This
+is used to parse the input hex number.
+It returns the remaining input after the hex number which is why #2F14DF🔅 returns 🔅 as
+the first item in the tuple.
+The second item in the tuple is the parsed color string turned into a Color struct.
+The hex segment parser, comprised of nom combinator functions, and IResult #
+Let’s look at the helper_fns::parse_hex_seg (the other 2 ways shown above do the same exact
+thing). The signature of this function tells nom that you can call the function w/ input
+argument and it will return IResult<Input, Output, Error>. This signature is the pattern that
+we will end up using to figure out how to chain combinators together. Here’s how the map_res
+combinator is used by parse_hex_seg() to actually do the parsing:
+take_while_m_n: This combinator takes a range of characters (2, 2) and applies the
+function match_is_hex_digit to determine whether the char is a hex digit (using
+is_ascii_hexdigit() on the char). This is used to match a valid hex digit. It returns a
+&str slice of the matched characters. Which is then passed to the next combinator.
+parse_str_to_hex_num: This parser is used on the string slice returned from above. It simply
+takes string slice and turns it into a Result<u8>, std::num::ParseIntError>. The error is
+important, since if the string slice is not a valid hex digit, then we want to return this
+error.
+Generalized workflow #
+After the really complicated walk through above, we could have just written the entire thing
+concisely like so:
+pub fn parse_hex_seg(input: &str) -> IResult<&str, u8> {
+map_res(
+take_while_m_n(2, 2, |it: char| it.is_ascii_hexdigit()),
+|it: &str| u8::from_str_radix(it, 16),
+)(input)
+}
+fn hex_color_no_alpha(input: &str) -> IResult<&str, Color> {
+let (input, _) = tag("#")(input)?;
+let (input, (red, green, blue)) = tuple((
+helper_fns::parse_hex_seg,
+helper_fns::parse_hex_seg,
+helper_fns::parse_hex_seg,
+))(input)?;
+Ok((input, Color { red, green, blue }))
+}
+This is a very simple example, but it shows how you can combine parsers together to create more
+complex parsers. You start w/ the simplest one first, and then build up from there.
+In this case the simplest one is parse_hex_seg() which is used to parse a single hex segment.
+Inside this function we call map_res() w/ the supplied input and simply return the result.
+This is also a very common thing to do, is to wrap calls to other parsers in functions and then
+re-use them in other parsers.
+Finally, the hex_color_no_alpha() function is used to parse a hex color w/o an alpha channel.
+The tag() combinator is used to match the # character.
+The tuple() combinator is used to match the 3 hex segments.
+The ? operator is used to return the error if there is one.
+The Ok() is used to return the parsed Color struct and the remaining input.
+Why can’t we parse “🔅#2F14DF”? #
+The reason we can’t parse 🔅#2F14DF is because the tag("#") combinator is used to
+match the # character at the very start of our input. Remember that the parser will try
+to eat the bytes from the start of the input to the end. This means that if the input
+doesn’t start with #, the parser will fail.
+If we have the requirement to parse a hex color code that doesn’t start with #, then we
+can modify the parser to handle this case. Here’s one way in which we can do this.
+/// This is the "main" function that is called by the tests.
+fn hex_color_no_alpha(
+input: &str,
+) -> IResult<
+(
+/* start remainder */ &str,
+/* end remainder */ &str,
+),
+Color,
+> {
+let mut root_fn = preceded(
+/* throw away "#" */
+tag("#"),
+/* return color */
+tuple((
+helper_fns::parse_hex_seg,
+helper_fns::parse_hex_seg,
+helper_fns::parse_hex_seg,
+)),
+);
+// Get chars before "#".
+let pre_root_fn = take_until::<
+/* input after "#" */ &str,
+/* start remainder */ &str,
+/* error type */ nom::error::VerboseError<&str>,
+>("#");
+if let Ok((input_after_hash, start_remainder)) = pre_root_fn(input) {
+if let Ok((end_remainder, (red, green, blue))) =
+root_fn(input_after_hash)
+{
+Ok((
+(start_remainder, end_remainder),
+Color::new(red, green, blue),
+))
+} else {
+Err(nom::Err::Error(Error::new(
+(input_after_hash, ""),
+ErrorKind::Fail,
+)))
+}
+} else {
+Err(nom::Err::Error(Error::new((input, ""), ErrorKind::Fail)))
+}
+}
+And this is what the tests would look like:
+#[test]
+fn parse_valid_color() {
+let input = "\n🌜\n#2F14DF\n🔅\n";
+let result = dbg!(hex_color_no_alpha(input));
+let Ok((remainder, color)) = result else {
+panic!();
+};
+assert_eq!(remainder, ("\n🌜\n", "\n🔅\n"));
+assert_eq!(color, Color::new(47, 20, 223));
+}
+Better error reporting when things go wrong #
+We can use the context combinator to provide better error reporting. This is a very useful
+combinator that you can use to provide better error messages when parsing fails. However, when
+using it, we need to:
+Be careful of expressing the nom error types as generic arguments to the parser
+functions, by  using the nom::error::VerboseError type to get more detailed error
+messages which are used by nom::error::convert_error.
+This type needs to be passed as a generic argument to each parser that uses the
+context combinator.
+In the example below, we call u8::from_str_radix. This might throw a
+core::num::ParseIntError error. However, this error is never thrown in the code. Even
+if core::num::ParseIntError were to be thrown, it would be consumed, and a higher
+level nom error would be returned for the map_res combinator.
+Here’s an example of this.
+use nom::{
+bytes::complete::{tag, take_while_m_n},
+combinator::map_res,
+error::{context, convert_error},
+sequence::Tuple,
+IResult, Parser,
+};
+/// `nom` is used to parse the hex digits from string. Then
+/// [u8::from_str_radix] is used to convert the hex string into a
+/// number. This can't fail, even though in the function signature,
+/// that may return a [core::num::ParseIntError], which never
+/// happens. Note the use of [nom::error::VerboseError] to get more
+/// detailed error  messages that are passed to
+/// [nom::error::convert_error].
+///
+/// Even if [core::num::ParseIntError] were to be thrown, it would
+/// be consumed, and a higher level `nom` error would be returned
+/// for the `map_res` combinator.
+pub fn parse_hex_seg(input: &str) -> IResult<
+&str,
+u8,
+nom::error::VerboseError<&str>
+> {
+map_res(
+take_while_m_n(2, 2, |it: char| it.is_ascii_hexdigit()),
+|it| u8::from_str_radix(it, 16),
+)
+.parse(input)
+}
+/// Note the use of [nom::error::VerboseError] to get more detailed
+/// error messages that are passed to [nom::error::convert_error].
+pub fn root(input: &str) -> IResult<
+&str,
+(&str, u8, u8, u8),
+nom::error::VerboseError<&str>
+> {
+let (remainder, (_, red, green, blue)) = (
+context("start of hex color", tag("#")),
+context("hex seg 1", parse_hex_seg),
+context("hex seg 2", parse_hex_seg),
+context("hex seg 3", parse_hex_seg),
+)
+.parse(input)?;
+Ok((remainder, ("", red, green, blue)))
+}
+This just sets up our code to use context, but we still have to format the output of the
+error in a human readable way to stdout. This is where convert_error comes in. Here’s
+how you can use it.
+#[test]
+fn test_root_1() {
+let input = "x#FF0000";
+let result = root(input);
+println!("{:?}", result);
+assert!(result.is_err());
+match result {
+Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+println!(
+"Could not parse because ... {}",
+convert_error(input, e)
+);
+}
+_ => { /* do nothing for nom::Err::Incomplete(_) */ }
+}
+}
+Here’s the output of the test.
+Err(Error(VerboseError { errors: [("x#FF0000", Nom(Tag)), ("x#FF0000", Context("start of hex color"))] }))
+Could not parse because ... 0: at line 1, in Tag:
+x#FF0000
+^
+1: at line 1, in start of hex color:
+x#FF0000
+^
+Here’s another test to see even more detailed error messages.
+#[test]
+fn test_root_2() {
+let input = "#FF_000";
+let result = root(input);
+println!("{:?}", result);
+assert!(result.is_err());
+match result {
+Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+println!(
+"Could not parse because ... {}",
+convert_error(input, e)
+);
+}
+_ => { /* do nothing for nom::Err::Incomplete(_) */ }
+}
+}
+Here’s the output of this test.
+Err(Error(VerboseError { errors: [("_000", Nom(TakeWhileMN)), ("_000", Context("hex seg 2"))] }))
+Could not parse because ... 0: at line 1, in TakeWhileMN:
+#FF_000
+^
+1: at line 1, in hex seg 2:
+#FF_000
+^
+Other examples #
+Simple CSS syntax parser #
+Here’s a snippet from the simple CSS parser
+code,
+that allows nom to parse a simple CSS like syntax. The hex color string can be in the
+following formats:
+#RRGGBB, eg: #FF0000 for red.
+#RRGGBBAA, eg: #FF0000FF for red with alpha.
+Here are some examples of valid input strings:
+style = {
+fg_color: #FF0000;
+bg_color: #FF0000FF;
+}
+The fg_color and bg_color are both optional.
+The style = { and } are required.
+/// Type alias for [nom::error::VerboseError] to make the code more
+/// readable.
+type VError<'input> = nom::error::VerboseError<&'input str>;
+/// Parser functions for a single hex segment & `#RRGGBB` &
+/// `#RRGGBBAA`.
+mod hex_color_parser_helper_fns {
+use super::*;
+pub fn parse_single_hex_segment(input: &str) -> IResult<&str, u8, VError> {
+map_res(
+take_while_m_n(2, 2, |it: char| it.is_ascii_hexdigit()),
+|it: &str| u8::from_str_radix(it, 16),
+)(input)
+}
+pub fn parse_hex_color_no_alpha(input: &str) -> IResult<
+&str, Color, VError
+> {
+let (input, _) = tag("#")(input)?;
+let (input, (red, green, blue)) = tuple((
+parse_single_hex_segment,
+parse_single_hex_segment,
+parse_single_hex_segment,
+))(input)?;
+Ok((input, Color::NoAlpha(ColorNoAlpha::new(red, green, blue))))
+}
+pub fn parse_hex_color_with_alpha(input: &str) -> IResult<
+&str, Color, VError
+> {
+let (input, _) = tag("#")(input)?;
+let (input, (red, green, blue, alpha)) = tuple((
+parse_single_hex_segment,
+parse_single_hex_segment,
+parse_single_hex_segment,
+parse_single_hex_segment,
+))(input)?;
+Ok((
+input,
+Color::WithAlpha(
+ColorWithAlpha::new(red, green, blue, alpha)
+),
+))
+}
+}
+/// Parser functions for a style multiline string.
+mod style_parser_helper_fns {
+use super::*;
+/// Parse `style = { bg_color: .. , fg_color: .. }` parser.
+pub fn parse_style(
+input: &str,
+) -> IResult<&str, Option<HashMap<ColorKind, Color>>, VError> {
+// Parse `style = {`.
+let (input, _) = tuple((
+tag("style"),
+multispace0,
+nom::character::complete::char('='),
+multispace0,
+tag("{"),
+multispace0,
+))(input)?;
+// Parse `bg_color: ..` or `fg_color: ..`.
+let (input, output) = many0(parse_color_key_value)(input)?;
+// Parse `}`.
+let (input, _) = tuple((multispace0, tag("}"), multispace0))(input)?;
+let output = {
+let mut it: HashMap<ColorKind, Color> = HashMap::new();
+for (color_kind, color) in output.iter() {
+it.insert(*color_kind, *color);
+}
+it
+};
+Ok((input, Some(output)))
+}
+/// Parse `<key>: #<val>`, where:
+/// 1. `<key>` can be `fg_color` or `bg_color`.
+/// 2. `<val>` can be `#RRGGBB` or `#RRGGBBAA`.
+pub fn parse_color_key_value(input: &str) -> IResult<
+&str, (ColorKind, Color), VError
+> {
+// Parse `fg_color` or `bg_color`.
+let (input, key_str) = alt((tag("fg_color"), tag("bg_color")))(input)?;
+// Parse `: #RRGGBBAA;` or `: #RRGGBB;`.
+let (input, (_, _, _, output, _, _, _)) = tuple((
+multispace0,
+tag(":"),
+multispace0,
+// The order in which these functions are called matters: first,
+// try to parse `#RRGGBBAA` & if it fails then try to parse
+// `#RRGGBB`.
+alt((parse_hex_color_with_alpha, parse_hex_color_no_alpha)),
+multispace0,
+tag(";"),
+multispace0,
+))(input)?;
+Ok((input, (ColorKind::from(key_str), output)))
+}
+}
+Simple natural language parser #
+Here’s a snippet from the Simple natural language parser
+code
+that parses natural language sentences.
+The sentences are in this form:
+Hello, [my name is <name>] and [i am <age> years old] and [i like <language>]
+The and is optional; it can be omitted or replaced w/ a ,.
+Here are examples of valid sentences:
+"Hello, my name is Tommaso and i am 32 years old and I like Rust"
+"Hello, my name is Roberto and i like Python, I am 44 years old"
+"Hello, I like JavaScript my name is Luciano i am 35 years old"
+/// Functions that can be composed to parse the sentence.
+mod parse_sentence {
+use super::*;
+/// Sentence starts w/ "hello". Then optional whitespace.
+/// Then optional ",". Then optional whitespace.
+pub fn root(input: &str) -> IResult</* remainder */ &str, Sentence> {
+let (rem, _) = tuple((
+tag_no_case("hello"),
+multispace0,
+opt(tag(",")), /* cut() also works instead of opt() */
+multispace0,
+))(input)?;
+// Name, age, and language show up next in any order.
+let (rem, (name, age, language)) =
+permutation((name, age, language))(rem)?;
+Ok((
+rem,
+Sentence {
+name,
+age,
+language,
+},
+))
+}
+/// Optional whitespace. Then optional "and" or optional ",". Then optional
+/// whitespace.
+pub fn optional_prefix(input: &str) -> IResult<&str, ()> {
+let (rem, _spaces) = multispace0(input)?;
+let (rem, _prefix) = opt(
+alt((
+tag_no_case("and"),
+tag(",")
+))
+)(rem)?;
+let (rem, _spaces) = multispace0(rem)?;
+Ok((rem, ()))
+}
+/// Age starts w/ optional "and" or ",". Then "i am". Then optional
+/// whitespace. Then age (number).
+pub fn age(input: &str) -> IResult<&str, u8> {
+let (rem, _prefix) = optional_prefix(input)?;
+let (rem, _i_am_with_spaces) = tuple((
+tag_no_case("i am"),
+multispace0
+))(rem)?;
+let (rem, age) = map_res(digit1, |age: &str| age.parse::<u8>())(rem)?;
+let (rem, _suffix) = tag_no_case(" years old")(rem)?;
+Ok((rem, age))
+}
+/// Name starts w/ optional "and" or ",". Then "my name is". Then optional
+/// whitespace. Then name.
+pub fn name(input: &str) -> IResult<&str, &str> {
+let (rem, _prefix) = optional_prefix(input)?;
+let (rem, _my_name_is_with_spaces) = tuple((
+multispace0,
+tag_no_case("my name is"),
+multispace0
+))(rem)?;
+let (rem, name) = alpha1(rem)?;
+Ok((rem, name))
+}
+/// Language starts w/ optional "and" or ",". Then "i like". Then optional
+/// whitespace. Then language.
+pub fn language(input: &str) -> IResult<&str, &str> {
+let (rem, _prefix) = optional_prefix(input)?;
+let (rem, _i_like_with_spaces) = tuple((
+tag_no_case("i like"),
+multispace0
+))(rem)?;
+let (rem, language) = alpha1(rem)?;
+Ok((rem, language))
+}
+}
+Markdown parser #
+You can find a simplified version of the Markdown parser in this
+repo. This may
+be useful to learn the basics of Markdown parsing before delving into the more complex parser that is
+used in r3bl_tui.
+The production
+md_parser
+module in the r3bl-open-core repo contains a fully functional Markdown parser (that you
+can use in your projects that need a Markdown parser). This parser supports standard
+Markdown syntax as well as some extensions that are
+added to make it work w/ R3BL products. It makes a great starting
+point to study how a relatively complex parser is written. There are lots of tests that
+you can follow along to understand what the code is doing.
+💡 You can get the source code for the production Markdown parser used in r3bl_tui from the
+r3bl-open-core
+repo.
+🌟 Please star this repo on github if you like it 🙏.
+The main entry point (function) for this Markdown parsing module is
+parse_markdown().
+It takes a string slice.
+And returns a vector of MdBlocks.
+Here are some entry points into the codebase.
+The main function
+parse_markdown()
+that does the parsing of a string slice into a
+MdDocument.
+The tests are provided alongside the code itself. And you can follow along to see how
+other smaller parsers are used to build up this big one that parses the whole of the
+Markdown document.
+The
+types module
+contain all the types that are used to represent the Markdown document model, such as MdDocument, MdBlock,
+MdLineFragment and all the other intermediate types & enums required for parsing.
+All the parsers related to parsing metadata specific for R3BL
+applications which are not standard Markdown can be found in
+parse_metadata_kv
+and
+parse_metadata_kcsv.
+All the parsers that are related to parsing the main “blocks” of Markdown, such as
+order lists, unordered lists, code blocks, text blocks, heading blocks, can be
+found block.
+All the parsers that are related to parsing a single line of Markdown text, such as
+links, bold, italic, etc. can be found
+fragment.
+References #
+nom is a huge topic. This tutorial takes a hands on approach to learning nom. However, the resources
+listed below are very useful for learning nom. Think of them as a reference guide and deep dive into
+how the nom library works.
+Useful:
+Source code examples (fantastic way to learn nom):
+export-logseq-notes repo
+Videos:
+Intro from the author 7yrs old
+nom 7 deep dive videos:
+Parsing name, age, and preference from natural language input
+Parsing number ranges
+Parsing lines of text
+nom 6 videos (deep dive into how nom combinators themselves are constructed):
+Deep dive, Part 1
+Deep dive, Part 2
+Tutorials:
+Build a JSON parser using nom 7
+Excellent beginner to advanced
+Write a parser from scratch
+Reference docs:
+nominomicon
+What combinator or parser to use?
+docs.rs
+Upgrading to nom 5.0
+Less useful:
+README
+nom crate
+Build with Naz video series on developerlife.com YouTube channel #
+You can watch a video series on building this crate with Naz on the
+developerlife.com YouTube channel.
+YT channel
+Playlists
+Build with Naz, Linux TTY, process, signals, commands in async Rust
+Build with Naz, fundamental effective Rust
+Build with Naz, effective async Rust and tokio
+Build with Naz, async readline and spinner for CLI in Rust
+Build with Naz, testing in Rust
+#cli
+#rust
+#server
+#tui
+👀 Watch Rust 🦀 live coding videos on our YouTube Channel.
+📦 Install our useful Rust command line apps using cargo install r3bl-cmdr
+(they are from the r3bl-open-core
+project):
+🐱giti: run interactive git commands with confidence in your terminal
+🦜edi: edit Markdown with style in your terminal
+giti in action
+edi in action
+Related Posts
+To Async or Not to Async: Building a Rust MCP Server for rust-analyzer
+Build with Naz : High-Performance Flat 2D Arrays in Rust (SIMD, L1 Cache)
+Build with Naz : Capturing Real-Time Build Progress from Cargo Using PTY and OSC Sequences
+Build with Naz : TLS (Transport Layer Security) in Rust with tokio, rustls, CFSSL
+Build with Naz : Diesel ORM, SQLite, and Rust
+Build with Naz : Rust lifetimes
+Build with Naz : Explore Linux TTY, process, signals w/ Rust
+Build with Naz : Box and Pin exploration in Rust
+Build with Naz : Rust async in practice tokio::select!, actor pattern & cancel safety
+Build with Naz : Markdown parser in Rust and nom from r3bl_tui
+Build with Naz : Rust error handling with miette
+Build with Naz : Rust typestate pattern
+Build with Naz : Linux io_uring and tokio-uring exploration with Rust
+Build with Naz : Rust async, non-blocking, concurrent, parallel, event loops, graceful shutdown
+Build with Naz : tokio tracing & OTel and how to use it in Rust
+Build with Naz : Rust Polymorphism, dyn, impl, using existing traits, trait objects for testing and extensibility
+Build with Naz : Build interactive and non blocking CLI apps with ease in Rust using r3bl_terminal_async
+Write a simple netcat client and server in Rust
+Write a simple TCP chat server in Rust
+How to overcome your fear of git merge conflicts
+tuify your clap CLI apps and make them more interactive
+Use just to manage project specific commands
+Create a simple DSL for CSS like syntax for TUIs
+Write a Redux library in Rust
+Write code using async/await in Rust
+Build a grep CLI app in Rust
+Build a non-binary tree that is thread safe using Rust
+Reference handbook for using Ink v3.2.0 components (w/ React, Node.js and TypeScript)
+Advanced guide to Ink v3.2.0 (w/ React, Node.js and TypeScript)
+Introduction to Ink v3.2.0 (w/ React, Node.js and TypeScript)
+Rust Reborrowing, Aliasing, and Mutable References
+Build with Naz : Rust, Memory performance & latency - locality, access, allocate, cache lines
+Build with Naz : Ubuntu 24.04 setup and config for dev productivity
+Guide to Rust procedural macros
+Node.js (v16.3.0) Handbook using TypeScript (v4.3.4)
+Experimenting w/ Fibers in Project Loom preview
+Creating asynchronous servlets with Tomcat 7 (Servlet 3.0 API)
+Using JSON for mobile object exchange
+Geocoding tutorial - Accessing Google Static Maps from Java
+What is XML? An introduction
+Advanced Threads
+XML and Java Tutorial, Part 1
+Subscribe to our
+YT Channel 🦀
+Our apps, crates, extensions 📦
+R3BL TUI APPS (GITI, EDI)
+r3bl-cmdr
+R3BL TUI LIBRARY
+r3bl_tui
+R3BL BROWSER EXT
+R3BL Shortlink
+R3BL MCP SERVER
+Rust Analyzer
+R3BL VSCODE EXT
+R3BL Development Pack
+Need help with code?
+💼
+developerlife.com site was started in Nov 1998 by Nazmul Idris, with coverage for topics
+related to Java, XML, and web and desktop technologies. Today it covers Rust, TUI,
+CLI, Kotlin, TypeScript, Node.js, React, Android, JDK, Web, Cloud technologies, User
+Experience Engineering (UXE) and design topics. © Nazmul Idris 1996-2025. All rights
+reserved.
+
+=== ROW 164 | f008692 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-58 | 2025-11-12T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #58
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #58
+The Embedded Rustacean Issue #58
+Nov 7, 2025
+In partnership with
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag us on LinkedIn or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+🦀 Rust 1.91 Released
+📢 esp-hal 1.0.0  Announced
+🍓 Pico VSCode extension now supports Rust
+🐧 apt Package Manager to require Rust soon
+💰 Rust Foundation Announces Maintainer Fund
+💬
+Quote of the Issue
+❝
+Software is a gas; it expands to fill its container.
+Nathan Myhrvold
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+esp-hal 1.0.0 release announcement ⭐
+Develop embedded firmware for Pico using Rust or Zephyr with pico-vscode ⭐
+probe-rs 0.30.0 release
+TrustInSoft Extends Formal Verification to Rust and Real-Time Systems
+Ferrocene 25.08.0 now available
+Rust News 🗞🦀
+Announcing the Rust Foundation Maintainers Fund ⭐
+Announcing Rust 1.91.0 ⭐
+Announcing seven new members of the compiler team
+Debian's APT Will Soon Begin Requiring Rust ⭐
+Ubuntu Will Use Rust For Dozens of Core Linux Utilities
+Hard Rust requirements from May onward
+Rust 1.91 promotes Windows on Arm64 to Tier 1 target
+Announcing the rust foundation maintainers fund
+Project goals for 2025H2
+Burn 0.19.0 Release: Quantization, Distributed Training, and LLVM Back End
+OpenTelemetry Adoption Update: Rust, Prometheus and Other Speed Bumps
+General Embedded News/Trends 📈
+RFC: Collecting Community Input on Qualification of LLVM Tools & Libraries
+Announcing the Edge Impulse Zephyr Module
+NXP Accelerates Edge AI with Kinara Acquisition
+NVIDIA Open Sources Aerial Software to Accelerate AI-Native 6G
+SOAFEE Roundtable Introduces Blueprints for Automotive Innovation
+ARM Education announces “AI at the Edge on Arm“ course
+NXP Rolls Out AI-Enabled Applications Processor Targeting Automotive
+Alif Semiconductor ’s releases framework extension for embedded systems
+OpenBMC ported to Zephyr and other news
+Grinn SBC shortens go-to-market for sophisticated AI-ready embedded systems
+NXP Intros Battery Management Tech Aims To Boost Performance
+Polyn delivers silicon-implementation of its NASP chip
+Collaborative Learning on the Edge
+Comparisons with Other Languages 🔍
+A Case Study in Rewriting a Critical Service in Rust
+Cloudflare Raves About Performance Gains After Rust Rewrite
+Automatically Translating C to Rust
+What’s the Go language really good for?
+Hardware 🛠
+ESP32JTAG – An open-source wireless JTAG and logic analyzer
+State of Embedded (SBCs): Q4 2025 Overview
+The Arduino Uno Q is a weird hybrid SBC
+HackBEE is a Raspberry Pi RP2350 USB-C dongle for developers
+The Arduino Uno Q: Hands On
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+impl Rust for ESP32: Ratatui on ESP32
+Async Rust explained without Tokio or Smol
+Insights, Tools, & Case Studies 📑
+Building Up And Sanding Down
+Turn ESP32 devices into through-wall motion sensors
+SafeFFI: Efficient Sanitization at the Boundary Between Safe and Unsafe Code in Rust and Mixed-Language Applications
+Futurelock: A subtle risk in async Rust
+Jack Huey, Niko Matsakis Interview, Rust Vision Doc Team
+Rust Hobby OS projects worth exploring
+Cross-platform applications with Rust 1: Durable and flexible
+SAFEXPLAIN: Building Trustworthy AI for Critical Embedded Systems
+Building cargo-sane: A Better Way to Manage Rust Dependencies
+The state of the Rust dependency ecosystem
+Recent Rust Changes
+Building a Coding Agent in Rust: Implementing Chat Feature
+Linking and shrinking Rust static libraries: a tale of fire
+Pixi: Modern package management for Robotics
+Patterns for Defensive Programming in Rust
+TECS/Rust-OE: Optimizing Exclusive Control in Rust-based Component Systems for Embedded Devices
+Complex, AI-Enabled Small Processors and Cybersecurity Will Dominate Embedded System Designs Going Forward
+deepSURF: Detecting Memory Safety Vulnerabilities in Rust Through Fuzzing LLM-Augmented Harnesses
+The Rust Revolution in Engineering Systems: Real-World Examples from the Lab to the Factory Floor
+HORUS: Production-grade robotics framework achieving sub-microsecond IPC with lock-free shared memory
+A hard rain's a-gonna fall: decoding JSON in Rust
+General Embedded 📟
+Debugging Embedded Graphics with Wokwi and AI: Solving a Raylib Color Mapping on ESP32
+Integrating Embedded Swift and SDL3 on ESP32
+Deep Learning on Microcontrollers: The State of Embedded ML in 2025
+TinyML is the most impressive piece of software you can run on any ESP32
+Grayskull: A tiny computer vision library in C for embedded systems, etc.
+NanoHydra: Energy-Efficient Time-Series Classification at the Edge
+RockNet: Distributed Learning on Ultra-Low-Power Devices
+Deploying MobileNetV3 on NXP i.MX8MP: A Complete Edge AI Workflow for Handwritten Digit Recognition
+Insights and Challenges for Securing Microcontroller Systems
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Harvard CS249 Introduction to Machine Learning Systems
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+burn v0.19.1
+stm32-hal2 v2.1.9
+embedded-test v0.7.0
+probe-rs v0.30.0
+esp-radio v0.17.0
+esp-hal v1.0.0
+ravedude v0.2.2
+Upcoming Events & Deadlines 🎭
+TokioConf 2026 - April 20th, 2026 - CFP Open, Deadline: December 8th, 2025 - Portland, Oregon, USA
+Rust Nation UK - February 18th & 19th, 2026 - London, UK
+Rust In Paris - March, 2026 (Projected) - Paris, France
+RustMeet - March, 2026 (Projected) - Gliwice, Poland
+Rustikon - 19 & 20 March, 2026 - Warsaw, Poland
+Rust Asia - March, 2026 (Projected) - Hong Kong
+RustWeek - May 18-23, 2026 - Utrecht, Netherlands
+RustForge - August, 2026 (Projected) - Wellington, New Zealand
+RustConf - September 8-11, 2026 - Montreal, Canada
+Oxidize - September 14-16, 2026 - Berlin, Germany
+EuroRust - October 14-17, 2026 - Barcelona, Spain
+RustLab - November, 2026 (Projected) - Florence, Italy
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 Internship: Firmware Rust Developer - NXP, Gratkorn, Austria
+🦀 Middle/Senior Rust Developer with C experience (IoT) - Sigma Software, Mutliple Locations, Europe
+🦀 Software Development Engineer - Embedded Development - Amazon, London, Cambridge, UK
+🦀 Firmware Engineer - IoT Biodiversity Sensors - Hula, Munich, Germany
+🦀 Embedded Rust (Medical) - Freelance, Munich, Germany
+🦀 Rust Developer/Promoter - Collabora, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+North America-Based Jobs 🌎
+🦀 Embedded Software Engineer, Senior Software Engineer, Staff Software Engineer, OTA, and Senior Software Engineer, OTA - Rivian/VW,  Palo Alto, CA and Vancouver, Canada
+🦀 Spacecraft Embedded Software Engineer (Rust) & Senior Spacecraft Embedded Software Engineer (Rust) - Spire, Multiple Locations, CA & USA
+🦀 Rust Software Developer - Ford, Hybrid, Palo Alto, CA
+🦀 Senior Embedded Developer (Hardware in the Loop) - Geotab, Oakville, ON
+🦀 Software Engineer II - Embedded Cybersecurity - Collins Aerospace, Cedar Rapids, IA
+🦀 Staff Software Engineer - OTA - Rivian-VW - Palo Alto, CA, Vancouver, Toronto, Canada
+🦀 Software Engineer, Platform - Impulse, San Fransisco, CA
+🦀 Embedded Firmware Engineer, Embedded Firmware Developer, and Embedded Rust/C++ Firmware Developer - Chemelex, Edmonton, Canada
+🦀 Principal Embedded Systems Engineer – Avionics / GNC - Orb Aerospace, Lowell, MI
+🦀 Embedded Systems Software Consultant (Rust / RTOS) - Seamgen, Remote
+🦀 Firmware Engineer - Mach Industries, Huntington Beach, CA
+🦀 Sr. Embedded Firmware Engineer (Rust and C) - Nanobiosym, Cambridge, MA
+🦀 Rust Software Engineer - K2Space, Los Angeles, CA
+🦀 Embedded Software Engineer (Bare Metal), Intelligence Systems - Anduril, Reston, VA
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Free, private email that puts your privacy first
+A private inbox doesn’t have to come with a price tag—or a catch. Proton Mail’s free plan gives you the privacy and security you expect, without selling your data or showing you ads.
+Built by scientists and privacy advocates, Proton Mail uses end-to-end encryption to keep your conversations secure. No scanning. No targeting. No creepy promotions.
+With Proton, you’re not the product — you’re in control.
+Start for free. Upgrade anytime. Stay private always.
+Get free private email
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 166 | f008801 | https://abishov.com/blog/pvec-rs-visualizing-structural-sharing | 2026-02-18T00:00:00 | individual-blogs;twir-links ===
+Visualizing persistent vectors with Rust and WebAssembly | Araz Abishov
+Araz Abishov
+Blog  Projects  About                Toggle theme
+Blog
+Visualizing persistent vectors with Rust and WebAssembly
+Visualizing persistent vectors with Rust and WebAssembly
+February 12, 2026
+4 min read
+rust        data-structures        wasm
+Cloning a vector means copying every element. For small collections this is fine, but as vectors grow, so does the cost. In functional languages, where collections are immutable, cheap copies are vital for performance.
+In Rust, this comes up too. Ownership means you must clone a vector if you want to keep using it after passing it somewhere else. As Niko Matsakis pointed out, Rust collections already behave like values; they just have an expensive clone. What if that clone could be nearly free?
+That post got me interested in the problem. After some research, I ended up building pvec-rs, a Rust library implementing persistent vectors based on RRB trees, a variant designed for efficient splitting and concatenation. This post is a visual introduction to how it all works.
+A quick intro to persistent vectors
+The idea is to represent a vector as a tree internally. Instead of copying every element, you reuse most of the existing structure. To produce a modified version, you only need to copy the path from the root to the changed leaf. This is called path copying. The unchanged nodes are shared between the old and new versions of the tree. This is known as structural sharing, and a data structure that preserves previous versions of itself after modification is called persistent.
+The diagrams in this post use a branching factor of 4 to keep things readable, but in practice 32 or 64 is used for better performance. Wide nodes are CPU cache friendly, and with a branching factor of 32, even ~4 billion elements (the limit of a 32-bit index) fit in a tree just 7 levels deep. That means at most 7 hops to reach any value, making random access effectively O(1).
+This data structure is called a Radix Balanced Tree (RB tree). It also keeps a small tail buffer for recent pushes, avoiding a tree traversal on every append. New elements are first collected in the tail and only flushed into the tree when it fills up.
+Path copying in practice. Vector B is a clone of Vector A with 4 extra elements pushed. Red nodes are shared between both vectors. Orange nodes were created when pushing to the clone: only the root and the right branch needed to be copied.
+The data structure has its roots in Phil Bagwell’s Ideal Hash Trees, which Rich Hickey adapted to build Clojure’s persistent vector. If you want to learn how it works in more detail, I would highly recommend Jean Niklas L’orange’s posts: part 1, part 2.
+RRB trees
+RB tree based vectors have a key weakness: splits and concatenations are O(n). RRB trees (Relaxed Radix Balanced) fix this by allowing nodes to be partially filled, which brings both operations down to O(log n). This matters for parallel code: you can split a vector across threads, process each part independently, then concatenate the results.
+Because nodes can now be partially filled, the tree can no longer compute subtree sizes from its shape alone. Each relaxed node stores a size table to keep track.
+A 16-element vector split at index 10. Vector A keeps elements 0-9, with the last two sitting in the tail. Vector B gets elements 10-15. Its left leaf only has 2 of 4 slots filled, so the root needs a size table (the numbers above it: 2, 6) to know how many elements each subtree holds.
+Visualizing it
+It took a couple of years of on-and-off hacking, but web-vis is finally in good enough shape to share. It compiles pvec-rs to WebAssembly and renders the tree in the browser. Each vector is drawn as a tree, and shared nodes are color-coded, so when you clone and push, you can see exactly which parts were copied and which are still shared. You can grow, shrink, clone, split, and concatenate vectors. If you split or concatenate, you will also see the size tables that relaxed nodes require.
+Start by cloning a vector, then push to one of the clones to see path copying in action. Try it out.
+If you want the full deep-dive (performance benchmarks, implementation details, and all the edge cases), it’s all in the thesis.
+© 2026 All rights reserved.
+Made by  Araz Abishov
+
+=== ROW 175 | f009654 | https://blog.rust-lang.org/2025/04/11/crates-io-security-session-cookies | 2025-04-11 | project-blog ===
+crates.io security incident: improperly stored session cookies | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+crates.io security incident: improperly stored session cookies
+Apr. 11, 2025 · Adam Harvey
+on behalf of the crates.io team
+Today the crates.io team discovered that the contents of the cargo_session
+cookie were being persisted to our error monitoring service,
+Sentry, as part of event payloads sent when an
+error occurs in the crates.io backend. The value of this cookie is a signed
+value that identifies the currently logged in user, and therefore these cookie
+values could be used to impersonate any logged in user.
+Sentry access is limited to a trusted subset of the crates.io team, Rust
+infrastructure team, and the crates.io on-call rotation team, who already have
+access to the production environment of crates.io. There is no evidence that
+these values were ever accessed or used.
+Nevertheless, out of an abundance of caution, we have taken these actions
+today:
+We have merged and deployed a change to redact all cookie values from all
+Sentry events.
+We have invalidated all logged in sessions, thus making the cookies stored
+in Sentry useless. In effect, this means that every crates.io user has been
+logged out of their browser session(s).
+Note that API tokens are not affected by this: they are transmitted using
+the Authorization HTTP header, and were already properly redacted before
+events were stored in Sentry. All existing API tokens will continue to work.
+We apologise for the inconvenience. If you have any further questions, please
+contact us on
+Zulip or
+GitHub.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 178 | f009740 | https://blog.rust-lang.org/2026/04/30/gsoc-2026-selected-projects | 2026-04-30 | project-blog;twir-links ===
+Announcing Google Summer of Code 2026 selected projects | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Announcing Google Summer of Code 2026 selected projects
+Apr. 30, 2026 · Jakub Beránek
+on behalf of the mentorship team
+As previously announced, the Rust Project is participating in Google Summer of Code (GSoC) 2026. GSoC is a global program organized by Google that is designed to bring new contributors to the world of open source.
+A few months ago, we published a list of GSoC project ideas, and started discussing these projects with potential GSoC applicants on our Zulip. We had many interesting discussions with the potential contributors, and even saw some of them making non-trivial contributions to various Rust Project repositories before GSoC officially started!
+The applicants prepared and submitted their project proposals by the end of March. This year, we received 96 proposals, which is a 50% increase from last year. We are glad that there was again a lot of interest in our projects! Like many other GSoC organizations this year, we somewhat struggled with some AI-generated proposals and low-quality contributions generated using AI agents, but it stayed manageable.
+GSoC requires us to produce an ordered list of the best proposals, which is always challenging, as Rust is a big project with many priorities. Our mentors examined the submitted proposals and evaluated them based on their prior interactions with the given applicant, their contributions so far, the quality of the proposal itself, but also the importance of the proposed project for the Rust Project and its wider community. We also had to take mentor bandwidth and availability into account. Unfortunately, we had to cancel some projects due to several mentors losing their funding for Rust work in the past few weeks.
+As is usual in GSoC, even though some project topics received multiple proposals1, we had to pick only one proposal per project topic. We also had to choose between proposals targeting different work to avoid overloading a single mentor with multiple projects. In the end, we narrowed the list down to the best proposals that we could still realistically support with our available mentor pool. We submitted this list and eagerly awaited how many of them would be accepted into GSoC.
+Selected projects
+On the 30th of April, Google has announced the accepted projects. We are happy to share that 13 Rust Project proposals were accepted by Google for Google Summer of Code 2026. That is a lot of projects! We are really happy and excited about GSoC 2026!
+Below you can find the list of accepted proposals (in alphabetical order), along with the names of their authors and the assigned mentor(s):
+A Frontend for Safe GPU Offloading in Rust by Marcelo Domínguez, mentored by Manuel Drehwald
+Adding WebAssembly Linking Support to Wild by Kei Akiyama, mentored by David Lattimore
+Bringing autodiff and offload into Rust CI by Shota Sugano, mentored by Manuel Drehwald
+Debugger for Miri by Mohamed Ali Mohamed, mentored by Oli Scherer
+Implementing impl and mut restrictions by Ryosuke Yamano, mentored by Jacob Pratt and Urgau
+Improving Ergonomics and Safety of serialport-rs by Tanmay, mentored by Christian Meusel
+libc: transition differing bit-width time and offset variants and deprecate bug-prone constants by Adam Martinez, mentored by Trevor Gross
+Link Linux kernel and its Modules with Wild by Vishruth Thimmaiah, mentored by David Lattimore
+Migrating rust-analyzer assists to SyntaxEditor by Shourya Sharma, mentored by Chayim Refael Friedman and Lukas Wirth
+Port std::arch test suite to rust-lang/rust by Sumit Kumar, mentored by Jakub Beránek and Folkert de Vries
+Reorganizing tests/ui/issues by zedddie, mentored by Teapot and Kivooeo
+Utilize debugger APIs to improve debug info test accuracy and error reporting by Anthony Bolden, mentored by Jakub Beránek and Jieyou Xu
+XDG path support for rustup by Guicheng Liu, mentored by rami3l
+Congratulations to all applicants whose project was selected! Our mentors are looking forward to working with you on these exciting projects to improve the Rust ecosystem. You can expect to hear from us soon, so that we can start coordinating the work on your GSoC projects.
+We are excited to mentor three contributors who already experienced GSoC with us in the previous year. Welcome back, Kei, Marcelo and Shourya!
+We would like to thank all the applicants whose proposal was sadly not accepted, for their interactions with the Rust community and contributions to various Rust projects. There were some great proposals that did not make the cut, in large part because of limited mentorship capacity. However, even if your proposal was not accepted, we would be happy if you would consider contributing to the projects that got you interested, even outside GSoC! Our project idea list is still current and could serve as a general entry point for contributors that would like to work on projects that would help the Rust Project and the Rust ecosystem. Some of the Rust Project Goals are also looking for help.
+There is a good chance we'll participate in GSoC next year as well (though we can't promise anything at this moment), so we hope to receive your proposals again in the future!
+The accepted GSoC projects will run for several months. After GSoC 2026 finishes (in autumn of 2026), we will publish a blog post in which we will summarize the outcome of the accepted projects.
+The most popular project topic received fourteen different proposals! ↩
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 179 | f009755 | https://blog.rust-lang.org/2026/09/22/announcing-a-maintainer-in-residence-scott-schafer-for-the-cargo-team | 2026-09-22 | project-blog;twir-links ===
+Announcing a Maintainer in Residence: Scott Schafer for the Cargo team | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+Announcing a Maintainer in Residence: Scott Schafer for the Cargo team
+Sept. 22, 2026 · Jakub Beránek
+on behalf of the Funding team
+At the end of August, we announced our first Maintainers in Residence, Rust Project contributors who are funded for their upstream contributions and maintenance work from the Rust Foundation Maintainers Fund (RFMF). Since then, the Rust Leadership Council has dedicated more funds from its Project Priorities budget to RFMF, and together with AWS also providing additional funds, this allowed us to open a new full-time Maintainer in Residence (MiR) position to support the Cargo team. We would like to thank the Rust Leadership Council, AWS, and also the Rust Foundation for providing us with this opportunity! If you would like to help us hire more maintainers to improve Rust, consider donating to RFMF.
+This post explains why we chose to support the Cargo team specifically, and introduces Scott Schafer, the new Cargo Maintainer in Residence.
+Why Cargo?
+The new MiR full-time position is dedicated to helping with the maintenance of Cargo, our build system and package manager. The Cargo project is deeply involved in many new Rust features, improvements, and Project Goals. Combined with its cross-cutting nature, where it has to support many different use-cases and integrate with several other tools, it takes a lot of work just to keep up with its maintenance needs, let alone support so many feature requests and proposed changes.
+Because of that, the Cargo team has sometimes struggled with meeting its maintenance demands. You might remember that for several years, it actually held a feature freeze, to reduce Cargo's internal tech debt, perform necessary refactorings, go through the issue and pull request backlog, and come up with scalable internal development and design processes, so that they could eventually go back to even thinking about adding new features.
+Recently, some changes occurred within the team, which made it more difficult for them to meet their maintenance baseline. Some members of the team left, while others lost their dedicated funding for working on Cargo maintenance and had to scale down their involvement. The Funding team thus considered it very important to support this team, given that we had an opportunity to do so. And thus we decided to hire a full-time maintainer to work on Cargo for (at least) the next 12 months.
+Even though we know that a single full-time maintainer will not completely solve the maintenance struggles of the Cargo team, we hope that it will improve the situation, and provide a bit of a relief for the team.
+Introducing Scott Schafer
+We are very happy to welcome Scott Schafer (@muscraft) into the Maintainer in Residence role! Scott has joined the Cargo team three years ago, and apart from working on Cargo, he is also the lead of the Rust Docker team, which prepares official Docker images for every Rust version.
+Apart from working on general maintenance of Cargo, Scott has implemented Cargo's Workspace inheritance feature, and has also spearheaded a complex multi-year effort to switch the rendering of diagnostics in the Rust compiler to use the annotate-snippets crate. This effort has been completed in the Rust 1.93.0 release. Thanks to it, the same diagnostics interface can now be shared between the compiler and Cargo (and also other tools), which amongst other things unblocked further development of the Cargo linting system, which has now been stabilized and will ship in the Rust 1.100.0 release.
+Everyone we talked about was very excited about Scott becoming a Cargo Maintainer in Residence, and we share that feeling. We wish Scott all the best in his new role, and we are very happy that we can support his maintenance work.
+Here is what Scott thinks about it:
+I am incredibly excited to work on Cargo full-time! There have been so many things that I wish I could've worked on over the years, that I will now be able to get to. I hope that my efforts will bring Cargo into a more maintainable state.
+Conclusion
+We are incredibly happy that we keep getting more funds for the Rust Foundation Maintainers Fund, which allows us to support Rust Project contributors. The funding team will be working with the supported maintainers, and also the funders, to ensure that they are all happy with the arrangement, so that we can secure stable funding for Rust maintenance for years to come.
+If you would like to help us support more Rust maintainers, consider donating to RFMF!
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 190 | f011688 | https://shuttle.rs/blog/2024/01/24/writing-cronjobs-rust | 2024-01-31T00:00:00 | twir-links ===
+Writing Cronjobs in Rust | Shuttle
+⭐️ If you like Shuttle,give it a star on GitHuborfollow us on Twitter
+Blog
+Docs
+Customers
+Writing Cronjobs in Rust
+Joshua Mo  • 23 January 2024
+Stay updated
+Get the latest news about Shuttle features and Rust tips
+Subscribe
+In this article we're going to talk about how you can write your own cron jobs as a web service using Shuttle!
+Cron jobs (or "scheduled tasks") are useful for many things. They allow you to automatically do things like:
+Automate data back-ups.
+Adding daily reminders (for example to customers who are signed up to a service you own but haven't started using it yet).
+Creating/writing reports.
+If you're interested in the final code and want to deploy quickly, you can find the repo here. You can deploy it with two simple steps:
+Run shuttle init --from shuttle-hq/shuttle-examples --subfolder shuttle-cron and follow the prompt (requires cargo-shuttle installed)
+Run shuttle deploy. That's it!
+Getting Started#
+If you don't have cargo-shuttle installed, you can install it by running the command below (requires Rust + Cargo installed):
+cargo install cargo-shuttle
+To get started, you'll want to initialise a project with cargo-shuttle:
+shuttle init
+You'll want to make sure to follow the prompt and choose None when the framework options come up. This will spawn a custom service that you can use with Shuttle. For this article, we will be using the project name shuttle-example-cron.
+Once done, we'll want to install the following dependencies:
+serde - Allows us to de/serialize tasks
+chrono - Allows us to use timestamps
+apalis - The task queue framework we'll be using
+sqlx - Allows you to interact with your provisioned database
+shuttle-shared-db - Provisions database for you from Shuttle (locally via Docker, via the runtime in deployment)
+tower - Used with apalis so that the cron job can be hosted.
+We can install all of these with the following shell snippet:
+cargo add apalis -F cron,postgres,extensions,retry
+cargo add chrono -F serde,clock
+cargo add serde -F derive
+cargo add shuttle-shared-db -F postgres
+cargo add sqlx -F runtime-tokio-native-tls,postgres
+cargo add tower
+Now that everything is installed, it's time to get coding!
+Writing our first cron job#
+Adding a database#
+Before we do anything else, let's provision a database using the Shuttle runtime. You'll want to add the shuttle-shared-db annotation to your main function like so and set up our Postgres connection pool:
+use sqlx::{PgPool, postgres::PgPoolOptions};
+pub struct MyService {
+db: PgPool,
+}
+#[shuttle_runtime::main]
+async fn shuttle_main(
+#[shuttle_shared_db::Postgres] conn_string: String,
+) -> Result<MyService, shuttle_runtime::Error> {
+let db = PgPoolOptions::new()
+.min_connections(5)
+.max_connections(5)
+.connect(&conn_string)
+.await
+.unwrap();
+Ok(MyService { db })
+}
+As you can see, pretty simple! You would otherwise need to run a Docker command to spin this up. In production, you would also need to manually instantiate and manage your Postgres instance or rely on an IaC (infrastructure as code) tool like Terraform.
+Then we need to implement a few new things:
+A struct that implements apalis::prelude::Job
+A struct that can be added as a shared data extension to our cron service with a function that will do the actual work we want
+A function that gets called by apalis when work is required to be done (according to the cronjob schedule)
+Let's start with implementing our job struct. Note that when using apalis jobs in a cronjob context, they must also implement From<chrono::DateTime<chrono::Utc>> (essentially this means they can't hold any other fields):
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use apalis::prelude::Job;
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+struct Reminder(DateTime<Utc>);
+impl From<DateTime<Utc>> for Reminder {
+fn from(t: DateTime<Utc>) -> Self {
+Reminder(t)
+}
+}
+// set up an identifier for apalis
+impl Job for Reminder {
+const NAME: &'static str = "reminder::DailyReminder";
+}
+Now we want to implement the function that will do the actual work when called by apalis. We can set this up so that it just says "Hello world from say_hello_world()!":
+use apalis::prelude::JobContext;
+async fn say_hello_world(job: Reminder, ctx: JobContext) {
+println!("Hello world from `say_hello_world()`!");
+}
+However, if you want to add extra variables (for example, a database connection pool) you need to add an extension layer in your service to be able to access them. Let's have a look at what this struct might look like:
+#[derive(Clone)]
+struct CronjobData {
+message: String
+}
+impl CronjobData {
+fn execute(&self, item: Reminder) {
+println!("{} from CronjobData::execute()!", &self.message);
+}
+}
+You can then feed this struct back into the say_hello_world function, which uses the execute() function:
+async fn say_hello_world(job: Reminder, ctx: JobContext) {
+println!("Hello world from send_reminder()!");
+// this lets you use variables stored in the CronjobData struct
+let svc = ctx.data_opt::<CronjobData>().unwrap();
+// this executes CronjobData::execute()
+svc.execute(job);
+}
+The variables for the CronjobData struct come from instantiating the struct and then adding it as a shared data extension to the Tower service that we use. This allows apalis to be able to use the data by using .data_opt() from the JobContext struct.
+Hooking it all up#
+Now we're going to hook the structs we made previously into our main app!
+To start with, we need to set up the PostgresStorage type so that we can use Postgres for durable job queues. Without durable job queues, our jobs would disappear if our web service has any outages! We can convert this directly from the PgPool type stored in our main struct and run the migrations for it like so:
+#[shuttle_runtime::async_trait]
+impl shuttle_runtime::Service for MyService {
+async fn bind(
+self,
+_addr: std::net::SocketAddr
+) -> Result<(), shuttle_runtime::Error> {
+// set up Postgres-backed storage
+let storage = PostgresStorage::new(self.db);
+// set up storage
+storage.setup().await.expect("Unable to run migrations :(");
+Ok(())
+}
+}
+The shuttle_runtime::Service trait is what allows your custom service to be packaged into a project that the Shuttle runtime can use. It also provides a HTTP address that you can optionally bind a HTTP-bound service to (for example, a web server).
+Now we can create a tower service that holds our job that we want to run. We can use the DefaultRetryPolicy provided to us by apalis to be able to add automatic re-tries, as well as layering the shared data as an Extension:
+use tower::ServiceBuilder;
+use apalis::layers::{DefaultRetryLayer, Extension, RetryLayer};
+use apalis::prelude::job_fn;
+// .. your previous code
+let cron_service_ext = CronjobData {
+message: "Hello world".to_string(),
+};
+// create a servicebuilder for the cronjob
+let service = ServiceBuilder::new()
+.layer(RetryLayer::new(DefaultRetryPolicy))
+.layer(Extension(cron_service_ext))
+.service(job_fn(say_hello_world));
+Now that we've built the service, we need to build the worker and then finally create an apalis::Monitor process that will carry the work out:
+use apalis::prelude::timer::TokioTimer;
+use apalis::cron::{Schedule, CronStream};
+use apalis::prelude::{WorkerBuilder, Monitor};
+// .. your previous code
+let schedule = Schedule::from_str("* * * * * *").expect("Couldn't start the scheduler!");
+// create a worker that uses the service created from the cronjob
+let worker = WorkerBuilder::new("morning-cereal")
+.with_storage(storage.clone())
+.stream(
+CronStream::new(schedule)
+.timer(TokioTimer)
+.to_stream()
+)
+.build(service);
+// start your worker up
+Monitor::new().register(worker).run().await.expect("Unable to start worker");
+Here is the full code for our main application:
+#[shuttle_runtime::async_trait]
+impl shuttle_runtime::Service for MyService {
+async fn bind(
+self,
+_addr: std::net::SocketAddr
+) -> Result<(), shuttle_runtime::Error> {
+let storage = PostgresStorage::new(self.db.clone());
+// set up storage
+storage.setup().await.expect("Unable to run migrations :(");
+let cron_service_ext = CronjobData {
+message: "Hello world".to_string()
+};
+// create a servicebuilder for the cronjob
+let service = ServiceBuilder::new()
+.layer(RetryLayer::new(DefaultRetryPolicy))
+.layer(Extension(cron_service_ext))
+.service(job_fn(say_hello_world));
+let schedule = Schedule::from_str("* * * * * *")
+.expect("Couldn't start the scheduler!");
+// create a worker that uses the service created from the cronjob
+let worker = WorkerBuilder::new("morning-cereal")
+.with_storage(storage.clone())
+.stream(CronStream::new(schedule).timer(TokioTimer).to_stream())
+.build(service);
+// start your worker up
+Monitor::new()
+.register(worker)
+.run()
+.await
+.expect("Unable to start worker");
+Ok(())
+}
+}
+Deploying#
+Now that we've written everything, all you need to do is shuttle deploy (with the --allow-dirty flag if working on a dirty Git branch). When the deployment is finished, you'll get the deployment information as well as the deployment database URL string.
+Extending#
+Now that we've finished our new cron service, here's a few ideas you can use to extend it:
+Add more cron jobs! You can also abstract creating the scheduler, worker, etc into a new struct (or enum) so that you don't need to manually instantiate everything as you may want to use the same defaults over many if not all of your jobs.
+Augment the service to use Axum (or another web framework!) instead of purely tower. You can find out more about this from this GitHub example.
+Finishing Up#
+Thanks for reading! I hope this cron job template helps you.
+Further reading:
+Find out more about the Axum framework here.
+Find out more about using a database with SQLx here.
+Stay updated
+Get the latest news about Shuttle features and Rust tips
+Subscribe
+Share article
+Introducing ShuttleLabs: Cutting-Edge Rust Talks
+30 January 2024 •
+Using Serde in Rust
+23 January 2024 •
+On this page
+-
+Getting Started
+Writing our first cron job
+-
+Deploying
+-
+Extending
+-
+Finishing Up
+Ship Faster
+Deploy Rust in seconds, not hours
+Zero config. No Dockerfiles. Just write Rust and ship.Start Building
+Build the Future of Backend Development with us
+Join the movement and help revolutionize the world of backend development. Together, we can create the future!
+Github
+Discord
+Twitter
+ShuttleFeaturesReleases
+CompanyAboutContactTerms of ServicePrivacy PolicyAcceptable Use PolicyCookie PolicyData Processing Addendum
+DevelopersDocsGuidesExamplesShuttle HeroesCustomersLaunchpadCode Hunt
+CommunityGitHubDiscordTwitterLinkedIn
+© 2025 Shuttle
+Backed by
+
+=== ROW 191 | f011716 | https://packtpub.com/en-us/product/asynchronous-programming-in-rust-9781805128137 | 2024-02-14T00:00:00 | twir-links ===
+Asynchronous Programming in Rust | Programming | Paperback
+18 captures
+27 May 2024 - 20 May 2026
+Apr
+MAY
+Jun
+20
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260520183805/https://www.packtpub.com/en-us/product/asynchronous-programming-in-rust-9781805128137
+CANCEL
+Subscription
+0
+Your Cart
+(0 item)
+You have no products in your basket yet
+Save more on your purchases!
+Buy 2 products and get 15% off
+Buy 3-4 products and get 20% off
+Buy 5+ products and get 30% off
+Savings automatically calculated. No voucher code required.
+Checkout
+Account
+Sign in
+New User? Create Account
+Your Account
+Your Orders
+Country Selection:
+Change country
+United States
+Great Britain
+India
+Germany
+France
+Canada
+Russia
+Spain
+Brazil
+Australia
+Singapore
+Canary Islands
+Hungary
+Ukraine
+Luxembourg
+Estonia
+Lithuania
+South Korea
+Turkey
+Switzerland
+Colombia
+Taiwan
+Chile
+Norway
+Ecuador
+Indonesia
+New Zealand
+Cyprus
+Denmark
+Finland
+Poland
+Malta
+Czechia
+Austria
+Sweden
+Italy
+Egypt
+Belgium
+Portugal
+Slovenia
+Ireland
+Romania
+Greece
+Argentina
+Netherlands
+Bulgaria
+Latvia
+South Africa
+Malaysia
+Japan
+Slovakia
+Philippines
+Mexico
+Thailand
+Explore Products
+Best Sellers
+New Releases
+Books
+Events
+Videos
+Audiobooks
+Packt Hub
+Free Learning
+SALE ENDS IN
+0
+Days
+:
+00
+Hours
+:
+00
+Minutes
+:
+00
+Seconds
+Home
+>
+Programming
+>
+Application Development
+>
+Asynchronous Programming in Rust
+Asynchronous Programming in Rust: Learn asynchronous programming by building working examples of futures, green threads, and runtimes
+Carl Fredrik Samson
+$49.99
+4.6
+(20 Ratings)
+Paperback
+Feb 2024
+306 pages
+1st Edition
+eBook
+$35.99
+$39.99
+Paperback
+$49.99
+Paperback
++ Subscription
+$29.99
+Monthly
+Carl Fredrik Samson
+$49.99
+4.6
+(20 Ratings)
+Paperback
+Feb 2024
+306 pages
+1st Edition
+eBook
+$35.99
+$39.99
+Paperback
+$49.99
+Paperback
++ Subscription
+$29.99
+Monthly
+eBook
+$35.99
+$39.99
+Paperback
+$49.99
+Paperback
++ Subscription
+$29.99
+Monthly
+What do you get with Print?
+Instant access to your digital copy whilst your Print order is Shipped
+Paperback book shipped to your preferred address
+Redeem a companion digital copy on all Print orders
+Access this title in our online reader with advanced features
+DRM FREE - Read whenever, wherever and however you want
+AI Assistant (beta) to help accelerate your learning
+Buy Now
+ADD TO CART
+Contact Details
+Payment Processing...
+Completed
+Shipping Address
+Billing is same as shipping information
+Billing Address
+Shipping Methods
+View table of contents
+Preview Book
+Asynchronous Programming in Rust
+Page
+1
+of 8
+Download Code
+Key benefits
+Master asynchronous Rust through examples focusing on key concepts
+Build a solid understanding of concepts such as coroutines, fibers, futures, and callbacks
+Explore Rust's futures, craft your own runtime, and excel in handling stacks, ABIs, syscalls, and inline assembly
+Purchase of the print or Kindle book includes a free PDF eBook
+Description
+Step into the world of asynchronous programming with confidence by conquering the challenges of unclear concepts with this hands-on guide. Using functional examples, this book simplifies the trickiest concepts, exploring goroutines, fibers, futures, and callbacks to help you navigate the vast Rust async ecosystem with ease.
+You’ll start by building a solid foundation in asynchronous programming and explore diverse strategies for modeling program flow. The book then guides you through concepts like epoll, coroutines, green threads, and callbacks using practical examples. The final section focuses on Rust, examining futures, generators, and the reactor-executor pattern. You’ll apply your knowledge to create your own runtime, solidifying expertise in this dynamic domain. Throughout the book, you’ll not only gain proficiency in Rust's async features but also see how Rust models asynchronous program flow.
+By the end of the book, you'll possess the knowledge and practical skills needed to actively contribute to the Rust async ecosystem.
+Who is this book for?
+This book is for programmers who want to enhance their understanding of asynchronous programming, especially those experienced in VM’ed or interpreted languages like C#, Java, Python, JavaScript, and Go. If you work with C or C++ but have had limited exposure to asynchronous programming, this book serves as a resource to broaden your knowledge in this area.
+Although the examples are predominantly in Rust, the intricacies of Rust’s futures are covered in detail. So, anyone with a keen interest in learning Rust or with working knowledge of Rust will be able to get the most out of this book.
+What you will learn
+Explore the essence of asynchronous program flow and its significance
+Understand the difference between concurrency and parallelism
+Gain insights into how computers and operating systems handle concurrent tasks
+Uncover the mechanics of async/await
+Understand Rust's futures by implementing them yourself
+Implement green threads from scratch to thoroughly understand them
+Estimated delivery fee
+Deliver to United States
+Economy delivery
+10 - 13 business days
+Free
+$6.95
+Premium delivery
+6 - 9 business days
+$21.95
+(Includes tracking information)
+Product Details
+Publication date, Length, Edition, Language, ISBN-13
+Publication date :
+Feb 09, 2024
+Length:
+306 pages
+Edition :
+1st
+Language :
+English
+ISBN-13 :
+9781805128137
+Category :
+Programming
+Languages :
+Rust
+Concepts :
+Application Development
+What do you get with Print?
+Instant access to your digital copy whilst your Print order is Shipped
+Paperback book shipped to your preferred address
+Redeem a companion digital copy on all Print orders
+Access this title in our online reader with advanced features
+DRM FREE - Read whenever, wherever and however you want
+AI Assistant (beta) to help accelerate your learning
+Buy Now
+ADD TO CART
+Contact Details
+Payment Processing...
+Completed
+Shipping Address
+Billing is same as shipping information
+Billing Address
+Shipping Methods
+Estimated delivery fee
+Deliver to United States
+Economy delivery
+10 - 13 business days
+Free
+$6.95
+Premium delivery
+6 - 9 business days
+$21.95
+(Includes tracking information)
+Product Details
+Publication date :
+Feb 09, 2024
+Length:
+306 pages
+Edition :
+1st
+Language :
+English
+ISBN-13 :
+9781805128137
+Category :
+Programming
+Languages :
+Rust
+Concepts :
+Application Development
+Packt Subscriptions
+See our plans and pricing
+$19.99
+billed monthly
+Unlimited access to Packt's library of 7,000+ practical books and videos
+Constantly refreshed with 50+ new titles a month
+Exclusive Early access to books as they're written
+Solve problems while you work with advanced search and reference features
+Offline reading on the mobile app
+Simple pricing, no contract
+START FREE TRIAL
+BUY NOW
+$199.99
+billed annually
+Unlimited access to Packt's library of 7,000+ practical books and videos
+Constantly refreshed with 50+ new titles a month
+Exclusive Early access to books as they're written
+Solve problems while you work with advanced search and reference features
+Offline reading on the mobile app
+Choose a DRM-free eBook or Video every month to keep
+PLUS own as many other DRM-free eBooks or Videos as you like for just $5 each
+Exclusive print discounts
+START FREE TRIAL
+BUY NOW
+$279.99
+billed in 18 months
+Unlimited access to Packt's library of 7,000+ practical books and videos
+Constantly refreshed with 50+ new titles a month
+Exclusive Early access to books as they're written
+Solve problems while you work with advanced search and reference features
+Offline reading on the mobile app
+Choose a DRM-free eBook or Video every month to keep
+PLUS own as many other DRM-free eBooks or Videos as you like for just $5 each
+Exclusive print discounts
+START FREE TRIAL
+BUY NOW
+Frequently bought together
+Go Programming - From Beginner to Professional
+Read more
+Mar 2024
+680 pages
+4.5 (14)
+eBook
+eBook
+$34.19
+Paperback
+$46.99
+$34.19
+$37.99
+$46.99
+ADD TO CART
+Rust Web Programming
+Read more
+Jan 2023
+666 pages
+5 (6)
+eBook
+eBook
+$37.79
+Paperback
+$51.99
+$37.79
+$41.99
+$51.99
+ADD TO CART
+Asynchronous Programming in Rust
+Read more
+Feb 2024
+306 pages
+4.6 (20)
+eBook
+eBook
+$35.99
+Paperback
+$49.99
+$35.99
+$39.99
+$49.99
+ADD TO CART
+Total
+$
+148.97
+ADD SELECTED TO CART
+$46.99
+ADD TO CART
+$51.99
+ADD TO CART
+$49.99
+ADD TO CART
+Total
+$
+148.97
+ADD SELECTED TO CART
+A book to keep every month + unlimited access
+Download this title for $29.99 with a premium membership
+Learn More
+Table of Contents
+15 Chapters
+Part 1:Asynchronous Programming Fundamentals
+Part 1:Asynchronous Programming Fundamentals
+Chapter 1: Concurrency and Asynchronous Programming: a Detailed Overview
+Chapter 1: Concurrency and Asynchronous Programming: a Detailed Overview
+Technical requirements
+An evolutionary journey of multitasking
+Concurrency versus parallelism
+The role of the operating system
+The CPU and the operating system
+Interrupts, firmware, and I/O
+Summary
+Chapter 2: How Programming Languages Model Asynchronous Program Flow
+Chapter 2: How Programming Languages Model Asynchronous Program Flow
+Definitions
+Threads provided by the operating system
+Fibers and green threads
+Callback based approaches
+Coroutines: promises and futures
+Summary
+Chapter 3: Understanding OS-Backed Event Queues, System Calls, and Cross-Platform Abstractions
+Chapter 3: Understanding OS-Backed Event Queues, System Calls, and Cross-Platform Abstractions
+Technical requirements
+Why use an OS-backed event queue?
+Readiness-based event queues
+Completion-based event queues
+epoll, kqueue, and IOCP
+Cross-platform event queues
+System calls, FFI, and cross-platform abstractions
+Summary
+Part 2:Event Queues and Green Threads
+Part 2:Event Queues and Green Threads
+Chapter 4: Create Your Own Event Queue
+Chapter 4: Create Your Own Event Queue
+Technical requirements
+Design and introduction to epoll
+The ffi module
+The Poll module
+The main program
+Summary
+Chapter 5: Creating Our Own Fibers
+Chapter 5: Creating Our Own Fibers
+Technical requirements
+How to use the repository alongside the book
+Background information
+An example we can build upon
+The stack
+Implementing our own fibers
+Finishing thoughts
+Summary
+Part 3:Futures and async/await in Rust
+Part 3:Futures and async/await in Rust
+Chapter 6: Futures in Rust
+Chapter 6: Futures in Rust
+What is a future?
+Leaf futures
+Non-leaf futures
+A mental model of an async runtime
+What the Rust language and standard library take care of
+I/O vs CPU-intensive tasks
+Summary
+Chapter 7: Coroutines and async/await
+Chapter 7: Coroutines and async/await
+Technical requirements
+Introduction to stackless coroutines
+An example of hand-written coroutines
+async/await
+c-async-await—concurrent futures
+Final thoughts
+Summary
+Chapter 8: Runtimes, Wakers, and the Reactor-Executor Pattern
+Chapter 8: Runtimes, Wakers, and the Reactor-Executor Pattern
+Technical requirements
+Introduction to runtimes and why we need them
+Improving our base example
+Creating a proper runtime
+Step 1 – Improving our runtime design by adding a Reactor and a Waker
+Step 2 – Implementing a proper Executor
+Step 3 – Implementing a proper Reactor
+Experimenting with our new runtime
+Summary
+Chapter 9: Coroutines, Self-Referential Structs, and Pinning
+Chapter 9: Coroutines, Self-Referential Structs, and Pinning
+Technical requirements
+Improving our example 1 – variables
+Improving our example 2 – references
+Improving our example 3 – this is… not… good…
+Discovering self-referential structs
+Pinning in Rust
+Improving our example 4 – pinning to the rescue
+Summary
+Chapter 10: Creating Your Own Runtime
+Chapter 10: Creating Your Own Runtime
+Technical requirements
+Experimenting with our runtime
+Challenges with asynchronous Rust
+The future of asynchronous Rust
+Summary
+Epilogue
+Index
+Index
+Why subscribe?
+Other Books You May Enjoy
+Other Books You May Enjoy
+Packt is searching for authors like you
+Share your thoughts
+Download a free PDF copy of this book
+Recommendations for you
+Fundamentals of Object-Oriented Programming - C++
+Read more
+May 2025
+7hrs 6mins
+5 (1)
+Video
+Video
+$32.99
+$32.99
+ADD TO CART
+Debunking C++ Myths
+Read more
+Dec 2024
+226 pages
+5 (1)
+eBook
+eBook
+$30.59
+Paperback
+$41.99
+$30.59
+$33.99
+$41.99
+ADD TO CART
+Go Recipes for Developers
+Read more
+Dec 2024
+350 pages
+eBook
+eBook
+$30.59
+Paperback
+$41.99
+$30.59
+$33.99
+$41.99
+ADD TO CART
+50 Algorithms Every Programmer Should Know
+Read more
+Sep 2023
+538 pages
+4.5 (64)
+eBook
+eBook
+$35.99
+Paperback
+$49.99
+Hardcover
+$49.99
+$35.99
+$39.99
+$49.99
+$49.99
+ADD TO CART
+Mastering JavaScript Variable Declarations - Insights into VAR, LET, and CONST in 2025
+Read more
+Feb 2026
+5hrs 19mins
+Video
+Video
+$120.99
+$120.99
+ADD TO CART
+Asynchronous Programming with C++
+Read more
+Nov 2024
+424 pages
+5 (1)
+eBook
+eBook
+$30.59
+Paperback
+$41.99
+$30.59
+$33.99
+$41.99
+ADD TO CART
+Modern CMake for C++
+Read more
+May 2024
+504 pages
+4.6 (14)
+eBook
+eBook
+$35.99
+Paperback
+$49.99
+$35.99
+$39.99
+$49.99
+ADD TO CART
+Learn Python Programming
+Read more
+Nov 2024
+620 pages
+3.7 (3)
+eBook
+eBook
+$28.79
+Paperback
+$39.99
+$28.79
+$31.99
+$39.99
+ADD TO CART
+Learn to Code with Rust
+Read more
+Apr 2026
+66hrs 46mins
+5 (1)
+Video
+Video
+$74.99
+$74.99
+ADD TO CART
+Modern Python Cookbook
+Read more
+Jul 2024
+818 pages
+4.9 (18)
+eBook
+eBook
+$39.59
+Paperback
+$54.99
+$39.59
+$43.99
+$54.99
+ADD TO CART
+Customer reviews
+Top Reviews
+Top Reviews
+Most Recent
+Rating distribution
+4.6
+(20 Ratings)
+5 star
+80%
+4 star
+10%
+3 star
+0%
+2 star
+5%
+1 star
+5%
+Filter
+Top Reviews
+Top Reviews
+Most Recent
+Filter reviews by
+All
+All
+Packt verified reviews
+Packt verified reviews
+Feefo verified reviews
+Feefo verified reviews
+Amazon verified reviews
+Amazon verified reviews
+All stars
+All stars
+5 Star only
+5 Star only
+4 Star only
+4 Star only
+3 Star only
+3 Star only
+2 Star only
+2 Star only
+1 Star only
+1 Star only
+K Lavanya
+Feb 19, 2024
+5
+Delving into Asynchronous Programming with Rust” by Carl Fredrik Samson provides an accessible and thorough exploration of asynchronous programming concepts tailored for Rust developers. Samson adeptly navigates through the intricacies of futures and green threads, offering practical examples and clear explanations. What sets this book apart is its emphasis on real-world applications, making it a valuable resource for developers seeking to enhance their understanding of asynchronous programming in Rust. Whether you’re a newcomer or a seasoned Rustacean, Samson’s insights and techniques will undoubtedly empower you to write efficient, scalable code that leverages Rust’s asynchronous capabilities to the fullest.
+Amazon Verified review
+Allen Wyma
+Mar 20, 2024
+5
+Async in Rust is a must-do now-a-days. this book goes very deep into the topic and great for those who want to do any Rust programs. This is the ultimate guide for that!
+Amazon Verified review
+Maxim Bovykin
+Feb 21, 2024
+5
+We live in a world filled with high-level programming languages, where average programmers don't always opt to deep dive into the inner workings of the runtimes and what's happening behind the scenes. We all write concurrent code (because our languages and runtimes make this job so easy for us), but are we doing it as efficiently as we can? This book approaches async programming from first principles, I would say a very rare approach nowadays, but for which I'm very grateful. The best engineers need to understand the fundamentals, especially as systems scale. Another unique thing about the book is, honestly, it's language agnostic. :) Yes, it's a Rust book that's language agnostic. The author goes above and beyond by using basic constructs, like OS and CPU cooperation through syscalls, that can be applied to any language if you choose so. Rust comes as a very nice bonus. The author rebuilds the runtime for async programming and shows how to create language-specific async programming blocks like fibers and coroutines. We gain a deep understanding of stacks and heaps, how context switching really works, and how to make the CPU jump to specific stacks! By the end of the book, we, the readers, gain a deep understanding of how async Rust works behind the scenes, down to the level of the CPU's instruction set! We understand the event queues provided by the OS as well as how to build our own on top of it (similar to what crates or packages offer). The introduction of this book was very timely for me personally - as I'm diving deep into the advanced topic of concurrent resource scheduling and Rust as well. I highly recommend giving this book a read, even a few times, to cement your understanding of async programming. It's a very rare book that's worth every minute one can spend reading it and, more importantly, going through the hands-on labs in there!
+Amazon Verified review
+Vladimir Krivopalov
+Sep 13, 2024
+5
+This book explores the topic of asynchronous programming in great detail, starting from the basics and building simplified yet fully working solutions to show how things work in real systems. A great read for both Rust developers and anyone interested in learning asynchronous programming.
+Amazon Verified review
+Shachar Langbeheim
+May 06, 2024
+5
+This book is relevant to anyone wondering how async systems actually work, regardless of language. The exercises are in Rust, but the content is mostly language agnostic.
+Amazon Verified review
+Previous
+1
+2
+3
+4
+Next
+People who bought this also bought
+50 Algorithms Every Programmer Should Know
+Read more
+Sep 2023
+538 pages
+4.5 (64)
+eBook
+eBook
+$35.99
+Paperback
+$49.99
+Hardcover
+$49.99
+$35.99
+$39.99
+$49.99
+$49.99
+ADD TO CART
+Event-Driven Architecture in Golang
+Read more
+Nov 2022
+384 pages
+4.9 (10)
+eBook
+eBook
+$37.79
+Paperback
+$51.99
+$37.79
+$41.99
+$51.99
+ADD TO CART
+The Python Workshop Second Edition
+Read more
+Nov 2022
+600 pages
+4.6 (21)
+eBook
+eBook
+$39.59
+Paperback
+$54.99
+$39.59
+$43.99
+$54.99
+ADD TO CART
+Template Metaprogramming with C++
+Read more
+Aug 2022
+480 pages
+4.6 (13)
+eBook
+eBook
+$35.99
+Paperback
+$48.99
+$35.99
+$39.99
+$48.99
+ADD TO CART
+Domain-Driven Design with Golang
+Read more
+Dec 2022
+204 pages
+4.4 (18)
+eBook
+eBook
+$34.19
+Paperback
+$46.99
+$34.19
+$37.99
+$46.99
+ADD TO CART
+About the author
+Carl Fredrik Samson
+Carl Fredrik Samson
+Carl Fredrik Samson is a popular technology writer and has been active in the Rust community since 2018. He has an MSc in Business Administration where he specialized in strategy and finance. When not writing, he's a father of two children and a CEO of a company with 300 employees. He's been interested in different kinds of technologies his whole life and his programming experience ranges from programming against old IBM mainframes to modern cloud computing, using everything from assembly to Visual Basic for Applications. He has contributed to several open source projects including the official documentation for asynchronous Rust.
+Read more
+See other products by Carl Fredrik Samson
+Get free access to Packt library with over  7500+ books and video courses for 7 days!
+Start Free Trial
+FAQs
+What is the digital copy I get with my Print order?
+When you buy any Print edition of our Books, you can redeem (for free) the eBook edition of the Print Book you’ve purchased. This gives you instant access to your book when you make an order via PDF, EPUB or our online Reader experience.
+What is the delivery time and cost of print book?
+Shipping Details
+USA:'
+Economy: Delivery to most addresses in the US within 10-15 business days
+Premium: Trackable Delivery to most addresses in the US within 3-8 business days
+UK:
+Economy: Delivery to most addresses in the U.K. within 7-9 business days.
+Shipments are not trackable
+Premium: Trackable delivery to most addresses in the U.K. within 3-4 business days!
+Add one extra business day for deliveries to Northern Ireland and Scottish Highlands and islands
+EU:
+Premium: Trackable delivery to most EU destinations within 4-9 business days.
+Australia:
+Economy: Can deliver to P. O. Boxes and private residences.
+Trackable service with delivery to addresses in Australia only.
+Delivery time ranges from 7-9 business days for VIC and 8-10 business days for Interstate metro
+Delivery time is up to 15 business days for remote areas of WA, NT & QLD.
+Premium: Delivery to addresses in Australia only
+Trackable delivery to most P. O. Boxes and private residences in Australia within 4-5 days based on the distance to a destination following dispatch.
+India:
+Premium: Delivery to most Indian addresses within 5-6 business days
+Rest of the World:
+Premium: Countries in the American continent: Trackable delivery to most countries within 4-7 business days
+Asia:
+Premium: Delivery to most Asian addresses within 5-9 business days
+Disclaimer:
+All orders received before 5 PM U.K time would start printing from the next business day. So the estimated delivery times start from the next day as well. Orders received after 5 PM U.K time (in our internal systems) on a business day or anytime on the weekend will begin printing the second to next business day. For example, an order placed at 11 AM today will begin printing tomorrow, whereas an order placed at 9 PM tonight will begin printing the day after tomorrow.
+Unfortunately, due to several restrictions, we are unable to ship to the following countries:
+Afghanistan
+American Samoa
+Belarus
+Brunei Darussalam
+Central African Republic
+The Democratic Republic of Congo
+Eritrea
+Guinea-bissau
+Iran
+Lebanon
+Libiya Arab Jamahriya
+Somalia
+Sudan
+Russian Federation
+Syrian Arab Republic
+Ukraine
+Venezuela
+What is custom duty/charge?
+Customs duty are charges levied on goods when they cross international borders. It is a tax that is imposed on imported goods. These duties are charged by special authorities and bodies created by local governments and are meant to protect local industries, economies, and businesses.
+Do I have to pay customs charges for the print book order?
+The orders shipped to the countries that are listed under EU27 will not bear custom charges. They are paid by Packt as part of the order.
+List of EU27 countries: www.gov.uk/eu-eea:
+A custom duty or localized taxes may be applicable on the shipment and would be charged by the recipient country outside of the EU27 which should be paid by the customer and these duties are not included in the shipping charges been charged on the order.
+How do I know my custom duty charges?
+The amount of duty payable varies greatly depending on the imported goods, the country of origin and several other factors like the total invoice amount or dimensions like weight, and other such criteria applicable in your country.
+For example:
+If you live in Mexico, and the declared value of your ordered items is over $ 50, for you to receive a package, you will have to pay additional import tax of 19% which will be $ 9.50 to the courier service.
+Whereas if you live in Turkey, and the declared value of your ordered items is over € 22, for you to receive a package, you will have to pay additional import tax of 18% which will be € 3.96 to the courier service.
+How can I cancel my order?
+Cancellation Policy for Published Printed Books:
+You can cancel any order within 1 hour of placing the order. Simply contact customercare@packt.com with your order details or payment transaction id. If your order has already started the shipment process, we will do our best to stop it. However, if it is already on the way to you then when you receive it, you can contact us at customercare@packt.com using the returns and refund process.
+Please understand that Packt Publishing cannot provide refunds or cancel any order except for the cases described in our Return Policy (i.e. Packt Publishing agrees to replace your printed book because it arrives damaged or material defect in book), Packt Publishing will not accept returns.
+What is your returns and refunds policy?
+Return Policy:
+We want you to be happy with your purchase from Packtpub.com. We will not hassle you with returning print books to us. If the print book you receive from us is incorrect, damaged, doesn't work or is unacceptably late, please contact Customer Relations Team on customercare@packt.com with the order number and issue details as explained below:
+If you ordered (eBook, Video or Print Book) incorrectly or accidentally, please contact Customer Relations Team on customercare@packt.com within one hour of placing the order and we will replace/refund you the item cost.
+Sadly, if your eBook or Video file is faulty or a fault occurs during the eBook or Video being made available to you, i.e. during download then you should contact Customer Relations Team within 14 days of purchase on customercare@packt.com who will be able to resolve this issue for you.
+You will have a choice of replacement or refund of the problem items.(damaged, defective or incorrect)
+Once Customer Care Team confirms that you will be refunded, you should receive the refund within 10 to 12 working days.
+If you are only requesting a refund of one book from a multiple order, then we will refund you the appropriate single item.
+Where the items were shipped under a free shipping offer, there will be no shipping costs to refund.
+On the off chance your printed book arrives damaged, with book material defect, contact our Customer Relation Team on customercare@packt.com within 14 days of receipt of the book with appropriate evidence of damage and we will work with you to secure a replacement copy, if necessary. Please note that each printed book you order from us is individually made by Packt's professional book-printing partner which is on a print-on-demand basis.
+What tax is charged?
+Currently, no tax is charged on the purchase of any print book (subject to change based on the laws and regulations). A localized VAT fee is charged only to our European and UK customers on eBooks, Video and subscriptions that they buy. GST is charged to Indian customers for eBooks and video purchases.
+What payment methods can I use?
+You can pay with the following card types:
+Visa Debit
+Visa Credit
+MasterCard
+PayPal
+What is the delivery time and cost of print books?
+Shipping Details
+USA:'
+Economy: Delivery to most addresses in the US within 10-15 business days
+Premium: Trackable Delivery to most addresses in the US within 3-8 business days
+UK:
+Economy: Delivery to most addresses in the U.K. within 7-9 business days.
+Shipments are not trackable
+Premium: Trackable delivery to most addresses in the U.K. within 3-4 business days!
+Add one extra business day for deliveries to Northern Ireland and Scottish Highlands and islands
+EU:
+Premium: Trackable delivery to most EU destinations within 4-9 business days.
+Australia:
+Economy: Can deliver to P. O. Boxes and private residences.
+Trackable service with delivery to addresses in Australia only.
+Delivery time ranges from 7-9 business days for VIC and 8-10 business days for Interstate metro
+Delivery time is up to 15 business days for remote areas of WA, NT & QLD.
+Premium: Delivery to addresses in Australia only
+Trackable delivery to most P. O. Boxes and private residences in Australia within 4-5 days based on the distance to a destination following dispatch.
+India:
+Premium: Delivery to most Indian addresses within 5-6 business days
+Rest of the World:
+Premium: Countries in the American continent: Trackable delivery to most countries within 4-7 business days
+Asia:
+Premium: Delivery to most Asian addresses within 5-9 business days
+Disclaimer:
+All orders received before 5 PM U.K time would start printing from the next business day. So the estimated delivery times start from the next day as well. Orders received after 5 PM U.K time (in our internal systems) on a business day or anytime on the weekend will begin printing the second to next business day. For example, an order placed at 11 AM today will begin printing tomorrow, whereas an order placed at 9 PM tonight will begin printing the day after tomorrow.
+Unfortunately, due to several restrictions, we are unable to ship to the following countries:
+Afghanistan
+American Samoa
+Belarus
+Brunei Darussalam
+Central African Republic
+The Democratic Republic of Congo
+Eritrea
+Guinea-bissau
+Iran
+Lebanon
+Libiya Arab Jamahriya
+Somalia
+Sudan
+Russian Federation
+Syrian Arab Republic
+Ukraine
+Venezuela
+Programming Language
+Application Development
+Geospatial Analysis
+Application Testing
+CRM
+Design Patterns
+High Performance Programming
+Data Structures and Algorithms
+Software Architecture
+Object Oriented Programming
+Legal
+Terms and Conditions
+Privacy Policy
+Cookie Policy
+Shipping Policy
+Cancellation Policy
+Return Policy
+Support
+Help
+Contact Us
+Business
+Subscriptions for Teams
+Partnerships
+Insight Reports
+Custom eBooks
+Careers
+Packt China
+Become an author
+Advertise with Packt
+Sponsored Newsletters
+Sponsored eBooks
+Packt+ Membership
+Subscription
+Packt Premium
+United States
+Company Address: Packt Publishing Ltd, Grosvenor House, 11 St Paul's Square, Birmingham, B3 1RB
+© 2026 Packt Publishing Limited All Rights Reserved
+You are browsing a version of our website which may not be the most relevant option for you. We suggest changing to the following version.
+Canada
+GO
+Signed in users are eligible for personalised offers and content recommendations.
+Sign in with Packt
+Sign in with Google
+Sign in with Github
+Create a Free Account To Continue Reading
+Sign Up/In with Google
+Sign Up/In with Github
+OR
+First name is required.
+Last name is required.
+The Password should contain at least :
+8 characters
+1 uppercase
+1 number
+Notify me about special offers, personalized product recommendations, and learning tips
+By signing up for the free trial you will receive emails related to this service, you can unsubscribe at any time
+By clicking ‘Create Account’, you are agreeing to our Privacy
+Policy and Terms
+& Conditions
+Create Account
+Already have an account?
+SIGN IN
+Sign in to activate your 7-day free access
+Sign Up/In with Google
+Sign Up/In with Github
+OR
+By redeeming the free trial you will receive emails related to this service, you can unsubscribe at any time.
+Sign In
+Forgot Password?
+
+=== ROW 193 | f012568 | https://reddit.com/r/rust/comments/1lknjc1/this_week_in_rust_605 | 2025-06-25T00:00:00 | twir-links ===
+This Week in Rust #605 : r/rust
+Skip to main content
+This Week in Rust #605 : r/rust
+Open menu
+Open navigation
+Go to Reddit Home
+r/rust
+Sign Up
+Sign up for Reddit
+Log In
+Log in to Reddit
+Expand user menu
+Open settings menu
+Go to rust
+r/rust
+• 1y ago
+b-dillo
+This Week in Rust #605
+📅 this week in rust
+this-week-in-rust.org
+Open
+Share
+Sort by:
+Best
+Open comment sort options
+Best
+Top
+New
+Controversial
+Old
+Q&A
+Comments Section
+b-dillo
+•
+1y ago
+publishing in progress, standby...
+Reply
+Share
+b-dillo
+•
+1y ago
+done!
+Reply
+Share
+More replies
+p32blo
+•
+1y ago
+•
+Edited  1y ago
+Hey everyone, here you can follow the r/rust comment threads of articles featured in TWIR (This Week in Rust). I've always found it helpful to search for additional insights in the comment section here and I hope you can find it helpful too.
+If you are curious how this comment is generated you can check https://github.com/p32blo/twir-reddit
+Enjoy !
+Official
+Announcing the Clippy feature freeze | Inside Rust Blog ↑561 | 15 comments
+Project/Tooling Updates
+tantivy 0.24 has been released! Cardinality aggregations, regex support in phrase queries, JSON field enhancements and much more! ↑69 | 8 comments
+Observations/Thoughts
+Why I Switched from Flutter + Rust to Rust + egui ↑204 | 42 comments
+Weird expressions in rust ↑51 | 4 comments
+Migrating off Legacy Tokio at Scale ↑165 | 12 comments
+Writeup on driving the rust compiler and using it to compile shellcode. I haven't seen much documentation on this so I figured I would break it down as simply as possible. ↑10 | 6 comments
+Counter Service: How we rewrote it in Rust ↑214 | 24 comments
+Defending Democracies With Rust ↑0 | 34 comments
+Rust Walkthroughs
+Porting GPU shaders to Rust 30x faster with AI ↑0 | 8 comments
+Experiments with DNA Compression and Generating Complimentary Base Pairs ↑38 | 9 comments
+Writing a basic Linux device driver when you know nothing about Linux drivers or USB ↑527 | 27 comments
+Rewriting Kafka in Rust Async: Insights and Lessons Learned in Rust ↑207 | 22 comments
+People also ask about section
+People also ask about
+Overview of This Week in Rust #605
+Top Rust libraries for web development
+Best practices for Rust error handling
+How to optimize Rust code performance
+Rust vs Go Which is better for microservices
+New to Reddit?
+Create your account and connect with a world of communities.
+Continue with Email
+Continue with Phone Number
+By continuing, you agree to our
+User Agreement
+and acknowledge that you understand the
+Privacy Policy.
+My guy memorized his tape 😂
+r/Construction
+•
+3y ago
+My guy memorized his tape 😂
+8.9K upvotes
+·
+307 comments
+Got this text for an unknown number in my area code who described what I was wearing.
+r/Scams
+•
+3y ago
+Got this text for an unknown number in my area code who described what I was wearing.
+4.2K upvotes
+·
+432 comments
+Giving a talk about rust next week and needed the right apparel
+r/rust
+•
+3mo ago
+Giving a talk about rust next week and needed the right apparel
+901 upvotes
+·
+31 comments
+This is peak Rust and you can’t convince me otherwise.
+r/playrust
+•
+4mo ago
+This is peak Rust and you can’t convince me otherwise.
+323 upvotes
+·
+18 comments
+Brutal rust
+r/HRSPRS
+•
+5mo ago
+Brutal rust
+1.6K upvotes
+·
+54 comments
+Rust, what do you think? Share your Thoughts :)
+r/minipainting
+•
+1mo ago
+Rust, what do you think? Share your Thoughts :)
+737 upvotes
+·
+39 comments
+A Decade of Rustls
+r/rust
+•
+18d ago
+A Decade of Rustls
+186 upvotes
+·
+14 comments
+Why 2026 is looking like the year of Rust
+r/rust
+•
+7mo ago
+Why 2026 is looking like the year of Rust
+18 comments
+2025 State of Rust Survey Results
+r/rust
+•
+7mo ago
+2025 State of Rust Survey Results
+175 upvotes
+·
+56 comments
+strip #271 of 645
+r/richgirlfrombcn
+•
+1y ago
+strip #271 of 645
+211 upvotes
+·
+11 comments
+I Miss The Old Rust Job Market So Bad
+r/rust
+•
+9mo ago
+I Miss The Old Rust Job Market So Bad
+598 upvotes
+·
+154 comments
+How bad is this rust and how screwed am I?
+r/mechanic
+•
+4mo ago
+How bad is this rust and how screwed am I?
+147 upvotes
+·
+183 comments
+strip #169 of 645
+r/richgirlfrombcn
+•
+1y ago
+strip #169 of 645
+232 upvotes
+·
+8 comments
+Possible the most Based complaint about modern day Rust I've seen in a while
+r/playrust
+•
+4mo ago
+Possible the most Based complaint about modern day Rust I've seen in a while
+204 upvotes
+·
+12 comments
+Tried Rust. I'm a believer now.
+r/rust
+•
+28d ago
+Tried Rust. I'm a believer now.
+235 upvotes
+·
+53 comments
+What’s the scam here, I got a random text. Area code is from my area
+r/Scams
+•
+4y ago
+What’s the scam here, I got a random text. Area code is from my area
+42 upvotes
+·
+49 comments
+Phone Scam
+r/vancouverwa
+•
+3y ago
+Phone Scam
+85 upvotes
+·
+21 comments
+Is it risky to play along with scam texts?
+r/scambait
+•
+4y ago
+Is it risky to play along with scam texts?
+13 upvotes
+·
+12 comments
+My impression of Rust after using it for a serious project
+r/rust
+•
+3mo ago
+My impression of Rust after using it for a serious project
+456 upvotes
+·
+145 comments
+I'm amazed by Rust
+r/rust
+•
+1y ago
+I'm amazed by Rust
+287 upvotes
+·
+42 comments
+This Week in Rust #645
+r/rust
+•
+6mo ago
+This Week in Rust #645
+46 upvotes
+·
+9 comments
+This Week in Rust #664
+r/rust
+•
+2mo ago
+This Week in Rust #664
+71 upvotes
+·
+6 comments
+RustWeek 2026 - RustWeek 2026
+r/rust
+•
+5mo ago
+RustWeek 2026 - RustWeek 2026
+68 upvotes
+·
+7 comments
+Spam control on iPhone, how??
+r/iphone
+•
+2y ago
+Spam control on iPhone, how??
+139 upvotes
+·
+81 comments
+My concerns about the future of Rust
+r/rust
+•
+19d ago
+My concerns about the future of Rust
+477 upvotes
+·
+202 comments
+Public
+Anyone can view, post, and comment to this community
+0
+0
+Top Posts
+Reddit
+reReddit: Top posts of June 26, 2025
+Reddit
+reReddit: Top posts of June 2025
+Reddit
+reReddit: Top posts of 2025
+Reddit Rules
+Privacy Policy
+User Agreement
+Accessibility
+Reddit, Inc. © 2026. All rights reserved.
+Expand Navigation
+Collapse Navigation
+RESOURCES
+About Reddit
+Advertise
+Developer Platform
+Reddit Pro
+BETA
+Help
+Blog
+Careers
+Press
+Best of Reddit
+Reddit Rules
+Privacy Policy
+User Agreement
+Accessibility
+Reddit, Inc. © 2026. All rights reserved.
+
+=== ROW 195 | f012788 | https://netstack.fm/#episode-15 | 2025-11-26T00:00:00 | twir-links ===
+Netstack.FM®Skip to main contentadmin
+Episodes
+Browse topics →
+EpisodesNetstack.FM⁠®Episodes
+Listen on
+Play on Spotify (opens in new tab)
+Play on Apple Podcasts (opens in new tab)
+Play on YouTube (opens in new tab)
+Play on Amazon Music (opens in new tab)
+Play on Deezer (opens in new tab)
+Netstack.FM⁠®
+A podcast about networking, Rust, and everything in between.
+Subscribe via RSS (opens in new tab)
+Listen on
+Play on Spotify (opens in new tab)
+Play on Apple Podcasts (opens in new tab)
+Play on YouTube (opens in new tab)
+Play on Amazon Music (opens in new tab)
+Play on Deezer (opens in new tab)
+A podcast about networking, Rust, and everything in between. Join us as we explore the stack: from protocols and packet flows to the people and projects building the modern internet — all through the lens of Rust. Featuring deep dives, crate spotlights, and expert interviews.
+If you're into systems programming, networking theory, or the Rust ecosystem, you are in the right place.
+You can send your questions to hello@netstack.fm or come chat with us on Discord. Netstack.FM is producted by Plabayo BV, a European software studio based in Gent, Belgium, focused on building
+resilient, interoperable, and secure digital infrastructure.
+Episodes
+Browse topics →
+EpisodesNetstack.FM⁠®Episodes
+Listen on
+Play on Spotify (opens in new tab)
+Play on Apple Podcasts (opens in new tab)
+Play on YouTube (opens in new tab)
+Play on Amazon Music (opens in new tab)
+Play on Deezer (opens in new tab)
+SearchDate rangeAll datesLast 7 daysLast 30 daysLast 12 monthsThis yearLast yearSearchMatches titles, show notes, and transcripts.Episodes
+Season 1
+Season 1 · Episode 38Season 1 · Episode 38S01 E3833:07
+Building and testing network stacks with Rama
+Episode 38: Building and testing network stacks with Rama. In this Protocol Shorts episode of Netstack.fm, Glen talks with Brecht Stamper about Rama, the modular Rust framework for building clients, servers, proxies, and…
+Topics
+#Rama
+#Proxy
+26 May 2026
+Season 1 · Episode 37Season 1 · Episode 37S01 E371:06:45
+dial9: from black box to insight in Tokio
+episode 37: dial9: from black box to insight in Tokio. In this episode of Netstack.fm, Glen talks with Jess Izen and Russell Cohen from Amazon about Dial9, a new tool for understanding what’s happening inside Rust and…
+Topics
+#Interview
+#Observability
+5 May 2026
+Season 1 · Episode 36Season 1 · Episode 36S01 E3616:32
+Protocol Shorts: WireGuard
+Episode 36 – Protocol Shorts: WireGuard In this Protocol Shorts episode of netstack.fm, we explore WireGuard, a modern and lightweight VPN protocol. Glen explains what makes it different from traditional VPNs and why its…
+Topics
+#Privacy
+#Proxy
+25 April 2026
+Season 1 · Episode 35Season 1 · Episode 35S01 E3556:46
+OpenTelemetry, eBPF and Metoro
+↳Remaster of Season 1 · Episode 3
+Episode 35 – OpenTelemetry, eBPF and Metoro. In this remastered episode, Chris Batterbee, co-founder of Metoro, discusses the importance of observability in modern software systems, particularly in Kubernetes…
+Topics
+#Interview
+#Observability
+15 April 2026
+Season 1 · Episode 34Season 1 · Episode 34S01 E341:35:34
+Tokio with Carl Lerche
+↳Remaster of Season 1 · Episode 5
+Episode 34 — Tokio with Carl Lerche. In this remastered episode, Glen speaks with Carl Lerche, the creator and maintainer of the Tokio Runtime, about his journey into technology, the evolution of programming languages,…
+Topics
+#Interview
+9 April 2026
+Season 1 · Episode 33Season 1 · Episode 33S01 E3327:57
+Protocol Shorts: TLS Encrypted Client Hello
+Episode 33 – Protocol Shorts: TLS Encrypted Client Hello. This episode explores TLS Encrypted Client Hello (ECH) and how it improves privacy on the internet by hiding sensitive metadata that was previously exposed during…
+Topics
+#TLS
+31 March 2026
+Load more episodes
+×
+Loading definition…
+←→Open full definition →
+© 2025 - 2026 Plabayo BVGlossary
+

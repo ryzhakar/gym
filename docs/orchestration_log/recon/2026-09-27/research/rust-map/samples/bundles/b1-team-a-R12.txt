@@ -1,0 +1,1718 @@
+=== ROW 90 | f004174 | https://forums.swift.org/t/what-is-copyable-for/84437 | 2026-01-28 | domain-subframes ===
+What is ~Copyable for?
+
+@dabrahams · 2026-01-28T22:02:28.647Z:
+I find myself surprised to be asking this question, but it’s serious.  What is the right way to think about when to make a ~Copyable type?
+Since it confers non-copyability on anything that contains it (and there are no copy constructors) its utility would seem extremely limited. You can’t use it as a low-level resource manager to be embedded in a struct, for example, unless you want that struct to be ~Copyable too (which begs the question).
+You could use it for resource management in a class instance, e.g. to manage an additional dynamic allocation (extremely limited utility when you could, e.g. use ManagedBuffer).
+You could use it for resource management as a local variable; defer is generally a better tool though.
+You can use it to represent a relationship such that an invariant would be broken due to the copy, e.g. a Foo stores the id of a related Bar and it's supposed to be a 1-1 relationship.  But those kinds of invariants need to be maintained in a higher-level abstraction that owns the Foos and Bars.  Not being able to temporarily have a copy of a Foo exist inside that abstraction seems like an inconvenient limitation with not much benefit.
+The one real use case I know of is as a mitigation for the fact that Swift makes too many copies.  But adding a language feature instead of fixing the underlying problem is not the Swift way, so I must be missing something.
+[I know there are planned improvements like making it possible for Array to store ~Copyable types, but features like that don’t expand the motivations for ~Copyable types; they only reduce friction once you do have them.]
+Thoughts?
+
+---
+
+@Slava_Pestov · 2026-01-28T22:21:28.843Z:
+dabrahams:
+What is the right way to think about when to make a ~Copyable type?
+One important use-case is when you need a deinit. It's not just about (or even primarily about?) avoiding copies.
+dabrahams:
+You can’t use it as a low-level resource manager to be embedded in a struct, for example, unless you want that struct to be ~Copyable too (which begs the question).
+Linear types were originally invented for resource management, yeah (well, originally it was a curiosity from formal logic, until people realized it could be applied to resource management). Not sure why you see the infectious nature is a downside -- it's sort of the whole point.
+dabrahams:
+You could use it for resource management as a local variable; defer is generally a better tool though.
+Not every resource lifetime is scoped to the dynamic extent of a single function call. You might want to initialize a resource in one function and "hand it off" somewhere else, or store it somewhere.
+dabrahams:
+The one real use case I know of is as a mitigation for the fact that Swift makes too many copies. But adding a language feature instead of fixing the underlying problem is not the Swift way, so I must be missing something.
+I'm generally a "language feature skeptic" too and there are other people better positioned to defend this specific feature than I am, but generally, it seems to me that it's better from a language design standpoint if you can explicitly declare that something has a certain property and have this property be enforced at the type system level, instead of relying on a sufficiently smart optimizer. Optimizations can be hard to reason about, especially across function boundaries, are prone to being defeated by small code changes.
+It is true that SILGen emits too many copies and the SIL optimizer is not able to eliminate some of them, and that should be addressed independently of ~Copyable, because in any case, most types are not expected to be ~Copyable. However, "too many" copies is one thing, but in some applications even one unnecessary copy is too much.
+[Edit: One more thing is that while Swift doesn't have guaranteed call-once closures (yet?), those are another obvious application for noncopyable types which comes up repeatedly.]
+
+---
+
+@taylorswift · 2026-01-29T00:00:22.843Z:
+it’s very difficult to create ~Copyable things that compose. a lot of times i have an idea, like “make a noncopyable structure that yields a view of itself through some accessor” and then i go out on a limb trying to implement it, only to find out it doesn’t compile.
+Ownership specifiers are rather awkward to work with Using Swift
+the following might describe a lot of programming tasks:
+create an instance of TypeA that does some work on some buffers, then
+transfer the buffers from TypeA to a second type, TypeB that does some more work on those buffers.
+struct TypeA:~Copyable
+{
+private
+var a:[A]
+private
+var b:[B]
+private
+var c:[C]
+private
+var d:[D]
+private
+let aStuff:Stuff
+...
+}
+extension TypeA
+{
+public consuming
+func finalizeMesh() -> TypeB
+}
+public
+struct TypeB:~C…
+Struggling with basic composition of noncopyable types Using Swift
+here’s something i really thought should be a straightforward composition of noncopyable types, where one buffer is temporarily rebound to another abstraction to avoid copy-on-write:
+struct ExampleContext: ~Copyable {
+var buffer: [Int]
+}
+struct ExampleState: ~Copyable {
+let buffer: [Int]
+}
+extension ExampleState {
+var context: ExampleContext {
+get {
+.init(buffer: self.buffer)
+}
+_modify {
+var context: ExampleContext = (consume self).co…
+many times, i conceive of the noncopyable abstraction as a technique to prevent bugs, but the ceremony needed to make noncopyable things actually compile actually ends up being a much larger bug surface for mistakes to creep in. for example, accidentally dropping a field when reconstructing self from its constituent components.
+i often feel at a loss for where i am supposed to learn how to get the most out of this system, or what the actual gaps are in my understanding that i need to fill in, or what the right patterns i need to learn actually are. what few resources exist are usually unhelpful, with common tropes including:
+“you just haven’t internalized the key concepts yet”
+“you’re just not using them correctly”
+“you need to make a mental leap to grasp this completely new (and superior!) architectural paradigm”
+but in the end, your team will spend a lot of time trying to grasp superior architectural paradigms while coming away with little to show for it in terms of skills acquired.
+
+---
+
+@jrose · 2026-01-29T00:06:58.945Z:
+I think “~Copyable is for deinit without shared ownership” is close to a sufficient summary most of the time. If you then ask “what’s wrong with shared ownership”, you don’t need it.
+Unfortunately, anyone writing sufficiently generic types or functions may eventually have to think about it, just like async and Sendable, because eventually someone is going to ask you “hey, why doesn’t your thing work with my non-Copyable type”. Progressive disclosure, but only to a point.
+(If you ask “what about using it for performance”, you’re not wrong, but the answer is longer and has a lot more caveats.)
+
+---
+
+@jeremyabannister · 2026-01-29T01:21:25.937Z:
+So far I've used it mostly to enable statically enforcing certain semantics by defining consuming methods. For example, in some LZ4 compression code I've written this allows me to enforce that after encoding the final segment the encoder can't be used any further:
+extension LZ4 {
+struct FrameEncoder: ~Copyable {
+// ...stored properties...
+mutating func compress(_ inputData: Data) throws -> LZ4.Frame.Segment {
+try compress(inputData, isFinalInput: false)
+}
+consuming func compressFinal(_ inputData: Data) throws -> LZ4.Frame.Segment {
+try compress(inputData, isFinalInput: true)
+}
+private mutating func compress(
+_ inputData: Data,
+isFinalInput: Bool,
+) throws -> LZ4.Frame.Segment {
+// ...
+}
+}
+}
+(my understanding is that this is exactly an API that would benefit both in terms of performance and caller-side flexibility if it used Span (or RawSpan?) instead of Data, but I haven't yet taken the time to familiarize myself with the right way to use work with those types)
+
+---
+
+@jrose · 2026-01-29T04:54:34.793Z:
+How so? (genuine!) Swift is ten years old, it makes sense that some areas of new development are going to be more niche. I did say “ownership” without thinking about the overlap in terminology; I was trying to avoid “ARC” when Swift doesn’t (for the most part) expose the reference counting as part of its model.
+
+---
+
+@ben-lev · 2026-01-29T07:58:30.935Z:
+jrose:
+I think “~Copyable is for deinit without shared ownership”
++1. class is shared ownership, and shared ownership comes with costs. It has a cost in terms of your ability to write correct code, since you need to make sure the type behaves reasonably in the face of multiple owners (or audit your code manually to make sure it has a single owner). It also has a cost in runtime latency to do reference counting.
+Longer ramble:
+There are undoubtedly many existing Swift types that have been written as class instead of struct because they need a deinit, but for which a shared ownership model does not make much sense.
+This includes any stateful object which holds non-trivial resources, and for which having multiple owners is almost never what you want. Even a normal dynamic array generally falls into this category. It is stateful, it usually doesn’t guard its state for performance reasons (insert caveats about the optimizer hoisting/elimination uniqueness checks), and in most situations doesn’t make semantic sense to have 2 owners referring to the same instance.
+The general Swift-y way to get around this is to give the type value semantics by making it a CoW struct. This strategy in general is awesome when it makes sense for the type/domain. However there are some types (a FileHandle being an easy example) for which CoW doesn’t make sense (files have identity, as well as you probably would never intentionally copy one through CoW), and some performance critical domains for which working with the harder ergonomics of noncopyable types is preferable to paying for runtime reference counting + uniqueness checks.
+A rough checklist in my mind for making a type ~Copyable is if it meets one or more of these criteria:
+Has mutable state and doesn’t semantically make sense to have multiple owners
+Has a meaningful identity such that CoW doesn’t fit well
+Is intended for performance critical domains where reference counting + uniqueness checks may not be tolerable
+Also a quicker code smell: I think a class that is not Sendable is a signal that the type would be better represented as a noncopyable struct.
+
+---
+
+@Dmitriy_Ignatyev · 2026-01-29T09:15:29.531Z:
+One use case I’ve found for this, which wasn’t mentioned in the proposals, is protecting data in a pipeline from being accidentally copied. The goal is to prevent data from being unintentionally saved in places where it shouldn't be, according to the design of the architecture.
+While making these accidental copies doesn’t usually cause major issues, they can add up over time and lead to an implementation that doesn’t align with the intended design. These small mistakes can result in inconsistent implementation, and then not precisely correct behavior and poor adherence to the architecture.
+To address this, I wrap certain data structures (and their components) in a ~Copyable wrapper. This helps enforce a stricter data flow. The ~Copyable wrapper (which often includes an underlying copyable value-semantics instances) allows the data to be borrowed for specific logic during the pipeline’s execution. The data is partially consumed strictly in the places where it is expected and is fully consumed at the end of the pipeline. This approach helps ensure that the data flow stays consistent with the design.
+
+---
+
+@Dmitriy_Ignatyev · 2026-01-29T09:30:43.413Z:
+Another thing I've recently tried is to reimplement DisposeBag from RxSwift for Combine cancellables. This now looks like:
+@_staticexclusiveonly
+struct CancellablesBag: ~Copyable {
+...
+}
+// For cases when bag need to recreated, destroying current subscriptions and creating new one.
+struct CancellablesBagClass {
+private let bag: CancellablesBag
+}
+
+---
+
+@Cyberbeni · 2026-01-29T12:17:00.515Z:
+I can tell you what it isn't good for. It can't protect C structs from being moved. (Some C structs, like locks, require the memory address to be constant between usages)
+import Foundation
+struct MyLock: ~Copyable {
+private var lock = pthread_rwlock_t()
+mutating func test() {
+withUnsafePointer(to: &lock) { lock in
+print("lock: \(lock)")
+}
+}
+}
+func test(_ a: consuming MyLock) {
+a.test()
+}
+@main
+enum App {
+static func main() {
+var a = MyLock()
+a.test()
+a.test() // this currently prints the same but it's documented to be undefined behavior, so you still shouldn't depend on it: https://github.com/swiftlang/swift/blob/af3e7e765549c0397288e60983c96d81639287ed/stdlib/public/core/UnsafePointer.swift#L197-L205
+test(a) // prints a different memory address
+}
+}
+You still want to use UnsafeMutablePointer for those, like this: TypedNotificationCenter/Sources/TypedNotificationCenter/Core/ReadWriteLock.swift at 4053077181018d0d11249c9411a2c0c54200cbd0 · Cyberbeni/TypedNotificationCenter · GitHub
+
+---
+
+@pierremb · 2026-01-29T12:48:52.632Z:
+I’ve used that to represent the tested app expected state in ui tests. Each navigation action is modeled by a consuming method on a state that returns the new expected state. And each state has a method to assert the current state is indeed the expected state.
+For example I have a DemoLoggedOutState ~Copyable struct, with a consuming method login(…) returning a MainState, and a consuming activate(…) returning an ActivationFormState. (The app is multi-user and needs to be activated before production use, but can be used with demo data before that).
+I can then share the navigation steps between tests, and compose them easily, and the consistency is statically checked.
+
+---
+
+@dima_kozhinov · 2026-01-29T13:40:27.534Z:
+Here is how I see this (I know, few will agree):
+When we had classes, we had single source of truth, referenced by an object variable(s) pointing to a class instance. Then Swift Concurrency came, encouraging to use structs instead, and the single source of truth was lost. When a struct is passed anywhere, a copy of the struct is made, and you don't know anymore which copy is the source of truth. IMO the ~Copiable is an attempt (dare I say "kludge") to get the single source of truth back in the brave new world of structs-first.
+
+---
+
+@Nobody1707 · 2026-01-29T16:21:55.207Z:
+Yeah, the only way to get a stable address for inline storage currently is to use undocumented underscored compiler features meant for the standard library. Or define your storage as an imported C++ type.
+
+---
+
+@Joe_Groff · 2026-01-29T16:25:23.791Z:
+Nobody1707:
+Yeah, the only way to get a stable address for inline storage currently is to use undocumented underscored compiler features meant for the standard library. Or define your storage as an imported C++ type.
+Note that even those underscored attributes give you stable storage only for the duration of a borrow, and don't prevent the owner from moving the value in between accesses. This is sufficient for atomics, which only need a fixed address when multiple observers can see them, and futex-style lightweight locks, which only really exist while locked. But pthread primitives in full portability generally require not being moved at all, so would still need to be placed in a separate allocation.
+
+---
+
+@Avi · 2026-01-29T16:33:57.671Z:
+I have used a ~Copyable type to model a response object in a protobuf-like implementation where messages are handed off to a registered service and the service invokes a method on the response object to return a result.  This function is consuming, which allows a (static) guarantee that the service only responds one time.
+
+---
+
+@dabrahams · 2026-01-29T16:39:51.175Z:
+Slava_Pestov:
+One important use-case is when you need a deinit.
+That’s not a use-case in the sense I mean it.  What’s an example of a problem where you “need a deinit” but using a class is inappropriate?
+Not sure why you see the infectious nature is a downside -- it's sort of the whole point.
+It’s the whole point up to a point.  At some point I want to be able to embed my resource manager in something copyable  and then explicitly determine how that something should deal with it. In C++ (if we must go there) a unique_ptr member doesn’t automatically make everything it is a part of non-copyable all the way to the aggregation root.
+Not every resource lifetime is scoped to the dynamic extent of a single function call. You might want to initialize a resource in one function and "hand it off" somewhere else, or store it somewhere.
+“Might want to” is not what I’m looking for here.  I want to understand what specific real world use-cases are best addressed using ~Copyable and how to describe them generally.  Ultimately I also want to understand why having this feature with its attendant complexity is better than not having it.  For example, you can handle the pattern above without having linear types; you just have to give up being restricted from copying the resource at compile-time.
+It’s awkward, but you can even get some runtime checking:
+/// An instance of `T` whose value can be used once.
+class Linear<T> {
+/// The instance, or `nil` if it has been used
+private var x: T?
+/// An instance with value `x`.
+public init(_ x: T) { self.x = x }
+/// Returns the value, making it unavailable for further use.
+public mutating func consume() -> T {
+precondition(x != nil, "\(T.self) was already used.")
+defer { x = nil }
+return x!
+}
+}
+Of course I realize there are low-level applications where the overhead of allocating a class is inappropriate; if I thought runtime checking was valuable enough to use the above in testing I’d replace it with a structthat does no runtime check for release builds.
+With regard to “relying on a sufficiently smart optimizer” I agree with you 100%.  But there are many  extra copies that should never existed in the first place and thus shouldn’t depend on the optimizer for elimination.  “You can’t count on Swift not to generate arbitrary copies” ought to instead be “these are the only scenarios where copies are created.”  I still believe borrowing should have been made the default despite the extremely marginal semantic differences it introduces.
+
+---
+
+@FlorianPircher · 2026-01-29T16:51:44.219Z:
+One common use case for ~Copyable in my projects is to wrap a pointer from a C library. That way, I don’t have to pay for additional allocations or reference counting but still get a deinit where I can call the library-specific free function.
+I used to use defer for this. With that, I needed to remember to use defer every time. And defer is not usable when I return this wrapped pointer from my function since defer can only handle syntactic scope.
+Most of these wrapped pointers represent objects that provide some transient interface to the C library. I do not need to store them in an array or keep them around for long. That way, the restrictions of ~Copyable are barely noticeable.
+
+---
+
+@ksluder · 2026-01-29T16:53:45.085Z:
+Joe_Groff:
+Note that even those underscored attributes give you stable storage only for the duration of a borrow, and don't prevent the owner from moving the value in between accesses. This is sufficient for atomics and futex-style lightweight locks, which only really exist while locked, but pthread primitives generally require not being moved at all, so would still need to be placed in a separate allocation.
+I’m confused by the phrasing “fixed address while locked”. At first I thought you meant “fixed address during the atomic operation,” which would not be sufficient—how could two threads synchronize on an Atomic if one of them decided in between atomic operations that the value lived somewhere else?
+But Atomics must be declared var which indicates a mutable borrow for the lifetime of the variable let even though they are always mutably borrowed.[1] The unique feature of Atomic is that this mutable borrow is not exclusive. So if I understand correctly, you meant the above statement as “fixed address while mutably borrowed.”
+Even then I’m not sure that’s enough given the existence of RawSpan. RawSpan allows us to “smuggle” the Atomic as immutably-borrowed raw memory. To remain useful, the Atomic must be fixed in memory even while all references to it as an Atomic have been extinguished, because one may be “resurrected” from a RawSpan that captured it. Even though RawSpan is ~Copyable, I’m skeptical that the language could reliably track the lifetime of an Atomic through conversion to and from RawSpan, so in general the compiler must never alias an Atomic to multiple memory locations.
+I got this wrong at first. This confusion is why I still think the design of Atomic is backward and confusing. ↩︎
+
+---
+
+@ben-cohen · 2026-01-29T17:05:23.385Z:
+jrose:
+(If you ask “what about using it for performance”, you’re not wrong, but the answer is longer and has a lot more caveats.)
+Maybe, but I think that's actually more of a core use case than the nice but maybe only nice-to-have semantic behaviors you can get with it. The ability to safely allocate and destroy memory without any reference counting, exclusivity checking, CoW overhead, is transformative for high-performance code.
+dabrahams:
+You could use it for resource management in a class instance, e.g. to manage an additional dynamic allocation (extremely limited utility when you could, e.g. use ManagedBuffer).
+dabrahams:
+That’s not a use-case in the sense I mean it. What’s an example of a problem where you “need a deinit” but using a class is inappropriate?
+While there are interesting semantic use cases, the core to my mind is the ability to allocate and destroy memory without any reference counting. The reality is that for some use cases, you cannot use ManagedBuffer because the costs it imposes are just too high.
+Those performance needs are, as others have pointed out, fairly niche. The vast majority of programs (apps, servers, daemons) can eat the cost of modest reference counting overhead, extra heap allocations etc. But if your hard goal is to match the performance you could achieve with C, you cannot afford these costs. Cost here covers both compiled binary text size and runtime performance – in practice they often end up being the same thing.
+Sometimes very marginal costs, of say 2-5% in runtime perf or text size, that would be noise under normal circumstances, are just too high a cost for these use cases, and these are costs that cannot be realistically eliminated by an optimizing compiler no matter how good it gets. For example, the "is the array unique" tax for copy-on-write types can add up. Yes it can be hoisted if the loop is statically visible to the compiler. But a) hoisting a check out of a loop doesn't mitigate the text size impact, and b) sometimes the loop is data-driven such as in an intepreter or parser, where static optimizations have no traction.
+We have been applying Swift to more use cases like this, and ~Copyable types such as UniqueArray are invaluable in replacing C code with Swift, in both low-level performance-sensitive user space, and in "text + stack + heap has to be less than 200k" embedded use cases, without having to accept a regression.
+This does lead to further questions, of course.
+The primary one is "can those not interested ignore it". For the most part, the answer is yes. The Swift project remains committed to progressive disclosure and that's been at the heart of of the design of a lot of the ownership features. For example, the ability for Optional to hold noncopyable types was added without breaking source, and most Swift users remained completely oblivious of this feature. But for those interested in adopting noncopyable types, it unlocked key functionality.
+Jordan is right that
+jrose:
+anyone writing sufficiently generic types or functions may eventually have to think about it
+but to my mind this is perfectly in keeping with progressive disclosure. Authors of generic libraries for others are expected in general to be intermediate users that probably do need to keep up with the more exotic parts of the language (they also need to understand things like specialized vs unspecialized generics, the source compatability consequences of library evolution etc). And they do still have the option of just not adopting new language features like supressed conformances, at the risk of annoying their users who do want to work with those features.
+I also think, at the library level, supressing default copyability can be valuable in helping you think a little more clearly about your code. Why do I need to make a copy here, and what might the consequences of that be? Did I forget to annotate a function argument as consuming (we've found plenty of places in the std lib where we did). And – to kick another hornets nest – I do think we as a community need to confront the reality that copy-on-write is a footgun for so many users, because it leads to significant hard to detect performance problems from code where the copy was expected to be ephemeral, but wasn't (or wasn't enough).
+It's also true that Swift remains relatively early in its ownership journey. The feature is usable today (and used heavily in some places) but there remain many many ergonomic wins we can make. Right now we're kind of persuing a "formula 1" model. High-end power users can make use of the feature to get C-like performance. Mixing in a little dusting of noncopyable types to speed up the core hot loop of your code sometimes works, but sometimes you hit the limits of the feature when doing this. Over time we need more support in both the language (if let needs to be able to borrow) and standard library (we need off-the-shelf things for e.g. the equivalent of Rust's RefCell without having to build it from a class+some boilerplate helpers every time, that will allow you to bridge from copyable to noncopyable idioms). Hopefully over time this means you will be able to drop in some noncopyable code to speed up you hot loop, while keeping the nice low-but-non-zero cost affordances that boost productivity everywhere else.
+Finally, note that ~Copyable is just one part of ownership, alongside things like Span and borrowing vs consuming arguments, and other features.
+
+---
+
+@Joe_Groff · 2026-01-29T17:39:43.383Z:
+ksluder:
+I’m confused by the phrasing “fixed address while locked”. At first I thought you meant “fixed address during the atomic operation,” which would not be sufficient—how could two threads synchronize on an Atomic if one of them decided in between atomic operations that the value lived somewhere else?
+Sorry, I meant "fixed address while locked" to qualify "lightweight locks" but not "atomics". But atomics are also only fixed in memory while undergoing one or more borrows. If nobody is potentially accessing the atomic, then the owner is free to move it (and, in theory, even apply normal exclusive-mutable operations on it) since it has exclusive ownership.
+ksluder:
+Even then I’m not sure that’s enough given the existence of RawSpan. RawSpan allows us to “smuggle” the Atomic as immutably-borrowed raw memory. To remain useful, the Atomic must be fixed in memory even while all references to it as an Atomic have been extinguished, because one may be “resurrected” from a RawSpan that captured it. Even though RawSpan is ~Copyable, I’m skeptical that the language could reliably track the lifetime of an Atomic through conversion to and from RawSpan, so in general the compiler must never alias an Atomic to multiple memory locations.
+You can only get a RawSpan from a Span over BitwiseCopyable values. Atomic types are not BitwiseCopyable.
+
+---
+
+@dabrahams · 2026-01-29T17:55:54.938Z:
+ben-lev:
+However there are some types (a FileHandle being an easy example) for which CoW doesn’t make sense (files have identity, as well as you probably would never intentionally copy one through CoW),
+Thanks for your thoughtful answer.  If you don't mind I'd like to dig into your points a bit further.
+Nit: the question here is not whether CoW makes sense, since that is just an implementation technique for value semantics, but whether copyable value semantics makes sense.
+“FileHandle” is a bit open-ended semantically, unless you mean a specific one like the one in Foundation—which I will note is not ~Copyable, and I don't think that fact has been a major pain point for anyone.
+But we can analyze the question in general:
+There are two obvious ways to view a FileHandle as a value:
+Its value is just the identity of the open file in the process, like a file descriptor.  The file's contents are an incidental value to the FileHandle. In this case, it's like a wire attached to an antenna through which I/O occurs.  You can make as many copies of the wire as you want and they all make sense.  If the existence of the FileHandle does not prevent other processes from writing the file this is probably the only correct view.
+Its value is the contents of the file.  This view only makes sense if the existence of the FileHandle prevents other processes from writing the file
+If the file is only open for reading, there's no point in restricting copies.  Each copy is semantically access to a copy of the same data.
+If the file is open for writing, you could say that the FileHandle's value is really the  data stored in the file from which it was created.  Mutating the value of a FileHandle with no existing copies could semantically update the file.  The copies then could then become semantically disassociated from the file (possibly to be associated later with another file).
+The 2nd view above is admittedly not very much like the abstraction we think of as a file handle, but it's worth asking whether file handle is an abstraction we should use.
+Thanks for your checklist.
+Has mutable state and doesn’t semantically make sense to have multiple owners
+Nit: the real question is whether multiple copies make sense.  What kinds of values don't make sense to copy? Sean Parent has often told me every value can be copied; it's just a matter of how you define the value.  In that view, for example, a copy of a mutex is just a disassociated unlocked mutex, and all mutex values are equal (literally, ==).
+Has a meaningful identity such that CoW doesn’t fit well
+I've never been able to make a “has a meaningful identity” determination by thinking critically.  To me it seems entirely subjective.  Can you shed any light on this?
+Is intended for performance critical domains where reference counting + uniqueness checks may not be tolerable
+Some of the most-cited uses of noncopyable types are for access to OS level I/O resources, but the cost of creating/destroying a class instance is usually in the noise compared to the underlying cost incurred by the OS.
+Setting those aside, the cost of reference-counting is not an issue if you never actually copy the thing (and on some processors no worse than a non-atomic increment when non-contended).  The cost of uniqueness checks is irrelevant if the thing has only immutable data and very low otherwise (because false negatives are OK you can used more-relaxed atomics).  So where is this an actual problem?
+Non-Sendability is indeed a smell, but could just be telling us it should be a copyable struct.  Some of us would argue we should never use (mutable) classes except as implementation details of types having value semantics
+
+---
+
+@Slava_Pestov · 2026-01-29T18:18:08.482Z:
+dabrahams:
+In C++ (if we must go there) a unique_ptr member doesn’t automatically make everything it is a part of non-copyable all the way to the aggregation root.
+I'm not sure I follow. According to std::unique_ptr - cppreference.com, std::unique_ptr does not provide a copy constructor, so it would have the same behavior as a non-copyable struct in Swift.
+
+---
+
+@jrose · 2026-01-29T18:37:50.463Z:
+The container can define a custom copy constructor in C++, restoring implicit copyability. In Swift you’d have to add an explicit clone() method or something.
+
+---
+
+@Joe_Groff · 2026-01-29T19:06:10.956Z:
+jrose:
+The container can define a custom copy constructor in C++, restoring implicit copyability. In Swift you’d have to add an explicit clone() method or something.
+Somewhat analogously, though, in Swift you can also wrap your noncopyable payload in a class and then store the object reference in a copyable type, and use copy-on-write to unique the object when necessary.
+
+---
+
+@Dmitriy_Ignatyev · 2026-01-29T19:38:42.230Z:
+dabrahams:
+but the cost of creating/destroying a class instance is usually in the noise compared to the underlying cost incurred by the OS.
+This isn’t always the case. Recently, I’ve been measuring performance and experimenting with different implementation strategies. While creating class instances is generally fast, it depends on what you're comparing it to. For instance, if you compare it to creating an InlineArray or using a unique, non-copyable owner, the latter is significantly faster.
+Additionally, using explicit ownership, even for copyable types, resulted in a 20-40% performance improvement in certain scenarios with generic code.
+Creation time of this simple wrappers differs dramatically:
+final class ClassBox<T> {
+let value: T
+init(value: T) {
+self.value = value
+}
+}
+struct NCBox<T>: ~Copyable {
+let value: T
+init(value: T) {
+self.value = value
+}
+}
+I agree that in day-to-day programming, these overheads usually don’t matter. However, when you start dealing with microsecond-level timings and lower, such overheads can become quite significant.
+
+---
+
+@dabrahams · 2026-01-29T19:48:20.368Z:
+Dmitriy_Ignatyev:
+This isn’t always the case. Recently, I’ve been measuring performance and experimenting with different implementation strategies. While creating class instances is generally fast, it depends on what you're comparing it to. For instance, if you compare it to creating an InlineArray or using a unique, non-copyable owner, the latter is significantly faster.
+Those are not cases where the purpose is to manage some underlying OS I/O resource.  I'm well aware there can be performance advantages in other cases; I'm specifically addressing the common subcategory of I/O resource management.
+
+---
+
+@Dmitriy_Ignatyev · 2026-01-29T19:53:23.353Z:
+The answer was focused on where this is commonly useful, as that’s the main question of this topic. Like others, I’ve shared some of my own experiences where using of ~Copyable provided practical benefits.
+
+---
+
+@ksluder · 2026-01-29T20:01:59.916Z:
+Also I would not make the assumption that I/O overhead would render refcounting “noise.” If you have a heavily multithreaded application whose threads are all working with the same file handle, I can totally imagine that modeling that file handle as a non-copyable type would provide a significant perf win over modeling it as a class.
+
+---
+
+@dabrahams · 2026-01-29T20:23:55.264Z:
+Thanks everybody; this was very helpful.
+
+---
+
+@FranzBusch · 2026-01-29T20:32:05.528Z:
+dabrahams:
+Some of the most-cited uses of noncopyable types are for access to OS level I/O resources, but the cost of creating/destroying a class instance is usually in the noise compared to the underlying cost incurred by the OS.
+Just to add to this, I personally think that the often used example of ~Copyable types to model FileDescriptors or Sockets where the deinit closes the descriptor is a bit misleading. Closing with file descriptors in almost all I/O interfaces is at least throwing, and we should surface this error up to the user even if it isn't all that useful, which isn't possible to model with a deinit. More modern I/O interfaces such as io_uring make closing an asynchronous action, which is also not possible to model with deinit. Having said that, I think ~Copyable for memory resource management as mentioned multiple times here is great, just not for any resource where the destructive action can either throw or is async.
+
+---
+
+@Nobody1707 · 2026-01-29T22:01:36.116Z:
+I'm honestly not convinced that Rust was wrong in making Copy a refinement of Clone. Every time I've tried to write an abstraction over a Clonable protocol, I always end up wishing that Copyable types just conformed automatically.
+FranzBusch:
+Just to add to this, I personally think that the often used example of ~Copyable types to model FileDescriptors or Sockets where the deinit closes the descriptor is a bit misleading. Closing with file descriptors in almost all I/O interfaces is at least throwing, and we should surface this error up to the user even if it isn't all that useful, which isn't possible to model with a deinit.
+Honestly, these types should have a consuming close() instead of closing in the deinit. Although, in the specific case of file descriptors, there's really no safe way to handle an error on close. The only thing to do is to log it.
+
+---
+
+@FlorianPircher · 2026-01-29T22:31:12.536Z:
+Nobody1707:
+Honestly, these types should have a consuming close() instead of closing in the deinit.
+For situations like this, but also for transaction-like objects that need an explicit end of lifetime (something like commit() or abort()) it would be very useful to have a language feature where there is no deinit, but the programmer must explicitly call a consuming method.
+Those consuming methods then could be async or throws or return a value which a deinit cannot (as easily).
+
+---
+
+@dabrahams · 2026-01-30T00:09:13.587Z:
+ksluder:
+I would not make the assumption that I/O overhead would render refcounting “noise.” If you have a heavily multithreaded application whose threads are all working with the same file handle, I can totally imagine that modeling that file handle as a non-copyable type would provide a significant perf win over modeling it as a class.
+Maybe, but I would be very surprised if that were not just a symptom of the “Swift copies too much” problem, rather than anything inherent to using the class model.
+
+---
+
+@grynspan · 2026-01-30T00:47:55.380Z:
+jrose:
+Swift doesn’t (for the most part) expose the reference counting as part of its model.
+While it's not as prominent a concept as it is in Objective-C, we've never hidden the fact that Swift uses reference counting, and Unmanaged is right there.
+
+---
+
+@jrose · 2026-01-30T01:12:51.528Z:
+It’s not “right there”, you have to go looking for it, and it’s marked unsafe. Important for C interop, not very common at all in pure Swift code.
+
+---
+
+@taylorswift · 2026-01-30T21:05:33.868Z:
+i’d like to add another example of ~Copyable adding constraints that are difficult to understand, even for experienced Swift developers, that i ran into today:
+struct Logger: ~Copyable {
+var x: Int { 1 }
+}
+func f(logger: borrowing Logger) {
+//     ~~~~~~
+// 'logger' cannot be captured by an escaping closure
+//  since it is a borrowed parameter
+var y: [Int: Int] = [:]
+y[0, default: logger.x] += 1
+}
+i guess ~Copyable things are not compatible with @autoclosure. but why?
+LLM diagnosis, which i did not find illuminating
+This code fails to compile because of a conflict between Swift's ownership rules for borrowing parameters and the @autoclosure semantics used in the Dictionary subscript.
+The Short Answer
+The compiler wraps your expression logger.x into an implicit closure (an @autoclosure) to be passed to the dictionary. The compiler determines that this closure is escaping, meaning it could theoretically outlive the function call.
+However, logger is a borrowing parameter, meaning it is only guaranteed to exist strictly for the duration of the function f. Swift forbids capturing a borrowed value in an escaping closure because the closure might try to access logger after it has been destroyed or invalidated.
+The Technical Breakdown
+Here is exactly what is happening under the hood:
+1. The Implicit Closure The signature for the dictionary subscript you are using looks roughly like this:
+Swiftsubscript(key: Key, default defaultValue: @autoclosure () -> Value) -> Value
+The @autoclosure attribute tells Swift to automatically wrap the expression you pass (logger.x) into a closure ({ logger.x }). This allows the dictionary to delay evaluating that code until it is sure the key is missing.
+2. The "Escaping" Diagnosis The error message explicitly states: captured by an escaping closure. In the context of the += operator (which triggers the _modify accessor of the dictionary), the Swift compiler treats the default autoclosure as escaping. The compiler cannot prove that this closure will strictly execute within the scope of the borrow, so it defensively marks it as escaping.
+3. The Borrowing Violation You defined f(logger: borrowing Logger).
+Borrowing means: "I want to look at this Logger, but I don't own it, and I cannot keep it."
+Escaping means: "This closure might be stored and executed later, potentially after the function returns."
+If the closure escapes, it might try to read logger after f has finished. Since logger is ~Copyable (non-copyable), managing its lifetime is strict. To prevent a "use-after-free" bug, the compiler blocks this capture entirely.
+
+---
+
+@Joe_Groff · 2026-01-30T21:35:44.157Z:
+That looks like a bug. The default autoclosure should be non-escaping.
+
+---
+
+@dabrahams · 2026-02-13T19:24:22.323Z:
+I thought I was done here but I have a new take on the question.  Let's reframe it as: do non-copyable types have a value, and if so, what is it?
+The value of a type is intimately tied to the semantics of equality comparison and copying.
+I don't know of a case where there's no meaningful way to copy a type that has a notional value, do you?
+In the case cited of managing raw memory allocations, you can meaningfully define the value to be the bytes of the allocation, so the manager becomes the memory and copying it allocates a new block with the same contents.
+The question in Swift specifically is colored by these facts:
+Swift copies both implicitly and more than necessary, which makes avoiding copies both urgent and difficult unless you disallow them in the type system.  If all copies were explicit, for example, that would be a non-factor. Also the costs of using reference counted CoW things would be a non-factor except for the minor storage costs for the atomic count.
+Swift doesn't let you define the semantics of copy so if you are defining a “whole” type with a copyable “part,” you have to accept the cost of copying the part in its defined way when copying the whole.
+That leaves me thinking the only  inherently non-copyable things are handles to external resources with no meaningful value or copy operation (e.g. a disk drive), and the other use cases can be viewed as artifacts of the language design.
+What about these artifacts?  Aside from the raw memory block, covered above, do they have meaningful values?
+
+---
+
+@jrose · 2026-02-13T19:52:47.325Z:
+I like this angle, I’m pretty happy to say “most non-Copyable types are inherently unique, always un-Equal to each other; the ones that aren’t are ones that have a meaningful notion of copying, but it’s not one that we can expose, or choose to expose, using the tools the language provides (bitwise copies or ARC-based copy-on-write)”.
+A motivating example for me here is file descriptors, for which a copy operation exists, dup, but which still refer to the same kernel object post-copy (which can be checked via kcmp on Linux). These definitely have a value (“a reference to a kernel object”), but they also need cleanup; their copy operation can’t be implemented with bitwise copy (and even in C++ you might hesitate to make it implicit); and using ARC-CoW on a value that already has reference semantics wouldn’t really add much. (I’m sidestepping that with ARC you probably don’t need to copy at all most of the time, but that’s not a contradiction.)
+
+---
+
+@ksluder · 2026-02-13T20:11:02.158Z:
+Pedantically, the file descriptor returned by dup is not identical to the original, even though it refers to the same kernel object. Each descriptor has its own set of flags that can be modified by fcntl. This rules out ARC/CoW as a valid way to model a duplicated file descriptor.
+
+---
+
+@taylorswift · 2026-02-13T22:49:09.852Z:
+github.com/swiftlang/swift
+cannot reference noncopyable value in an `@autoclosure` expression
+opened 10:48PM - 13 Feb 26 UTC
+tayloraswift
+triage needed
+### Description
+discussed here: https://forums.swift.org/t/what-is-copyable-for…/84437/38
+### Reproduction
+```swift
+struct Logger: ~Copyable {
+var x: Int { 1 }
+}
+func f(logger: borrowing Logger) {
+//     ~~~~~~
+// 'logger' cannot be captured by an escaping closure
+//  since it is a borrowed parameter
+var y: [Int: Int] = [:]
+y[0, default: logger.x] += 1
+}
+```
+### Expected behavior
+it should compile
+### Environment
+$ swift --version
+Swift version 6.3-dev (LLVM 4f7a3dbb7e97ac4, Swift 477d32c08627ddd)
+Target: x86_64-unknown-linux-gnu
+Build config: +assertions
+### Additional information
+_No response_
+
+---
+
+@dabrahams · 2026-02-13T23:06:13.591Z:
+jrose:
+I like this angle, I’m pretty happy to say “most non-Copyable types are inherently unique, always un-Equal to each other;
+But x == x has to be true for equality to be an equivalence relation.  So my current conclusion is that equality for ~Copyable types should be address equality, when there's no more meaningful answer.
+the ones that aren’t are ones that have a meaningful notion of copying, but it’s not one that we can expose, or choose to expose, using the tools the language provides (bitwise copies or ARC-based copy-on-write)”.
+Just observing:
+I'm not sure there are any types with a more meaningful answer that really shouldn't be allowed to be copied at all, even by a copy() method.
+You know this but for everyone else: it's not strictly bitwise copy; it's bitwise copy plus reference count bumps for any directly-stored references.
+A motivating example for me here is file descriptors, for which a copy operation exists, dup, but which still refer to the same kernel object post-copy (which can be checked via kcmp on Linux). These definitely have a value (“a reference to a kernel object”), but they also need cleanup; their copy operation can’t be implemented with bitwise copy (and even in C++ you might hesitate to make it implicit);
+If I'm reading the dup docs correctly, it seems possible you wouldn't want to expose that and use bitwise copy instead.  It seems to be equivalent (except for possibly getting different bits).  Am I missing something?  If I am, I'd be inclined to use a class with an explicit .copy() method.
+and using ARC-CoW on a value that already has reference semantics wouldn’t really add much. (I’m sidestepping that with ARC you probably don’t need to copy at all most of the time, but that’s not a contradiction.)
+Based on the dup docs, I think you'd never want CoW for these because you'd still end up with reference semantics… unless you define the FD's value to be just its file descriptor flags and treat all the other observable properties and behaviors as non-salient messages sent and received though the ether.
+
+---
+
+@jrose · 2026-02-13T23:18:40.668Z:
+dabrahams:
+But x == x has to be true for equality to be an equivalence relation. So my current conclusion is that equality for ~Copyable types should be address equality, when there's no more meaningful answer.
+They don’t always have addresses either. (A Mutex has an address while it’s in-use, but they can also be moved wholesale.) So I was going with / extending your idea of “some (most?) non-Copyable types are not values, and thus it’s not sensible to ask if they are equal”. I guess I could have phrased it better.
+dabrahams:
+If I'm reading the dup docs correctly, it seems possible you wouldn't want to expose that and use bitwise copy instead. It seems to be equivalent (except for possibly getting different bits).
+dup gives you an fd with an independent lifetime, allowing you to hand it off to a library while you close the original one later. I can think of very few situations where I’d actually want that, but it does exist. (Maybe it made more sense on the original Unix?) Agreed that it probably makes more sense as a dedicated operation.
+
+---
+
+@dabrahams · 2026-02-13T23:22:30.117Z:
+ksluder:
+Pedantically, the file descriptor returned by dup is not identical to the original, even though it refers to the same kernel object. Each descriptor has its own set of flags that can be modified by fcntl. This rules out ARC/CoW as a valid way to model a duplicated file descriptor.
+Other problems modeling an FD as a value aside, I don't see why that would be a problem.  A modification of the file descriptor flags (not file status flags, which are shared) is a write and would cause a dup for any FileDescriptor sharing the same class instance wrapping an OS file descriptor.
+
+---
+
+@ksluder · 2026-02-13T23:30:12.010Z:
+The file handle returned from dup always has its FD_CLOEXEC flag unset, and any attempt to implement CoW by checking the current value of the flag when the FileDescriptor instance is cloned is subject to a race condition.
+More philosohically, file descriptors are guaranteed to be assigned the lowest value available, so lazily duping a file descriptor on mutation would result in observable changes to the lowest-available descriptor index upon CoW.
+
+---
+
+@grynspan · 2026-02-13T23:33:05.190Z:
+Okay, dup2.
+
+---
+
+@dabrahams · 2026-02-13T23:35:27.223Z:
+jrose:
+They don’t always have addresses either. (A Mutex has an address while it’s in-use, but they can also be moved wholesale.)
+You can take the address of anything, and anything you can take the address of effectively has an address.  The fact that something can be moved doesn't matter; it's still equal to itself because both arguments to == have the same address.  This of course depends on the idea that pass-by-value  is borrowing (or at least the arguments to == are), which it should be.  Otherwise, you can never write x == x for a non-copyable type.
+So I was going with / extending your idea of “some (most?) non-Copyable types are not values, and thus it’s not sensible to ask if they are equal”. I guess I could have phrased it better.
+Yeah, my take has shifted.  Think about function equality: the ideal notion is not computable.  However, there is a useful definition of == for functions in a program such that f == g => f = g (implemented equality implies ideal equality), and that is a necessary part of any efficient basis for computing with functions.  Because of the way == composes, because of Hashable's reliance on Equatable, and probably other similar reasons those semantics, we should spell the implementable equality ==.  We're specifically considering ~Copyable types that don't have an ideal equality.  Address equality is still useful, so that's what I'd use.
+dup gives you an fd with an independent lifetime, allowing you to hand it off to a library while you close the original one later. I can think of very few situations where I’d actually want that, but it does exist.
+OK, but those semantics  can be reproduced without dup as long as you are encapsulating everything.
+
+---
+
+@grynspan · 2026-02-14T15:00:28.342Z:
+jrose:
+A Mutex has an address while it’s in-use, but they can also be moved wholesale.
+Depending on the implementation and CPU architecture, a mutex may not be safely movable. Realistically, if another thread may acquire the mutex, you cannot safely move it without data corruption (unless you use another mutex or atomics or something to guard the first mutex!)
+You'll note if you go spelunking that Swift's Mutex is backed by a type, _Cell, with some special underscored attributes that ensure it resides at a fixed address on the stack or heap.
+(I know you, Jordan, know how this stuff works, so this may be more for the edification of other readers than you).
+
+---
+
+@Slava_Pestov · 2026-02-14T15:27:50.359Z:
+grynspan:
+Depending on the implementation and CPU architecture, a mutex may not be safely movable. Realistically, if another thread may acquire the mutex, you cannot safely move it without data corruption (unless you use another mutex or atomics or something to guard the first mutex!)
+That’s sort of how all values work; you cannot mutate a value or move it out unless you have exclusive access to its memory. If someone else can “see” the memory that contains the value, you can’t touch it.
+A Mutex requires special support to model in Swift; you have to be able to lock the mutex (which is technically a mutation) if you only have read access to its memory. This gives you exclusive access to the value the mutex guards once locked, so you can move that value out, but you can’t move the mutex itself. This is what Cell accomplishes, and it’s used by atomics as well.
+Some Mutex implementations might require the address of the mutex to be registered with the library, or the kernel, or the Mutex might contain a pointer into itself. These cannot be moved.
+But other than that, there’s no inherent reason you can’t move a Mutex if you have exclusive access to it (which prevents any other thread from acquiring it). After all, a simple implementation that blocks by spinning can be cooked up using only a single atomic value.
+
+---
+
+@Slava_Pestov · 2026-02-14T15:36:59.794Z:
+jrose:
+dup gives you an fd with an independent lifetime, allowing you to hand it off to a library while you close the original one later. I can think of very few situations where I’d actually want that, but it does exist. (Maybe it made more sense on the original Unix?)
+It’s how I/O redirection works in the shell! Imagine you redirect stdout and stderr to the same file, and then your Unix utility decides to close stdout when it’s done writing output, but it might continue to output a few error messages to stderr after that before exiting.
+
+---
+
+@grynspan · 2026-02-14T18:56:12.752Z:
+Slava_Pestov:
+But other than that, there’s no inherent reason you can’t move a Mutex if you have exclusive access to it (which prevents any other thread from acquiring it). After all, a simple implementation that blocks by spinning can be cooked up using only a single atomic value.
+Well yeah, that's sort of my point. You can't move atomic values either!
+
+---
+
+@jrose · 2026-02-14T20:56:00.822Z:
+You can also move atomic values if you have exclusive access to them.
+(Neither of these are theoretical, Rust atomics and std::sync::Mutex both allow moving.)
+
+---
+
+@grynspan · 2026-02-14T21:21:01.007Z:
+Atomics, yes, in the sense that if they cannot be observed by another core and you issue a memory barrier in the right place to ensure that any previous observations are ordered before the move. But that's the same as saying "destroy the old atomic value at the old address and create a new one at a new address while nobody's looking".
+Mutexes are a more complex topic because their implementations can vary quite a bit (and do). But if you can guarantee you have exclusive access to a mutex, and this exclusive access is visible across cores, then why do you need a mutex?
+
+---
+
+@asdf_bro · 2026-02-19T19:56:28.479Z:
+Swift’s COW data structures are very performant if you treat them as noncopyable types; the only unavoidable cost of Swift.Array over Collections.UniqueArray is uniqueness checking on mutations, which should just be relaxed atomic loads.
+And if uniqueness checking (which always succeeds) is too great a cost for your program, you’re probably skilled enough to build an UnsafeArray type with a deallocate() method and use it correctly.  You should worry more about compiler bugs regarding noncopyable types than you should about using unsafe types in limited scopes.
+
+=== ROW 91 | f004205 | https://forums.swift.org/t/escapable-span-ownership-annotations-etc/84566 | 2026-02-04 | domain-subframes ===
+~Escapable, Span, Ownership Annotations, etc
+
+@dabrahams · 2026-02-04T19:34:34.834Z:
+I realize it's probably too late to make any difference in Swift's evolution, but I get the sense this whole area, and especially its consequences for language complexity, hasn't been well thought out.
+99.9% of uses of ownership in Rust can be expressed in Swift by yielding subscripts (or properties) with utter simplicity.  I wager the failure to recognize that fact and instead return Spans by value accounts for all these deprecations. As far as I can tell, the only thing you get from ~Escapable that you don't get from yield, is the ability to assign the result into a variable, which would be covered if Swift added the missing ability to create named inout and borrowing bindings.
+I may have missed a lot—there are surely details of the design I don't yet understand well—but my overall concern stands: I've thought a lot about the kinds of use cases that a complex borrow checking system like the one that seems to be evolving here enables and I'm convinced that the vast majority of real use-cases can be covered by subscripts and two new types of bindings, and that a far, far easier and simpler overall language results from being willing to use unsafe constructs for the small corner of code that remains.
+That's the bet Hylo is making. We even have a (partially-designed) feature called “remote parts” that would help us cover most or all of that small corner without introducing the kind of complexity I see developing here, but we are being circumspect because we're not sure how often it's actually needed and thus whether it will carry its weight as a language feature.  I fear that Swift has lost the hard-nosed unwillingness that we started with to solve problems by becoming more complex.  I care about this because Swift is still the language I choose for real programming, mostly due to its ability to express my intent directly and efficiently without noise getting in my way.  On my value scale it's simply the best general-purpose language, and I'd like to keep it that way.
+
+---
+
+@Dmitriy_Ignatyev · 2026-02-05T08:36:01.892Z:
+dabrahams:
+hasn't been well thought out.
+From a retrospective view it might give the impression that some aspects weren’t fully explored, but at each stage the design has been carefully considered, reviewed from multiple angles and adjusted or sent back for revision.
+Now when a significant part of the path has already been walked, we can look back and draw some conclusions. But I believe that at each point the best decisions available were made with the information and constraints at hand.
+I’m not deeply experienced with Rust, but from what I understand, ownership usage in Rust is often temporary, non-escaping and used locally. In that sense it maps very closely to Swift’s yielding accessors, as you noted.
+Yielding subscripts cover only a subset of Rust’s ownership capabilities, not anywhere near 99.9%. There also borrow bindings, stored references, borrowing iterations, repeated access without recomputing the projection, generics. Yielding accessors alone cannot express all of these patterns. However, yielding accessors combined with the recently pitched Borrow and Inout types seem capable of expressing a large fraction of commonly written Rust borrowing code.
+As I feel it, Swift’s ~Escapable is about choosing a different point in the complexity-ergonomics tradeoff space. I find Swift ergonomics noticeably higher than in Rust. It keeps the common cases simple and lightweight, at the cost of some expressivity.
+It gives developers non-escaping guarantees without the cognitive and syntactic burden of explicit lifetime annotations.
+One more great benefit I see is that lifetimes in Swift are not required in API most of the time. The compiler ensures safety without exposing lifetimes in the func signatures.
+
+---
+
+@Dmitriy_Ignatyev · 2026-02-05T08:54:45.333Z:
+dabrahams:
+language complexity
+Most of this complexity is hidden. When I talk with mobile developers, most of them don’t really know what ownership is, and those who have ever seen consuming somewhere usually think something like: “this is for people who understand it and need it, not for me.”
+For those who do need it, the complexity comes from the real world no matter what language you use: Swift, Rust, or C++. If you want to do things correctly, precisely and safely, you have to deal with it. In C++, you don’t get as many compile-time guarantees and must rely on your own understanding to enforce safety.
+In Swift and Rust, the compiler is the guarantor of safety;
+in C++, you are the guarantor.
+In any case, the complexity arises from the way memory and low-level computer operations actually work. Safety and correctness are not abstract concepts; they are reflections of real world constraints.
+Swift’s ownership model is rather pragmatic – it captures most real-world needs for safe, temporary or localized references while keeping the APIs clean and ergonomically friendly. It allows developers to express intent safely without being constantly burdened by low-level details, unlike C++ or even Rust in more complex lifetime scenarios.
+This balance between safety and usability is what makes it approachable for most developers while still being precise enough.
+So, going back to the phrase:
+dabrahams:
+its consequences for language complexity, hasn't been well thought out
+Personally, I don’t feel that way. To me Swift’s ownership model is moving in the right direction and aligns very well with the principle of progressive disclosure.
+
+---
+
+@dabrahams · 2026-02-05T22:05:48.606Z:
+I'm certain that the design has been carefully considered at each stage.  I'm saying that in doing this incrementally by adding “small” features—each of which has arguably only a small complexity cost—the massive opportunity provided by existing features has been overlooked.  (This is not the first such failure, IMO).
+Dmitriy_Ignatyev:
+I’m not deeply experienced with Rust, but from what I understand, ownership usage in Rust is often temporary, non-escaping and used locally. In that sense it maps very closely to Swift’s yielding accessors, as you noted.
+Yes, in fact that is an inherent part of the “shape” of computations implied by the Law of Exclusivity.  It is this shape that I believe has not been carefully considered. References in Rust (and borrows/ inouts/~Escaping in Swift, or similar constructs in any language that statically upholds the LoE) are not generalized references at all, because of these limitations:
+The LoE is upheld by the compiler (a good thing!) which means a lot of code that would respect the LoE if analyzed dynamically has to be expressed differently.
+Even if they seem to escape they are local to something up the call chain and the same code could have been expressed without escaping by using higher-order functions just as yielding accessors can.
+You may be able to store them temporarily (because of the previous bullet) but you can never store (or even get) multiple mutable references into the same whole object without some unsafe code that exposes multiple non-overlapping parts of a single whole at once.  That severely limits what you can express with them, and it's not clear what compelling use-cases remain that justify the complexity.
+Yielding subscripts cover only a subset of Rust’s ownership capabilities, not anywhere near 99.9%.
+I didn't make any claim about a percentage of Rust's ownership capabilities.  It is a claim about use-cases.  In fact, you're proving my point: most of these other capabilities account for a lot of complexity and language weight and are only “needed” in a small fraction of use cases.
+There also borrow bindings
+Which I mentioned as a missing piece for Swift (which IMO should have been added before any of this other stuff because synergy with yielding accessors would have helped reveal that more complexity isn't needed), but which can also be expressed as parameters to higher-order functions.
+stored references
+As noted, it's really unclear how important or useful this feature is.  It is the same capability as the aforementioned “remote parts” which Hylo is currently refraining from surfacing because we're not sure it's a capability/complexity win, but notably we believe would still be much less complex than first-class references.
+borrowing iterations
+Easily expressed using yielding accessors.
+repeated access without recomputing the projection
+That's just borrow bindings again, is it not?
+generics
+I don't know what you have in mind here, but the way lifetime annotations creep into the type system via generics is among the worst complexity effects they've had on Rust.
+yielding accessors combined with the recently pitched Borrow and Inout types seem capable of expressing a large fraction of commonly written Rust borrowing code.
+My point exactly !  Swift could avoid a huge amount of complexity by starting there. (Though the idea that there would be first class types rather than binding modifiers is extremely worrying.  Where is this pitch?)
+As for complexity being hidden:
+It is a fallacy that complexity in the fundamental language base is ever really hidden.  It's always there for anyone who wants to really understand what's going on.  That is even true for features such as Builders that sit on top, but at least there's a level of the language you can fully understand without confronting them.
+This is an effect of the incremental adoption and rollout.  It only seems hidden because the standard library hasn't (fully?) adopted it, at which point it is going to be in everyone's faces. It will also become an imperative for library developers to understand and support these features.
+For those who do need it, the complexity comes from the real world no matter what language you use: Swift, Rust, or C++.
+That's an oversimplification. There are tradeoffs here. The vast majority of these problems are easily solved by a safe language with a few well-chosen features.  There's a small corner of problems that Rust can solve safely, but only at a huge cost in language complexity, and in complexity of the code that solves those problems.  It is much harder to write and verify the correctness of that code than of the same code written in an unsafe language, because of all the hoops you have to jump through.  Not everything is best expressed in the type system, and the cases that aren't expressible with yielding accessors and two new bindings are so rare as to not be worth supporting in safe code.
+It's not entirely true that the compiler is the guarantor of safety. The standard library plays a huge role. There are some things that can't be implemented in safe code (like Array) so the standard library implements them as safe abstractions.  Because the unsafe code is localized, validating the correctness of these abstractions isn't hard. The same facilities are available to end users for good reason.  Did anybody research the real use cases in this corner and consider solving them that way vs the complexity costs of these new features?
+I bet they didn't, but if I'm wrong, someone should be able to provide examples that fit the shape described above and become much better and cleaner with all these new language features than they would be without them.  The fact that we in Hylo land have been having this same conversation with Rust folks and haven't gotten a single concrete example makes us strongly suspect the same is true for Swift. I wouldn't have posted this otherwise.
+
+---
+
+@Alvae · 2026-02-06T04:32:56.981Z:
+There is not much I can add to Dave’s response but I’d like to say that we’re genuinely interested in discovering those use cases that are truly not expressible with yielding accessors and borrow bindings, but still fit within the shape that Dave mentioned. We do not deny that those cases exist but we find them very rare in practice, which is part of why we’re betting that Hylo does not need Rust-like references to express the kind of programs people write in safe Rust or Swift.
+I would encourage people interested in trying to understand what we mean to try applying this pattern every time they feel like they need a function returning a reference:
+fn foo(x: T) -> &U { &x.something }
+// becomes
+fn foo<R>(x: T, action: impl FnOnce(&U) -> R) -> R { action(&x.something) }
+This transformation is sufficient to avoid the kind of escaping references that Rust offers in the vast majority of cases I have encountered in practice. Then, one can observe that references that only appear as non-escaping arguments can be expressed with either by-value or inout parameters in Swift.
+yielding accessors and borrow bindings do not add much expressiveness to this pattern; they can be understood as a sugar to make it easier to use.
+Yielding subscripts cover only a subset of Rust’s ownership capabilities, not anywhere near 99.9%.
+As Dave mentioned, I don’t think that is true as soon as borrowing bindings are considered. I’ll add two things:
+First, a borrowing binding can be expressed as a parameter of some function. So, again as an exercise, one can combine yielding accessors with functions to get a sense of what’s possible to express without Rust-like references. The following illustrates with an actual pattern that we use in many places of Hylo’s compiler implementation:
+public func modify<T, U>(_ value: inout T, _ action: (inout T) throws -> U) rethrows -> U {
+try action(&value)
+}
+public struct DirectedGraph<Vertex: Hashable, Label> {
+private var out: [Vertex: [Vertex: Label]]
+public mutating func removeEdge(from source: Vertex, to target: Vertex) -> Label? {
+modify(&out[source, default: [:]]) { (tips) in
+if let i = tips.index(forKey: target) {
+defer { tips.remove(at: i) }
+return tips[i].value
+} else {
+return nil
+}
+}
+}
+}
+In this example, we use modify in combination with Dictionary's subscript to essentially reproduce Rust’s HashMap::entry method. Borrowing bindings would simplify the example by eliminating the higher-order function but, crucially, Swift is already expressive enough to use a pattern that many in the Rust community present as a justification for first-class references.
+Second, it’s important to observe that subscripts allow patterns that references do not. Therefore yielding accessors do not encode just a strict subset of references. There are plenty examples in Swift’s standard library already but an academic one that I like is the following:
+extension UInt32: MutableCollection {
+public var startIndex: Int { 0 }
+public var endIndex: Int { 4 }
+public func index(after p: Int) -> Int { p + 1 }
+public subscript(p: Int) -> UInt8 {
+get { UInt8(truncatingIfNeeded: self >> (p * 8)) }
+_modify {
+var u = UInt8(truncatingIfNeeded: self >> (p * 8))
+yield &u
+self = self & ~(0xff << (p * 8)) | (UInt32(u) << (p * 8))
+}
+}
+}
+func foo<T: FixedWidthInteger>(_ x: inout T, _ y: T) { x = ~x & y }
+var xs: UInt32 = 0x01020304
+foo(&xs[2], 0xff)
+print(String(xs, radix: 16)) // 0x01fd0304
+AFAICT it is not possible to write an equivalent to the _modify variant of the above subscript without using some kind of proxy, which would invite more complexity. In particular, it would not let us apply foo without paying for a more sophisticated signature. I believe that explains in part why conversions are so pervasive in Rust.
+
+---
+
+@Nobody1707 · 2026-02-06T07:19:41.422Z:
+Wasn't one of the explicit motivations for spans to help eliminate the need for these higher order function wrappers? Particularly, to obviate the use of the various withUnsafeXXX functions? Unless the unsafeness of the types vended by those methods was the only (or nearly the only) reason the core team wanted to wean us off of them, then I don't see how proving that first class references are equivalent to the use of withXXX closures changes anything.
+Aside, perhaps, from proving the soundness of first class references.
+
+---
+
+@Dmitriy_Ignatyev · 2026-02-06T10:07:25.874Z:
+dabrahams:
+It will also become an imperative for library developers to understand and support these features.
+Sure, but what are the actual downsides? Developers can still write Swift in a Swift 3 style today, and many do. I regularly see code that only uses Swift 3/4–level features, even though Swift 5/6 has been available for years and offers significantly better language features and tooling.
+Of course, all of these features add complexity. However, we’re not forced to use them. We’re not required to define ~Copyable types, and we can still build libraries without ~Escapable types. If you don’t want to engage with these features, you can design libraries using only yielding accessors with Borrow and Inout. And you can still use unsafe constructs if you prefer them instead of these new features.
+Am I missing something in making this argument?
+dabrahams:
+at which point it is going to be in everyone's faces.
+Our discussion is happening in the space of meanings and features at the leading edge of Swift’s evolution, including experimental, upcoming, and even not-yet-implemented features. However, my experience shows that a large number of developers are only fragmentarily and selectively aware of new Swift capabilities. Many developers still don’t know about Never, Duration, variadic generics, or typed throws, and even fewer are aware of move-only types, init accessors, InlineArray, or region-based isolation.
+Another example is opaque types. A huge number of developers have already encountered them through SwiftUI, yet many of those developers don’t use opaque types anywhere outside SwiftUI, largely because they have a weak understanding of what they are for beyond that context.
+So yes, the language does become more complex. But what is the actual problem, and for whom? Most developers will never have to face this complexity at all.
+Those who do need advanced features now simply have more options: they can use the new language features, or continue to rely on unsafe primitives, as is commonly done today for e.g. Array.
+PS: Despite everything said above, and even though I have my own perspective on this situation, I’m genuinely interested in understanding how you see it. I’d like to hear your viewpoint and I find your perspective interesting.
+
+---
+
+@tim1724 · 2026-02-06T10:08:52.858Z:
+dabrahams:
+Though the idea that there would be first class types rather than binding modifiers is extremely worrying. Where is this pitch?
+Here: `Borrow` and `Inout` types for safe, first-class references
+
+---
+
+@Alvae · 2026-02-06T10:09:29.234Z:
+Nobody1707:
+Wasn't one of the explicit motivations for spans to help eliminate the need for these higher order function wrappers?
+The higher-order function wrapper only serves to compensate for the lack of borrowing binding. If it was possible to create a local inout binding there would be no need for the modify function in the example I presented.
+In Hylo one can write the following:
+subscript min<T is Comparable>(x: inout T, y: inout T) inout -> T {
+if y < x { yield &y } else { yield &x }
+}
+public fun main() {
+var x = 1
+var y = (2, 0)
+inout z = &min[&x, &y.1]
+&z += 1
+}
+
+---
+
+@Alvae · 2026-02-06T10:16:22.623Z:
+Dmitriy_Ignatyev:
+So yes, the language does become more complex. But what is the actual problem, and for whom? Most developers will never have to face this complexity at all.
+Not using a feature does not prevent the complexity of the feature from leaking in other aspects of the language.
+Dave mentioned libraries. As a library author, whether I like it or not, I will eventually have to contend with ~Escapable and think about the interaction of this feature with my algorithms and data structures. Maybe I can make the choice to ignore non-escapable types, but even that requires recognizing their existence and understanding them to make an informed choice.
+Another issue relates to error messages. Whether or not one knows about protocols, one will inevitably encounter an error message that talks about them when one uses Swift. Understanding the diagnostic presented by the compiler, therefore, requires at least some understanding of the feature. This phenomenon is quite apparent in Rust in my opinion, as it is effectively impossible to simply ignore lifetime annotations even if one decides to never use references in their own code.
+
+---
+
+@RishabhRD · 2026-02-06T10:22:51.013Z:
+I am more interested in concrete code examples and real use-cases that has been motivation for this path and can’t be expressed using yield accessors with Borrow and Inout. Because the language complexity is real, although it is “arguably hidden”, but there should be many motivating examples for adding even that hidden complexity, right?
+
+---
+
+@Avi · 2026-02-06T10:31:28.409Z:
+Dmitriy_Ignatyev:
+However, my experience shows that a large number of developers are only fragmentarily and selectively aware of new Swift capabilities.
+As someone who mostly lurks on this forum, I am aware of these features, but as a typical app developer, I don’t use most of them.  My experience matches your intuition that most developers will never need to master these concepts and features in order to continue using Swift.
+Usage
+When I write that I don’t use them, I mean that I don’t write code that explicitly makes use of the feature.  I don’t mean that I don’t use stdlib or third-party code that uses these features.
+
+---
+
+@Dmitriy_Ignatyev · 2026-02-06T10:32:55.464Z:
+Alvae:
+Not using a feature does not prevent the complexity of the feature from leaking in other aspects of the language.
+I’m not sure I fully understand your position. Are you suggesting that the language should stop evolving? Are you opposed to specific features, or do you see some of them as harmful? Do you have alternative approaches in mind that could provide game-changing benefits? Ideally, what do you want to see instead?
+Swift has become a mature language, and every mature language accumulates this kind of complexity. C is much simpler in terms of surface features, but it’s hard to imagine most developers being taught to write safe programs in C. By contrast, many developers today write relatively safe Swift code because safety checks and best practices are built into the compiler. As a result people can write reasonably safe code by default without having deep expertise.
+
+---
+
+@Alvae · 2026-02-06T11:57:42.662Z:
+We are getting off topic but I am happy to clarify my position.
+I have no problem for any language evolving. However, all features come with complexity costs that must be considered with respect to the benefits they bring. I would consider adding a new feature to a well-established language if and only if the result of this cost/benefit analysis leans heavily toward the latter. I firmly believe that complexity causes harm and friction in terms of explainability, user experience, and maintenance, regardless of how well/often it can be hidden under the rug with good defaults and/or inference. Hiding tricks almost always leak and as a teacher and researcher, I can tell from experience that it makes languages harder to explain and/or study.
+Specifically in the context of this thread, we are talking about multiple features adding significant complexity to the language and I am not convinced that the benefits they bring are worth this complexity, especially because I believe that the overwhelming majority of use cases justifying these features can be addressed with much simpler changes (i.e., borrowing bindings). In other words, I do not believe these features (~Escapable, named lifetimes, first-class references, etc.) are game changer in Swift because yielding accessors have already changed the game.
+
+---
+
+@Dmitriy_Ignatyev · 2026-02-06T13:50:37.288Z:
+How could Span types be implemented safely without ~Escapable? Are there alternatives that give the same strong safety guarantees? Without it, returning non-owning references to parts of a collection is either unsafe or forces copying, losing efficiency and clarity.
+Take collection slices for example. Today, all slices carry a warning:
+“Long-term storage of a slice may prolong the lifetime of elements that are no longer otherwise accessible, which can appear as memory leakage.”
+With ~Escapable, we can create slices that cannot outlive their storage, removing this hazard. Slices aren’t a marginal or narrow feature, they’re broadly used. The same applies to other temporary views: substrings, windowed computations, cursors... anything that should not escape its underlying data.
+Swift already distinguishes between escaping and non-escaping closures, with non-escaping closures being extremely common. ~Escapable extends this concept to other types, allowing safe, temporary borrows in a broader range of situations.
+As for Ownership Annotations, they are useful for Copyable types too. As Swift team members already pointed out, even perfect optimizer will not be able to eliminate all copies. If you have ideas how to completely eliminate copies overhead, which is needed in performance constrained code, I'm sure those ideas will be highly welcome in Swift community. Bot for now it is the best we have.
+
+---
+
+@Dmitriy_Ignatyev · 2026-02-06T13:57:21.661Z:
+It seems the goal of this discussion is to find enough motivating examples that satisfy 2 key criteria:
+They clearly demonstrate the usefulness of ~Escapable.
+They can not be expressed using only yielding accessors and borrowing bindings.
+Focusing on examples that meet both points will make it easier to evaluate the practical impact and necessity of ~Escapable in Swift.
+
+---
+
+@filip-sakel · 2026-02-06T14:27:00.470Z:
+I think I was confused by the thread’s title. Is the main argument here that we don’t need ~Escapable? That exposing a ~Copyable view type through a borrowing/mutating variable/subscript is sufficient to guarantee that said view doesn’t escape?
+
+---
+
+@Jon_Shier · 2026-02-06T16:15:46.087Z:
+Dmitriy_Ignatyev:
+Our discussion is happening in the space of meanings and features at the leading edge of Swift’s evolution, including experimental, upcoming, and even not-yet-implemented features. However, my experience shows that a large number of developers are only fragmentarily and selectively aware of new Swift capabilities. Many developers still don’t know about Never, Duration, variadic generics, or typed throws, and even fewer are aware of move-only types, init accessors, InlineArray, or region-based isolation.
+Developers may be unaware of these features because Swift does a poor job of surfacing their existence at the level most developers operate, and makes it difficult to try them out. I've never been able to use a toolchain to build an iOS app, which is still the vast majority of Swift code.
+Never: I'd actually say this is fairly common for anyone writing or using generic code. You have to at least type the word to use Combine, for example.
+Duration: Types with limited OS availability will naturally see limited use. iOS 16 only just became a common deployment target in the last year for many companies.
+variadic generics: Useful feature that is extremely buggy (or incomplete), so is avoided or dropped. It shouldn't be a surprise that, when a feature turns up bug reports or other issues in search results, it doesn't become popular.
+typed throws: Incomplete feature missing the most useful part, inference through closures. Unless you know the additional syntax required to let it be even partly useful, it just looks broken.
+move-only types: Niche feature that doesn't have any obvious use cases for most developers. I've only ever used it because that was the only way to get a logger working with @_transparent to call the runtime issue API.
+init accessors: Also niche, with odd syntax, so it isn't discoverable, but I have seen it used where appropriate in knowledgeable libraries.
+InlineArray: Also niche, and also runtime limited, so I wouldn't expect to see much usage until later this year at the earliest, probably next year.
+region-based isolation: This isn't a developer feature, and is enabled by default in Swift 6 mode, so all Swift 6 devs use it. I wouldn't expect developers to know about it at all, any more than other compiler intelligence features, but anyone who's transitioned from Swift 5 to 6 definitely knows about it, since it's a huge part of the compiler's concurrency intelligence that makes the feature actually work.
+If Swift would like to make its features more discoverable, that's great. A linter for adopting new language features to better replace existing patterns would be well received. But given Swift's limited attempts to encourage adoption, and deployment limitations on its most popular platform, you can't really use such limited adoption to say that evolution at the cutting edge can proceed without considering such adoption.
+
+---
+
+@NotTheNHK · 2026-02-06T16:53:06.362Z:
+Personally, I would like to see an evolution freeze for at least a year, focusing on bug fixes, documentation improvements, and an evaluation of Swift’s existing and envisioned features, perhaps even reconsidering entire features.
+P.S. For example, Swift’s initial actor implementation was completely broken and clearly not ready at the time.
+
+---
+
+@dabrahams · 2026-02-06T23:37:02.558Z:
+To be clear (answering @filip-sakel and clarifying for @Dmitriy_Ignatyev), ~Escapable is not the primary problem.  The primary problem is the steady march toward a full Rust-like lifetime system, which is where you end up as soon as you start returning (instead of yielding) notional references from one thing into another.  We believe escapability shouldn't be surfaced as a first-class property of types. All that said, ~Escapable seems to be entirely unneeded today.
+Dmitriy_Ignatyev:
+How could Span types be implemented safely without ~Escapable?
+I was surprised to find that it seems to be possible today without any explicit treatment of escapability.
+With ~Escapable, we can create slices that cannot outlive their storage, removing this hazard. Slices aren’t a marginal or narrow feature, they’re broadly used. The same applies to other temporary views: substrings, windowed computations, cursors... anything that should not escape its underlying data.
+All of which you can do by yielding ~Copyable things.†
+Swift already distinguishes between escaping and non-escaping closures, with non-escaping closures being extremely common. ~Escapable extends this concept to other types, allowing safe, temporary borrows in a broader range of situations.
+None of this is lost on me, you know.  I saw this complexity coming years ago when I pleaded for an effort to address fundamentals first and use these existing concepts to create a more coherent solution.
+Dmitriy_Ignatyev:
+It seems the goal of this discussion is to find enough motivating examples that satisfy 2 key criteria:
+They clearly demonstrate the usefulness of ~Escapable.
+They can not be expressed using only yielding accessors and borrowing bindings.
+Focusing on examples that meet both points will make it easier to evaluate the practical impact and necessity of ~Escapable in Swift.
+It's mostly number 2 ;-). As I mentioned, some notion of escapability is needed.  We think it shouldn't be surfaced in this way (and arguably I've shown that it doesn't need to be—it can just be a consequence of other things), but this one pseudo-protocol, by itself, doesn't create that much of a problem.
+Of course, all of these features add complexity. However, we’re not forced to use them.
+I'll just point out that the same argument is often given by proponents of C++ when people say it's too complicated.  Complexity adds up, hurting usability, teachability, implementability, evolvability, understandability, and adoption (…I could go on…and on!) of a language.  These effects are well understood among language designers. When we were first designing Swift, we stayed keenly aware of that fact and pushed back hard against the introduction of new wrinkles.  The larger point is that this ethos seems to have been mostly lost.  The number of partially-implemented, broken, or limited features in @Jon_Shier's list seem to reflect that.
+† When you're thinking about all these generalized uses of non-escapability, keep in mind that what you get from putting it in the type system is limited in the same way Rust references are (though not any more limited than yielded things).  The compiler has to reason about what might escape based on only function signatures, so it's easy to come up with useful things you might want to do where nothing actually escapes but the compiler has to stop you.  For example, in the Hylo implementation we intentionally store substrings of the whole file string all over the place, and we store them far away from that whole file string.  Doing that with ~Escapable types would be impossible. To track the lifetime relationships for a span-like type would entail a Rust-like lifetime system and would require threading lifetime parameters through many diverse data structures.
+
+---
+
+@Dmitriy_Ignatyev · 2026-02-07T01:19:58.429Z:
+I need some time to think about it and inspect the Spaan implementation you have provided in godbolt. Thank you for your detailed insights and clarifications!
+
+---
+
+@filip-sakel · 2026-02-07T03:02:40.025Z:
+dabrahams:
+I was surprised to find that it seems to be possible today without any explicit treatment of escapability.
+I think this is quite elegant and is probably easier for beginners to understand. I wonder how this would play out with MutableSpan, though. Thinking out loud here: it makes sense to me to expose Span as borrowing or yielding; however, it seems unintuitive to expose MutableSpan as inout (it's still a view into the base collection and we're not actually modifying the view itself).
+dabrahams:
+As I mentioned, some notion of escapability is needed. We think it shouldn't be surfaced in this way (and arguably I've shown that it doesn't need to be—it can just be a consequence of other things), but this one pseudo-protocol, by itself, doesn't create that much of a problem.
+What is escapability needed for apart from optimizing closure allocations? Also, while developing Hylo, did you encounter any corner cases that require ~Escapable (but don't justify the complexity of supporting it in the language).
+
+---
+
+@dmt · 2026-02-07T05:59:31.170Z:
+I’ve been following this discussion to better understand the fundamental divergence in the models being compared here.
+Maybe I've misunderstood, as very little code has been brought to the discussion so far to demonstrate the practical differences between the models. However, it seems to me that the core difference isn't whether lifetimes exist, as they are involved in both models, but rather where the language models them:
+The Yielding Model: Escapability and lifetime are properties of the binding. The lifetime is enforced by control flow (the structural scope of the yielded accessor). Essentially, we tie the lifetime of the resulting binding to the lifetime of all arguments; consequently, we don't need "lifetime" as a separate language construct.
+The "Returning a Reference" Model: The lifetime of the return value is explicitly declared. To support this, the returned type must make no assumptions about escapability, necessitating ~Escapable.
+In the yielding model, we get safety "for free" because the stack frame implies the lifetime. In the returning model, we lose that stack context the moment we return a value, so we must reconstruct that safety using a more complex type system.
+Both examples provided so far (the min subscript and the Span-yielding subscript) are covered by both models because, in both cases, the result depends on all arguments. This also aligns with the code I've been playing with after reading the Borrow/Inout types pitch (Compiler Explorer).
+To identify a real point of divergence, I'll expand on the min subscript example. In the Yielding model, the "lifetime" of an access is the entire duration of the suspended coroutine. This leads to the "scope-locking" of disjoint arguments:
+subscript sorted<T>(x: inout T, y: inout T, by comp: borrowing (T, T) -> Bool) inout -> (T, T) {
+if comp(x, y) {
+yield (&x, &y)
+} else {
+yield (&y, &x)
+}
+}
+func main() {
+var x = 1
+var y = 2
+let f: (Int, Int) -> Bool = { $0 < $1 }
+inout (min, max) = &sorted[&x, &y, f]
+// While 'min' and 'max' bindings are alive, 'f' is effectively locked because
+// the 'sorted' accessor is still suspended. We cannot mutate or move 'f'.
+&min += 1
+}
+In the Returning model, the function returns references and the stack frame is popped. The compiler can use named lifetimes to see that the result depends on x and y, but not on f. To achieve that same granularity in the Yielding model (releasing f while the binding is still active), we would have to introduce a way to annotate disjoint lifetimes of arguments within the signature, effectively reinventing named lifetimes.
+@dabrahams @Alvae Do I understand correctly that the bet here is that these cases are so rare that the language can simply accept the "scope-locking" of disjoint arguments as a negligible cost in exchange for a much simpler overall system?
+
+---
+
+@Alvae · 2026-02-07T07:11:48.477Z:
+dmt:
+In the yielding model, we get safety "for free" because the stack frame implies the lifetime. In the returning model, we lose that stack context the moment we return a value, so we must reconstruct that safety using a more complex type system.
+That is a very accurate description I think.
+dmt:
+@dabrahams @Alvae Do I understand correctly that the bet here is that these cases are so rare that the language can simply accept the "scope-locking" of disjoint arguments as a negligible cost in exchange for a much simpler overall system?
+Yes, that is our position for now at least.
+I’ll quickly note that we have discussed ways to avoid the “scope-locking” of disjoint arguments by annotating parameters rather than carrying escapability (or lifetimes) on return types. So even if this problem turns out to be more pervasive than we think, we would most likely go in that direction first.
+
+---
+
+@dabrahams · 2026-02-07T07:17:44.257Z:
+filip-sakel:
+I think this is quite elegant and is probably easier for beginners to understand. I wonder how this would play out with MutableSpan, though.
+It’s not obvious to me why a second Spaan type would be needed. Am I missing something?
+Oh I suppose if you want to get a Spaan of immutable elements from which you can drop elements off the ends from a mutable collection you need a second type (and a nonmutating _modify accessor). Exercise for the reader?
+
+---
+
+@dmt · 2026-02-07T14:41:24.461Z:
+Alvae:
+Yes, that is our position for now at least.
+I’ll quickly note that we have discussed ways to avoid the “scope-locking” of disjoint arguments by annotating parameters rather than carrying escapability (or lifetimes) on return types. So even if this problem turns out to be more pervasive than we think, we would most likely go in that direction first.
+Thanks for the clarification. Regarding your point about avoiding "scope-locking" by annotating parameters, could you provide an example of what that might look like?
+I imagine it would be something where we promise that an argument is only used in the prologue and is not "captured" by the yield. Something along these lines:
+subscript sorted<T>(
+x: inout T,
+y: inout T,
+// '@transient' promises that 'comp' is not needed after the yield starts.
+by comp: @transient borrowing (T, T) -> Bool
+) inout -> (T, T) {
+if comp(x, y) {
+yield (&x, &y)
+} else {
+yield (&y, &x)
+}
+}
+If that's what you meant, it looks like "lifetimes but the other way around" - instead of declaring entangled arguments, we declare those which are not. I might be missing some important differences though.
+Another question I have is about the composition of these accessors. In the "Returning a Reference" model we can write a closure returning a lifetime-bound result, then pass the closure to another function or store it somewhere (in the case of escapable closures).
+How do you envision such composition working with subscripts? Do you plan to make subscripts first-class values? If so, would it involve a transformation into a Continuation Passing Style closure under the hood?
+func incrementMin<T>(x: inout T, y: inout T, minProjector: borrowing [inout T, inout T] inout -> T) {
+inout (min, max) = &minProjector[&x, &y]
+&min += 1
+}
+func main() {
+var x = 1
+var y = 2
+// Hypothetical syntax for a first-class yielding closure
+let minProjector: [inout Int, inout Int] inout -> Int = { inout x, inout y in
+if x < y {
+yield &x
+} else {
+yield &y
+}
+}
+// Is 'minProjector' transormed by the compiler into an equivalent of this?
+// func minProjector(x: inout Int, y: inout Int, continuation: borrowing (inout Int) -> Void) {
+//   if x < y {
+//     continuation(&x)
+//   } else {
+//     continuation(&y)
+//   }
+// }
+incrementMin(&x, &y, minProjector)
+}
+
+---
+
+@Alvae · 2026-02-07T17:15:27.171Z:
+dmt:
+Regarding your point about avoiding "scope-locking" by annotating parameters, could you provide an example of what that might look like?
+The example you have offered illustrates what I meant already. The requirement for your @transient annotation is indeed that the argument should not be part of the projected value and not be used after the projection (what we call the “slide” of the subscript).
+dmt:
+If that's what you meant, it looks like "lifetimes but the other way around" - instead of declaring entangled arguments, we declare those which are not.
+Correct. Again, the advantage of this approach would be that it would let us avoid carrying information through the type of the returned (we say “projected“) value.
+dmt:
+Do you plan to make subscripts first-class values?
+Yes. We have formalized this feature in the core model of Hylo but haven’t implemented it yet so I can’t show syntax. However I’ll note that we can already emulate first-class citizenship using scoped conformances.
+I can provide an example if necessary but I don’t want to confuse people with an avalanche of Hylo-specific features that will be difficult to relate directly to Swift.
+dmt:
+If so, would it involve a transformation into a Continuation Passing Style closure under the hood?
+Not exactly. @dabrahams discussed about the compilation model we envision in here. I do not anticipate any issue applying it to first-class subscripts.
+
+---
+
+@Panajev · 2026-02-08T08:22:07.988Z:
+Dmitriy_Ignatyev:
+When I talk with mobile developers, most of them don’t really know what ownership is
+The thing about mobile devs is that many may never have needed the complexity the language brought productivity wise perhaps… then again SwiftUI is possible because of Swift and yet again many companies want custom UI and not just lightly skinned SwiftUI components so that means still dragging UIKit around or doing custom SwiftUI views which exposes a Lot of complexity in Swift.
+There is also the company paying the mobile developers angle and LLMs lowering the cost of verbose code that should be considered, especially where more and more devs are moving to JavaScript / TS for mobile apps as RN and other multiplatform tech (like web based MFEs / Micro Front Ends) continue to expand (not to talk about KMP/CMP from the Android side or Flutter).
+Devs are kind of walking with their feet / being walked or dragged into dynamic languages that prioritise fast iteration (talking about the dev iteration cycle: think, express, run and test, … and repeat) which long compile times do not help with.
+Anyways, I will stop here because I am ranting and I do not think all the above could be avoided if Swift compiled super mega fast, but it is annoying to see the reality on the field as Swift becomes, a tiny bit more and more every month, more like ASM for these multiplatform tools than something people can really code in anymore :/.
+(Apologies for the rant, anyways)
+
+---
+
+@dabrahams · 2026-02-09T05:31:24.091Z:
+filip-sakel:
+What is escapability needed for apart from optimizing closure allocations? Also, while developing Hylo, did you encounter any corner cases that require ~Escapable (but don't justify the complexity of supporting it in the language).
+Non-Escapability is needed for exposing notional parts of a value that don’t exist in memory  (like span) with minimal overhead. It’s also useful for avoiding allocations with existential types (similar to the closure case, which has an any to represent the captures).
+No we have not encountered any cases that require a first-class ~Escapable; as in my Span example non-escapability is a property of particular values not of types.
+
+---
+
+@tera · 2026-02-09T12:10:37.697Z:
+Alvae:
+I would encourage people interested in trying to understand what we mean to try applying this pattern every time they feel like they need a function returning a reference:
+fn foo(x: T) -> &U { &x.something }
+// becomes
+fn foo<R>(x: T, action: impl FnOnce(&U) -> R) -> R { action(&x.something) }
+Wouldn't the second approach lead to a "pyramid of doom" if I need to deal with multiple references at once? (Not that a pyramid of doom is necessarily a bad thing.)
+
+---
+
+@OneSadCookie · 2026-02-09T12:43:30.431Z:
+In Swift I think the pyramid of doom is a visual indicator of a worse problem — things like async, (typed) throws, sending, noncopyability, etc. don't compose well across these withX style APIs.
+(I think the Haskellers are laughing at us in Monad now)
+
+---
+
+@dabrahams · 2026-02-10T18:11:27.068Z:
+tera:
+Wouldn't the second approach lead to a "pyramid of doom" if I need to deal with multiple references at once? (Not that a pyramid of doom is necessarily a bad thing.)
+It's definitely a bad thing, but as @Alvae already pointed out this construct is just a substitute for the lack borrow/inout bindings.  Her suggestion is to put up with the pyramid for the purposes of understanding what would be possible with yielding accessors and these two bindings.
+
+---
+
+@galileopan · 2026-02-10T20:20:47.754Z:
+Dave’s overall argument is especially applicable to large, long-lived projects. Large projects aren’t like small ones that can ignore language complexity if they don’t need those features. I spent 25 years on the Photoshop team and worked with other large app and library teams. With a large team and long-lived codebase, it’s inevitable that somebody will decide almost every obscure language feature is essential to something they’re coding. It may even start out isolated to the interior of a small library but it rarely stays that way. And unlike with the standard library, app developers at large companies routinely have to debug into arbitrary company-owned libraries.
+Over time, a large project and its libraries accumulate uses of esoteric language features. In the larger scheme of things, only a tiny percentage of them were truly necessary to achieve a significant difference in the performance of the overall system, but it’s organizationally impossible to prevent the accumulation. The end result is that all the engineers on the project have to learn the esoteric features because they’ll have to debug and/or develop in those modules.
+As each update to C++ came out, we tried to educate developers about “new features you shouldn’t use but you’ll have to know about” and “new features you should only use after consultation with a senior engineer” - an ever-growing mental overhead. Swift is heading down the same path.
+In my current life as a retired hobby developer, Swift’s progressive disclosure works well. If I were concerned about Swift’s usefulness in developing large systems, I’d be pushing hard in the direction Dave is advocating - of shifting the balance between “we can prove it’s sometimes useful so include it” and “we have to prove its usefulness is worth the costs it imposes on the people who don’t need it but will have to learn about it”.
+
+---
+
+@tera · 2026-02-10T21:08:09.874Z:
+Is there a playground for Hylo?
+
+---
+
+@processeus · 2026-02-10T22:22:29.146Z:
+The best relevant resource is probably the subscript section of the language tour for now, but you can check out an experimental version of Hylo in compiler explorer.
+
+---
+
+@Nobody1707 · 2026-02-11T04:27:10.620Z:
+There's one wrinkle here, and that's something like:
+var first: Optional<Borrowing<T>> {
+// ...
+}
+var first: Optional<Inout<T>> {
+mutating get {
+// ...
+}
+}
+How do we do this with first class borrows? Do we add a facility to create a non-copyable stable safe pointer to a value, then yield an Optional of that?
+
+---
+
+@dabrahams · 2026-02-11T17:14:10.959Z:
+We have thought about handling these cases with remote parts, but our current working theory is that APIs that return optional borrows are “wrong” (for the overall balance of complexity/capability).  If first had a precondition of !empty it could just project a T.
+Also, we're exploring a syntactic approach that would allow the use of if let x = someProjection without ever actually forming an Optional, on the theory that the use cases ~never actually want to hang onto an Optional.  That would save the extra test implied by the precondition.
+
+---
+
+@dnadoba · 2026-02-11T18:30:05.839Z:
+dabrahams:
+We have thought about handling these cases with remote parts, but our current working theory is that APIs that return optional borrows are “wrong” (for the overall balance of complexity/capability).
+I already had a couple use cases for  Optional<Inout<T>>.
+subscript for collections that don't allow removal e.g. InlineArray.
+extension InlineArray {
+subscript(safe index: Int) -> Element?
+// would be better described as (+ Borrowed version)
+subscript(safe index: Int) -> Optional<Inout<Element>>
+}
+Todays version with runtime preconditions
+extension InlineArray {
+subscript(safe index: Int) -> Element? {
+get {
+if indices.contains(index) {
+self[index]
+} else {
+nil
+}
+}
+_modify {
+if indices.contains(index) {
+var optional: Optional = self[index]
+defer {
+if let optional {
+self[index] = optional
+} else {
+// with Optional<Inout<Element>> this state would not be possible
+fatalError("not allowed to be set to nil")
+}
+}
+yield &optional
+} else {
+var optional = Element?.none
+defer {
+guard optional == nil else {
+// with Optional<Inout<Element>> this state would not be possible
+fatalError("can not set value at \(index)")
+}
+}
+yield &optional
+}
+}
+}
+}
+Providing a property for an associated value of an enum that supports in-place mutation.
+enum Foo {
+case bar([Int])
+case baz
+var bar: [Int]? { ... }
+// would be better described as (+ Borrowed version)
+var bar: Optional<Inout<[Int]?> { ... }
+}
+Todays version with runtime preconditions
+enum Foo {
+case bar([Int])
+case baz
+var bar: [Int]? {
+get {
+switch self {
+case .bar(let array):
+array
+case .baz:
+nil
+}
+}
+_modify {
+switch consume self {
+case .bar(let array):
+var optional: Optional = array
+yield &optional
+if let optional {
+self = .bar(optional)
+} else {
+// with Optional<Inout<Element>> this state would not be possible
+fatalError("not allowed to be set to nil")
+}
+case .baz:
+var optional = [Int]?.none
+yield &optional
+if let optional {
+self = .bar(baz)
+}
+}
+}
+}
+}
+I think these are valuable constructs to support safely and efficiently.
+
+---
+
+@dmt · 2026-02-11T23:16:40.593Z:
+dnadoba:
+I think these are valuable constructs to support safely and efficiently.
+I agree that safe and efficient mutations are the goal, and I might be wrong, but I am concerned that using Optional<Inout<T>> for these specific cases creates a misleading API contract (given the way Inout is currently proposed).
+When a property yields Optional<Inout<T>> via mutating mutate, it effectively yields an inout Optional<...> to the caller. The caller is free to mutate the Optional itself, changing .none to .some or vice versa, and might expect those changes to be meaningful. And, yielding borrowing Optional<Inout<T>> does not give the caller exclusive access, rendering the referee read-only.
+If we expand your InlineArray example, we run into both ambiguity and implementation issues:
+extension InlineArray {
+subscript(safe index: Int) -> Optional<Inout<Element>> {
+borrow { ... }  // useless (referee becomes read-only)
+mutate {
+guard indices.contains(index) else {
+// We yield a disconnected 'none'
+var t = Optional<Inout<Element>>.none
+yield &t
+// What happens if the caller writes to 't'?
+// The caller might have written: `array[safe: 100] = Inout(&myVar)`
+// We are forced to silently ignore the assignment or fatalError().
+// But we can't express in the signature which one it is.
+}
+var t = Optional(Inout(&self[index]))
+yield &t
+// Similarly, what happens if the caller assigned `nil`?
+}
+}
+}
+The same ambiguity applies to the enum example. If the enum is in the .baz case, and the caller assigns a valid Inout to the projected optional, does the enum switch cases to .bar?
+enum Foo {
+case bar([Int])
+case baz
+var bar: Optional<Inout<[Int]>> {
+borrow { ... } // useless
+mutate {
+switch self {
+case .baz:
+var t = Optional<Inout<[Int]>>.none
+yield &t
+// We can ignore mutation of 't' or assign `self = .bar(...)`
+case .bar: ...
+}
+}
+}
+}
+So inout Optional<Inout<T>> could represent either a "re-seatable reference" or "conditional access to existing storage," and we can't express which one it is.
+For "conditional access to existing storage" there is an unambiguous solution - a CPS function with the "yield at most once" guarantee:
+extension InlineArray {
+mutating func safeWithElement<T>(
+at index: Int,
+_ f: (inout Element) -> T // ideally this closure should also convey "at most once" semantics
+) -> T? {
+guard indices.contains(index) else {
+return nil
+}
+return f(&self[index])
+}
+}
+Similarly, for your enum example, a switch with an inout binding would also be clearer, maintaining the same efficiency:
+func process(_ foo: inout Foo) {
+switch &foo {
+case .bar(inout value):
+value.append(...)
+case .buz:
+foo = .bar([])
+}
+}
+So, IMO, being explicit about the control flow is better in both cases.
+
+---
+
+@Alejandro · 2026-02-11T23:25:03.069Z:
+dmt:
+When a property yields Optional<Inout<T>> via mutating mutate
+Properties that return Optional<Inout<T>> will most likely be mutating get similar to how getting MutableSpan from Array.mutableSpan is a mutating get.
+
+---
+
+@dabrahams · 2026-02-11T23:46:32.733Z:
+dnadoba:
+I already had a couple use cases for Optional<Inout<T>>…
+Todays version with runtime preconditions:…
+I don't see how the language features would help you avoid precondition checks in either case.
+I don't know that the overloading works out in practice once you have multiple variants.  The avoidance of overloads is another great strength of subscripts that I hadn't mentioned before
+(I know what you're trying to do but trapping precondition checks aren't unsafe so you shouldn't use “safe” here.)
+Unless they've fixed this, the enum case is hobbled by the fact that there's no way to directly borrow or inout a payload.
+Yes these constructs have use cases.  The question is whether they are the best way (given all the tradeoffs involved) to address those use cases.
+
+---
+
+@dmt · 2026-02-12T00:58:23.069Z:
+Alejandro:
+Properties that return Optional<Inout<T>> will most likely be mutating get
+That makes sense regarding mutating get. It effectively sidesteps the "reseating" ambiguity because there is no setter to abuse. But mutating get requires named lifetimes, doesn't it? In a design without named lifetimes, we would have to use either yielding subscripts or CPS. And yielding subscripts require either a different design of Inout<T> or a different way to specify contracts.
+I guess we can say it's another point of divergence between the yielding and the "returning-a-reference" models.
+
+---
+
+@tera · 2026-02-12T18:51:19.142Z:
+processeus:
+The best relevant resource is probably the subscript section of the language tour for now, but you can check out an experimental version of Hylo in compiler explorer.
+Thank you.
+yield &self // yield point (control goes back to caller, i.e. the plateau)
+// something afterwards
+How is yielding done in Hylo? Is this accurate:
+at the point of yield control "temporarily" goes back to the caller
+the stack is not yet unwinded
+then after the caller did something with the returned value or the reference – control returns back to the point right after yield
+execution continues until the point of the final return
+the stack is unwinded, control goes back to the caller
+Is Swift the same in these regards?
+
+---
+
+@NotTheNHK · 2026-02-12T20:34:19.041Z:
+I’m not an expert in this, but these are coroutines, and Swift uses them under the hood as well. There are two LLVM videos by Mr. McCall that explain coroutines in general and how they are used in Swift:
+Coroutine Representations and ABIs in LLVM
+Asynchronous Functions in Swift
+
+---
+
+@Alvae · 2026-02-12T22:20:02.594Z:
+tera:
+Is Swift the same in these regards?
+Yes. We have shamelessly copied Swift’s semantics. The most significant difference is that we can bind the yielded value in the caller whereas it can only be used as a subexpression in Swift.
+It is implemented as a coroutine in our current prototype and I think we’re doing almost the same thing as `swiftc`. Unfortunately this approach has some run-time overhead because LLVM compiles yield-once coroutines to a pair of a functions, the first of which stores its frame in the heap. We have started implementing a more efficient approach to avoid this overhead.
+
+=== ROW 92 | f004229 | https://pingcap.com/blog/seamless-tidb-cloud-upgrades-replicating-production-workloads-traffic-replay | 2026-02-09 | domain-subframes ===
+TiDB Cloud Traffic Replay: Seamless Production Upgrades
+AI
+TIDB FOR AGENTIC AI
+Database for Agentic AI
+Purpose-built for agent memory, state, and multi-hop reasoning
+Persistent Context for AI Agents
+Persistent, queryable memory for AI agents with per-agent isolation
+Build AI Applications
+SDKs, guides, and templates for shipping AI apps fast
+Vector Search & RAG
+Native vector indexing and retrieval-augmented generation pipelines
+AI Startup Program													PROGRAM
+Scale faster without letting infrastructure become the bottleneck
+Product
+An open-source distributed SQL database trusted by innovators to power transactional, AI, and other modern applications.
+Product Overview
+Deployment Options
+TiDB Cloud
+TiDB Self-Managed
+Pricing
+Ecosystem
+Integrations
+TiKV
+mem9
+TiDB Cloud Filesystems
+OSS Insight
+Solutions
+Customer Stories
+Trusted and verified by innovation leaders around the world.
+By Industry
+AI
+Fintech
+eCommerce
+SaaS
+Logistics & Supply Chain
+Web3
+By Use Case
+Lower Infrastructure Costs
+Enable Operational Intelligence
+Modernize MySQL Workloads
+Build GenAI Applications
+Build Persistent Context for AI Agents
+Resources
+Learn
+Blog
+eBooks & Whitepapers
+Webinars and Videos
+Compare Databases
+Playbooks
+Engage
+Events
+Discord Community
+Developer Hub
+TiDB SCaiLE
+PingCAP University
+Courses
+Hands-on Labs
+Certifications
+Company
+Trust Hub
+Explore how TiDB ensures the confidentiality and availability of your data.
+About
+Press Releases & News
+About Us
+Careers
+Partners
+Contact Us
+Docs
+Sign In
+Start for Free
+AI
+TIDB FOR AGENTIC AI
+Database for Agentic AI
+Persistent Context for AI Agents
+Build AI Applications
+Vector Search & RAG
+AI Startup ProgramPROGRAM
+Product
+An open-source distributed SQL database trusted by innovators to power transactional, AI, and other modern applications.
+Product Overview
+Deployment Options
+TiDB Cloud
+TiDB Self-Managed
+Pricing
+Ecosystem
+Integrations
+TiKV
+mem9
+TiDB Cloud Filesystems
+OSS Insight
+Solutions
+Customer Stories
+Trusted and verified by innovation leaders around the world.
+By Industry
+AI
+Fintech
+eCommerce
+SaaS
+Logistics & Supply Chain
+Web3
+By Use Case
+Lower Infrastructure Costs
+Enable Operational Intelligence
+Modernize MySQL Workloads
+Build GenAI Applications
+Build Persistent Context for AI Agents
+Resources
+Learn
+Blog
+eBooks & Whitepapers
+Webinars and Videos
+Compare Databases
+Playbooks
+Engage
+Events
+Discord Community
+Developer Hub
+TiDB SCaiLE
+PingCAP University
+Courses
+Hands-on Labs
+Certifications
+Company
+Trust Hub
+Explore how TiDB ensures the confidentiality and availability of your data.
+About
+Press Releases & News
+About Us
+Careers
+Partners
+Contact Us
+Docs
+Sign In
+Start for Free
+Seamless TiDB Cloud Upgrades: Replicating Production Workloads with Traffic Replay
+2026-01-27
+Product
+Ming Zhang
+Software Engineer
+Database upgrades are often a source of “performance anxiety.” Even with extensive testing, the gap between a sterile staging environment and the chaotic reality of production—characterized by shifting SQL parameters, bursty concurrency, and complex execution contexts—often leads to unexpected post-upgrade regressions.
+Traffic Replay on TiDB Cloud, an internal-only tool currently in development for a wider release, bridges this gap. It allows you to upgrade with production-fidelity confidence by catching execution plan regressions and performance “cliffs” before they ever reach your users.
+Key Terminology:
+CPS (Commands Per Second): The volume of SQL commands executed per second. Replay fidelity is measured by how closely the test CPS matches the production curve.
+Prepared Statements & Plan Cache: By preserving statement IDs to 1:1 simulate prepared statements, we ensure Plan Cache efficiency is accurately modeled.
+99% Accuracy: The statistical correlation between production and replay traffic in CPS shape and query mix.
+The Problem with Traditional Database Testing
+Common synthetic benchmarking (client-side simulation) often fails to reflect actual production pressure. Traffic Replay addresses these specific “fidelity gaps”:
+FeatureSynthetic Simulation (Traditional)Traffic Replay (TiDB Cloud)
+Load PatternsStatic: Relies on fixed scripts or simple randomization.Dynamic: Captures mixed request types and fluctuating frequencies.
+Data DistributionUniform: Often misses hotspots or data skewness.Authentic: Validates cache and indexing under real-world data skew.
+ConcurrencyFixed: Linear or static concurrency models.Real-world: Replicates bursts and interrelated session states.
+Execution ContextOversimplified: Often misses session variables or Plan Cache state.High Fidelity: 1:1 mapping of connections and prepared statements.
+When Should You Use TiDB Cloud Traffic Replay?
+If your application meets any of the following criteria, Traffic Replay should be a mandatory step in your maintenance lifecycle:
+Major Version Upgrades: Moving across significant architectural changes (e.g., TiDB 6.x to 8.x).
+Optimizer Changes: When enabling new features like optimizer enhancements.
+High P99/P999 Sensitivity: For latency-critical applications where even a 5ms regression is unacceptable.
+Workload Volatility: For systems with highly bursty traffic or complex query patterns.
+How TiDB Cloud Traffic Replay Works
+TiDB Cloud Traffic Replay is an integrated operational workflow, not just a tool.
+1. Storage & Security
+To begin, you must enable audit logging via the web console, which records requests directly to object storage (e.g., S3).
+Encryption: Audit logs are stored in encrypted S3 buckets. Data is encrypted in transit via TLS.
+Sensitive Data Exclusion: Audit logs contain original SQL statements. To ensure high fidelity, the data is not masked during replay. However, users can manage data privacy at the source: during the recording phase, you can selectively exclude specific databases, tables, or sensitive SQL types.
+Retention: Ensure your log retention window covers the “peak traffic” period you wish to replay.
+2. The Operational Flow
+Environment Setup: Before replaying, create a test cluster and use the TiDB Cloud BR tool to restore production data to this test cluster (usually taking just a few hours). The test cluster size is a trade-off:
+1:1 Cluster: For highest fidelity (validating P99 latency and resource contention).
+Scaled-down Cluster: For cost-effective directional testing. Note: Expect different absolute latency and hotspot behavior.
+Inputs: Select the backup snapshot’s timestamp as the replay’s starting point. You can manually terminate the session at any time once you have gathered sufficient data.
+Execution: The replay tool then begins reading audit logs from that timestamp, parsing them into SQL statements, and executing them on the test cluster. The engine maps production connection IDs 1-to-1 to test connections, preserving transaction states.
+3. Outputs
+Once complete, TiDB Cloud generates a comparison report for efficiently comparing cluster health based on:
+Key Metric Diffs: CPS, Latency, and CPU deltas.
+Slow Query Diffs: Queries that were fast in production but slow in the new version.
+Top SQL Diffs: Queries that consume more CPU resources in the new version.
+The chart below compares the CPS, component CPU usage, and latency results from a customer’s pre-upgrade traffic replay:
+The chart shows:
+CPS Overlap: The CPS margin of error is within 1%, with the comparison curves nearly overlapping, indicating that the workload fidelity is nearly perfect. We are testing the actual pressure of your business.
+P999 Latency: The max P999 latency decreases by more than 20%. The tail latency matters because upgrades often impact complex edge-case queries.
+CPU Utilization: The CPU usage of TiDB, TiKV, and TiFlash decreases by more than 10%. You have identified a clear performance gain or cost-saving opportunity.
+Next, we have a comparison of slow queries and resource-intensive SQL statements:
+It is evident that the total number of slow queries decreased significantly, and optimized SQL statements far outnumbered those that showed regression. For the identified regressions, we can download the details and bind their execution plans to prevent any business impact after the upgrade.
+The Regression Playbook: What if Things Go Wrong?
+Finding a regression is a “win”—it means you caught it early. Follow this sequence:
+Identify: Locate the specific SQL Digest in the “Slow Query” section.
+Confirm: Compare execution plans. Is it a stats drift or an optimizer change?
+Remediate: Use SQL Plan Binding to lock in a known “good” plan or update statistics.
+Validate: Re-run the replay session to ensure the fix holds under production pressure.
+Limitations to Keep in Mind
+Users should be aware of the following technical constraints inherent in the replay process:
+Inter-Connection Temporal Drifts: The absolute temporal alignment between independent sessions may vary, potentially leading to a different global execution order than seen in production.
+DML Result Divergence: The results of DML statements may differ from production. For example, if a table uses Auto-increment columns, the generated IDs in the replay environment may not match those in production due to differences in concurrency timing or environment variables.
+Conclusion
+By achieving 99% accuracy in workload reproduction, Traffic Replay on TiDB Cloud transforms upgrades from a “risky event” into a “validated routine.”
+Ready to secure your next upgrade? Run a 30-minute traffic session from your last peak period, and compare your P999 latency and Top SQL CPU time.
+Get Started
+BenchmarkingDatabase UpgradesDistributed SQLTestingTiDB Cloud
+Spin up a database with 25 GiB free resources.
+Start Right Away
+Share:
+Related Resources
+Solution
+The FinTech Scalability Crisis: How Distributed SQL Unlocks Innovation with Zero Downtime Operations
+Tutorial
+Vercel and TiDB Cloud Starter: The Full-Stack Playbook for AI Apps
+Engineering
+Lakebase, TiDB X, and the Database Architecture AI Demands
+Solution
+The FinTech Scalability Crisis: How Distributed SQL Unlocks Innovation with Zero Downtime Operations
+Tutorial
+Vercel and TiDB Cloud Starter: The Full-Stack Playbook for AI Apps
+Engineering
+Lakebase, TiDB X, and the Database Architecture AI Demands
+View All
+Have questions? Let us know how we can help.
+Contact Us
+TiDB Cloud Dedicated
+A fully-managed cloud DBaaS for predictable workloads
+Sign Up
+Learn More
+TiDB Cloud Starter
+A fully-managed cloud DBaaS for auto-scaling workloads
+Start for Free
+Learn More
+English
+日本語
+Product
+Product Overview
+TiDB Cloud
+TiDB Self-Managed
+Pricing
+English
+日本語
+Ecosystem
+Integrations
+TiKV
+mem9
+TiDB Cloud Filesystems
+OSS Insight
+Resources
+Blog
+Articles
+Events & Webinars
+TiDB SCaiLE
+Docs
+Developer Guide
+FAQs
+Support
+Company
+About Us
+News
+Careers
+Contact Us
+Partners
+Trust Hub
+Security
+Release Support
+Brand Guidelines
+Stay Connected
+Sign up to receive periodic updates and
+feature releases to your email.
+© 2026 PingCAP. All Rights Reserved.
+Privacy Policy
+Legal
+
+=== ROW 94 | f004369 | https://neon.com/blog/ctrl-c-in-psql-gives-me-the-heebie-jeebies | 2026-03-05 | domain-subframes ===
+Ctrl-C in psql gives me the heebie-jeebies - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Postgres
+Ctrl-C in psql gives me the heebie-jeebies
+Postgres has been YOLOing query cancellation for 30 years
+George MacKerron–Software DeveloperMar 05, 2026
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+There are a few different reasons to hit the brakes on a Postgres query. Maybe it’s taking too long to finish. Maybe you realised you forgot to create an index that will make it orders of magnitude quicker. Maybe there’s some reason the results are no longer needed.
+Or maybe you, or your LLM buddy, made a mistake in the SQL, and you only noticed it while you were waiting for it to return. Maybe it’s even a mistake [scary chords play] that could have valuable production data as collateral damage. But let’s hope it isn’t (or, if it is, that you’re using a system that does time-travel, like Neon).
+Whatever the reason, if you’re a psql command-line user, Ctrl-C is in your muscle memory. So now you’re looking at the words Cancel request sent, followed shortly after by the not-really-an-error message ERROR: cancelling statement due to user request. But what’s going on behind the scenes?
+How CancelRequest works
+To cancel a Postgres query, the Postgres client makes a new and additional connection to the server, in the form of a CancelRequest. The server distinguishes this from an ordinary client connection via a magic protocol version number at the beginning of the startup message: the latest Postgres protocol is v3.2 (or 0x00030002), but a CancelRequest claims to be v1234.5678 (or 0x04d2162e).
+A CancelRequest targets a connection rather than a specific query. The target connection is identified to the server by two numbers that the server originally provided to the client at the end of their connection handshake (via the BackendKeyData message).
+The numbers are a 4-byte process ID and a secret random key value, traditionally also 4 bytes long. Aside from an initial length-of-message value, that’s everything the client sends. No credentials are required except that 4-byte secret key.
+It’s perhaps slightly surprising that Postgres cancels by connection rather than by query. It leads to a race condition: we risk cancelling a different query to the one that was running at the moment we asked to cancel it (this isn’t great, but the heebie-jeebies are pretty mild so far: maybe a 2 or 3 out of 10).
+But here’s a bigger surprise: psql always sends this CancelRequest unencrypted. Even if the connection carrying the query to be cancelled has the strictest possible TLS settings (sslmode=verify-full, channel_binding=require, and so on), psql always goes right ahead and cancels in plaintext.
+The Postgres server on the other end of the exchange has accepted CancelRequest messages over TLS ever since it got TLS support. But until Postgres 17 — that is, less than 18 months ago — there was simply no support for encrypting a CancelRequest in libpq, the client-side Postgres C library on which psql is built.
+Since Postgres 17, libpq does have functions to send CancelRequest messages over TLS. And many drivers that are based on libpq, such as ruby-pg, now use these new, encrypting functions.
+But psql itself still doesn’t use them. As of today, hit Ctrl-C in psql and your CancelRequest goes over the wire naked as the day it was born, in unencrypted plaintext.
+Hello, Denial-of-Service?
+As someone who cares about Postgres security, this makes me a bit uneasy (heebie-jeebies level: a solid 6 at least). There’s a potential Denial of Service attack lurking here.
+It’s not that the Postgres developers aren’t well aware of the problem. There are architectural reasons why psql doesn’t yet use libpq’s encrypted cancellation functions (it “would need a much larger refactor to be able to call them due to the new functions not being signal-safe”) – but a patch to do the necessary refactoring is in the works for some future release.
+And Neon’s own Heikki described the risk that 4-byte secret keys get brute-forced two years back, resulting in the first Postgres protocol update in over twenty years. Protocol v3.2 differs from v3.0 only in that the secret key for cancellation can be up to 256 bytes long. But libpq and psql still don’t use this new version unless you explicitly specify min_protocol_version=3.2 on the end of your connection string.
+So, what if you do use the latest psql, and you also specify protocol 3.2 so as to get a secret key that’s too big to brute-force? Even then, as soon as you cancel a query, anyone who can see your network traffic (e.g. anyone on the same open WiFi network) can mount a Denial of Service attack. Specifically, they can cancel any and all future queries on the same connection, just by repeatedly replaying the intercepted cancellation request.
+No TLS = SNI is MIA
+The fact that CancelRequest connections commonly travel unencrypted has some slightly subtler impacts that Postgres-adjacent developers need to deal with. In fact, these are what led me to dive deeper into this little backwater of the Postgres protocol.
+I created and maintain Elephantshark, an open-source Postgres network traffic monitor. It’s like Wireshark, but specialised for Postgres and implemented as a proxy.
+Elephantshark’s first release could only proxy one Postgres connection at a time. That had been fine for my own use-cases, but first contact with the real world demonstrated it was a pretty dumb limitation.
+As one example, you now know that when you press Ctrl-C in psql, the CancelRequest message that’s sent to the Postgres back-end travels over a new and separate connection. As another example: did you also know that Bun.SQL defaults to connecting a pool of 10 clients, eagerly and in parallel, even if you only send one query?
+It’s safe to say that neither of those things plays nicely with one-at-a-time connection support. So Elephantshark got support for concurrent connections in v0.2. That fixed its Bun.SQL issue.
+But Ctrl-C in psql still wasn’t working. And, after a little digging, the non-encryption of CancelRequest messages turned out to be the culprit.
+That’s because, when you connect to Postgres via Elephantshark over TLS, Elephantshark typically works out your target server using the SNI (Server Name Indication) extension to TLS, plus a customisable suffix.
+For instance, to monitor a connection to ep-adj-noun-abc1234.region.aws.neon.tech, you run elephantshark and then connect to ep-adj-noun-abc1234.region.aws.neon.tech.local.neon.build instead. Any subdomain of .local.neon.build resolves to 127.0.0.1, where Elephantshark is running. And Elephantshark knows that, if the hostname it gets via SNI ends in .local.neon.build, it should strip that off before it makes the onward connection.
+Marvellous. Until, that is, you hit the brakes on a query. Because your CancelRequest travels unencrypted, there is no SNI, and that means no record of the intended destination host. Luckily, Elephantshark recognises when it’s being asked to forward both from and to localhost, and would politely bail in preference to sending your message in an infinite loop. Unluckily, until Elephantshark v0.3, this would bring you no closer to cancelling your query.
+The fix for this turns out to be old news in the Postgres proxy world. It’s in Neon’s proxy, for one. On receiving an ordinary client connection, you update a data structure that maps (process ID, secret key) values to destination hostnames. On subsequently receiving a CancelRequest connection without SNI, you look up the destination hostname using the (process ID, secret key) it specifies. Elephantshark v0.3 keeps a Ruby Hash for this purpose, so now you can both cancel and monitor your cancelling.
+Wrapping up
+Let’s hope encrypted CancelRequest messages land in psql soon. In the meantime, if you care a lot about security, do some or all of the following: use Postgres 18 and min_protocol_version=3.2; use a VPN; don’t use Ctrl-C in psql; and check any other Postgres clients or drivers you use to see if they’re encrypting their CancelRequests.
+On that last point, Elephantshark can help. And watch this space — I have an idea to make this kind of check even easier in the near future.
+Appendix: what happens when you press Ctrl-C in psql, using Postgres protocol v3.2, courtesy of Elephantshark
+#1  listening on 127.0.0.1 port 5432 …#2  listening on 127.0.0.1 port 5432 …#1  connected at t0 = 2026-03-04 17:42:07 +0000#1  client -> script: "\x00\x00\x00\x08\x04\xd2\x16\x2f" = SSLRequest#1  script -> client: "S" = SSL supported#1  TLSv1.3/TLS_AES_256_GCM_SHA384 connection established with client#1    server name via SNI: ep-winter-morning-abv2sxkp.eu-west-2.aws.neon.tech.local.neon.build#1  client -> script: "\x00\x00\x00\x56" = 86 bytes of startup message#1    "\x00\x03" = protocol major version 3 "\x00\x02" = protocol minor version 2#1    "user\x00" = key "neondb_owner\x00" = value#1    "database\x00" = key "neondb\x00" = value#1    "application_name\x00" = key "psql\x00" = value#1    "client_encoding\x00" = key "UTF8\x00" = value#1    "\x00" = end#1  connecting to Postgres server: ep-winter-morning-abv2sxkp.eu-west-2.aws.neon.tech#1  script -> server: "\x00\x00\x00\x08\x04\xd2\x16\x2f" = SSLRequest#1  server -> script: "S" = SSL supported#1  TLSv1.3/TLS_AES_256_GCM_SHA384 connection established with server#1  forwarding client startup message to server#1  script -> server: "\x00\x00\x00\x56" = 86 bytes of startup message#1    "\x00\x03" = protocol major version 3 "\x00\x02" = protocol minor version 2#1    "user\x00" = key "neondb_owner\x00" = value#1    "database\x00" = key "neondb\x00" = value#1    "application_name\x00" = key "psql\x00" = value#1    "client_encoding\x00" = key "UTF8\x00" = value#1    "\x00" = end#1  forwarding all later traffic#1  server -> client: "R" = Authentication "\x00\x00\x00\x2a" = 42 bytes "\x00\x00\x00\x0a" = AuthenticationSASL#1    "SCRAM-SHA-256-PLUS\x00" = SASL mechanism#1    "SCRAM-SHA-256\x00" = SASL mechanism#1    "\x00" = end#1  ^^ 43 bytes forwarded at +0.17s#1  client -> server: "p" = SASLInitialResponse "\x00\x00\x00\x36" = 54 bytes#1    "SCRAM-SHA-256\x00" = selected mechanism "\x00\x00\x00\x20" = 32 bytes follow#1    "n,,n=,r=6Dv+CvxsNyKjNgqj9ICgfr0A" = SCRAM client-first-message#1  ^^ 55 bytes forwarded at +0.17s#1  server -> client: "R" = Authentication "\x00\x00\x00\x5c" = 92 bytes "\x00\x00\x00\x0b" = AuthenticationSASLContinue#1    "r=6Dv+CvxsNyKjNgqj9ICgfr0AmTrd19svrM64paqVlEwutk7d,s=wJpvuPu9tcsKybvQsHxu+w==,i=4096" = SCRAM server-first-message#1  ^^ 93 bytes forwarded at +0.18s#1  client -> server: "p" = SASLResponse "\x00\x00\x00\x6c" = 108 bytes#1    "c=biws,r=6Dv+CvxsNyKjNgqj9ICgfr0AmTrd19svrM64paqVlEwutk7d,p=iFJwCSajkRUUpTF5J9Sb7mqumKK3JyEZtW1DrGTWil0=" = SCRAM client-final-message#1  ^^ 109 bytes forwarded at +0.19s#1  server -> client: "R" = Authentication "\x00\x00\x00\x36" = 54 bytes "\x00\x00\x00\x0c" = AuthenticationSASLFinal#1    "v=U52Ytx3KNXJPcOgMs0UdGwJBjHUdw91OTUawbAB0EK0=" = SCRAM server-final-message#1  server -> client: "R" = Authentication "\x00\x00\x00\x08" = 8 bytes "\x00\x00\x00\x00" = AuthenticationOk#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x17" = 23 bytes "in_hot_standby\x00" = key "off\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x19" = 25 bytes "integer_datetimes\x00" = key "on\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x11" = 17 bytes "TimeZone\x00" = key "GMT\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x1b" = 27 bytes "IntervalStyle\x00" = key "postgres\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x20" = 32 bytes "search_path\x00" = key ""$user", public\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x15" = 21 bytes "is_superuser\x00" = key "off\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x1a" = 26 bytes "application_name\x00" = key "psql\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x26" = 38 bytes "default_transaction_read_only\x00" = key "off\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x1a" = 26 bytes "scram_iterations\x00" = key "4096\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x17" = 23 bytes "DateStyle\x00" = key "ISO, MDY\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x23" = 35 bytes "standard_conforming_strings\x00" = key "on\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x27" = 39 bytes "session_authorization\x00" = key "neondb_owner\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x19" = 25 bytes "client_encoding\x00" = key "UTF8\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x22" = 34 bytes "server_version\x00" = key "17.8 (6108b59)\x00" = value#1  server -> client: "S" = ParameterStatus "\x00\x00\x00\x19" = 25 bytes "server_encoding\x00" = key "UTF8\x00" = value#1  server -> client: "K" = BackendKeyData "\x00\x00\x00\x14" = 20 bytes#1    "\x00\x00\x03\x6d" = process ID: 877#1    "\x6b\x32\xfb\x77\x81\x02\x50\xee\x49\xe2\x92\x73" = secret key#1  server -> client: "Z" = ReadyForQuery "\x00\x00\x00\x05" = 5 bytes "I" = idle#1  ^^ 522 bytes forwarded at +0.22s#1  client -> server: "Q" = Query "\x00\x00\x00\x19" = 25 bytes "SELECT pg_sleep(10);\x00" = query#1  ^^ 26 bytes forwarded at +1.41s#3  listening on 127.0.0.1 port 5432 …#2  connected at t0 = 2026-03-04 17:42:10 +0000#2  no SSLRequest: continuing in plaintext#2  client -> script: "\x00\x00\x00\x18" = 24 bytes of CancelRequest message#2    "\x04\xd2" = cancel code: 1234 "\x16\x2e" = cancel code: 5678#2    "\x00\x00\x03\x6d" = target backend process ID: 877#2    "\x6b\x32\xfb\x77\x81\x02\x50\xee\x49\xe2\x92\x73" = target backend secret key#2  using remembered host for CancelRequest connection#2  connecting to Postgres server: ep-winter-morning-abv2sxkp.eu-west-2.aws.neon.tech#2  script -> server: "\x00\x00\x00\x08\x04\xd2\x16\x2f" = SSLRequest#2  server -> script: "S" = SSL supported#2  TLSv1.3/TLS_AES_256_GCM_SHA384 connection established with server#2  forwarding client startup message to server#2  script -> server: "\x00\x00\x00\x18" = 24 bytes of CancelRequest message#2    "\x04\xd2" = cancel code: 1234 "\x16\x2e" = cancel code: 5678#2    "\x00\x00\x03\x6d" = target backend process ID: 877#2    "\x6b\x32\xfb\x77\x81\x02\x50\xee\x49\xe2\x92\x73" = target backend secret key#2  forwarding all later traffic#2  server hung up#2  connection end#1  server -> client: "T" = RowDescription "\x00\x00\x00\x21" = 33 bytes "\x00\x01" = 1 columns follow#1    "pg_sleep\x00" = column name "\x00\x00\x00\x00" = table OID: 0 "\x00\x00" = table attrib no: 0#1    "\x00\x00\x08\xe6" = type OID: 2278 "\x00\x04" = type length: 4 "\xff\xff\xff\xff" = type modifier: -1 "\x00\x00" = format: text#1  server -> client: "E" = ErrorResponse "\x00\x00\x00\x68" = 104 bytes#1    "S" = severity "ERROR\x00" = value#1    "V" = unlocalized severity "ERROR\x00" = value#1    "C" = SQLSTATE code "57014\x00" = value#1    "M" = message "canceling statement due to user request\x00" = value#1    "F" = file "postgres.c\x00" = value#1    "L" = line "3428\x00" = value#1    "R" = routine "ProcessInterrupts\x00" = value#1    "\x00" = end#1  server -> client: "Z" = ReadyForQuery "\x00\x00\x00\x05" = 5 bytes "I" = idle#1  ^^ 145 bytes forwarded at +3.13s
+On this page
+How CancelRequest works
+Hello, Denial-of-Service?
+No TLS = SNI is MIA
+Wrapping up
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+

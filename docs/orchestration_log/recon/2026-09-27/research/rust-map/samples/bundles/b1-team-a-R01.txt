@@ -1,0 +1,2070 @@
+=== ROW 8 | f000227 | https://rtic.rs/ | unknown (living document) | books-courses ===
+Preface - Real-Time Interrupt-driven Concurrency
+Keyboard shortcuts
+Press ← or → to navigate between chapters
+Press S or / to search in the book
+Press ? to show this help
+Press Esc to hide this help
+Preface
+Is RTIC an RTOS?
+RTIC - The Past, current and Future
+Stack Resource Policy based Scheduling
+SRP analysis
+Example
+RTIC the hardware accelerated real-time scheduler
+Example
+Mapping
+Example
+RTIC into the Future
+RTIC the model
+1. Starting a new project
+2. RTIC by example
+2.1. The app
+2.2. Hardware tasks
+2.3. Software tasks & spawn
+2.4. Resources
+2.5. The init task
+2.6. The idle task
+2.7. Channel based communication
+2.8. Delay and Timeout using Monotonics
+2.9. The minimal app
+2.10. Tips & Tricks
+2.10.1. Resource de-structure-ing
+2.10.2. Avoid copies when message passing
+2.10.3. 'static super-powers
+2.10.4. Inspecting generated code
+3. Monotonics & the Timer Queue
+4. RTIC vs. the world
+5. RTIC and Embassy
+6. Awesome RTIC examples
+7. Migrating from v1.0.x to v2.0.0
+7.1. Migrating to rtic-monotonics
+7.2. Software tasks must now be async
+7.3. Using and understanding rtic-sync
+7.4. A code example on migration
+8. Under the hood
+8.1. Target architectures
+Auto
+Light
+Rust
+Coal
+Navy
+Ayu
+Real-Time Interrupt-driven Concurrency
+RTIC
+The hardware accelerated Rust RTOS
+A concurrency framework for building real-time systems
+Preface
+This book contains user level documentation for the Real-Time Interrupt-driven Concurrency
+(RTIC) framework. The API reference is available here.
+This is the documentation for RTIC v2.x.
+Older releases:
+RTIC v1.x | RTIC v0.5.x (unsupported) | RTFM v0.4.x (unsupported)
+Is RTIC an RTOS?
+A common question is whether RTIC is an RTOS or not, and depending on your background the answer may vary. From RTIC’s developers point of view; RTIC is a hardware accelerated RTOS that utilizes the hardware such as the NVIC on Cortex-M MCUs, CLIC on RISC-V etc. to perform scheduling, rather than the more classical software kernel.
+Another common view from the community is that RTIC is a concurrency framework as there
+is no software kernel and that it relies on external HALs.
+RTIC - The Past, current and Future
+This section gives a background to the RTIC model. Feel free to skip to section RTIC the model for a TL;DR.
+The RTIC framework takes the outset from real-time systems research at Luleå University of Technology (LTU) Sweden. RTIC is inspired by the concurrency model of the Timber language, the RTFM-SRP based scheduler, the RTFM-core language and Abstract Timer implementation. For a full list of related research see RTFM and RTIC publications.
+Stack Resource Policy based Scheduling
+Stack Resource Policy (SRP) based concurrency and resource management is at heart of the RTIC framework. The SRP model itself extends on Priority Inheritance Protocols, and provides a set of outstanding properties for single core scheduling. To name a few:
+preemptive deadlock and race-free scheduling
+resource efficiency
+tasks execute on a single shared stack
+tasks run-to-completion with wait free access to shared resources
+predictable scheduling, with bounded priority inversion by a single (named) critical section
+theoretical underpinning amenable to static analysis (e.g., for task response times and overall schedulability)
+SRP comes with a set of system-wide requirements:
+each task is associated a static priority,
+tasks execute on a single-core,
+tasks must be run-to-completion, and
+resources must be claimed/locked in LIFO order.
+SRP analysis
+SRP based scheduling requires the set of static priority tasks and their access to shared resources to be known in order to compute a static ceiling (𝝅) for each resource. The static resource ceiling 𝝅(r) reflects the maximum static priority of any task that accesses the resource r.
+Example
+Assume two tasks A (with priority p(A) = 2) and B (with priority p(B) = 4) both accessing the shared resource R. The static ceiling of R is 4 (computed from 𝝅(R) = max(p(A) = 2, p(B) = 4) = 4).
+A graph representation of the example:
+p(A) = 2
+𝝅(R) = 4
+p(B) = 4
+RTIC the hardware accelerated real-time scheduler
+SRP itself is compatible with both dynamic and static priority scheduling. For the implementation of RTIC we leverage on the underlying hardware for accelerated static priority scheduling.
+In the case of the ARM Cortex-M architecture, each interrupt vector entry v[i] is associated a function pointer (v[i].fn), a static priority (v[i].priority), an enabled- (v[i].enabled) and a pending-bit (v[i].pending).
+An interrupt i is scheduled (run) by the hardware under the conditions:
+is pending and enabled and has a priority higher than the (optional BASEPRI) register, and
+has the highest priority among interrupts meeting 1.
+The first condition (1) can be seen as a filter, allowing RTIC to take control over which tasks should be allowed to start (and which should be prevented from starting).
+The SRP model for single-core static scheduling, on the other hand, states that a task should be scheduled (run) under the conditions:
+it is requested to run and has a static priority higher than the current system ceiling (𝜫)
+it has the highest static priority among tasks meeting 1.
+The similarities are striking and it is not by chance/luck/coincidence. The hardware was cleverly designed with real-time scheduling in mind.
+In order to map the SRP scheduling onto the hardware we need to take a closer look at the system ceiling (𝜫). Under SRP 𝜫 is computed as the maximum priority ceiling of the currently held resources, and will thus change dynamically during the system operation.
+Example
+Assume the task model above. Starting from an idle system, 𝜫 is 0, (no task is holding any resource). Assume that A is requested for execution, it will immediately be scheduled. Assume that A claims (locks) the resource R. During the claim (lock of R) any request B will be blocked from starting (by 𝜫 = max(𝝅(R) = 4) = 4, p(B) = 4, thus SRP scheduling condition 1 is not met).
+Mapping
+The mapping of static priority SRP based scheduling to the Cortex M hardware is straightforward:
+each task t are mapped to an interrupt vector index i with a corresponding function v[i].fn = t and given the static priority v[i].priority = p(t).
+the current system ceiling is mapped to the BASEPRI register or implemented through masking the interrupt enable bits accordingly.
+Example
+For the running example, a snapshot of the ARM Cortex M Nested Vectored Interrupt Controller (NVIC) may have the following configuration (after task A has been pended for execution.)
+IndexFnPriorityEnabledPending
+0A2truetrue
+1B4truefalse
+(As discussed later, the assignment of interrupt and exception vectors is up to the user.)
+A claim (lock(r)) will change the current system ceiling (𝜫) and can be implemented as a named critical section:
+old_ceiling = 𝜫, 𝜫 = 𝝅(r)
+execute code within critical section
+𝜫 = old_ceiling
+This amounts to a resource protection mechanism, requiring only two machine instructions on enter and one on exit the critical section, for managing the BASEPRI register. For architectures lacking BASEPRI, we can implement the system ceiling through a set of machine instructions for disabling/enabling interrupts on entry/exit for the named critical section. The number of machine instructions vary depending on the number of mask registers that needs to be updated (a single machine operation can operate on up to 32 interrupts, so for the M0/M0+ architecture a single instruction suffice). RTIC will determine the ceiling values and masking constants at compile time, thus all operations is in Rust terms zero-cost.
+In this way RTIC fuses SRP based preemptive scheduling with a zero-cost hardware accelerated implementation, resulting in “best in class” guarantees and performance.
+Given that the approach is dead simple, how come SRP and hardware accelerated scheduling is not adopted by any other mainstream RTOS?
+The answer is simple, the commonly adopted threading model does not lend itself well to static analysis - there is no known way to extract the task/resource dependencies from the source code at compile time (thus ceilings cannot be efficiently computed and the LIFO resource locking requirement cannot be ensured). Thus, SRP based scheduling is in the general case out of reach for any thread based RTOS.
+RTIC into the Future
+Asynchronous programming in various forms are getting increased popularity and language support. Rust natively provides an async/await API for cooperative multitasking and the compiler generates the necessary boilerplate for storing and retrieving execution contexts (i.e., managing the set of local variables that spans each await).
+The Rust standard library provides collections for dynamically allocated data-structures which are useful to manage execution contexts at run-time. However, in the setting of resource constrained real-time systems, dynamic allocations are problematic (both regarding performance and reliability - Rust runs into a panic on an out-of-memory condition). Thus, static allocation is the preferable approach!
+From a modelling perspective async/await lifts the run-to-completion requirement of SRP, and each section of code between two yield points (awaits) can be seen as an individual task. The compiler will reject any attempt to await while holding a resource (not doing so would break the strict LIFO requirement on resource usage under SRP).
+So with the technical stuff out of the way, what does async/await bring to the table?
+The answer is - improved ergonomics! A recurring use case is to have task perform a sequence of requests and then await their results in order to progress. Without async/await the programmer would be forced to split the task into individual sub-tasks and maintain some sort of state encoding (and manually progress by selecting sub-task). Using async/await each yield point (await) essentially represents a state, and the progression mechanism is built automatically for you at compile time by means of Futures.
+Rust async/await support is still incomplete and/or under development. Nevertheless, it covers most common use cases and can be considered production ready.
+An important property is that futures are composable, thus you can await either, all, or any combination of possible futures (allowing e.g., timeouts and/or asynchronous errors to be promptly handled).
+RTIC the model
+An RTIC app is a declarative and executable system model for single-core applications, defining a set of (local and shared) resources operated on by a set of (init, idle, hardware and software) tasks. In short the init task runs before any other task returning a set of resources (local and shared). Tasks run preemptively based on their associated static priority, idle has the lowest priority (and can be used for background work, and/or to put the system to sleep until woken by some event). Hardware tasks are bound to underlying hardware interrupts, while software tasks are scheduled by asynchronous executors (one for each software task priority).
+At compile time the task/resource model is analyzed under SRP and executable code generated with the following outstanding properties:
+guaranteed race-free resource access and deadlock-free execution on a single-shared stack (thanks to SRP)
+hardware task scheduling is performed directly by the hardware, and
+software task scheduling is performed by auto generated async executors tailored to the application.
+The RTIC API design ensures that both SRP requirements and Rust soundness rules are upheld at all times, thus the executable model is correct by construction. Overall, the generated code infers no additional overhead in comparison to a handwritten implementation, thus in Rust terms RTIC offers a zero-cost abstraction to concurrency.
+
+=== ROW 9 | f000256 | https://rustwasm.github.io/docs/book | unknown (living document) | books-courses ===
+Introduction - Rust and WebAssembly
+1. Introduction
+2. Why Rust and WebAssembly?
+3. Background And Concepts
+3.1. What is WebAssembly?
+4. Tutorial
+4.1. Setup
+4.2. Hello, World!
+4.3. Rules
+4.4. Implementing Life
+4.5. Testing Life
+4.6. Debugging
+4.7. Adding Interactivity
+4.8. Time Profiling
+4.9. Shrinking .wasm Size
+4.10. Publishing to npm
+5. Reference
+5.1. Crates You Should Know
+5.2. Tools You Should Know
+5.3. Project Templates
+5.4. Debugging
+5.5. Time Profiling
+5.6. Shrinking .wasm Size
+5.7. JavaScript Interoperation
+5.8. Which Crates Will Work Off-the-Shelf with WebAssembly?
+5.9. How to Add WebAssembly Support to a General-Purpose Crate
+5.10. Deploying Rust and WebAssembly to Production
+This project and website is no longer maintained
+Light (default)
+Rust
+Coal
+Navy
+Ayu
+Rust and WebAssembly
+Rust 🦀 and WebAssembly 🕸
+This small book describes how to use Rust and WebAssembly together.
+Who is this book for?
+This book is for anyone interested in compiling Rust to WebAssembly for fast,
+reliable code on the Web. You should know some Rust, and be familiar with
+JavaScript, HTML, and CSS. You don't need to be an expert in any of them.
+Don't know Rust yet? Start with The Rust Programming Language first.
+Don't know JavaScript, HTML, or CSS? Learn about them on MDN.
+How to read this book
+You should read the motivation for using Rust and WebAssembly
+together, as well as familiarize yourself with the background
+and concepts first.
+The tutorial is written to be read from start to finish. You should follow
+along: writing, compiling, and running the tutorial's code yourself. If you
+haven't used Rust and WebAssembly together before, do the tutorial!
+The reference sections may be perused in any order.
+💡 Tip: You can search through this book by clicking on the 🔍 icon at the
+top of the page, or by pressing the s key.
+Contributing to this book
+This book is open source! Find a typo? Did we overlook something? Send us a
+pull request!
+
+=== ROW 10 | f000508 | https://forums.swift.org/t/se-0410-atomics/68007 | 2023-10-23 | domain-subframes ===
+SE-0410: Atomics
+
+@Joe_Groff · 2023-10-23T16:57:36.495Z:
+Hi everyone. The review of SE-0410: Atomics begins now and runs through November 6th, 2023.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to me as the review manager by email or DM. When contacting the review manager directly, please put "SE-0410" in the subject line.
+Trying it out
+An implementation of this proposal is provided in these custom built toolchains:
+macOS
+Ubuntu Linux
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at:
+https://github.com/apple/swift-evolution/blob/main/process.md
+Thank you,
+Joe Groff
+Review Manager
+
+---
+
+@ajo · 2023-10-23T17:34:35.492Z:
+I’m very happy to see this proposal! +1
+I’ve read through it and it will be a nice addition to the language, especially the RawRepresentable-support was
+One edge-case I didn’t see covered is how this will play with e.g. SIMD-types that fit in 64-bits, e.g SIMD8<UInt8>?
+
+---
+
+@Alejandro · 2023-10-23T17:45:05.829Z:
+ajo:
+One edge-case I didn’t see covered is how this will play with e.g. SIMD-types that fit in 64-bits, e.g SIMD8<UInt8>?
+SIMD is a hard one to do because a type can only conform to a protocol once and we'd need different atomic representations depending on the scalar type.
+extension SIMD2: AtomicValue {
+// When Scalar == Int8 || Scalar = UInt8
+public typealias AtomicRepresentation = Int16.AtomicRepresentation
+// When Scalar == Int16 || Scalar == UInt16
+public typealias AtomicRepresentation = Int32.AtomicRepresentation
+...
+}
+It could in theory do something like:
+extension SIMD2: AtomicValue {
+public typealias AtomicRepresentation = TwoOf<Scalar.AtomicRepresentation>
+}
+(TwoOf is not real, just expressing an example. We'd need FourOf, EightOf, etc for all the various sizes)
+which would double the storage of whatever scalar's representation is, but it would be difficult to express the alignment guarantees of the type considering we don't know the size/alignment of the containing type.
+(Although, now that I think about we could go pretty extreme here and do something like:
+protocol AtomicValue {
+associatedtype AtomicRepresentation
+associatedtype TwoAtomicRepresentation = Never
+...
+}
+extension UInt8: AtomicValue {
+typealias AtomicRepresentation = ...
+typealias TwoAtomicRepresentation = ...
+}
+extension SIMD2: AtomicValue where Scalar: AtomicValue {
+typealias AtomicRepresentation = Scalar.TwoAtomicRepresentation
+...
+}
+but this would add a level of complexity and complications to the AtomicValue protocol a bit I feel.)
+
+---
+
+@grynspan · 2023-10-23T17:49:46.200Z:
+This is a fantastic addition and something I know we've got use cases for in swift-testing. Thanks for taking on this work!
+I think the names of the various member functions on Atomic could do with a bit of finessing, as they don't really follow the typical API naming patterns. For example:
+public borrowing func compareExchange(
+expected: consuming Value,
+desired: consuming Value,
+ordering: AtomicUpdateOrdering
+) -> (exchanged: Bool, original: Value)
+This might be better-named:
+public borrowing func compareAndExchange(
+expecting: consuming Value,
+desiring: consuming Value,
+orderedAs: AtomicUpdateOrdering
+) -> (exchanged: Bool, original: Value)
+So it reads:
+... = x.compareAndExchange(
+expecting: 10,
+desiring: 20,
+orderedAs: .relaxed
+)
+Or some such. (I suspect others on the forums can come up with some good suggestions here!)
+I might have missed it, but I don't think I saw an explanation as to why AtomicOptionalWrappable must be a separate type from AtomicValue? Seems like it could also be implemented as a specialization of AtomicValue?
+
+---
+
+@scanon · 2023-10-23T18:19:23.425Z:
+ajo:
+One edge-case I didn’t see covered is how this will play with e.g. SIMD-types that fit in 64-bits, e.g SIMD8<UInt8>?
+I think in this case I would define a struct with a single SIMD8<UInt8> member and then conform that struct to AtomicValue with an AtomicRepresentation = UInt64.
+
+---
+
+@Alejandro · 2023-10-23T20:49:34.628Z:
+Hi all, I built a toolchain with these changes that you can try here:
+macOS: https://ci.swift.org/job/swift-PR-toolchain-macos/909/artifact/branch-main/swift-PR-68857-909-osx.tar.gz
+Ubuntu 20.04 (x86_64): https://download.swift.org/tmp/pull-request/68857/620/ubuntu2004/PR-ubuntu2004.tar.gz
+
+---
+
+@wadetregaskis · 2023-10-23T21:42:02.615Z:
+Good to see this coming about.
+Non-functional fences
+I think I mentioned this in an earlier thread, but I'm still not thrilled with the ability to write atomicMemoryFence(ordering: .relaxed) which is effectively a no-op.  I don't think it's a big deal, but it is a slightly sharp edge that could confuse newbies (understanding the C++ memory ordering model is hard enough as it is).
+Documentation
+It'd be great to see a more human-readable version of the explanation on memory ordering as part of adding this to the standard library, in the documentation (perhaps the Swift Reference Guide?).  Not only is it preferable if folks learning about atomics can do so without referring to another language's documentation, it'd be great if Swift's version of that documentation could be the best out there.
+Atomic weak references
+The inclusion of AtomicLazyReference is excellent.  It's one of my most common use-cases for atomics, other than atomic integers.
+It could perhaps benefit from a throwing store method, so that callers can more easily write preconditions (e.g. value.store(x)!) or otherwise fail (e.g. try value.store(x)).
+However, what about the variant case where you want to be able to write the value multiple times?  e.g. for a 'most recent value' cache (of sorts).  I don't need this often but it has come up occasionally (and might be more frequently used with a nice high level abstraction, rather than having to drop into C).
+Before I read to that part of the proposal, I actually spent a bunch of time trying to figure out how to derive this from the earlier primitives (e.g. Atomic<Unmanaged<T>>) but ran into challenges exactly as the proposal mentions regarding reference counting.  It makes me wonder whether the inclusion of Unmanaged (perhaps among others?) in the atomic world should be made private, given how difficult it is to use correctly.
+Unsupported architectures
+Will the compiler specifically diagnose unsupported-only-on-the-target-architecture atomic types?  e.g. a simple "UInt64 does not support atomic operations on i386" rather than whatever vaguer message it would if left to the default e.g. some "does not conform to protocol" diagnostic?
+Actual instructions for memory fences
+If I understand correctly, then with atomicMemoryFence the various arguments map as:
+AtomicUpdateOrdering
+Instruction
+Unintended side-effects
+relaxed
+None
+No actual function.
+acquiring
+dmb ishld
+Prevents earlier reads crossing the barrier.
+releasing
+dmb ish
+Prevents later reads & writes crossing the barrier.
+acquiringAndReleasing
+dmb ish
+sequentiallyConsistent
+dmb ish
+Is that correct?  I'm basing it on Table B2-1 in the ARMv8 ARM.
+I'm assuming use of the Inner Shareable domain because that seems to me like the most commonly applicable one for user-space code, because per the ARMv8 ARM:
+The Inner Shareable domain is expected to be the set of PEs controlled by a single hypervisor or operating system.
+The unintended side-effects appear to be because ARMv8 doesn't provide more nuanced modes for dmb…?
+How do I get a dmb ishst instruction?
+Beyond basic memory barriers
+I suspect the answer is that it's beyond the chosen scope (which is fine), but has consideration been given to other types of barriers?  e.g. speculation barriers (sb / csdb / ssdb / pssbb), sync barriers (dsb), instruction barriers (isb), etc.  I'm not all that familiar with most of them, but as I understand it they are intended for userspace code (instruction barriers for runtime codegen, for example, and speculation barriers for cryptographic or otherwise security-sensitive code).
+Acquire-release pairing (etc)
+A lot of the time the nature of accesses is intrinsic in the variable, e.g. it's always relaxed, or you always read acquiring and store releasing, or it's always sequentially consistent.  Should that be codified in the types themselves, e.g. Atomic<T> (meaning .relaxed), OrderedAtomic<T>, TotallyOrderedAtomic<T>, or somesuch?
+It'd be nicer to use, then, because you wouldn't:
+Have to specify the ordering on every access (and therefore could use standard operators etc), and
+Couldn't accidentally screw it up by using the wrong ordering in an individual access (e.g. Xcode auto-completed .relaxed when you meant .releasing, and you didn't notice).
+Maybe this is what is alluded to when the proposal says it's expected that higher-level data types are expected to be built atop these primitives?
+At the end of the proposal, it does discuss this, although some of the arguments aren't persuasive to me.
+This design puts the ordering specification far away from the actual operations -- obfuscating their meaning.
+Well, only insofar as it does for putting the variable's type, or whether a variable is 'weak' (vs strong), etc.  I don't think the ordering method needs to be mentioned at every single use any more than the variable's type needs to be.  Like the type of the variable, or its reference semantics, it's (usually) more tied to the nature of the variable than specific uses of the variable.
+It makes it a lot more difficult to use custom orderings for specific operations…
+Only if it's the only way to do it.  I think it's acceptable to have an optional ordering argument in this scenario, so you can override the default behaviour on a case-specific basis.  It does introduce a risk of confusion, between the type declaration and its usage, but IMO it's worth it.  But if that is a real bother to folks, then there could always be two layers - one of primitive "Atomic" and one above that.  It does make the API surface nominally much bigger but conceptually it's only slightly more complicated.
+Alternatively.:
+let foo: Atomic<UInt64>(0, defaultOrdering: .acquireAndRelease)
+The trick with the above is you'd want the corresponding ordering parameters to be omitted (or become optional) only if a default ordering was specified at the declaration site.  To my knowledge Swift (the language) doesn't have a way to express that, currently.
+Ordering views
+FWIW I like that proposed alternative, counter.relaxed.wrappingAdd(1) etc.
+I think the resulting code reads well, and it might also make it possible to address the prior point by allowing users to stash the view in a variable instead of the base atomic (assuming the view retains its base object) - which'd also allow a user to choose to enforce a specific ordering by only storing that ordering's view, and throwing out all accessible references to the base atomic value.
+Re. some of the other counter-arguments listed in the proposal:
+Composability. Such ordering views are unwieldy for the variant of compareExchange that takes separate success/failure orderings. Ordering views don't nest very well at all:
+counter.acquiringAndReleasing.butAcquiringOnFailure.compareExchange(...)
+I disagree, even with that specific example.  It reads easily and clearly.
+API surface area and complexity.…
+Granted it's easy for me to say as not the implementor of this functionality, but the API explosion seems worth the benefits.  We're talking about the Swift standard library here - it's really widely used and so the trade-off between implementation challenge and user experience should be weighted way towards user experience.
+The documentation explosion is a minor annoyance - it's true it'd nominally multiply the volume of documentation, but it'd have little impact on the actual conceptual complexity of the API - folks will pretty quickly realise the API for the views is the same; they're not likely to mistakenly read the redundant copies.
+Unintuitive syntax. While the syntax is indeed superficially attractive, it feels backward to put the memory ordering before the actual operation. While memory orderings are important, I suspect most people would consider them secondary to the operations themselves.
+I don't think it's unintuitive.  Unconventional, perhaps.
+And if you consider my prior point about the ability to save the view rather than the base object, this approach actually gives you a way to abstract the ordering away from individual use sites, if you want.
+Limited Reuse. Implementing ordering views takes a rather large amount of (error-prone) boilerplate-heavy code that is not directly reusable. Every new atomic type would need to implement a new set of ordering views, tailor-fit to its own use-case.
+Every additional type or set of equivalent types?  I would have thought you could have a single view [for each ordering] for e.g. all atomic integers, genericised over the specific integer type… no?
+English sucks
+compareExchange doesn't make sense (for the intended meaning) in English, strictly speaking.  It parses as "compare Exchange", whatever the noun "Exchange" means.  Any particular reason to omit the And, or to not phrase it conditionallyExchange or somesuch?
+weakCompareExchange
+It's not clear [to me] from the method's documentation what this really means; why I might want this over the [regular] compareExchange.  The docs say only:
+(In this weak form, transient conditions may cause the original == expected check to sometimes return false when the two values are in fact the same.)
+What's missing is an explanation of why those false negatives might occur, which might be important for the caller to understand at least for performance (e.g. if there's deterministic factors, could this cause an infinite loop?).
+The proposal itself does provide more insight:
+The weakCompareExchange form may sometimes return false even when the original and expected values are equal. (Such failures may happen when some transient condition prevents the underlying operation from succeeding -- such as an incoming interrupt during a load-link/store-conditional instruction sequence.) This variant is designed to be called in a loop that only exits when the exchange is successful; in such loops, using weakCompareExchange may lead to a performance improvement by eliminating a nested loop in the regular, "strong", compareExchange variants.
+That should be in the actual "headerdoc".
+Missing type information in API listings
+e.g. logicalAnd(with:ordering:) is ambiguous because it's not apparent from context what type the first parameter is…?
+var, inout, consuming…
+The proposal notes that use of these with atomic types is basically wrong and will cause problems, but it doesn't seem to be proposing that the compiler prevent it…?
+For full implementation details…
+For the full API definition, please refer to the [implementation][implementation].
+i.e. typo; missing link.
+Atomic Strong References
+Note that you can probably implement these in a single pointer-sized value, if there's at least a bit still free in the pointer representation.  That bit can be made to mean "I'm retaining or releasing this", and with compare-and-exchange you can use that essentially as a spinlock on the pointer.
+If you have two bits available then you can make a more efficient version, I believe.
+But of course you need to wrap that pointer in a non-copyable type (same as for the double-word variant the proposal alludes to).
+It'd be less efficient than a "non-atomic" reference, of course, due to the extra locking (essentially), but presumably it'd be worth it in some cases.  And honestly, it's probably an insignificant inefficiency to the vast majority of users.
+Default ordering
+I concur that having a default - which would basically have to be .sequentiallyConsistent to be safe - is a bad idea.  It's not just that it defeats the point somewhat (re. performance) but that making callers explicitly choose an ordering helps ensure they understand its ramifications (or at the very least, that the 'ordering' concept exists).
+
+---
+
+@Nobody1707 · 2023-10-23T22:56:31.579Z:
+I'm not very familiar with atomics, but I read the pitch thread and the proposal and this seems good to me. +1.
+
+---
+
+@pyrtsa · 2023-10-25T17:10:35.478Z:
+As part of this proposal, I'd expect to see a few standard protocol conformances for the new WordPair type: Equatable, Hashable, Comparable, and Sendable at least.
+
+---
+
+@lorentey · 2023-10-25T23:14:07.489Z:
+wadetregaskis:
+Atomic weak references
+Beware, this proposal mentions no such thing as an "atomic weak reference". We do not have an implementation for such a construct, and we don't currently have plans to create one, either.
+AtomicLazyRefence has strong reference semantics; it implements one useful way to generalize the lazy var feature for concurrency. (But it's just one way -- there are others. The primary benefit of this particular one is that it doesn't rely on blocking; its primary drawback is that it may induce duplicate work, so use cases must allow their result to be discarded. Another approach would be to use a dispatch_once-style, blocking solution; IIRC behind the scenes global let variables already work that way in Swift.)
+wadetregaskis:
+The inclusion of AtomicLazyReference is excellent. It's one of my most common use-cases for atomics, other than atomic integers.
+It could perhaps benefit from a throwing store method, so that callers can more easily write preconditions (e.g. value.store(x)!) or otherwise fail (e.g. try value.store(x)).
+I don't see how it would be desirable for callers to ever consider losing a race a precondition violation, or to do different things based on whether or not they won -- can you please expand? If a caller loses the race, they must simply discard their object and use the returned instance instead; the API reflects and encourages this.
+The API does make it possible to do otherwise (as callers can technically hold on to their original reference and use === to compare it against the returned one), but doing that is outside of the intended target use case -- it's true that it looks quite clumsy to do that, but the clumsiness is intentional.
+wadetregaskis:
+However, what about the variant case where you want to be able to write the value multiple times? e.g. for a 'most recent value' cache (of sorts). I don't need this often but it has come up occasionally (and might be more frequently used with a nice high level abstraction, rather than having to drop into C).
+This is covered in the Future Directions section. To keep this proposal at a (relatively) manageable length, it postpones introducing a reassignable atomic strong reference construct to a future date. This is not a value judgement; it's just a practical matter.
+Safe atomic strong references aren't rarely needed, niche constructs -- they are crucial, unavoidable building blocks for concurrent data structures. They bring Swift to relative feature parity with garbage collected languages, by providing a baseline memory reclamation solution that avoids the usual problems. (It still does not make such things easy to write, of course, but it provides an important shortcut.)
+We have had a stable implementation for this in the swift-atomics package for several years now. I fully expect a proposal for adding them to the stdlib to follow shortly after this one (although the usual caveats about scheduling difficulties apply).
+wadetregaskis:
+Before I read to that part of the proposal, I actually spent a bunch of time trying to figure out how to derive this from the earlier primitives (e.g. Atomic<Unmanaged<T>>) but ran into challenges exactly as the proposal mentions regarding reference counting.
+This is an excellent idea -- trying to roll your own atomic strong reference implementation is a great way to get into the right mindset about the difficulty level of such code.
+(In my opinion, the right mindset is to avoid deploying atomics code into production at all costs, unless there is absolutely no other way to solve a problem.)
+wadetregaskis:
+It makes me wonder whether the inclusion of Unmanaged (perhaps among others?) in the atomic world should be made private, given how difficult it is to use correctly.
+I don't think that would be right! Single-word, untagged atomic pointers are difficult to use correctly in general, but so are atomic integers. It is possible to write useful algorithms over raw atomic pointers. E.g., an atomic pointer that simply cycles through a preset number of storage buffers is useful, and isn't subject to any of the issues that plague the general case.
+wadetregaskis:
+Note that you can probably implement these in a single pointer-sized value, if there's at least a bit still free in the pointer representation. That bit can be made to mean "I'm retaining or releasing this", and with compare-and-exchange you can use that essentially as a spinlock on the pointer.
+This is unfortunately not the case. We cannot let readers/writers ever get blocked on a particular thread's forward progress -- that would effectively be a (bad) reimplementation of a lock, and it would lead to the same problems as naive userspace locks invariably run into (such as problems with priority inversion).
+One basic goal for atomic strong references (and atomic operations in general) is that the suspension of any thread must not block any others from continuing to run operations on the same entity. Forward progress must always remain possible -- even if an existing thread is suspended midway through a read or update operation, it must be possible for other threads to continue reading/updating the variable.
+To make atomic strong references work reliably as a standalone construct (i.e., not in coordination with some tailor-made memory reclamation solution), they need to include a version number (to avoid the ABA problem), and they need to include an "inlined" refcount that can be updated in the same atomic transaction that loads the reference. (Well, I say "need", but there may be alternative approaches.)
+
+---
+
+@lorentey · 2023-10-26T00:20:23.714Z:
+(In my opinion, the right mindset is to avoid deploying atomics code into production at all costs, unless there is absolutely no other way to solve a problem.)
+Related: I still think that it would be a mistake to put struct Atomic and its paraphernalia in the default namespace of every Swift program.
+
+---
+
+@wadetregaskis · 2023-10-26T00:37:52.962Z:
+lorentey:
+Beware, this proposal mentions no such thing as an "atomic weak reference". We do not have an implementation for such a construct, and we don't currently have plans to create one, either.
+Ah yes, I did conflate the two in my reading.  I was indeed thinking about the weak case.
+Can you elaborate on the [lack of] plans to add such functionality?  e.g. is it a matter of difficulty, or lack of perceived utility?
+lorentey:
+Another approach would be to use a dispatch_once-style, blocking solution; IIRC behind the scenes global let variables already work that way in Swift.
+Right, and I think that might be partly why I mistook it as meaning weak.  I imagine that the built-in let or lazy var functionality will be what most people need most of the time, for strong references, but to my knowledge you can't have a weak lazy var.
+lorentey:
+I don't see how it would be desirable for callers to ever consider losing a race a precondition violation, or to do different things based on whether or not they won -- can you please expand?
+The write path might be inherently serial (or at least should be per a given design, thus the interest in a precondition-like check to ensure that), even if the read paths aren't (and therefore you can't just use a vanilla variable).
+I think it's fine that the design allows for you to gracefully loose a race, for cases where those might be inherent to the usage and benign.
+lorentey:
+If a caller loses the race, they must simply discard their object and use the returned instance instead
+They might have clean-up or follow-up actions to take (which would fit naturally in the exception handling mechanism), beyond just letting the object release.  e.g. sending a response back over HTTP, such as 409 "Conflict" (meaning 'you lost the race and your version was not installed').
+As you note the API as currently proposed does permit this kind of check, but it makes it a bit awkward.  I don't think it benefits from being awkward.
+lorentey:
+This is covered in the Future Directions section. To keep this proposal at a (relatively) manageable length, it postpones introducing a reassignable atomic strong reference construct to a future date. This is not a value judgement; it's just a practical matter.
+Fair enough.
+lorentey:
+(In my opinion, the right mindset is to avoid deploying atomics code into production at all costs, unless there is absolutely no other way to solve a problem.)
+I know this is a common opinion, and I understand where it's coming from.  I think there's room for disagreement, though.  Particularly with numeric values, oftentimes it is very straightforward to use an atomic rather than a more heavy-handed method of mutual exclusion.  Yes, you can end up with performance-degrading cache ping-ponging, but not necessarily (and addressing that is a whole other level of design complexity, so it's not something to be rushed into).
+lorentey:
+I don't think that would be right! Single-word, untagged atomic pointers are difficult to use correctly in general, but so are atomic integers. It is possible to write useful algorithms over raw atomic pointers.
+Right, but Unmanaged isn't really a raw pointer.  It has methods which actually do things with the underlying pointer in ways that are often overlooked by users - e.g. takeRetainedValue calls release on the underlying pointer, nominally after reading the 'current' value, but it neither uses appropriate barriers to prevent reordering nor anything to prevent races against other threads.
+I haven't mapped out a specific sequence that would cause an issue, but I assume there is one.  If there weren't, then wouldn't Unmanaged already be essentially thread-safe?
+lorentey:
+wadetregaskis:
+Note that you can probably implement these in a single pointer-sized value, if there's at least a bit still free in the pointer representation. That bit can be made to mean "I'm retaining or releasing this", and with compare-and-exchange you can use that essentially as a spinlock on the pointer.
+This is unfortunately not the case. We cannot let readers/writers ever get blocked on a particular thread's forward progress…
+Can you clarify what you mean by "blocked"?  Delayed, sure - that's the "spin" aspect of 'spinlock' - but in this case I don't see how anything could be blocked permanently… unless, maybe a re-entrancy problem?  I know it's possible to 'resurrect' objects in their dealloc methods, for example, but isn't that sort of thing basically forbidden anyway?  And I'm not sure it's worth worrying about someone e.g. implementing a custom retain or release method and somehow causing re-entrancy that way.  On the basis that it's surely exceedingly rare, at least.
+I'm less familiar with the ABA problem in a practical sense.  I can see academically why it would be a problem for some use-cases, although seemingly not all?  A lot of the time all I care about with an atomic [strongly-referenced] pointer is that I get a valid object when I interact with it; whether it's the same object, and what its address is, between interactions is irrelevant for many purposes… isn't it?
+
+---
+
+@lorentey · 2023-10-26T01:43:23.628Z:
+wadetregaskis:
+compareExchange doesn't make sense (for the intended meaning) in English, strictly speaking. It parses as "compare Exchange", whatever the noun "Exchange" means. Any particular reason to omit the And, or to not phrase it conditionallyExchange or somesuch?
+The compareExchange method performs the atomic compare/exchange operation. Its name follows the term of art very strongly established by C++11, that has also been adopted by popular languages born since then.
+We intentionally chose to align the Swift names of the core atomic operations with C++ -- there are very strong benefits in not arbitrarily diverging from Swift's parent and sister languages. (Or, for that matter, from SE-0282v1 and the swift-atomics package, which are the precursors of this proposal.)
+At the time those precursors were drafted, feedback on the name compareAndExchange (or compareThenExchange) was quite negative within the primary target audience for atomics -- low-level systems programmers. A less inventive name would be "compare-and-swap", which is a wildly used term for this in academics, but the same issue applies: the actual people who earn a living using these seem to prefer the C++ name. "Compare-exchange" isn't a confusing or misleading name, so I don't think it's worth annoying experts by trying to invent our own.
+(Interestingly, some of the same experts did also recommend breaking C++/Rust precedent by switching compareExchange to use a tuple return type.)
+
+---
+
+@lorentey · 2023-10-26T01:53:08.768Z:
+wadetregaskis:
+Can you clarify what you mean by "blocked"? Delayed, sure - that's the "spin" aspect of 'spinlock' - but in this case I don't see how anything could be blocked permanently…
+I'm simply talking about lock-freedom, which we really want these operations to universally guarantee. (As opposed to wait-freedom, which doesn't seem practical to guarantee.)
+wadetregaskis:
+I'm less familiar with the ABA problem in a practical sense. I can see academically why it would be a problem for some use-cases, although seemingly not all? A lot of the time all I care about with an atomic [strongly-referenced] pointer is that I get a valid object when I interact with it; whether it's the same object, and what its address is, between interactions is irrelevant for many purposes… isn't it?
+ABA is one particular aspect of the wider problem of memory reclamation, usually discussed in texts about lock-free data structures. Wikipedia has a plausible-looking explanation.
+(Edit: the wiki's example is plausible-looking, but its "simplifying" assumptions make it quite useless.)
+
+---
+
+@taylorswift · 2023-10-26T03:44:40.689Z:
+wadetregaskis:
+Before I read to that part of the proposal, I actually spent a bunch of time trying to figure out how to derive this from the earlier primitives (e.g. Atomic<Unmanaged<T>>) but ran into challenges exactly as the proposal mentions regarding reference counting. It makes me wonder whether the inclusion of Unmanaged (perhaps among others?) in the atomic world should be made private, given how difficult it is to use correctly.
+you might be interested in many of the replies to this thread:
+Use swift-atomics to track a “largest seen value”? Using Swift
+this is sort of a continuation from How to use swift-atomics to expose non-isolated state of an actor?
+is there a good algorithm for updating an atomic value only if the new value is larger than the old value?
+for example, i would like
+let currentTime:UnsafeAtomic<UInt64>
+to only update the time if it is larger than the current time, so that the time increases monotonically.
+one idea i had was to use exchange(_:ordering:) and roll back the change if the old value ended up being greater than…
+
+---
+
+@Alejandro · 2023-10-26T16:31:13.361Z:
+wadetregaskis:
+Non-functional fences
+I think I mentioned this in an earlier thread, but I'm still not thrilled with the ability to write atomicMemoryFence(ordering: .relaxed) which is effectively a no-op. I don't think it's a big deal, but it is a slightly sharp edge that could confuse newbies (understanding the C++ memory ordering model is hard enough as it is).
+I agree that it's not ideal that one can write that, however I don't think introducing new API to prevent this, something like AtomicFenceOrdering would provide a big benefit here. Atomics are fundamentally a low level implementation detail, so "newbies" shouldn't be reaching for these in the first place. Instead, we should push them towards using all of the amazing concurrency features and support in the language to help write better and more correct concurrent code.
+wadetregaskis:
+Documentation
+It'd be great to see a more human-readable version of the explanation on memory ordering  as part of adding this to the standard library, in the documentation (perhaps the Swift Reference Guide?). Not only is it preferable if folks learning about atomics can do so without referring to another language's documentation, it'd be great if Swift's version of that documentation could be the best out there.
+I agree, documentation should be updated to better reflect what each ordering does, how some operations synchronize with each other, etc. This can all be incremental however!
+wadetregaskis:
+Unsupported architectures
+Will the compiler specifically diagnose unsupported-only-on-the-target-architecture atomic types? e.g. a simple "UInt64 does not support atomic operations on i386" rather than whatever vaguer message it would if left to the default e.g. some "does not conform to protocol" diagnostic?
+It would be nice if we could do something like the following:
+@available(
+*,
+unavailable,
+message: "Target does not support double wide atomics"
+)
+extension WordPair: AtomicValue {...}
+However, this is a warning (until Swift 6). This feature was designed for Sendable, but it would be nice to make this a hard error for protocols that either 1. aren't marker protocols or 2. aren't Sendable. In the mean time, we must make this conformance not exist whatsoever for those targets, so yes you will see WordPair does not conform to AtomicValue for example.
+wadetregaskis:
+Actual instructions for memory fences
+If I understand correctly, then with atomicMemoryFence the various arguments map as:
+AtomicUpdateOrdering
+Instruction
+Unintended side-effects
+relaxed
+None
+No actual function.
+acquiring
+dmb ishld
+Prevents earlier reads crossing the barrier.
+releasing
+dmb ish
+Prevents later reads & writes crossing the barrier.
+acquiringAndReleasing
+dmb ish
+sequentiallyConsistent
+dmb ish
+Is that correct? I'm basing it on Table B2-1 in the ARMv8 ARM.
+I'm assuming use of the Inner Shareable domain because that seems to me like the most commonly applicable one for user-space code, because per the ARMv8 ARM:
+The Inner Shareable domain is expected to be the set of PEs controlled by a single hypervisor or operating system.
+The unintended side-effects appear to be because ARMv8 doesn't provide more nuanced modes for dmb…?
+How do I get a dmb ishst instruction?
+For ARMv8, yes those memory orderings compile down to those instructions.
+The unintended side effects are not entirely unintended. Keep in mind that the compiler is also forced into preventing reads/writes from being reordered past certain fences. These are somewhat documented in the std::atomic_thread_fence documentation:
+While an atomic store-release operation prevents all preceding reads and writes from moving past the store-release, an atomic_thread_fence with memory_order_release ordering prevents all preceding reads and writes from moving past all subsequent stores.
+This is not only enforced by the CPU architecture itself, but also at the compiler level.
+If you want dmb ishst then you gotta write the assembly yourself  More seriously though, the semantics of the current memory orderings best compile down to what you've written and anything besides those are outside of C++'s memory ordering model (which we're now using for our atomics). x86_64 for instance doesn't issue any instruction for fences besides sequentially consistent.
+wadetregaskis:
+Beyond basic memory barriers
+I suspect the answer is that it's beyond the chosen scope (which is fine), but has consideration been given to other types of barriers? e.g. speculation barriers (sb / csdb / ssdb / pssbb), sync barriers (dsb), instruction barriers (isb), etc. I'm not all that familiar with most of them, but as I understand it they are intended for userspace code (instruction barriers for runtime codegen, for example, and speculation barriers for cryptographic or otherwise security-sensitive code).
+A lot of these barriers are way more granular than what Swift code is operating at. Also, keep in mind that not all architectures have support for these various barrier kinds, so it's not immediately obvious that we need an instruction barrier for only arm targets in Swift code. Perhaps for embedded targets it would make sense to say do an isb with inline assembly or something, but wouldn't be super useful outside of those environments I feel.
+The other barrier we were interested in was std::atomic_signal_fence which is essentially just a compiler barrier. It doesn't emit any instructions whatsoever, but it does require the compiler to prevent reorderings from happening underneath your nose as well. This would require more effort to look into the SILOptimizer to fully support it, but it is something we're looking into.
+wadetregaskis:
+Acquire-release pairing (etc)
+A lot of the time the nature of accesses is intrinsic in the variable, e.g. it's always relaxed, or you always read acquiring and store releasing, or it's always sequentially consistent. Should that be codified in the types themselves, e.g. Atomic<T> (meaning .relaxed), OrderedAtomic<T>, TotallyOrderedAtomic<T>, or somesuch?
+It'd be nicer to use, then, because you wouldn't:
+Have to specify the ordering on every access (and therefore could use standard operators etc), and
+Couldn't accidentally screw it up by using the wrong ordering in an individual access (e.g. Xcode auto-completed .relaxed when you meant .releasing, and you didn't notice).
+Maybe this is what is alluded to when the proposal says it's expected that higher-level data types are expected to be built atop these primitives?
+At the end of the proposal, it does discuss this, although some of the arguments aren't persuasive to me.
+This design puts the ordering specification far away from the actual operations -- obfuscating their meaning.
+Well, only insofar as it does for putting the variable's type, or whether a variable is 'weak' (vs strong), etc. I don't think the ordering method needs to be mentioned at every single use any more than the variable's type needs to be. Like the type of the variable, or its reference semantics, it's (usually) more tied to the nature of the variable than specific uses of the variable.
+It makes it a lot more difficult to use custom orderings for specific operations…
+Only if it's the only way to do it. I think it's acceptable to have an optional ordering argument in this scenario, so you can override the default behaviour on a case-specific basis. It does introduce a risk of confusion, between the type declaration and its usage, but IMO it's worth it. But if that is a real bother to folks, then there could always be two layers - one of primitive "Atomic" and one above that. It does make the API surface nominally much bigger but conceptually it's only slightly more complicated.
+Alternatively.:
+let foo: Atomic<UInt64>(0, defaultOrdering: .acquireAndRelease)
+The trick with the above is you'd want the corresponding ordering parameters to be omitted (or become optional) only if a default ordering was specified at the declaration site. To my knowledge Swift (the language) doesn't have a way to express that, currently.
+That may be true for some applications of atomics, but others need to have differing orderings depending on the operation. For example, AtomicLazyReference's load is an acquiring operation while the store is an acquiring and releasing. Having a type level atomic like TotallyOrderedAtomic would mean we would be able to do 1 but not the other. As well as there being an accepted default ordering in the atomic initializer. The atomic type must store that value somewhere in its representation, but we do not want to introduce storage just to store a default ordering.
+At a higher level, atomics are very hard to get right. It is immensely useful to those writing code and reviewing it to see explicitly at every call site of an atomic operation what ordering it's using. Allowing for custom defaults would create immense confusion reading arbitrary atomic operations because the semantics between the orderings are very different. We do not want to design an atomic API whatsoever where the ordering of the operation is hidden away somewhere.
+wadetregaskis:
+Ordering views
+FWIW I like that proposed alternative, counter.relaxed.wrappingAdd(1) etc.
+I think the resulting code reads well, and it might also make it possible to address the prior point by allowing users to stash the view in a variable instead of the base atomic (assuming the view retains its base object) - which'd also allow a user to choose to enforce a specific ordering by only storing that ordering's view, and throwing out all accessible references to the base atomic value.
+Re. some of the other counter-arguments listed in the proposal:
+Composability. Such ordering views are unwieldy for the variant of compareExchange that takes separate success/failure orderings. Ordering views don't nest very well at all:
+counter.acquiringAndReleasing.butAcquiringOnFailure.compareExchange(...)
+I disagree, even with that specific example. It reads easily and clearly.
+API surface area and complexity.…
+Granted it's easy for me to say as not the implementor of this functionality, but the API explosion seems worth the benefits. We're talking about the Swift standard library here - it's really widely used and so the trade-off between implementation challenge and user experience should be weighted way towards user experience.
+The documentation explosion is a minor annoyance - it's true it'd nominally multiply the volume of documentation, but it'd have little impact on the actual conceptual complexity of the API - folks will pretty quickly realise the API for the views is the same; they're not likely to mistakenly read the redundant copies.
+Unintuitive syntax. While the syntax is indeed superficially attractive, it feels backward to put the memory ordering before the actual operation. While memory orderings are important, I suspect most people would consider them secondary to the operations themselves.
+I don't think it's unintuitive. Unconventional, perhaps.
+And if you consider my prior point about the ability to save the view rather than the base object, this approach actually gives you a way to abstract the ordering away from individual use sites, if you want.
+Limited Reuse. Implementing ordering views takes a rather large amount of (error-prone) boilerplate-heavy code that is not directly reusable. Every new atomic type would need to implement a new set of ordering views, tailor-fit to its own use-case.
+Every additional type or set of equivalent types? I would have thought you could have a single view [for each ordering] for e.g. all atomic integers, genericised over the specific integer type… no?
+We think the views are really cool too. However, they introduce a bunch of ergonomic problems that we don't think are worth the risk. API documentation would be a mess to scrub through, custom atomic operations would be significantly harder to do:
+extension AtomicRelaxedView
+where Value.AtomicRepresentation == UInt8.AtomicRepresentation
+{
+func myCustomOp() -> Value {...}
+}
+extension AtomicRelaxedView
+where Value.AtomicRepresentation == UInt16.AtomicRepresentation
+{
+func myCustmoOp() -> Value {...}
+}
+... For each storage kind and ordering
+Of course, if you shared a single view type then it's only 5 extensions, 1 for each storage (UInt8, UInt16, UInt32, UInt64, and WordPair). It would also mean another thing we really need the optimizer to compile away would be the intermediate state storing the kind of ordering in that view. We feel the constant expression ordering API is some most experts using atomics would feel very familiar with.
+wadetregaskis:
+weakCompareExchange
+It's not clear [to me] from the method's documentation what this really means; why I might want this over the [regular] compareExchange. The docs say only:
+(In this weak form, transient conditions may cause the original == expected check to sometimes return false when the two values are in fact the same.)
+What's missing is an explanation of why those false negatives might occur, which might be important for the caller to understand at least for performance (e.g. if there's deterministic factors, could this cause an infinite loop?).
+The proposal itself does provide more insight:
+The weakCompareExchange form may sometimes return false even when the original and expected values are equal. (Such failures may happen when some transient condition prevents the underlying operation from succeeding -- such as an incoming interrupt during a load-link/store-conditional instruction sequence.) This variant is designed to be called in a loop that only exits when the exchange is successful; in such loops, using weakCompareExchange may lead to a performance improvement by eliminating a nested loop in the regular, "strong", compareExchange variants.
+That should be in the actual "headerdoc".
+I can include what the proposal documents for the weak form in the docs
+wadetregaskis:
+Missing type information in API listings
+e.g. logicalAnd(with:ordering:) is ambiguous because it's not apparent from context what type the first parameter is…?
+The context is that it's in a table called specialized boolean operations  I can however update the proposal to be more explicit here though.
+wadetregaskis:
+var, inout, consuming…
+The proposal notes that use of these with atomic types is basically wrong and will cause problems, but it doesn't seem to be proposing that the compiler prevent it…?
+Correct, we are not proposing any way of disallowing this at the compiler level. We could in theory incrementally add that if we feel those using atomics are doing it wrong with these keywords.
+wadetregaskis:
+For full implementation details…
+For the full API definition, please refer to the [implementation][implementation].
+i.e. typo; missing link.
+Will update, thanks!
+
+---
+
+@nonsensery · 2023-10-26T17:53:42.276Z:
+Bikeshedding: It seems like the obvious names for AtomicValue and AtomicOptionalWrappable would be AtomicRepresentable and AtomicOptionalRepresentable. The proposal even uses the phrase “custom ‘atomic-representable’ types” to describe the types that conform to AtomicValue.
+Has there been any discussion as to why the current names were chosen?
+
+---
+
+@wadetregaskis · 2023-10-27T04:52:02.555Z:
+Alejandro:
+If you want dmb ishst then you gotta write the assembly yourself  More seriously though, the semantics of the current memory orderings best compile down to what you've written and anything besides those are outside of C++'s memory ordering model (which we're now using for our atomics). x86_64 for instance doesn't issue any instruction for fences besides sequentially consistent.
+Tangentially, is there a reason dmb ishst's function is so demoted?  Isn't it the one you actually want a lot of time, e.g. for the common pattern of initialising a structure and then publicising it by writing its address somewhere.  On the writer side you don't care about loads in that case (beyond normal dependency orderings that the processor always enforces anyway), only that all your stores into the structure happen before the store of its address.
+It seems like the natural compliment for the LD variants (as used by readers).  The Arm docs don't explicitly say it, but I get the impression these two modes (ST & LD) were specifically designed to pair together in this way).
+Alejandro:
+Also, keep in mind that not all architectures have support for these various barrier kinds, so it's not immediately obvious that we need an instruction barrier for only arm targets in Swift code.
+I'd be surprised if other [modern] architectures don't have equivalent functionality?  Even if (like x86-64) it's relatively coarse-grained compared to ARMv8.
+Even if they don't, ARMv8 is the most widely used CPU architecture - doubly-so within the Apple & Swift worlds - so IMO it warrants "special treatment" in this sense.
+It's not really any different to having support for more than just dmb sy - x86-64 doesn't have any of the finer granularities (IIRC), and doesn't even need a memory barrier at all in some cases.  Doesn't mean Swift code written without the barriers is valid (nor that ARM systems should be penalised by excessively strict barriers, in the dmb case).
+This is academic for me personally, at least for now.  And I don't see any need at all to try to incorporate these other barrier types in this proposal.  I was partly just curious about future plans, and partly hoping to ensure the proposal doesn't inadvertently preclude adding them later (I see nothing in it which does, but you'd know better than me).
+
+---
+
+@Karl · 2023-10-28T00:15:04.728Z:
+Will the Clang importer import C/C++ atomics as these native atomic types?
+Also, are there any thoughts about adding an equivalent to C++20's atomic_ref one day?
+
+---
+
+@Alejandro · 2023-10-30T22:51:35.006Z:
+Hi all, I pushed a PR to address some of the things brought up in this review here: [SE-0410] Atomics: Some clarifications (minor fixes), WordPair changes, and RawRepresentable OptionalWrappable by Azoy · Pull Request #2203 · apple/swift-evolution · GitHub
+This adds the implementation link which is referenced later in the proposal, adds type information to the specialized integer and boolean functions, rewords the atomic strong references future direction to directly mention the AtomicReference construct in swift-atomics, and included the WordPair conformances to standard protocols like Equatable, Mashable, Comparable, and more. In addition to that, I've also renamed the highWord/lowWord in WordPair to just first/second because WordPair is not an integer type deliberately, but rather it's semantically akin to (Uint, UInt).
+pyrtsa:
+As part of this proposal, I'd expect to see a few standard protocol conformances for the new WordPair type: Equatable, Hashable, Comparable, and Sendable at least.
+Thanks! I included these conformances and few others in the updated proposal text.
+
+---
+
+@Alejandro · 2023-10-30T23:06:18.052Z:
+We may be able to do something here, but I would hold off until the clang importer understands non copyable types.
+_Atomic works pretty differently than how our Atomic<T> works because given the following:
+void increment(_Atomic(int) value) {
+value += 1;
+}
+you actually pass value by value here which is a big no no for our atomics (for anyone curious, this creates stack space, copies value into said space, and performs the atomic add op on that). We could however in theory support:
+void increment(_Atomic(int) *value) {
+*value += 1;
+}
+// and in C++
+void increment(_Atomic(int) &value) {
+value += 1;
+}
+C++'s std::atomic is actually much closer to the semantics of our Atomic<T>. Struct and class types who have a std::atomic as a member are treated as address only types and std::atomic itself is not copyable.
+
+---
+
+@Alejandro · 2023-10-30T23:10:44.483Z:
+There hasn't been any discussion on these names. These names come from the swift-atomics package where they were renamed from AtomicProtocol which was proposed and reviewed in SE-0282v1.
+
+---
+
+@lorentey · 2023-10-31T04:18:12.711Z:
+The swift-atomics package arrived at these protocol names based on prolonged discussions.
+I don't recall issues filed over protocol names over the three years the package has been available. I'm considering this as proof that the names work well enough -- granted, it's a quite weak proof, but it's still based on more concrete data than most naming discussions on this forum.
+The protocol names aren't typically mentioned in code that uses atomics, so renaming them would not be as disruptive a change as, say, renaming the core atomic operations. (Edit: especially since we decided to overhaul the protocols in this proposal, so they do not work the way they do in the package.)
+But the package still serves as quite strong prior art; deviations need to be very deliberate, as they do not come for free. We aren't starting from scratch here.
+
+---
+
+@Joe_Groff · 2023-10-31T17:25:38.896Z:
+Alejandro:
+SIMD is a hard one to do because a type can only conform to a protocol once and we'd need different atomic representations depending on the scalar type.
+Another possibility might be to use additional protocols like the AtomicOptionalWrappable protocol used to let Optional be atomic. Types whose SIMD vectors fit within an atomic access could have AtomicSIMDNWrappable conformances with associated types for the SIMD vectors' atomic storage.
+
+---
+
+@xwu · 2023-10-31T19:59:23.744Z:
+Very happy with how the APIs ended up. I think these being in the standard library itself is the right solution (cf. prior discussion about layering issues) and the final names chosen are such that their appearing on fundamental types won't be hugely distracting.
+Two minor comments on API design:
+bitwiseAnd(with:ordering:) and friends, as well as logicalAnd(with:ordering:) and friends, don't really require an argument label for the first parameter, just as add and subtract don't. API design guidelines would suggest omitting vacuous labels where possible.
+The terms "wrapping add" and "wrapping subtract" are somewhat unfortunate in that they diverge from The Swift Programming Language, which names these operations "overflow add" and "overflow subtract" (which aren't great, either), while simultaneously being a different usage of the term "wrap" than in AtomicOptionalWrappable. One compromise here would be something like: addWrappingOverflow (à la addReportingOverflow).
+
+---
+
+@scanon · 2023-10-31T20:05:24.927Z:
+TSPL is wrong here. "Overflow add" is a terrible name for this operation, as by definition it does not ever overflow. We should update TSPL.
+FWIW, we use "wrapping" or "wrapped sum" in the documentation and API for SIMD arithmetic.
+
+---
+
+@xwu · 2023-10-31T20:15:34.878Z:
+scanon:
+TSPL is wrong here. "Overflow add" is a terrible name for this operation, as by definition it does not ever overflow. We should update TSPL.
+Good reminder about SIMD precedent. Updating TSPL would be good, yes.
+
+---
+
+@pyrtsa · 2023-10-31T22:00:43.448Z:
+Nit: The second paragraph under Specialized Integer Operations as well as the following chapter on boolean operations still suggest there are two variants of each operation instead of just one returning the (oldValue, newValue) pair.
+I think it's a good idea to mention that the operations traditionally come in two variants but that Swift chose otherwise here for better ergonomy.
+
+---
+
+@John_McCall · 2023-10-31T22:11:28.405Z:
+Overall, I'm very excited to see this.
+I'm concerned about the usability of this feature given its interaction with exclusivity.  Programmers will naturally think of atomic objects as mutable — a compare-exchange on an atomic is a mutating operation in the natural sense of the word — and so they will want to declare them as vars.  Unfortunately, as discussed in the proposal, this is always wrong but not actually diagnosed.  The exact same problem will also arise with non-allocating lock types.
+I really think you should add an attribute to this proposal that either disallows declaring a var of a particular type or implicitly reinterprets var as let.  (Maybe it should also ban declaring mutating methods on the type.)  It would still be possible for users to accidentally get a mutable object of atomic type with generics, but it's reasonable to expect that it will be very uncommon to declare atomics that way, and covering the 99% case should be good enough.  You can also give that attribute the (currently non-public) behavior of ensuring that borrowed values of the type are always passed by address, so that non-stdlib programmers have a complete tool they can use to safely wrap their own C-style concurrency primitives.
+
+---
+
+@Douglas_Gregor · 2023-11-01T15:03:39.998Z:
+I'm thrilled to see this refined version of the swift-atomics package coming to the standard library.
+The proposal covers what I'd expect and the API looks reasonable to me. I didn't get around to actually writing working code against it, but I did review some of the C++ atomics-handling code in the concurrency library to envision how it would look with this proposal. The proposal is mirroring the C++ atomics APIs very closely, which I think is okay: we're leveraging the C++ memory model, and there's a lot of benefits to cross-language consistency for something this complicated. I suspect that we'll want some slightly-higher-level APIs in the future, but that won't obviate the need for what's in this proposal.
+I'm glad to see AtomicLazyReference here as one of these "higher-level APIs". I think it should be conditionally Sendable, i.e.,
+extension AtomicLazyReference: Sendable where Instance: Sendable { }
+The thread-safe lazy initialization pattern is listed as:
+var _foo: AtomicLazyReference<Foo> = ...
+// This is safe to call concurrently from multiple threads.
+var atomicLazyFoo: Foo {
+if let foo = _foo.load() { return foo }
+// Note: the code here may run concurrently on multiple threads.
+// All but one of the resulting values will be discarded.
+let foo = Foo()
+return _foo.storeIfNil(foo)
+}
+but IIUC that _foo should be a let rather than a var, right? And it's fairly likely that one would then want atomicLazyFoo to also be nonisolated, so it can be referenced concurrently.
+It doesn't need to be in this proposal, but this cries out for a macro so one could do:
+@AtomicLazy
+nonisolated var atomicLazyFoo: Foo = Foo()
+to apply the above pattern.
+An additional note with regards to the Law of Exclusivity, atomic values should never be declared with a var binding, always prefer a let one.
+As noted by others, this is a pretty big foot-gun, especially since we've been teaching folks for years that var means mutable and let means immutable, and atomics feel like value types even though identity is critical. At the very least, we'll want some compiler warnings here to help guide folks away from var for these atomic types. It would be better to generalize this notion with an attribute, because I suspect we're going to have other noncopyable types like this in the future.
+Doug
+
+---
+
+@Joe_Groff · 2023-11-01T16:55:44.184Z:
+Yeah, one kind of understated aspect of this proposal is that it generalizes the existing let-vs-var from merely immutable-vs-mutable to "shared access only"-vs-"allows exclusive access". For the vast majority of types, mutation is only safe under exclusive access, so that generalization is irrelevant, but atomics, locks, and other concurrency primitives make it important. I think that, within the boundaries of static exclusivity checking, that there could be uses for exclusive access to atomics. When you know you have exclusive access to an atomic, then it's safe to nonatomically access the storage, and so that could be a mechanism by which we provide statically safe "tearing" operations on atomics. This already happens somewhat implicitly because atomics are still movable types: you can have an Atomic<T> in a field of a noncopyable struct, and move the containing struct around, which is safe because consuming requires exclusive ownership of the value so we can safely memcpy the atomic storage from the old owner to the new owner. So I think the thing to provide a diagnostic for would be when an Atomic appears as a var that would be subject to dynamic exclusivity checking, such as a class property, escaped closure capture, or global/static variable.
+On the subject of memcpy-ing when moving atomics, it's probably worth mentioning that the AtomicRepresentation associated type of an AtomicValue conformance is required to be bitwise-movable. This can be an informal stated requirement for now, but if we get a BitwiseMovable generic constraint in the future, we ought to formalize it in the protocol.
+
+---
+
+@Douglas_Gregor · 2023-11-01T19:20:49.527Z:
+Joe_Groff:
+Yeah, one kind of understated aspect of this proposal is that it generalizes the existing let-vs-var from merely immutable-vs-mutable to "shared access only"-vs-"allows exclusive access".
+Right. I’ve been struggling with how we teach let-vs-var once we have this. It’s clear that “let” has the right language mechanics for atomics and in-place locks, and it’s always been the case that “let” is only shallowly immutable, since the variable can be of class type (or have a class type buried in it). This isn’t for the proposal to solve per  se, but it’s interesting going forward.
+Joe_Groff:
+When you know you have exclusive access to an atomic, then it's safe to nonatomically access the storage, and so that could be a mechanism by which we provide statically safe "tearing" operations on atomics. This already happens somewhat implicitly because atomics are still movable types: you can have an Atomic<T> in a field of a noncopyable struct, and move the containing struct around, which is safe because consuming requires exclusive ownership of the value so we can safely memcpy the atomic storage from the old owner to the new owner.
+I had somehow missed this link; thanks for the clarification.
+Doug
+
+---
+
+@Alejandro · 2023-11-01T22:25:13.962Z:
+Hi all,
+I've pushed some updates to the proposal which resolves some of your minor nits that you all caught. These can be found here: [SE-0410] Atomics: Some clarifications (minor fixes), WordPair changes, and RawRepresentable OptionalWrappable by Azoy · Pull Request #2203 · apple/swift-evolution · GitHub
+pyrtsa:
+Nit: The second paragraph under Specialized Integer Operations  as well as the following chapter on boolean operations still suggest there are two variants of each operation instead of just one returning the (oldValue, newValue) pair.
+Thanks! I've removed these references in the update
+xwu:
+bitwiseAnd(with:ordering:) and friends, as well as logicalAnd(with:ordering:) and friends, don't really require an argument label for the first parameter, just as add and subtract don't. API design guidelines would suggest omitting vacuous labels where possible.
+Sure, I've gone ahead and removed these labels to make them consistent with the add/subtract functions.
+Douglas_Gregor:
+I think it should be conditionally Sendable, i.e.,
+extension AtomicLazyReference: Sendable where Instance: Sendable { }
+Yep, the implementation made it Sendable, but the proposal didn't state it. Apologies, and thanks for the find!
+Douglas_Gregor:
+but IIUC that _foo should be a let rather than a var, right? And it's fairly likely that one would then want atomicLazyFoo to also be nonisolated, so it can be referenced concurrently.
+Yep, you're right this should be a let  I've also gone ahead and marked the atomicLazyFoo as nonisolated as well.
+In addition to those changes, I've also reworded a paragraph in WordPair which implied that the type would be unable when the platform doesn't support double wide atomics, but that is not true the type will always be available. It's the conformance that won't be available.
+One sort of major thing that I had forgotten to include in the proposal was the inclusion of the default implementations of AtomicOptionalWrappable for RawRepresentable where Self: AtomicOptionalWrappable, RawValue: AtomicOptionalWrappable. This works the same as the default implementations for AtomicValue already discussed for RawRepresentable in Custom Atomic Types, but had forgotten to mention the extra support for optionality. Here's what I wrote:
+We also support the AtomicOptionalWrappable defaults for RawRepresentable as well:
+extension RawRepresentable where Self: AtomicOptionalWrappable, RawValue: AtomicOptionalWrappable {
+...
+}
+Similar to the enum example, we can model types whose raw value type is a pointer for example and use their optional value in atomic operations:
+struct MyPointer: RawRepresentable, AtomicOptionalWrappable {
+var rawValue: UnsafeRawPointer
+init(rawValue: UnsafeRawPointer) {
+self.rawValue = rawValue
+}
+}
+let myAtomicPointer = Atomic<MyPointer?>(nil)
+...
+myAtomicPointer.compareExchange(
+expected: nil,
+desired: MyPointer(rawValue: somePointer),
+ordering: .relaxed
+).exchanged {
+...
+}
+...
+myAtomicPointer.store(nil, ordering: .releasing)
+(This get you an AtomicValue conformance for free as well because AtomicOptionalWrappable: AtomicValue , so non-optional Atomic<MyPointer> will work just as fine as well)
+Apologies for all of the fixes I've had to do, it turns out reviving 3 year old proposals isn't easy
+
+---
+
+@Alejandro · 2023-11-01T22:53:30.685Z:
+John_McCall:
+I really think you should add an attribute to this proposal that either disallows declaring a var of a particular type or implicitly reinterprets var as let. (Maybe it should also ban declaring mutating methods on the type.) It would still be possible for users to accidentally get a mutable object of atomic type with generics, but it's reasonable to expect that it will be very uncommon to declare atomics that way, and covering the 99% case should be good enough. You can also give that attribute the (currently non-public) behavior of ensuring that borrowed values of the type are always passed by address, so that non-stdlib programmers have a complete tool they can use to safely wrap their own C-style concurrency primitives.
+Are you suggesting the proposal add a new public attribute, something like @noVarOnlyLet? It seems to me that for the time being the proposal can retrofit the current attribute it uses to guarantee address only-ness, @_rawLayout, to include the no var only let semantics. So the proposal could then mention that it would actively disallow declaring vars with type Atomic so we can leave design space and iteration on the public attribute in a separate proposal. I think formalizing @_rawLayout itself would be a better future goal that would allow folks to make these kinds of types outside of the standard library. In fact, I think using this attribute on a new type, something akin to UnsafeCell in Rust, would be the general purpose tool folks could use.
+Joe_Groff:
+So I think the thing to provide a diagnostic for would be when an Atomic appears as a var that would be subject to dynamic exclusivity checking, such as a class property, escaped closure capture, or global/static variable.
+Right, I think these cases are the ones where var is actively hurting these kinds of types. A local var that's not captured would be fine, but it would make things like reassignment possible for atomics which is 1. not an atomic operation and 2. quite weird maybe. (Similar for vars as struct stored properties)
+func something() {
+// No dynamic exclusivity checking here
+var x = Atomic<Int>(0)
+// Not an atomic operation
+x = Atomic<Int>(123)
+}
+So I think it would beneficial to ban all uses of var for these kinds of types regardless if there is dynamic exclusivity checking included or not. We can still achieve the safe "tearing" operations when moving these things during consumption as lets.
+
+---
+
+@John_McCall · 2023-11-02T01:55:29.373Z:
+Alejandro:
+Are you suggesting the proposal add a new public attribute, something like @noVarOnlyLet? It seems to me that for the time being the proposal can retrofit the current attribute it uses to guarantee address only-ness, @_rawLayout, to include the no var only let semantics. So the proposal could then mention that it would actively disallow declaring vars with type Atomic so we can leave design space and iteration on the public attribute in a separate proposal. I think formalizing @_rawLayout itself would be a better future goal that would allow folks to make these kinds of types outside of the standard library. In fact, I think using this attribute on a new type, something akin to UnsafeCell in Rust, would be the general purpose tool folks could use.
+It does not make sense to me to do this as a separate proposal. One way to describe the behavior of that attribute would be “make this type act like the atomic types do”, but we’ll already have decided how the atomic types work in this proposal, so that future proposal would be, what, just picking a name?
+Or to put it another way, you’re already describing several behaviors for these new types that are unlike any other types, and this seems like the most appropriate time to have a discussion of those behaviors and how they’re exposed in the language.
+
+---
+
+@tclementdev · 2023-11-02T08:16:00.811Z:
+Is there any interest in implementing the atomic wait/notify_one/notify_all primitives? Seems like they might be useful tools to build condition locks.
+
+---
+
+@ksluder · 2023-11-02T14:17:06.265Z:
+Those aren’t atomics, they are synchronization primitives that require kernel support.
+
+---
+
+@John_McCall · 2023-11-02T20:44:24.543Z:
+On top of that, even when we do add synchronization primitives like locks, I hold out hope that we can avoid adding traditional condition variables, which have some nasty properties.
+
+---
+
+@Geordie_J · 2023-11-03T06:13:06.786Z:
+This would imply to me either we disable var somehow entirely for these declarations, or we declare atomic variables via atomic myVariableName rather than let myVariableName. The latter would be more obvious but also more destructive to the point of being overkill.
+
+---
+
+@ellie20 · 2023-11-03T07:03:39.838Z:
+Douglas_Gregor:
+Right. I’ve been struggling with how we teach let-vs-var once we have this. It’s clear that “let” has the right language mechanics for atomics and in-place locks, and it’s always been the case that “let” is only shallowly immutable, since the variable can be of class type (or have a class type buried in it). This isn’t for the proposal to solve per se, but it’s interesting going forward.
+Could we explain that Atomic and similar types have "reference semantics"? This would follow the precedent of ReferenceWritableKeyPath, which uses "reference" to describe the ability to non-exclusively mutate something.
+As a tangent, I think interior mutability for noncopyable types need not be particularly unusual or low-level in the future. Shared mutable state is quite common, like with classes. Noncopyable types would just guarantee that the shared mutable state has a bounded lifetime and doesn't require heap allocation. We could embrace opt-in "reference semantics" for noncopyable types in the future. Maybe we could add a noncopyable @ReferenceWritable property wrapper, or class A: ~Copyable syntax, or something.
+John_McCall:
+I'm concerned about the usability of this feature given its interaction with exclusivity. Programmers will naturally think of atomic objects as mutable — a compare-exchange on an atomic is a mutating operation in the natural sense of the word — and so they will want to declare them as vars. Unfortunately, as discussed in the proposal, this is always wrong but not actually diagnosed. The exact same problem will also arise with non-allocating lock types.
+I really think you should add an attribute to this proposal that either disallows declaring a var of a particular type or implicitly reinterprets var as let. (Maybe it should also ban declaring mutating methods on the type.) It would still be possible for users to accidentally get a mutable object of atomic type with generics, but it's reasonable to expect that it will be very uncommon to declare atomics that way, and covering the 99% case should be good enough. You can also give that attribute the (currently non-public) behavior of ensuring that borrowed values of the type are always passed by address, so that non-stdlib programmers have a complete tool they can use to safely wrap their own C-style concurrency primitives.
+I think if we explain that Atomic has "reference semantics", we should be good. We have a similar situation with classes, where we do allow vars, but disallow mutating methods. Some people have complained about the latter restriction and have used protocol extensions to work around it.
+A var atomic could have some limited use cases, such as if we statically know that nothing is borrowing an atomic, and we want to change its value without incurring the potential performance cost of an atomic operation.
+We already emit a compiler warning when a var can be turned into a let. Maybe we can also emit a compiler warning if a non-public mutating method never mutates the instance.
+
+---
+
+@ksluder · 2023-11-03T15:38:18.342Z:
+ellie20:
+Could we explain that Atomic and similar types have "reference semantics"?
+That’s at odds with a very important feature of atomics, which is that their storage is inline.
+
+---
+
+@Karl · 2023-11-03T16:03:38.303Z:
+Not entirely; they still have reference semantics. Because they are not copyable, you can only access them via borrows (which are references).
+Of course, this is the only way atomics make sense -- they must be a kind of shared mutable state (i.e. have reference semantics), otherwise there is no point to atomic operations because there will never be concurrent accesses.
+
+---
+
+@ksluder · 2023-11-03T16:07:15.581Z:
+If we consider a mutable Int property of a class, we don’t say the Int itself has reference semantics.
+We need better terminology here, because there is such a thing as a ManagedAtomic, which does have reference semantics.
+
+---
+
+@John_McCall · 2023-11-03T16:39:15.475Z:
+Many of the semantic differences between value and reference types disappear for non-copyable types. A uniquely-held reference has all of the local-reasoning properties we associate with a value type; that’s part of why copy-on-write works, as well as the core insight behind exclusivity, Rust ownership, etc. So on some level, sure, we could say that atomics have reference semantics and that the inline-ness of the storage is an implementation detail that we could expect only experts to understand.
+Where the reference-type idea falls apart is that you can have mutable variables that hold references, and you can assign new references into those variables. You can come up with ways that this makes sense for atomic types, actually — assignment had to be done with exclusive access to a variable, so this “reference” assignment replaces the value in the atomic at a moment when you know it’s not being concurrently accessed. The problem is that that readmits the exclusivity-tracking problem; we still don’t want vars of these types in most of the contexts we’d like to use them.
+
+---
+
+@taylorswift · 2023-11-03T17:10:24.592Z:
+atomics are Weird, they’re an advanced feature and i think it’s okay if they don’t fit neatly into the introductory value vs. reference semantics dichotomy. i feel like they are closer to being references than values, so i’m okay with saying they have “reference semantics”.
+
+---
+
+@dfunckt · 2023-11-03T17:21:58.809Z:
+Fantastic proposal, very thorough and I support it wholeheartedly. Props to the authors!
+Just one question: several examples in the proposal include a compareExchange that is retried in a while loop (as it usually should) but I’d expect some sort of yield operation at each iteration and I’m seeing none. There is also nothing proposed to that end — is this considered beyond the scope of the proposal?
+
+---
+
+@John_McCall · 2023-11-03T19:05:58.399Z:
+Back-off (such as yielding) is important when your attempts to perform an operation can interfere with other threads' ability to make progress.  Compare-exchanges do cause contention in the memory subsystem that can stall other compare-exchanges for a few cycles, but in typical lock-free algorithms, the expectation is that this contention will always rapidly clear because (1) at least one of the threads should succeed and (2) failure on any thread should set up that thread to succeed on its next attempt, unless another thread succeeds first again.  As a result, there's not really any point in adding back-off.
+Now, that caveat is important — the fact that other threads might repeatedly succeed over ours is a failure in basic fairness.  This is generally considered acceptable for three reasons:
+As far as I know, you can't really fix unfairness while keeping a lock-free algorithm; you need to switch to a fair lock.
+Fair locks are generally a lot more expensive than unfair locks, and much more expensive than lock-free algorithms.  The gains from a lock-free algorithm are generally more than enough to pay for a few threads starving for a few cycles.
+If you have a single atomic that's so heavily contended that some threads are completely unable to make progress, something is seriously broken about your design.
+But simple back-off strategies like "back off after failure" don't really help with fairness anyway, because it's the other threads you need to make back off.
+This all just applies to lock-free algorithms that follow the typical pattern of a load followed by a compare-exchange loop that builds a new value based on the last observed value.  Back-off is important for something like a spin lock because it doesn't follow those two rules above.  In particular, failing to acquire a spin lock doesn't set the failing thread up to succeed on its next attempt, so a thread failing to acquire a naive spin lock can definitely throw up enough contention to interfere with an attempt to unlock.  But implementing a good spin lock is a very tricky business and tends to be very environment-specific; I don't think there's a useful way to offer a general yield function that would help people to implement portable spin locks.  And frankly I'm not sure we really want people to offer portable spin lock libraries anyway, because in most environments you should probably not be using a spin lock.
+
+---
+
+@dfunckt · 2023-11-03T19:32:37.789Z:
+Thank you for the extensive reply @John_McCall! Understood.
+Beyond fairness though, when a thread does indeed starve, does it matter in practice what it’s doing? In other words, is spinning considered harmful and should be avoided, or it just doesn’t matter in practice?
+
+---
+
+@John_McCall · 2023-11-03T19:38:56.264Z:
+As a general rule, yeah, I’d say spinning for what you might reasonably expect to be a long time is never great. It’s wasted energy if nothing else. Sometimes you don’t have any good alternatives because e.g. you’re implementing the thread scheduler; but short of that, there are better alternatives, and you should use them.
+
+---
+
+@Karl · 2023-11-03T19:57:58.497Z:
+On yield (i.e. POSIX's sched_yield), Linus Torvalds has a (well, fairly aggressive TBH, but also informative) piece on it:
+The problem with that is "yield" is pretty much undefined. The definition of it is literally about single queue of a real-time behavior with a real-time scheduler with priorities.
+But that "definition" has almost nothing to do with actual usage. There are various random people who use it, and some might use it for locking, while some use it for other things.
+What you want to use it for is "schedule the right process". But you don't even know what the right process is, or if you do you don't tell the system (because sched_yield() literally doesn't have that interface), so the kernel has to guess.
+In some cases, "sched_yield()" is basically used by processes that say "I'm CPU-intensive, but I'm not important for latency, and I don't want to cause problems for others". You'll find various random GUI programs doing that because they are threaded, and one thread does things like update the screen, while another thread does calculations. The calculation loop (which is still important, just not latency-critical) might have "sched_yield() in it as a cheap way of saying "maybe there's a more important UI event going on".
+In other cases, it's a performance optimization, where somebody says "I have done my part of the work and written it out, now I'm yielding because there's another user that is likely to want to use it, and that other user is actually the more heavy CPU hog and should run before I start generating more data for it".
+And in others, it's because they are actually using real-time scheduling - perhaps on dedicated CPU doing the true Hard real-time kinds of things - and depend on the FIFO definition within their priority group.
+That's the defined usage, but even that is really defined only in the traditional UP sense of "there is one process running at a time, and we have one single queue of them".
+End result: sched_yield() is basically historical garbage. It's often literally wrong even for the defined usage because times have moved on from that whole "we run one thing at a time" long long ago. If your RT system actually has multiple concurrent threads (as opposed to being limited to a dedicated CPU) it's not really all that well-defined even there. But at least there you can still pretend it is.
+Good locking simply needs to be more directed than what "sched_yield()" can ever give you outside of a UP system without caches. It needs to actively tell the system what you're yielding to (and optimally it would also tell the system about whether you care about fairness/latency or not - a lot of loads don't).
+But that's not "sched_yield()" - that's something different. It's generally something like std::mutex, pthread_mutex_lock(), or perhaps a tuned thing that uses an OS-specific facility like "futex", where you do the nonblocking (and non-contended) case in user space using a shared memory location, but when you get contention you tell the OS what you're waiting for (and what you're waking up).
+
+---
+
+@David_Smith · 2023-11-04T07:10:12.307Z:
+dfunckt:
+In other words, is spinning considered harmful and should be avoided, or it just doesn’t matter in practice?
+The really unfortunate thing about spinlocks, and the reason they're pretty much entirely avoided in userspace on Darwin-based OSs, is the combination of spinning and lacking priority inversion avoidance support. This means that if several high priority threads are waiting on the lock, they may keep a low priority thread from being scheduled to release the very lock that they're waiting for, since from the scheduler's point of view they're extremely busy doing higher priority work.
+Luckily, in my experience at least, very few userspace spinlock users actually cared specifically about spinning under contention; they just wanted either fast uncontended locking, unfair locking, or both. Newer locks like OSAllocatedUnfairLock provide both of those properties without the downsides.
+
+---
+
+@Nobody1707 · 2023-11-04T13:53:50.331Z:
+It's not just Darwin-based OS's, Linus Torvald's has an even more incendiary rant about spin-locks, and says, essentially, that they should never be done in user-space, period, end-of-story. He's obviously speaking about Linux here, but I think his arguments apply to most (if not all) OSs.
+
+---
+
+@Joe_Groff · 2023-11-17T20:42:16.015Z:
+Thanks for the review feedback, everyone! The language steering group has decided to return this proposal for revision based on some of the topics raised in this review thread.
+
+=== ROW 12 | f000538 | https://github.com/yewstack/yew/pull/3509 | 2023-11-01 | domain-subframes ===
+Dynamic Prop Labels
+
+---
+
+@kirillsemyonkin · 2023-11-01T20:53:17Z:
+#### Description
+
+Partially implements features from discussion #3477. This PR adds Dynamic Prop Labels, so that anyone can write their favorite attributes like [HTMX's `hx-on:click`](https://htmx.org/attributes/hx-on/):
+```rust
+html! {
+    <div "hx-on:click"="alert('Clicked!')">{ "Click" }</div>
+    <div { "hx-on:click" }={ "alert('Clicked!')" }>{ "Click" }</div>
+}
+```
+
+It works by using new `PropLabel` enum everywhere, which can be either a `Static` `HtmlDashedName` like before, or `Dynamic` `Expr`. When parsing, if it meets `=` token after the expression group, it will read a value following it instead of assuming that it is shorthand syntax.
+
+#### Checklist
+
+- [x] I have reviewed my own code - what does that mean? Is this always checked for everyone?
+- [x] I have added tests
+
+
+---
+
+@github-actions[bot] · 2023-11-01T20:56:29Z:
+Visit the preview URL for this PR (updated for commit 6240128):
+
+[https://yew-rs--pr3509-dyn-prop-v9qsw7el.web.app](https://yew-rs--pr3509-dyn-prop-v9qsw7el.web.app/docs/next)
+
+<sub>(expires Sun, 12 Apr 2026 02:00:32 GMT)</sub>
+
+<sub>🔥 via [Firebase Hosting GitHub Action](https://github.com/siku2/action-hosting-deploy) 🌎</sub>
+
+---
+
+@kirillsemyonkin · 2023-11-01T20:57:09Z:
+My local setup told me nothing about which Rust version is used, wow...
+
+Fixing 1.64.0 compiler support shortly I guess, there is nothing special, just `Result::is_ok_and`.
+
+---
+
+@github-actions[bot] · 2023-11-01T21:00:51Z:
+### Size Comparison
+
+<details>
+
+| examples | master (KB) | pull request (KB) | diff (KB) | diff (%) |
+| --- | --- | --- | --- | --- |
+| async_clock | 99.941 | 99.941 | 0 | 0.000% |
+| boids | 167.609 | 167.609 | 0 | 0.000% |
+| communication_child_to_parent | 93.235 | 93.235 | 0 | 0.000% |
+| communication_grandchild_with_grandparent | 105.061 | 105.061 | 0 | 0.000% |
+| communication_grandparent_to_grandchild | 101.410 | 101.410 | 0 | 0.000% |
+| communication_parent_to_child | 90.646 | 90.646 | 0 | 0.000% |
+| contexts | 105.110 | 105.110 | 0 | 0.000% |
+| counter | 85.941 | 85.941 | 0 | 0.000% |
+| counter_functional | 87.976 | 87.976 | 0 | 0.000% |
+| dyn_create_destroy_apps | 89.865 | 89.865 | 0 | 0.000% |
+| file_upload | 98.951 | 98.951 | 0 | 0.000% |
+| function_delayed_input | 93.924 | 93.924 | 0 | 0.000% |
+| function_memory_game | 172.830 | 172.830 | 0 | 0.000% |
+| function_router | 396.243 | 396.243 | 0 | 0.000% |
+| function_todomvc | 164.054 | 164.054 | 0 | 0.000% |
+| futures | 234.664 | 234.664 | 0 | 0.000% |
+| game_of_life | 104.172 | 104.172 | 0 | 0.000% |
+| immutable | 257.882 | 257.882 | 0 | 0.000% |
+| inner_html | 80.464 | 80.464 | 0 | 0.000% |
+| js_callback | 109.086 | 109.086 | 0 | 0.000% |
+| keyed_list | 179.568 | 179.568 | 0 | 0.000% |
+| mount_point | 83.833 | 83.833 | 0 | 0.000% |
+| nested_list | 112.744 | 112.744 | 0 | 0.000% |
+| node_refs | 91.222 | 91.222 | 0 | 0.000% |
+| password_strength | 1718.404 | 1718.404 | 0 | 0.000% |
+| portals | 92.711 | 92.711 | 0 | 0.000% |
+| router | 367.169 | 367.169 | 0 | 0.000% |
+| suspense | 113.058 | 113.058 | 0 | 0.000% |
+| timer | 88.079 | 88.079 | 0 | 0.000% |
+| timer_functional | 98.566 | 98.566 | 0 | 0.000% |
+| todomvc | 141.760 | 141.760 | 0 | 0.000% |
+| two_apps | 85.805 | 85.805 | 0 | 0.000% |
+| web_worker_fib | 135.562 | 135.562 | 0 | 0.000% |
+| web_worker_prime | 183.950 | 183.950 | 0 | 0.000% |
+| webgl | 82.605 | 82.605 | 0 | 0.000% |
+
+</details>
+
+✅ None of the examples has changed their size significantly.
+
+---
+
+@github-actions[bot] · 2023-11-01T21:01:03Z:
+### Benchmark - SSR
+
+#### Yew Master
+
+<details>
+
+| Benchmark | Round | Min (ms) | Max (ms) | Mean (ms) | Standard Deviation |
+| --- | --- | --- | --- | --- | --- |
+| Baseline | 10 | 291.386 | 292.360 | 291.762 | 0.343 |
+| Hello World | 10 | 497.092 | 532.564 | 515.727 | 12.709 |
+| Function Router | 10 | 31267.667 | 32485.351 | 31982.221 | 391.193 |
+| Concurrent Task | 10 | 1006.935 | 1008.290 | 1007.519 | 0.381 |
+| Many Providers | 10 | 1096.211 | 1196.809 | 1152.681 | 29.431 |
+
+</details>
+
+#### Pull Request
+
+<details>
+
+| Benchmark | Round | Min (ms) | Max (ms) | Mean (ms) | Standard Deviation |
+| --- | --- | --- | --- | --- | --- |
+| Baseline | 10 | 291.372 | 291.873 | 291.540 | 0.158 |
+| Hello World | 10 | 505.155 | 565.163 | 524.877 | 19.045 |
+| Function Router | 10 | 32206.196 | 32988.900 | 32449.800 | 279.032 |
+| Concurrent Task | 10 | 1006.155 | 1008.149 | 1007.133 | 0.671 |
+| Many Providers | 10 | 1121.337 | 1232.394 | 1175.342 | 35.107 |
+
+</details>
+
+
+---
+
+@kirillsemyonkin · 2023-11-01T21:12:56Z:
+Uh sorry, will check what it fails on tomorrow
+
+---
+
+@kirillsemyonkin · 2023-11-02T07:45:11Z:
+Wow, I passed even the benchmark lol
+I still need help with writing tests for this.
+
+---
+
+@ranile · 2023-11-02T16:32:59Z:
+You need both passing and failing tests for it.  You can copy a `-fail.rs` and `-pass.rs` from `yew-macro/tests/html_macro` and modify it as needed. To regenerate stderr files, you can run tests with `TRYBUILD=overwrite` environment variable
+
+---
+
+@kirillsemyonkin · 2023-11-05T16:46:43Z:
+If there are any `// FIXME`s in my PR, I also need them reviewed
+
+---
+
+@kirillsemyonkin · 2023-11-06T17:40:01Z:
+I tried to add following to the `dyn-prop-pass.rs` test:
+```rust
+    // property literal
+    _ = ::yew::html! { <span ~"hx-on:click"="alert('Clicked!')" /> };
+    _ = ::yew::html! { <span ~"hx-on:click"="alert('Clicked!')" ~"hx-on:click"="alert('Clicked!')" /> };
+    _ = ::yew::html! { <span ~{ "hx-on:click" }={ "alert('Clicked!')" } /> };
+    _ = ::yew::html! { <span ~{ "hx-on:click" }={ "alert('Clicked!')" } ~{ "hx-on:click" }={ "alert('Clicked!')" } /> };
+
+    // property expr
+    _ = ::yew::html! { <span ~{ dyn_prop() }={ "alert('Clicked!')" } /> };
+    _ = ::yew::html! { <span ~{ dyn_prop() }={ "alert('Clicked!')" } ~{ dyn_prop() }={ "alert('Clicked!')" } /> };
+```
+Tests (`RUST_BACKTRACE=1 cargo +1.64.0 test -p yew-macro`) greeted me with the following:
+```
+test tests\html_macro\dyn-prop-pass.rs [should pass] ... error
+Test case failed at runtime.
+
+STDERR:
+┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+thread 'main' panicked at 'function not implemented on non-wasm32 targets', D:\RustDownloads\cargo\registry\src\github.com-1ecc6299db9ec823\wasm-bindgen-0.2.87\src\lib.rs:996:1       
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/a55dd71d5fb0ec5a6a3a9e8c27b2127ba491ce52/library\std\src/panicking.rs:584:5
+   1: core::panicking::panic_fmt
+             at /rustc/a55dd71d5fb0ec5a6a3a9e8c27b2127ba491ce52/library\core\src/panicking.rs:142:14
+   2: core::panicking::panic
+             at /rustc/a55dd71d5fb0ec5a6a3a9e8c27b2127ba491ce52/library\core\src/panicking.rs:48:5
+   3: wasm_bindgen::__wbindgen_string_new
+             at D:\RustDownloads\cargo\registry\src\github.com-1ecc6299db9ec823\wasm-bindgen-0.2.87\src\lib.rs:41:17
+   4: wasm_bindgen::JsValue::from_str
+             at D:\RustDownloads\cargo\registry\src\github.com-1ecc6299db9ec823\wasm-bindgen-0.2.87\src\lib.rs:132:32
+   5: <wasm_bindgen::JsValue as core::convert::From<&str>>::from
+             at D:\RustDownloads\cargo\registry\src\github.com-1ecc6299db9ec823\wasm-bindgen-0.2.87\src\lib.rs:776:9
+   6: <T as core::convert::Into<U>>::into
+             at /rustc/a55dd71d5fb0ec5a6a3a9e8c27b2127ba491ce52\library\core\src\convert/mod.rs:550:9
+   7: trybuild005::main
+             at D:\RustProjects\yew\packages\yew-macro\tests\html_macro\dyn-prop-pass.rs:58:30
+   8: core::ops::function::FnOnce::call_once
+             at /rustc/a55dd71d5fb0ec5a6a3a9e8c27b2127ba491ce52\library\core\src\ops/function.rs:248:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+```
+As I was trying to find out whether any tests would help me figure out how to test the feature, I performed a quick search on all tests, only to find out that nobody tested `~` properties. I will await on someone testing and fixing the feature before adding tests like this. (Edit: This is not blocking)
+
+---
+
+@its-the-shrimp · 2025-05-03T21:14:31Z:
+> I performed a quick search on all tests, only to find out that nobody tested `~` properties
+
+Either this is an outdated comment or you missed something, because there are _Wasm_ tests that use `~`, if you want to test how `~` works with dynamic prop labels, you can check out one of those Wasm tests and replace `~prop` with `~"prop"` or `~{ "prop" }`. You can find all places where `~` is used by grepping `~[a-zA-Z]`
+
+---
+
+@cecton · 2023-11-06T14:53:06Z:
+maybe that message could be improved because it wasn't obvious to me why this would fail. not blocking though
+
+---
+
+@cecton · 2023-11-06T14:58:24Z:
+Maybe you can add a test to make sure this case also works?
+
+```
+let value: Option<AttrValue> = None;
+<span { dyn_prop() }={ value } />
+let value: Option<AttrValue> = Some("alert('Clicked!')");
+<span { dyn_prop() }={ value } />
+```
+
+---
+
+@kirillsemyonkin · 2023-11-06T15:22:15Z:
+This error message is from the way it always worked: components expect only valid rust identifiers for their prop names. Otherwise it would not make sense to make a struct from dynamic names here, it would basically be deserialization of sorts.
+However, the error comes from Yew itself, and can actually be more specific (like my previous sentence)
+```suggestion
+error: components expect valid Rust identifiers for their property names
+```
+https://github.com/yewstack/yew/blob/2e8573125566efa772b9a3a9ad4846643257b74b/packages/yew-macro/src/props/component.rs#L197
+
+---
+
+@kirillsemyonkin · 2023-11-06T15:34:46Z:
+What do these test cases achieve? Optional values for properties are supposed to be already tested by more general tests that are not inherent to dynamic props. Like, sure, it compiles when I put it into `dyn-prop-pass.rs` with minimal changes, but should I be somehow testing that it does what it is supposed to (e.g. resulting `Attributes` containing some particular values)?
+
+---
+
+@cecton · 2023-11-06T15:38:02Z:
+Yes maybe I'm being too cautious nevermind 
+
+---
+
+@cecton · 2023-11-06T15:40:43Z:
+That's better indeed
+
+---
+
+@kirillsemyonkin · 2023-11-06T17:08:46Z:
+Done in 6427346
+
+---
+
+@its-the-shrimp · 2025-05-03T21:09:24Z:
+What did you mean by this fixme?
+
+---
+
+@kirillsemyonkin · 2025-05-04T07:48:48Z:
+no idea. probably that dynamic label `{ ... }` should be emitted as `{ ... }`, not as `...`, and so that spans are preserved that group should be saved somehow or something
+
+---
+
+@its-the-shrimp · 2025-05-04T12:20:47Z:
+Unrelated, but it'd be better to write that `to_tokens` impl as
+```rs
+match self {
+    Self::Static(name) => name.to_tokens(tokens),
+    Self::Dynamic(expr) => expr.to_tokens(tokens),
+}
+```
+to avoid allocating a temporary TokenStream just to feed it into another TokenStream
+
+---
+
+@its-the-shrimp · 2025-05-04T12:33:11Z:
+Same here
+```suggestion
+                    match self {
+                        Key::Static(dashed_name) => dashed_name.to_tokens(tokens),
+                        Key::Dynamic(expr) => expr.to_tokens(tokens),
+                    }
+```
+
+=== ROW 14 | f000545 | https://github.com/zed-industries/zed/issues/4382 | 2023-11-04 | domain-subframes ===
+Zen mode
+
+---
+
+@gldtn · 2023-11-04T05:58:28Z:
+### Check for existing issues
+
+- [X] Completed
+
+### Describe the feature
+
+I've seen a few feature request to allow us to hide a bunch of things, so I wanted to summarize a few here and call it Zen mode or God mode LOL. 
+
+Like most of us coming from vscode, we know about the zen mode feature we all love as we can pretty much hide anything we want and focus strictly on our code. Additionally to being able to hide it we can get everything that we might want back by exiting zen mode with our preferred keybinding.
+
+Any other suggestion, just reply below and I would try to added to the list if I can edit the issue in the future. **Or perhaps an admin can take over.**
+
+ **Things we would like to hide, the ones checked can already be hidden and as far as I know we can't hide the unchecked ones yet:**
+
+- [X] Left/Right Sidebar
+- [X] Dock
+- [ ] Title bar
+- [x] Tabs
+- [X] Breadcrumbs
+- [ ] Status bar 
+- [X] Line numbers
+- [x] Current line highlight
+- [X] Occurrences highlight
+- [x] Indent guides* (zed doesn't have them yet?)
+- [X] Ignore files in finder/explorer bar
+- [X] Setting to hide/show the navigation history buttons ([v0.131.0-pre](https://github.com/zed-industries/zed/releases/tag/v0.131.0-pre))
+
+**Additionally in zen mode we should be able to set:**
+
+**plus anything in that might get added in the future, such as popover, overlays, underlines, lightbulbs, etc..
+
+- [x] buffer_font_family
+- [x] buffer_font_features
+- [x] buffer_line_height
+- [x] buffer_font_size
+
+With a config like this we can define what we want and don't want in zen mode and when we exit it.
+
+**List of hiding requests I found so far:**
+
+1. https://github.com/zed-industries/zed/issues/5373
+2. https://github.com/zed-industries/zed/issues/5120 
+3. https://github.com/zed-industries/zed/issues/4685
+4. https://github.com/zed-industries/zed/issues/4756
+5. https://github.com/zed-industries/zed/issues/4963
+6. https://github.com/zed-industries/zed/issues/4461
+7. https://github.com/zed-industries/zed/issues/4500
+8. https://github.com/zed-industries/zed/issues/5150
+9. https://github.com/zed-industries/zed/issues/5185
+10. https://github.com/zed-industries/zed/issues/5443
+11. https://github.com/zed-industries/zed/issues/5365
+12. https://github.com/zed-industries/zed/issues/6424
+13. https://github.com/zed-industries/zed/issues/7422
+14. https://github.com/zed-industries/zed/issues/4204
+15. https://github.com/zed-industries/zed/issues/5040
+
+### If applicable, add mockups / screenshots to help present your vision of the feature
+
+**Here is a keybinding I have in vscode that takes me in and out of my personalized zen mode.**
+
+```json  
+{
+// Toggle Font Size
+"key": "cmd+k cmd+k",
+"command": "toggle",
+"when": "editorTextFocus",
+"args": {
+    "id": "fontSize",
+    "value": [
+       	{
+      		"editor.fontSize": 20,
+      		"editor.lineHeight": 45,
+      		"editor.lineNumbers": "off",
+      		"editor.guides.indentation": false,
+       	},
+       	{
+      		"editor.fontSize": 16,
+      		"editor.lineHeight": 0,
+      		"editor.lineNumbers": "on",
+      		"editor.guides.indentation": true,
+       	}
+    ]
+    }
+},
+```
+
+### **Here is my editor font setting:**
+
+```json
+{
+    // Typography
+    "editor.fontFamily": "MonoLisa",
+    "editor.fontSize": 15,
+    "editor.lineHeight": 45,
+    "editor.suggestFontSize": 15,
+    "editor.suggestLineHeight": 28,
+    "terminal.integrated.fontSize": 15,
+    "terminal.integrated.lineHeight": 1.5,
+}
+```
+
+So by using the keybinding above I can zoom out if needed and get an "overview" of my code with linenumbers/currentline/indent guides, etc.. enabled so I can debug.
+
+### Here is a quick video:
+
+https://github.com/zed-industries/community/assets/981383/639167f8-78a2-4560-9818-46220dc0c615
+
+
+
+---
+
+@JosephTLyons · 2023-11-06T14:44:33Z:
+Very nicely written issue @gldtn! Thank you! I think it would be super cool if we had settings to make Zed even more minimal.  We had a PR for hiding the tab bar, but it didn't land because we still want to provide some way of being able to see what open buffers need to be saved (via some small tiny button you could click and get a drop down summary of the hidden tabs), and that was never added in, so it didn't happen, but I'm sure some of this will happen after we open source Zed (which is coming soon!).
+
+---
+
+@krstp · 2023-11-07T05:34:47Z:
+I like the idea to have control over multiple features, but isn't `SHIFT+ESC` already delivering this in large part? Just saying.
+
+---
+
+@gldtn · 2023-11-07T23:32:12Z:
+> I like the idea to have control over multiple features, but isn't `SHIFT+ESC` already delivering this in large part? Just saying.
+
+I would probably say far away from what vscode zen mode is capable of. All "zoom in" or `SHIFT+ESC` is doing is detaching the editor temporally to hide sidebar, terminal, etc..(from what I can see)! In vscode you can control tabs/fonts/line height, and all other editor/workspace aspects.. and still access sidebar, terminal, etc.. all while in the zen mode state. In Zed, it takes me out of zoom immediately if I try to access my sidebar which makes sense on how they implemented it.
+
+With what my initial issue is proposing.. it gives us far more control of the editor. Here is another quick video for comparison, side-by-side:
+
+https://github.com/zed-industries/community/assets/981383/a45143a6-c01a-46ca-aa79-fa00c22657c7
+
+Notice how clean vscode is when I'm in zen mode. Also if I close and open it again, it remains that way until I choose to exit out of it.
+
+---
+
+@jansol · 2023-11-07T23:45:59Z:
+Could be interesting to also optionally add something like Ghostwriter's "Focus Mode" to such a zen mode: https://ghostwriter.kde.org/ along with this.
+
+---
+
+@gldtn · 2023-11-07T23:56:09Z:
+> Could be interesting to also optionally add something like Ghostwriter's "Focus Mode" to such a zen mode: https://ghostwriter.kde.org/ along with this.
+
+That is a nice touch! 
+
+---
+
+@titouandk · 2024-01-26T17:29:22Z:
+A zen mode would be very nice indeed.
+
+I like to have a very minimal zen mode when I edit markdown in ST4 (the font is [Cascadia Code](https://github.com/microsoft/cascadia-code)):
+<img width="1440" alt="zen-mode" src="https://github.com/zed-industries/zed/assets/5413308/78b320f8-34eb-42cb-873c-23726999cd0b">
+
+I like the fact that in ST4, settings are duplicated (you have one settings file for normal mode, and another file for zen mode).
+One file can display tabs for the normal mode, the other hide them for the zen mode, and so on.
+
+---
+
+@TerminalFi · 2024-02-23T15:55:51Z:
+https://github.com/zed-industries/zed/pull/8241 Would solve some of this
+
+---
+
+@insign · 2024-03-01T10:42:45Z:
+Very very useful comment: Where can I look desperate enough to have the feature of hiding tabs implemented?
+
+---
+
+@narqo · 2024-03-01T11:10:11Z:
+@insign 
+
+> Where can I look desperate enough to have the feature of hiding tabs implemented?
+
+There is a list of related issues in the description. Check #6424 (this one also has more drafts and related discussions linked)
+
+---
+
+@Moshyfawn · 2024-03-03T16:39:08Z:
+Related #8762
+
+---
+
+@sihayas · 2024-03-14T03:01:02Z:
+To add to this, I'd love for the zen-mode to also get rid of the title bar. A pure, unfiltered view into the code something I haven't seen any editor do yet except for VS Code with weird extensions but I refrain from using it because the text rendering is garbage
+
+---
+
+@alygin · 2024-03-23T16:23:01Z:
+@gldtn,
+
+> Things we would like to hide...
+> [ ] Occurrences highlight
+
+It looks like this setting does the job:
+
+```json
+"scrollbar": {
+  "symbols_selections": false
+}
+```
+
+---
+
+@codeams · 2024-03-26T01:37:22Z:
+Where can I find documentation on the setting keys I can set to hide/show things?
+
+---
+
+@codeams · 2024-03-26T01:39:56Z:
+Answering myself lol
+
+I believe the intention is to see the defaults as there is no auto-complete at the moment?
+
+For anyone else wondering, you can follow the instruction that is by default at the top of the settings json:
+```
+// To see all of Zed's default settings without changing your
+// custom settings, run the `open default settings` command
+// from the command palette or from `Zed` application menu
+```
+
+---
+
+@alygin · 2024-03-26T04:36:04Z:
+> I believe the intention is to see the defaults as there is no auto-complete at the moment?
+
+Actually, there's auto-completion in `settings.json`, with documentation:
+
+<img width="875" alt="изображение" src="https://github.com/zed-industries/zed/assets/2101250/17f22874-6e10-46a9-9832-ad174517734c">
+
+---
+
+@Feel-ix-343 · 2024-04-04T16:44:09Z:
+A zen mode command would be a great touch too. It shldnt change any config but just be temporary
+
+---
+
+@Feel-ix-343 · 2024-04-04T16:44:59Z:
+I want to use Zen to write my notes (daily notes) and I'm very excited about this feature
+
+---
+
+@failable · 2024-04-14T15:37:38Z:
+Configurable title bar would also be helpful, e.g. show file path when breadcrumb and tab bar are hidden.
+
+Zed:
+
+![image](https://github.com/zed-industries/zed/assets/5475262/1a2ea2c3-4be4-44b0-a892-7ee13c04d1f1)
+
+Emacs: 
+
+<img width="719" alt="image" src="https://github.com/zed-industries/zed/assets/5475262/72256fc0-d72d-4d0d-b2de-1a7e2958e298">
+<img width="781" alt="image" src="https://github.com/zed-industries/zed/assets/5475262/736bb118-672c-4f81-b7b9-196f4426de78">
+
+
+---
+
+@PJUllrich · 2024-04-27T07:25:44Z:
+Just wanted to share my current settings that get me pretty close to Zen mode. If I could hide the status and top bar, I'd be 100% there.
+
+One other thing missing is a padding on the left side if I hide the gutter. If you look at the screenshots below, VSCode has a generious left padding, but Zed shows the code right next to the window edge. It would be nice to be able to configure that left padding in Zed too.
+
+Background: I record coding session and want to eliminate any distraction from the code.
+
+```
+  // ZEN MODE
+  "toolbar": {
+    // Whether to show breadcrumbs.
+    "breadcrumbs": false,
+    // Whether to show quick action buttons.
+    "quick_actions": false
+  },
+  "scrollbar": {
+    // When to show the scrollbar in the editor.
+    // This setting can take four values:
+    //
+    // 1. Show the scrollbar if there's important information or
+    //    follow the system's configured behavior (default):
+    //   "auto"
+    // 2. Match the system's configured behavior:
+    //    "system"
+    // 3. Always show the scrollbar:
+    //    "always"
+    // 4. Never show the scrollbar:
+    //    "never"
+    "show": "never"
+  },
+  "cursor_blink": false,
+  // Whether to pop the completions menu while typing in an editor without
+  // explicitly requesting it.
+  "show_completions_on_input": false,
+  "gutter": {
+    // Whether to show line numbers in the gutter.
+    "line_numbers": false,
+    // Whether to show code action buttons in the gutter.
+    "code_actions": false,
+    // Whether to show fold buttons in the gutter.
+    "folds": false
+  }
+```
+
+## Current Zed Layout
+![CleanShot 2024-04-27 at 09 23 40@2x](https://github.com/zed-industries/zed/assets/10426523/1c5fde26-fd95-4d2f-81d0-82522cf4a653)
+
+## Current VSCode Layout
+![CleanShot 2024-04-27 at 09 27 14@2x](https://github.com/zed-industries/zed/assets/10426523/8bed2cca-b969-4d81-9a25-d89ec9786e8a)
+
+
+
+---
+
+@Yevgnen · 2024-04-27T07:32:24Z:
+@PJUllrich You cannot enter zen when you have tabs. 🥹
+
+---
+
+@alygin · 2024-04-27T18:03:19Z:
+> One other thing missing is a padding on the left side if I hide the gutter.
+
+The [Centered Layout](https://github.com/zed-industries/zed/pull/9754) mode may help you to some extent. Though it comes with borders. You can hide borders by setting the `pane_group.border` theme color.
+
+---
+
+@devdumpling · 2025-01-04T16:02:45Z:
+Is there a way to toggle certain config when in centered layout? I'm settling for lazily commenting in and out config for now. 
+
+---
+
+@MrBns · 2025-03-20T08:09:16Z:
+is this feature available yet ? 
+
+
+---
+
+@gldtn · 2025-08-08T04:17:19Z:
+Guys, with the latest pre release [v0.199.0-pre](https://github.com/zed-industries/zed/releases/tag/v0.199.0-pre), the included PR(https://github.com/zed-industries/zed/pull/35339) by @probably-neb , which makes the Zen mode possible.. Making this request almost complete(see check list above)! 
+
+My current "Zen" profile:
+```jsonc
+"profiles": {
+    "Focus": {
+      "ui_font_size": 16,
+      "buffer_font_size": 18,
+      "buffer_line_height": { "custom": 2.0 },
+      "tab_bar": {
+        "show": false,
+        "show_nav_history_buttons": false
+      },
+      "toolbar": {
+        "breadcrumbs": false,
+        "quick_actions": false
+      },
+      "gutter": {
+        "line_numbers": false,
+        "folds": false,
+        "breakpoints": false,
+        "runnables": false,
+        "min_line_number_digits": 0
+      },
+      "indent_guides": {
+        "enabled": false
+      },
+      "current_line_highlight": "none",
+      "scrollbar": {
+        "show": "never",
+        "cursors": false,
+        "git_diff": false,
+        "diagnostics": "none",
+        "search_results": false,
+        "selected_symbol": false
+      }
+    }
+  }
+```
+
+---
+
+@negentropi · 2025-08-15T02:55:50Z:
+i like god mode, cool new name. 
+
+=== ROW 16 | f000801 | https://neon.com/blog/semantic-search | 2024-01-24 | domain-subframes ===
+Semantic search using OpenAI, pg_embedding and Neon - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+Semantic search using OpenAI, pg_embedding and Neon
+Learn how to build semantic search experiences using OpenAI, Neon and pg_embedding
+Mahmoud Abdelwahab–Developer AdvocateAug 25, 2023
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+A few weeks back, we published an AI-powered app where you can submit an idea for a startup and get a list of similar companies YCombinator has invested in. The app got attention on HackerNews and Twitter, resulting in 5,000+ visitors and 2,500+ submissions.
+If you haven’t had a chance to try it out, go to neon.tech/ycmatcher
+In this blog post, we will cover how we built the app using OpenAI, Neon, and pg_embedding.
+How the app works
+The app uses semantic search, a search technique that understands the meaning behind a user’s search query. This is more powerful than keyword-based search that looks for exact string matches.
+For example, consider these two search queries:
+“Ride-sharing for friends.”
+“An app that allows you to get from point A to point B, and you split the fee.”
+Even though they’re completely different and have nothing in common from a lexical perspective, you will find that the app returns similar results. This is possible because we rely on vector embeddings and vector similarity search.
+What are vector embeddings?
+A vector embedding is a vector (list) of floating point numbers. We can use it to represent unstructured data (e.g., text, images, audio, or other types of information).
+What’s powerful about embeddings is they can capture the meaning behind the text and be used to measure the relatedness of text strings. The smaller the distance between two vectors, the more they’re related to each other and vice-versa.
+Consider the following three sentences summarizing different books:
+“A young wizard attends a magical school and battles against an evil dark lord.”
+“A group of friends embarks on an adventurous journey to destroy a powerful ring and save the world.”
+“A detective investigates a series of mysterious murders in a small town.”
+For example, we can have the following embeddings:
+Summary #1 → [0.1, 0.1, 0.1]
+Summary #2 → [-0.2, 0.2, 0.3]
+Summary #3 → [0.3, -0.2, 0.4]
+If we want to find out which two summaries are most related, we can calculate the distance between every two embeddings ( #1 and #2, #2 and #3, #1 and #3). The two embeddings closest to each other distance-wise are the most similar.
+At a high level, this is how the YC idea matcher app works:
+Convert the user’s search query into an embedding
+Go through every company description and return the most similar ones
+Generating vector embeddings using OpenAI
+One way to generate embeddings is by using OpenAI’s Embeddings API. It enables sending a text string to an API endpoint and returning a corresponding vector embedding.
+Here’s an example API call using the text-embedding-ada-002 model:
+curl https://api.openai.com/v1/embeddings \
+-H "Content-Type: application/json" \
+-H "Authorization: Bearer $OPENAI_API_KEY" \
+-d '{
+"input": "Your text string goes here",
+"model": "text-embedding-ada-002"
+}'
+Example response:
+{
+"data": [
+{
+"embedding": [
+-0.006929283495992422,
+-0.005336422007530928,
+...
+-4.547132266452536e-05,
+-0.024047505110502243
+],
+"index": 0,
+"object": "embedding"
+}
+],
+"model": "text-embedding-ada-002",
+"object": "list",
+"usage": {
+"prompt_tokens": 5,
+"total_tokens": 5
+}
+}
+The text-embedding-ada-002 has an output dimension of 1536. This means that the embedding array included in the response will have a size of 1536. There are other embedding models out there that you can use. However, keep in mind that when comparing the distance between two vectors, they must be of similar length.
+Vector similarity search in Postgres using pg_embedding
+The process of representing data into embeddings and calculating the similarity between one or more items is known as vector search (or similarity search). It has a wide range of applications:
+Information Retrieval: you can retrieve relevant information based on user queries since you can accurately search based on the meaning of the user query. (This is what YC idea matcher does)
+Natural Language Processing: since embeddings capture the meaning of the text, you can use them to classify text and run sentiment analysis.
+Recommendation Systems: You can recommend similar items based on a given set of items. (e.g., movies/products/books, etc.)
+Anomaly Detection: since you can determine the similarity between items in a given dataset, you can determine items that don’t belong.
+Storing and retrieving vector embeddings can be done in Postgres. This is incredibly useful because it eliminates the need to introduce an external vector store when building AI and LLM applications if you’re already using Postgres.
+To get started, you can use pg_embedding or pgvector, which are two Postgres extensions that allow you to do vector similarity search.
+YC idea matcher uses pg_embedding. However, since pg_embedding is compatible with pgvector, the YC idea matcher app can easily be converted to use pgvector instead.
+To get started:
+1. Enable pg_embedding
+CREATE EXTENSION embedding
+2. Create a column for storing vector data (this step was done in the data collection step for YC idea matcher)
+CREATE TABLE documents(id integer PRIMARY KEY, embedding real[]);
+INSERT INTO documents(id, embedding) VALUES (1, '{1.1, 2.2, 3.3}'),(2, '{4.4, 5.5, 6.6}');
+3. Run similarity search queries
+SELECT id FROM documents ORDER BY embedding <=> ARRAY[1.1, 2.2, 3.3] LIMIT 1;
+This query retrieves the ID from the documents table, sorts the results by the shortest distance between the embedding column and the array [1.1, 2.2, 3.3], and returns only the first result.
+The <=> operator calculates the Cosine similarity between two vectors. pg_embedding supports Euclidean (L2) distance using the <-> operator as well as Manhattan distance using the <~> . Cosine similarity works best when comparing vector embeddings that represent text.
+Code deep dive
+You can find the app’s source code on GitHub. In this section, we’ll cover how it works.
+Gathering the data
+The first step was to gather company data from the YCombinator public API. The API returns the data in the following format:
+{
+"companies": [
+{
+"id": 64,
+"name": "Y Combinator",
+"slug": "y-combinator",
+"website": "https://www.ycombinator.com",
+"smallLogoUrl": "https://bookface-images.s3.amazonaws.com/small_logos/2db694dd7905db37d037821a2fdaf9fa0708a964.png",
+"oneLiner": "Not your average fixed point combinator.",
+"longDescription": "Make something people want.",
+"teamSize": 100,
+"url": "https://www.ycombinator.com/companies/y-combinator",
+"batch": "",
+"tags": [
+],
+"status": "Active",
+"industries": [
+"Fintech"
+],
+"regions": [
+"United States of America",
+"America / Canada",
+"Remote",
+"Partly Remote"
+],
+"locations": [
+"Mountain View, CA, USA"
+],
+"badges": [
+"isHiring"
+]
+},
+...
+],
+"nextPage": "https://api.ycombinator.com/v0.1/companies?page=2",
+"page": 1,
+"totalPages": 177
+}
+companies: is an array of objects, where each object contains data about a specific company
+nextPage: contains the API endpoint URL with the page number specified as a query parameter
+page: the current page number
+totalPages: total number of pages. There are 177 in total, and each page returns an array of 25 companies (the last page returns three companies, so we have 4,403 companies in total. However, some companies didn’t have a long description, so we removed them.)
+We then wrote a script that went through each page, and for each company’s long description, we generated an embedding and stored the company data in a Neon database.
+// generate-embeddings.ts
+import { Pool } from 'pg';
+import axios from 'axios';
+const DATABASE_URL = '';
+const OPENAI_API_KEY = '';
+const pool = new Pool({
+connectionString: DATABASE_URL,
+});
+async function createCompaniesTable() {
+const client = await pool.connect();
+try {
+await client.query(`
+CREATE EXTENSION IF NOT EXISTS embedding;
+CREATE TABLE IF NOT EXISTS companies (
+id SERIAL PRIMARY KEY,
+name TEXT,
+slug TEXT,
+website TEXT,
+"smallLogoUrl" TEXT,
+"oneLiner" TEXT,
+"longDescription" TEXT,
+"teamSize" INTEGER,
+url TEXT,
+batch TEXT,
+tags TEXT [],
+status TEXT,
+industries TEXT [],
+regions TEXT [],
+locations TEXT [],
+badges TEXT [],
+embedding REAL []
+);
+`);
+console.log('Companies table created successfully');
+} catch (error) {
+console.error('Error creating companies table:', error);
+} finally {
+client.release();
+}
+}
+async function scrapeCompanies(url: string) {
+try {
+const response = await axios.get(url);
+const { companies, nextPage } = response.data;
+for (const company of companies) {
+const { longDescription } = company;
+const embedding = await generateEmbedding(longDescription);
+await storeCompany(company, embedding);
+}
+if (nextPage) {
+await scrapeCompanies(nextPage);
+}
+} catch (error) {
+console.error('Error scraping companies:', error);
+}
+}
+async function generateEmbedding(text: string): Promise<number []> {
+try {
+const response = await axios.post(
+'https://api.openai.com/v1/embeddings',
+{
+input: text,
+model: 'text-embedding-ada-002',
+},
+{
+headers: {
+Authorization: `Bearer ${OPENAI_API_KEY}`,
+'Content-Type': 'application/json',
+},
+}
+);
+const { data } = response.data;
+return data [0].embedding;
+} catch (error) {
+console.error('Error generating embedding:', error);
+}
+return [];
+}
+async function storeCompany(company: any, embedding: number []) {
+const {
+name,
+slug,
+website,
+smallLogoUrl,
+oneLiner,
+longDescription,
+teamSize,
+url,
+batch,
+tags,
+status,
+industries,
+regions,
+locations,
+badges,
+} = company;
+const client = await pool.connect();
+try {
+await client.query(
+`
+INSERT INTO companies (
+name, slug, website, "smallLogoUrl", "oneLiner", "longDescription", "teamSize", url, batch, tags, status, industries, regions, locations, badges, embedding
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+`,
+[
+name,
+slug,
+website,
+smallLogoUrl,
+oneLiner,
+longDescription,
+teamSize,
+url,
+batch,
+tags,
+status,
+industries,
+regions,
+locations,
+badges,
+embedding,
+]
+);
+console.log(`Company '${name}' stored successfully`);
+} catch (error) {
+console.error(`Error storing company '${name}':`, error);
+} finally {
+client.release();
+}
+}
+async function runScript() {
+await createCompaniesTable();
+await scrapeCompanies('https://api.ycombinator.com/v0.1/companies?page=1');
+await pool.end();
+}
+runScript();
+Once we had the data, the last step was building the app. We used Next.js, a React framework for building full-stack web applications.
+Building the UI and API
+On the frontend, a form captures user submissions, tracks the submit event using Vercel analytics, and sends a POST request to an API endpoint.
+We then render the API response, which is a list of companies. You can check out the frontend code in the page.tsx file
+As for the API, it has the following code:
+// app/api/idea/route.ts
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
+import { neon, neonConfig } from '@neondatabase/serverless';
+import { NextRequest, NextResponse } from 'next/server';
+import { generateEmbeddings } from '~/utils';
+import { z } from 'zod';
+export const runtime = 'edge';
+export const preferredRegion = 'iad1';
+neonConfig.fetchConnectionCache = true;
+const ratelimit = new Ratelimit({
+redis: Redis.fromEnv(),
+analytics: true,
+limiter: Ratelimit.slidingWindow(2, '5s'),
+});
+const sql = neon(process.env.DATABASE_URL!);
+export async function POST(request: NextRequest) {
+const id = request.ip?? 'anonymous';
+const limit = await ratelimit.limit(id?? 'anonymous');
+if (!limit.success) {
+return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+}
+const body = await request.json();
+const schema = z.object({
+idea: z
+.string()
+.min(20, {
+message: 'Idea must be at least 20 characters.',
+})
+.max(140, {
+message: 'Idea should be at most 140 characters.',
+}),
+});
+const validated = schema.safeParse(body);
+if (!validated.success) {
+return NextResponse.json(
+{ error: `Invalid request ${validated.error.message}` },
+{ status: 400 }
+);
+}
+const { idea } = validated.data;
+try {
+const embedding = await generateEmbeddings(idea);
+const result = await sql(
+`SELECT id, name, "smallLogoUrl", website, "oneLiner", "longDescription", batch, url, status, industries FROM companies ORDER BY embedding <=> array[${embedding}] LIMIT 5;`
+);
+return NextResponse.json({ data: result });
+} catch (error) {
+return NextResponse.json({ error: error }, { status: 500 });
+}
+}
+The API endpoint is a serverless edge function deployed to the us-east-1 region (Washington, D.C., USA) on Vercel. We specified this region since it’s the same region where the Neon database is deployed.
+The Neon serverless driver is used to connect and send queries to the database. We’re enabling experimental connection caching, which improves the performance of subsequent database queries.
+We then use Upstash to rate limit the API endpoint and Zod to validate the incoming request body.
+Lastly, we generate an embedding for the user-submitted query and return the five most similar companies as JSON.
+Final thoughts
+The end result is fast since it uses a small data set. However, it’s important to create an index when working with a large amount of data (e.g., tens of thousands of rows or more). You can check out pg_embedding’s documentation to learn how to create an HNSW index to optimize search behavior.
+If you have questions about building AI apps on Neon, feel free to reach out on Twitter or our community forum. We’d love to hear from you.
+Also, if you’re new to Neon, you can sign up for free.
+On this page
+How the app works
+Code deep dive
+Final thoughts
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+

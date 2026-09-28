@@ -1,0 +1,2968 @@
+=== ROW 147 | f008389 | https://tantaluspath.com/tech/rust_to_swift_state_syncing | 2025-04-09T00:00:00 | individual-blogs;twir-links ===
+Replicating state changes across language barriers with Rust, UniFFI, and
+proc macros | Tantalus: an app for intermittent reward management
+TantalusPath
+Replicating state changes across language barriers with Rust,
+UniFFI, and proc macros
+March 27, 2025
+Rust is a viable language to use for the core business logic of a
+mobile app, and in some ways ideal. The expressiveness of the type
+system, tooling, and raw speed has made it a great tool for our
+apps. Further, its availability across all our relevant platforms
+will let us bring those benefits to new targets similar to how C++
+has been used historically. However, our architecture for turning
+our Rust data into pixels on the screen has evolved substantially
+over time, so this post aims to help skip past some of the
+less-optimized attempts and go straight to a great solution.
+Our app
+TantalusPath
+uses SwiftUI as the UI layer and passes data using UniFFI, which
+derives bindings and glue code for our Rust functions and data
+structures so both sides can interact in a relatively idiomatic way.
+Our overall structure is a little under-engineered but has been
+appropriate for a small team project with limited scope. Swift views
+that need to communicate with the Rust side take a semi-god object
+that provides functionality the UI can call into. They also have a
+big ‘ole struct that we generate from Rust side that has the
+exact state information that is necessary for things to render
+correctly. This is stuff like the unlock-status of various
+components, so the UI knows whether to hide it, gray it out, or make
+it fully available.
+// App passes these two objects around: the wrapper to communicate with the Rust brain,
+// and the MainModel for tracking state
+@main
+struct TantalusApp: App {
+var tantalusWrapper: TantalusWrapper
+@State var mainModel: MainModel
+// ...
+}
+Note that MainModel is a pretty big object that is
+passed around via @Binding on the Swift side but
+generated from Rust
+// This Rust struct has all the info needed to render the app
+// and is equivalent to what the TantalusApp struct is holding
+#[derive(uniffi::Record)]
+pub struct MainModel {
+// ... many fields
+}
+SwiftUI is declarative, so all we have to do is take changes to the
+Rust state and manually apply it on the Swift side. To do this, we
+have two strategies: to return changes directly from the
+cross-language API call or have a foreign event handler that the
+Swift side registers that fires when changes occur
+// The Swift implementation of the RustEventHandler trait
+// which is tagged with #[uniffi::export(with_foreign)]
+class RustEventManager: RustEventHandler {
+func onUpdate(update: [MainModelFieldValue]) {
+// interesting stuff, keep reading
+}
+}
+We need both these approaches because of needs for both sync and
+async state changes.
+Graveyard of the less good
+State management has gone through a few iterations, refined along
+the way. Note that primary drivers of progress have been ergonomics
+and correctness rather than performance because it has been
+performant enough even in subideal paradigms. The limited quantity
+of data crossing the boundary and limited number of crossings makes
+even debug Rust builds perform fine. Here’s a brief history of
+how our approach progressed over time and why we changed away at
+each step in favor of something else.
+The first attempt was Swift code that would call Rust functions and
+apply the return values at that location. This worked reasonably
+well for synchronous state updates as a result of a user action but
+was poor for async and led to maintaining many similar structs and a
+lot of logic in the non-portable code. Despite existing only on iOS
+currently, we want to be able to somewhat easily port the UI when it
+makes business sense to do so: limiting the scope of the SwiftUI
+layer is required.
+The next iteration introduced the event handler in a less elegant
+form: each possible state change was a separate function the handler
+had to implement. This solved a problem where previously when adding
+a field to a returned struct, you would have to search for usage to
+make sure it would be applied consistently. There were still
+oh-so-many structs, and you still had to manually wire new struct
+fields in the event handler without compiler help, and it was easy
+to end up crossing the language barrier multiple times.
+The next phase was the StateUpdateModel which was
+basically the MainModel but with every field as an optional and then
+a singular method in the event handler to apply it. This allowed us
+to remove most of the little structs and, with the ability to set a
+couple fields and use ..Default::default() for the
+rest, even had decent ergonomics. On the Swift side though, we had
+to manually check all the fields to see which were
+Some(state) even for the simplest updates which does
+not scale. When adding a field, the implementor needed to remember
+to add it to the StateUpdateModel as an optional, and
+also add it to the swift event handler implementation which led to a
+few times when an update would miss one of the steps and introduce a
+bug.
+How procedural macros made it better
+Enter proc macro. For the uninitiated, Rust’s procedural
+macros allow us to take a struct definition and generate additional
+code: impl blocks, additional structs, enums, etc.
+Well, they can actually do even more, but that’s how we are
+using them. With our derive macro, we generate a new struct with
+getters/setters wrapped around the underlying struct. We also
+generate an enum where each variant wraps one field from the
+original struct. This allows us to keep track of changes to state
+that haven’t been synced across the language barrier.
+Crucially, the original state object and the enum for the fields are
+both UniFFI exported data so now it’s easy to
+ensure that none of the state object fields are wasted.
+// This Swift exhaustive enum checking is boring to write but effective
+func onUpdate(update: [MainModelFieldValue]) {
+for field in update {
+switch field {
+case let MainModelFieldValue.bar(value: value):
+self.mainModel.bar = value
+// ... more cases ...
+}
+}
+}
+// ... and how it's used elsewhere
+struct SampleView: View {
+@Binding var mainModel: MainModel
+var body: some View {
+Text("bar is \(mainModel.bar)")
+}
+}
+If a state field is added or removed on the Rust side, this Swift
+function will fail compilers’ enum exhaustiveness checks until
+it is added. The update array is a diff of state that can be sent
+either asynchronously via the event handler or sent as the return
+value for api calls directly to save a trip across the FFI boundary.
+If the state is updated only by Rust (unidirectional syncing), it
+can also reduce diff size by only sending changed values, so setting
+a state value to an identical value will not propagate. Here’s
+an example of a simple struct and the kind of code that is generated
+(trimmed down for relevance)
+// This struct is used primarily via the translated version on the other side of the FFI boundary.
+// The derive_enum attribute applies the list of derives to the FooFieldValue enum.
+// In this case, it's making it available to the Swift code so it can be used to update
+// the Foo object
+#[derive(uniffi::Record, StateUpdate)]
+#[derive_enum(uniffi::Enum)]
+struct Foo {
+bar: i32,
+baz: String,
+}
+// The above StateUpdate proc macro generates the following:
+// Key for HashMap
+enum FooField {
+Bar,
+Baz,
+}
+// one case per original struct field, for diffing
+#[derive_enum(uniffi::Enum)]
+pub enum FooFieldValue {
+Bar { value: i32 },
+Baz { value: String },
+}
+// Rust side uses this instead of original Foo to keep track of cross-language state
+pub struct FooState {
+value: Foo,
+uncommitted: Option<HashMap<FooField, FooFieldValue>>,
+}
+impl FooState {
+pub fn take_uncommitted(&mut self) -> Option<Vec<FooFieldValue>> {
+self.uncommitted
+.take()
+.map(|uncommitted| uncommitted.values().cloned().collect())
+}
+pub fn get_bar(&self) -> &i32 {
+&self.value.bar
+}
+pub fn get_baz(&self) -> &String {
+&self.value.baz
+}
+pub fn set_bar(&mut self, new_value: i32) -> &mut Self {
+if self.value.bar != new_value {
+self.value.bar = new_value.clone();
+if let Some(ref mut map) = self.uncommitted {
+map.insert(
+FooField::Bar,
+FooFieldValue::Bar {
+value: new_value.clone(),
+},
+);
+} else {
+let mut map = std::collections::HashMap::new();
+map.insert(
+FooField::Bar,
+FooFieldValue::Bar {
+value: new_value.clone(),
+},
+);
+self.uncommitted = Some(map);
+}
+}
+self
+}
+pub fn set_baz(&mut self, new_value: String) -> &mut Self {
+// logic elided: essentially the same as set_bar
+}
+}
+In practice, because the code base was originally written with
+bidirectional state updates, we have to send any set_bar calls to
+the uncommitted map regardless of whether it compares equally with
+the previous value. This customization is provided by an attribute
+on the proc macro (not shown). In
+ChessTiles, another application by us, we are able to use the more efficient
+version because it was architected with unidirectional syncing.
+Refactors over time should get us to the point where both apps can
+take advantage of this, or perhaps it will be stuck half-migrated
+like most software.
+Aren’t procedural macros difficult to develop?
+They used to be. The “search for a guide, follow it, and then
+modify” strategy arguably still is. Here is a shorter guide
+that worked well enough to get started, because once you get
+something working, extending it is often relatively easy, and
+you’ll learn as you work from something that is functional.
+cargo new --lib my_proc_macro_lib
+go to the my_proc_macro_lib directory that just
+generated and replace your Cargo.toml with the
+following:
+[package]
+name = "my_proc_macro_lib"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"
+[lib]
+proc-macro = true
+the proc-macro = true bit is required, and the
+dependencies are near universal for parsing and generating code.
+cargo build your deps while you do the next step!
+Go to your favorite AI, and paste in your Cargo.toml and a
+description of what you want the macro to do and ask the model to
+generate it. They have been trained on so many of these that for
+something relatively simple, like what we wrote, you are likely to
+get something that works reasonably on the first try. Put this in
+your lib.rs. If not working yet, paste in the error
+message to your LLM chat or try a manual edit.
+Iterate. Here cargo expand (sometimes built into IDE)
+is your friend. How does the code match up with what you would
+write? Go back to your proc macro’s lib.rs file
+and make edits. You can also go back to your LLM and ask for
+changes. Pro tip: use cargo expand on a minimal
+module to get an idea of the code that comes out rather than on
+your real-world codebase which will probably produce vastly more
+output to comb through. Something similar to the following has
+served us well for prototyping and verifying output
+mod proc_test {
+use state_update::StateUpdate;
+#[derive(StateUpdate)]
+struct Foo {
+bar: String,
+}
+}
+Future work
+Our onUpdate Swift function is essentially rote
+busy-work built on top of data structures generated from Rust. While
+the code is formulaic to write, it would be nice to close the loop
+by generating it directly. This would probably require another proc
+macro but used as a separate Rust binary and invoked as part of the
+build process similar to how we ensure we always have up-to-date
+UniFFI bindings.
+Are you reading this post and thinking, “I would use your proc
+macro if it was available as a crate”? Reach out on one of our
+social media links (at the bottom of the page) because the main
+barrier to publishing is lack of perceived demand.
+Discord
+Bluesky
+Instagram
+© Serendipity Systems LLC. All rights reserved.
+
+=== ROW 148 | f008455 | https://rustunit.com/blog/2025/05-18-bevy-ios-deep-linking | 2025-05-28T00:00:00 | individual-blogs;twir-links ===
+rustunit
+HOME
+APPS
+PROJECTS
+BEVY MEETUP
+BLOG
+CONTACT
+2025-05-18
+iOS Deep-Linking with Bevy
+Until very recently Bevy iOS apps had a hard time reading deep linking information. Bevy uses winit by default for its platform integrations like window lifecycle management. On iOS winit used to implement and register its own AppDelegate to receive app life cycle hooks/calls.
+Users of Bevy therefore had only one inconvenient option to receive these hooks: Ditch winit and roll this themselves.
+As of winit 0.30.10 (see release) we can now do much better.
+What is the use case?
+"Deep linking" means that a link leads to our app being opened or foregrounded and the app knowing that and what url triggered it. The iOS jargon for this is URL Scheme. Some example use cases for this are:
+Sharing specific content inside the app (imagine a user sharing their game profile with a friend)
+File-Sharing (more on that later)
+Advertisement attribution tracking (not covered here)
+You might wonder why this is relevant for File-Sharing on iOS. It turns out that the code that triggers your app to open after sharing a file with it is actually just using such a URL scheme to do that.
+High level steps
+Configure your url schema in xcode
+Add a handler for the application:(_:open:options:) call. (see docs)
+Handle deep link properly
+Configure your url schema
+For iOS to open your app on a click on a specifically crafted URL we have to adapt our Info.plist file like so:
+...
+<key>CFBundleURLTypes</key>
+<array>
+<dict>
+<key>CFBundleURLName</key>
+<string>com.rustunit.tinytakeoff</string>
+<key>CFBundleURLSchemes</key>
+<array>
+<string>tinytakeoff</string>
+</array>
+</dict>
+</array>
+With this our game tinytakeoff will be opened when clicking on URL looking this: tinytakeoff://fooobar?param=value
+Alternatively you can also make that change via the XCode UI, see the docs to register your URL scheme.
+So far these steps were possible already before and lead to your app being opened or foregrounded based on a click on such a URL.
+What was not possible was step 2 and 3 to actually make use of that information inside your Bevy app.
+Receive app open options
+Thanks to the objc2 crate we can use native objc APIs without having to write objc but pure rust instead. The underlying code looks like magic and uses a bunch of macros to accomplish this. The result is that we can abstract this away into a conventient rust only crate: bevy_ios_app_delegate.
+Using this crate hooking into this open url life cycle call of the AppDelegate becomes as easy as this snippet of bevy setup code:
+pub fn plugin(app: &mut App) {
+// bevy setup skipped here...
+// register our crates plugin (this is a noop on non ios platforms)
+app.add_plugins(IosAppDelegatePlugin);
+// register observer that triggers if open url app delegate was called (either by app opening or foregrounding after a click on a URL scheme)
+app.add_observer(|trigger: Trigger<AppDelegateCall>| {
+info!("app delegate call: {:?}", trigger.event());
+});
+}
+Handle deep link
+This is of course very application dependant. Here are a few example of what to do:
+Link actionApp behaviour
+game user profile linkApp opens the user profile of the user that created the link
+a player's new record game runThe app shows this player's replay after clicking their link
+file sharingA ShareExtension receives a file that it wants to share with your app and opens your app using a URL schema and the app can identify what file to open using the deep linking context
+Further steps
+universal links
+Aside from the custom URL schema we described above, a regular web domain can be associated with your app and trigger opening it, this is called universal linking (see apple docs) and requires yet another AppDelegate call implementation.
+push notification token
+Being able to make a custom AppDelegate implementation has more advantage than just for deep linking. We can now vastly simplify also the way we currently receive a push notification token in the bevy_ios_notifications crate. Receiving this token also happens via AppDelegate call and will be provided via the new bevy_ios_app_delegate crate soon.
+Exciting times to build iOS apps using Bevy.
+Do you need support building your Bevy or Rust project? Our team of experts can support you! Contact us.
+Copyright © 2026 Rustunit
+
+=== ROW 149 | f008566 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-52 | 2025-08-20T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #52
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #52
+The Embedded Rustacean Issue #52
+Aug 15, 2025
+In partnership with
+Get 10% off with Code (details below)
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag @theembeddedrust on Twitter/X or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+🦀 Rust 1.89.0 is out
+❤️ Rust is the most admired language, again
+💼 Tenstorrent posts a Rust job
+🤝 Ferrous part of SOAFEE
+🔍 Vector Publishes Industry Insights on Rust in SDVs
+🔐 Ripple’s Rust crypto shakeup
+📀 Microsoft Launches Rust-based Wassette
+🧑‍💻 FreeCodeCamp publishes embedded Swift course
+♾ Arduino Updates Zephyr-based Cores
+🍓 RasPi Steps Hardware to Fix Errors
+💬
+Quote of the Issue
+❝
+Clean code always looks like it was written by someone who cares.
+Robert C. Martin
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+Ferrous Systems joins SOAFEE to bring Rust’s safety and performance to software-defined vehicles ⭐
+Rust News 🗞🦀
+gccrs July 2025 Monthly report
+XRP Ledger Shake-Up? Ripple Eyes Modular Rebuild ⭐
+FerrisKey v0.1.0 – An open-source IAM in Rust
+Microsoft Launches Wassette: Open-Source Rust-Wasm for Secure AI Agents ⭐
+Debian GNU/Hurd 2025 released with Rust, 64-bit support, and more
+Rust Project goals update — July 2025
+Announcing Rust 1.89.0 ⭐
+Program management update — July 2025
+Rust Foundations 2025 Technology Report
+2025 Stack Overflow Developer Survey ⭐
+General Embedded News/Trends 📈
+Arduino's Move to a Zephyr RTOS-Based Firmware Makes New Strides with Core v0.3.2
+ARM Announces Developer Labs Program
+Updated Arduino cores with ZephyrOS ⭐
+Introducing ESP RainMaker MCP Server
+Renesas Intros 64-bit MPU Aimed at AI-Centric High-Performance HMI Designs
+ANAVI Aims to Boost Raspberry Pi Project Security with a Simple Drop-In Trusted Platform Module 2.0
+In Search of Riches, Hackers Plant 4G-Enabled Raspberry Pi In Bank Network
+RP2350 RISC-V Support added to Nuttx
+Raspberry Pi Squashes Security Bugs, Fixes E9 Erratum with the RP2350 A4 Stepping ⭐
+Alif Unveil the Ensemble E4, E6, and E8 AI Controllers
+Comparisons with other Languages 🔍
+2x Performance, $300k Savings: A Case Study in Rewriting a Critical Service in Rust
+Rust, Python, and TypeScript: the new trifecta
+Rust and C++ Interop
+Stack vs Heap Memory: A Deep Dive into C/C++, BASIC, and Pascal
+Unleashing the Power of Rust in GIS Development
+A Rusty Web? An Excursion of a Perl Guy into Rust Land
+Hardware 🛠
+ALPON X5 AI: First Industrial Edge AI Computer Built on Raspberry Pi
+XIAOML Kit complements a free Machine Learning Systems book ⭐
+CM5 MINIMA R3: A Compact, Open-Source Powerhouse for Raspberry Pi CM5
+Tonybot Educational Humanoid Robot
+New XIAO nRF54L15
+Pico2-ice FPGA Dev Board
+RP3A0 Pico Is a Reverse-Engineered Raspberry Pi Zero 2 W
+WAVEGO Pro 12-DOF Bionic Robot Dog
+Rockchip RK3688: The Future of ARM-Based Development and Programming
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+Rust on the Lilygo T-Deck
+Using the Qt Logger in Rust with CXX-Qt
+Insights, Tools, & Case Studies 📑
+Renault Group’s software-defined vehicles built on Google Cloud
+Rust on the Lilygo T-Deck
+Invariants In Rust, The Secret to Bulletproof Code
+How Rust powers Proton Authenticator
+Rust in Automotive - New Potential for SDVs? ⭐
+The Deep Dive: Why and How Projects Use Multiple Programming Languages
+Rust is best explained with F#
+Hyper-Efficient Memory Management via Adaptive Granularity in Rust Embedded Systems
+Quetty: A terminal Azure Service Bus manager in Rust with ARM support
+Rust for billions of MCUs
+Unlocking Android SDK Features in Rust with JNI: Pros and Cons
+Introducing yap - A friendlier serial terminal
+An Easy Problem Made Hard: Rust & Binary Trees
+ESP32 Bus Pirate 0.5 – A hardware hacking tool that speaks every protocol
+rustframe: A lightweight dataframe & math toolkit for Rust
+Memory Mapped Register Tool in Rust
+Embedded Systems in Medical Devices: Compliance, Design, and Safety
+Rust Iterators : DeSugarified
+Memory-safe car engines and a consultancy acquisition
+Rust DataFrame Alternatives to Polars: Meet Elusion v4.0.0
+TinyML Market: The Next Frontier in Edge AI for Smart Cities and IoT
+General Embedded 📟
+Embedded Swift: A Modern Approach to Low-Level Programming ⭐
+Edge Machine Learning Systems Engineering Course
+Free ROS 2 Tutorials
+Formal methods are the future of embedded software
+Milliwatt-sized Machine Learning on Microcontrollers (FOSDEM 2025)
+Raspberry Pi-Based FPGA Test System Part One
+Building the Linux Kernel for Embedded Devices vs. Standard PCs: Key Differences Explained
+Why WebAssembly Runs Slower on Embedded Devices — And How Hardware Acceleration Achieved a 142 Speedup
+Agentic TinyML for Intent-aware Handover in 6G Wireless Networks
+Safe and Efficient C++ For Embedded Systems Training Course
+MicroZed Chronicles: MathWorks Deep Learning Processor
+Designing Object Detection Models for TinyML
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Rust for System Programmers
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+edge-net v0.11.1
+embassy-stm32 v0.3.0
+embassy-sync v0.7.1
+embedded-test v0.6.2
+stm32-hal2 v2.1.3
+embassy-boot v0.6.0
+embassy-rp v0.7.0
+embassy-nrf v0.6.0
+Upcoming Events & Deadlines 🎭
+Rust Forge - August 2025, Wellington, New Zealand
+RustConf - September 2-5, 2025, Seattle, USA
+Oxidize - September 16-18, 2025, Berlin, Germany
+NDC Techtown - September 22-25, Kongsberg, Norway
+EuroRust - October 9-10, 2025, Paris, France
+Espressif DevCon 2025 - November 5-6, 2025
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (New) Middle/Senior Rust Developer with C experience (IoT) - Sigma Software, Mutliple Locations, Europe
+🦀 (New) Software Development Engineer - Embedded Development - Amazon, London, Cambridge, UK
+🦀 Firmware Engineer - IoT Biodiversity Sensors - Hula, Munich, Germany
+🦀 Embedded Rust (Medical) - Freelance, Munich, Germany
+🦀 Rust Developer/Promoter - Collabora, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+North America-Based Jobs 🌎
+🦀 (New) Sr. Rust Developer, Systems Engineering - Tenstorrent, Portland, US & Toronto, CA
+🦀 (New) Staff Software Engineer - OTA - Rivian-VW - Palo Alto, CA, Vancouver, Toronto, Canada
+🦀 (New) Embedded Software Engineer - Rust - Viasat, Carlsbad, CA, Marlborough, MA
+🦀 (New) Software Engineer, Platform - Impulse, San Fransisco, CA
+🦀 (New) Rust Embedded Software Engineer - Geologics, Taunton, MA
+🦀 Embedded Firmware Engineer, Embedded Firmware Developer, and Embedded Rust/C++ Firmware Developer - Chemelex, Edmonton, Canada
+🦀 Principal Embedded Systems Engineer – Avionics / GNC - Orb Aerospace, Lowell, MI
+🦀 Embedded Systems Software Consultant (Rust / RTOS) - Seamgen, Remote
+🦀 Firmware Engineer - Mach Industries, Huntington Beach, CA
+🦀 Sr. Embedded Firmware Engineer (Rust and C) - Nanobiosym, Cambridge, MA
+🦀 Rust Software Engineer - K2Space, Los Angeles, CA
+🦀 Embedded Software Engineering Manager - Span, San Francisco, CA
+🦀 Embedded Software Engineer (Bare Metal), Intelligence Systems - Anduril, Reston, VA
+🦀 Open Source Robotics Engineer - rerun.io, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Poststation is a tool from James Munns for connecting embedded devices with applications running on a PC, laptop, or embedded linux system. It works with any device speaking the postcard-rpc protocol. See more and download at poststation.rs, and if you like it, purchase a license with discount code ERNEWSLTR5 for 10% off to support the Embedded Rustacean Newsletter!
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 150 | f008583 | https://forgestream.idverse.com/blog/20250902-cloudwatch-rust-logging | 2025-09-03T00:00:00 | individual-blogs;twir-links ===
+How to set up Rust logging in AWS Lambda for AWS CloudWatch
+ForgeStream
+Home
+Blog
+Topics
+Authors
+Home
+Blog
+Topics
+Authors
+Search
+Back to blog
+rust
+How to set up Rust logging in AWS Lambda for AWS CloudWatch
+Sep 2, 2025
+AWS Lambda automatically sends logs to AWS CloudWatch, but how do we make sure our Rust logs are formatted correctly?
+The AWS official documentation explains the basic
+setup with the Tracing crate. In this article, we dive deeper into how
+to set up Rust logging outputs properly.
+JSON format setup
+The most common JSON format for logging is bunyan.
+When using bunyan, we can use the standard tooling for processing it, such as the Rust CLI port.
+The crate tracing-bunyan-formatter lets us set up the bunyan log output format with the tracing framework. We assume we have the Cargo.toml dependencies set up:
+[dependencies]
+# ...
+tracing = "0.1"
+tracing-bunyan-formatter = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+We can either hard-code the package name or use the CARGO_PKG_NAME environment variable or the module_path!() macro:
+let package_name = package_name
+.split("::")
+.next()
+.expect("splitn should always return at least one element")
+.replace('-', "_");
+Next, we can check if the RUST_LOG environment variable exists. If it doesn’t, we can set it to a default value. Here’s how we can do that:
+let env_filter = if std::env::var("RUST_LOG").is_err() {
+EnvFilter::builder().parse_lossy("info,aws=warn")
+} else {
+EnvFilter::from_default_env()
+};
+let formatting_layer =
+BunyanFormattingLayer::new(package_name.to_string(), std::io::stdout);
+let subscriber = Registry::default()
+.with(env_filter)
+.with(JsonStorageLayer)
+.with(formatting_layer);
+As with the standard tracing setup, if we want to capture SpanTraces, we can add the ErrorLayer:
+let mut subscriber = subscriber.with(tracing_error::ErrorLayer::default());
+To customize the logging setup for local testing, we can check the AWS_LAMBDA_RUNTIME_API environment variable. If it’s not set, we can use a different logging format instead of the one used on AWS Lambda. Here’s an example:
+if std::env::var("AWS_LAMBDA_RUNTIME_API").is_err() {
+subscriber = Registry::default()
+.with(EnvFilter::from_default_env())
+.with(tracing_subscriber::fmt::layer());
+}
+And finally, we set this subscriber as the global one:
+tracing::subscriber::set_global_default(subscriber).unwrap();
+Stack overflow from enabling debug logging
+Even something as simple as logging can cause complex issues.
+For us, it was when we enabled debug logging and Rust-based AWS Lambdas suddenly started crashing with stack overflows.
+The root cause was an issue here about debug logging with the BunyanFormattingLayer
+potentially causing an infinite loop.
+The debug log statements have been removed from the tracing-bunyan-formatter,
+so you should not encounter this issue anymore. If you are still worried about it being reintroduced, you can disable logging of the tracing_bunyan_formatter itself:
+let bunyan_logging_off = "tracing_bunyan_formatter::formatting_layer=off"
+.parse()
+.expect("invalid directive");
+let subscriber = Registry::default()
+.with(EnvFilter::from_default_env().add_directive(bunyan_logging_off))
+.with(JsonStorageLayer)
+.with(formatting_layer);
+Excluding secrets
+Now, let’s talk about excluding certain data from the logs, such as API keys or personal identifiable information. We can do this by creating wrappers around types that we don’t want to accidentally leak in the logs. These wrapper types don’t implement the Display or Debug traits or implement them with a fixed string, like this:
+pub struct Secret<T>(T);
+impl<T> Debug for Secret<T> {
+fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+write!(f, "*** redacted ***")
+}
+}
+One way to do this is using the wrapper types from the secrecy crate. This crate also ensures that the content is properly zeroed out when the value goes out of scope.
+Error logging
+When logging errors, using the alternate display format {:#} is generally preferred, because it contains the full source error
+information. For example, in AWS SDK, a lot of errors fall under the Unhandled variant (e.g. AccessDeniedException)
+where the default error format does not show the error context, while the alternate display contains the error metadata (e.g.
+the actual resources being accessed) as with DisplayErrorContext.
+One common issue happens with the popular thiserror crate. The thiserror crate
+currently only supports the default {} display format, which loses the error context. One workaround for this is to wrap the errors
+in anyhow or eyre that support the alternate display format.
+Conclusion
+While AWS CloudWatch captures AWS Lambda logging outputs automatically, there are a few things to keep in mind. First, make sure your logging outputs are in the right format, such as bunyan. Second, avoid leaking sensitive info such as API keys in your logs. Third, when logging errors, try to include as much context as possible to help diagnose them. With these tips, you can set up your logging with some peace of mind.
+Topics
+Rust Lang
+Author
+Tomas Tauber
+GitHubBlueSkyLinkedIn
+Tomas has an academic background in programming language implementation; he completed his PhD in Computer Science at The University of Hong Kong, and worked a research compiler for typed (System F-based) functional programming languages to Java.
+Since 2018, he has been working professionally with the Rust programming language. He’s a core maintainer of pest, a popular parser generator for Rust.
+View 2 posts
+ForgeStream
+The IDVerse engineering blog. Sharing insights on Rust, systems programming, and identity verification technology.
+Content
+Blog
+Topics
+Authors
+Search
+Connect
+GitHub
+LinkedIn
+IDVerse
+© 2026 IDVerse. All rights reserved.
+Built withusing Astro
+
+=== ROW 151 | f008651 | https://crustyengineer.com/blog/axum-multi-tenancy-abstract-repository-layer | 2025-10-22T00:00:00 | individual-blogs;twir-links ===
+Axum: Multi-tenancy (with Hexarch) and Abstracting the Repository Layer
+/home
+/blog
+/services
+/workflow
+/resources
+Axum: Multi-tenancy (with Hexarch) and Abstracting the Repository Layer
+Published on 19 October 2025, 625 words, 3 minutes
+read
+Implementing a repository layer generally looks like
+impl UserRepository for PostgresDBOutbound {
+async fn create(&self, creation: UserCreation) -> anyhow::Result<UserInfo> {
+let user = sqlx::query_as!(
+UserInfo,
+r#"
+INSERT INTO "users" (
+"email"
+) VALUES ($1)
+RETURNING
+"id",
+"email",
+"firstname",
+"lastname",
+"created_at",
+"updated_at"
+"#,
+creation.email
+)
+.fetch_one(&self.pool)
+.await
+.context("could not create User")?;
+Ok(user)
+}
+//...
+}
+sqlx has better multi-tenancy support (as of 5-days ago)
+I noticed that sqlx had released 0.9.0-alpha.1 and mentions PR#3383 with a full example for setting up multi-tenancy with Postgres.
+The above example’s file-structure has some interesting aspects to note:
+the main binary has src/migrations. Each sub-crate has them above src/lib.rs.
+sqlx.toml appears in the main binary and each sub-crate.
+each sub-crate maps to a Postgres schema (namespace) – accounts.account is the account table inside the accounts schema; it also has it’s own _sqlx_migrations table.
+the postgres public schema has it’s own _sqlx_migrations table as well.
+Since accounts are a primary aspect, in the sense that not only are they are the “tenant” but also foreign-key constraints will tie back to it (in most cases), if you refer to the example’s README – migrations need to be run in a specific order:
+run migrations in accounts
+all other sub-crates (any order)
+in the main binary
+.
+├── Cargo.toml
+├── README.md
+├── accounts
+│   ├── Cargo.toml
+│   ├── migrations
+│   │   ├── 01_setup.sql
+│   │   ├── 02_account.sql
+│   │   └── 03_session.sql
+│   ├── sqlx.toml
+│   └── src
+│       └── lib.rs
+├── payments
+│   ├── Cargo.toml
+│   ├── migrations
+│   │   ├── 01_setup.sql
+│   │   └── 02_payment.sql
+│   ├── sqlx.toml
+│   └── src
+│       └── lib.rs
+├── sqlx.toml
+└── src
+├── main.rs
+└── migrations
+├── 01_setup.sql
+└── 02_purchase.sql
+Another “abstraction” to the repository layer
+daymare was just commenting on the need for constant abstractions, but this offers two benefits:
+the sub-crates only care about primitive types, as these map (more or less) to the primitive types supported by sqlx and their Postgres equivalents.
+as such sub-crate public APIs may not need to change types more often
+types used by the repository interface can change (as much as they need to), without impacting the sub-crate API.
+Please note that I am using the term abstraction here rather loosely. In a strict sense, this would refer to the use of generics and traits (which we do so later on, with feature gates). The repository layer is still the last abstraction layer of significance but we are now placing a crate boundary between this layer and our sqlx sub-crates – which is also an abstraction in the sense of
+strict public API
+encapsulation
+organisation
+visibility (as needed!)
+Now, I can share the stack of sub-crates with another engineer and they can have a full postgres step, which is decoupled from the host Axum application. We can design sub-systems with the knowledge that each tenant has an Account and even enforce foreign-key references (as needed).
+Use of a transaction below is a placeholder, as we may create associated records in join-tables related to the account upon its creation.
+impl UserRepository for PostgresDBOutbound {
+async fn create(&self, creation: UserCreation) -> anyhow::Result<UserInfo> {
+let accounts = AccountsManager::setup(&self.pool)
+.await
+.map_err(|err| anyhow!(err).context("error initializing AccountsManager"))?;
+// Use externally managed transaction, as an example only
+let mut txn = self.pool.begin().await?;
+let account_id = accounts.create(&mut txn, &creation.email).await?;
+// note: call to other sub-crates to create any records inside other postgres schema (as needed).
+txn.commit().await?;
+// skipped: convert to UserInfo, returned as `r` below
+Ok(r)
+}
+//...
+}
+This is the layout I have adopted, with a sub-crate called postgres_interfaces – more on this below:
+persistence
+└── postgres
+├── accounts
+│   ├── Cargo.toml
+│   ├── migrations
+│   │   ├── 01_setup.sql
+│   │   ├── 02_account.sql
+│   │   └── 03_session.sql
+│   ├── sqlx.toml
+│   └── src
+│       ├── lib.rs
+│       ├── models
+│       └── models.rs
+├── interfaces
+│   ├── Cargo.toml
+│   └── src
+│       └── lib.rs
+└── shops
+├── Cargo.toml
+├── sqlx.toml
+└── src
+└── lib.rs
+Potential Caveats
+Whilst writing an integration test (in an unrelated crate, meaning one that does not have a sqlx.toml file) seems to just work fine. Even running cargo sqlx prepare --workspace -- --all-targets picked up these changes in the integration tests.
+TBD
+Conclusion
+I also wrote about some challenges I was facing with Postgres namespaces and that discussion lead me in this direction.
+What are your thoughts in adding another layer of abstraction, would you consider this to be extreme?
+P.S. this is not limited to Axum, but named the article as such as I may extend this in the future with code examples of Axum handlers etc.
+SQLx 0.9.0-alpha.1 released! smol/async-global-executor support, configuration with sqlx.toml files, lots of ergonomic improvements, and more!
+Reddit thread for this article.
+#rust
+#hexarch
+#axum
+Think I could be an asset to you ?
+Let's chat!
+Copyright © 2026 Michael de Silva
+Built with
+Zola.
+
+=== ROW 152 | f008694 | https://blog.goose.love/posts/improving-the-incremental-system-in-the-rust-compiler | 2025-11-19T00:00:00 | individual-blogs;twir-links ===
+[Talk] Improving the Incremental System in the Rust Compiler | BLOG.GOOSE.LOVE
+BLOG.GOOSE.LOVE
+This page uses 0 cookies! (I don't
+even know if anyone reads these, lemme know if you do via Mastodon)
+[Talk] Improving the Incremental System in the Rust Compiler2025-11-04 - Estimated read time: 8 minutes
+OPTIONAL
+[!memo] There’s a video of this!
+This post is the script for this talk I gave at RustChinaConf 2025, the pacing may be a bit off if you’re only reading the text version.
+Slides here
+你好! I’m Alejandra González, a Clippy team member that focuses mainly on performance for both the Clippy side of things, as well as the general Rust diagnostics (so, Rust’s compiler errors and warnings). I’m obsessed with performance, so obsessed in fact that I’ve been a project goal owner twice, both times for making Clippy faster. (With great results so far).
+But first of all, let’s state the obvious. The Rust compiler is slow, very slow. I’ve seen people complain that some package (i.e. bevy) take an awful lot of time to compile due to well, the Rust compiler being very complex which is a side effect of all the positive stuff we love about the Rust language.
+Borrow checking takes time, trait solving takes time, macro expansion takes time. Everything takes time and I’m this little fish optimizing a linter, in an ocean made of complex, technical issues. So I thought to myself, what if we could, somehow, instead of making Clippy faster in single runs (which is something I’ll continue to keep doing), tackle one of this big fish, in fact, it may even qualify as the fisherman.
+Well, today I’ll be talking about redesigning the incremental system so that we can, in fact, not build so much.
+But first, let’s describe the problem. If you right now go to a terminal and run cargo check, and THEN cargo build. The cargo build will rebuild your packages, including dependendants in your local tree and the target size will be a lot greater than if you just ran cargo build in the first place. It will be the sum of running cargo build & cargo check in both time and memory.
+This means that, if in your CI you run cargo check, then cargo clippy, and then cargo test. You’ll be met with redoing the heavy computations that compilers do, thrice. Making 0 use of the existence of the incrementals.
+So that’s why, today, I’m presenting a conceptual redesign for the incremental system in the Rust compiler.
+We’ll go through a quick breakdown of how the Rust compiler works. So, there are several stages as in almost any other compiler, they broadly are: The lexing (not pictured here), the parsing into AST, the HIR, the THIR, which is a substage of HIR, the MIR and then codegen. Several sublayers of analysis are also done, namely linting, borrow checking, macro expansion… etc.
+A very useful concept that powers the compiler is the existence of “queries”. These queries are a special So, if you run the query with the same input, it can just return the output without doing expensive computations several times unnecesarilly.
+These two concepts can be mixed. We can extract each of these stages into their own query so, It could be possible for us to save all that information in a persistent way for future compilations. And that’s how the dependency graph was born! <simplification>
+If we track each executed query, and track all the subqueries that that query calls, we can make a graph out of that. Which goes node by node checking if the hash is the same as expected, or re-evaluating the query if the original value has changed.
+Now that all that is explained , we know the problem, we know how the compiler works. Here’s where we introduce the hero in our story. Atomic levels and data dependencies!!
+These are little stringy directives that we tell the compiler that represent what the target of our compilation is. If we just need AST information, we direct the compiler to only compute the AST and then exit, for example. All the queries related to processing the AST would be in their own atomic level, the same for HIR, for MIR, etc…
+This way, any compiler-adjacent activity such as check, build or clippy could declare an atomic level they’d like to go to.
+For example, while check or clippy go to the borrowchecking atomic level, build goes to the emit-bin atomic level, we can now represent neatly what the last compilation was doing in the incremental directory, and avoid tying an incremental to what flags are used or other arbitrary information.
+Here’s where data dependencies come in. While we can extract what stage the compiler goes up to via atomic bits, not all information can be extracted this way because that’s just redoing compiler flags all over again and it defeats the purpose. For example, the part of the compiler that produces binary files still needs to be reexecuted if flags related to codegen have changed. This is done via these data dependencies.
+They are little bits of information that each query can request and that act like leaves in the dependency graph. Talking about the emitting binaries scenario, a data dependency would be things like linking arguments, link time optimizations or how the symbol mangling should be performed.
+This allows us to move the change in the “try mark green” algorithm from the earlier stage to the necessary one. So LTO options wouldn’t impact clippy, for example.
+These data dependencies aren’t only for emitting binaries,they are also the values of cfgs for macro expansion, or lint configuration. Being that these are “lazy” as they act like leaves only called when necessary, we can perform a few optimizations, I have a few ideas that we might get into later.
+Apart from not rechecking with clippy for linker changes, that also goes in the other direction. build can jump off the progress that cargo check made, because now that codegen options are extracted from hashing, we can guarantee that emit-bin will always overlap with borrowchecking and thus, use that information in our compilation.
+And that’s it, that’s the great redesign! We have now tackled the fisherman in our odyssey. Users are now insanely happy with how the incremental information is handled, and everyone lived happily ever after.
+Or did they? We can go further! Very little of rebuilds are actually just changing terminal flags and running a build after check. Let’s talk business.
+If you work on a big proyect with many dependencies in your workspace, you probably know that emotion when you change something that’s ultimately irrelevant but you still trigger a rebuild. Or even funnier, Just performing a simple comment change that only affects, the same module.
+As you may know, dependencies are not handled by the Rust compiler itself, but by Cargo. Cargo orchestrates package compilation so that every package has its dependencies ready when its the time to compile it.
+The process that Cargo follows to check if your package needs rebuilding starts from the outermost dependencies. Cargo checks if these dependencies have changed in any way and if so, they are rebuilt.
+This “changed in any way” means that Cargo apart from checking obvious things like the compiler version or if the file has changed, also check more innocuous properties such as last modified time.
+Here’s where the second key concept of the talk comes in. Two stage fingerprints!!
+Instead of compiling all the way to emitting binaries, we only go so far as to perform name resolution.
+Name resolution is the stage in which the compiler actually finds what you’re talking about when you mention items or variables, etc… in your source code.
+Being that definition ids are calculated on name resolution, we need to see if those hashes that were changed in the dependency were used in the dependendant. So we actually have to come up with a way to know if K depends on one of the modified items in V, even indirectly.
+There are lots of ways to do this, one is to calculate the two modules up to name resolution and then compare if the dependant module needed any of the DefIds that were changed in the dependency.
+In this model, we take advantage of the fact that the dependant module would have to be built either way, so we’re just saving the process of type checking, borrow checking and code generation, which takes a huge part of the compilation process.
+Another way to solve this conundrum is to track the relationships between all items in the incremental of the dependant, write those to a file, and just check that file before recompiling the dependency. This saves even the parsing state for the dependant, because we already have all the name resolution information from the previous compilation.
+And you might be thinking, how will Cargo signal to the compiler to just go up to name resolution? The answer is, yep, you’re correct, atomic bits!! Everything’s intertwined, it’s all a central theory and Santa’s real.
+And that third key concept, the two stage fingerprint verification is just an example of what atomic bits can do. And similar to these ideas I’ve been giving, the powerful concept of atomic bits has lots of unexplored potential. I have a paper right here with some of them I’ve managed to come up with.
+And that’s it, thanks for coming here and listening to my talk, you can reach me at any point in the event or via the internet. Have a great day.
+OPTIONAL
+Apart from strictly incremental improvements, data dependencies have lots of possible optimizations. I’ll mention some of these:
+We can filter early and late lint passes changed in the terminal, and avoid recompiling for a late lint change, if we’re only going up to, for example, macro expansion.
+We can collect all used cfg in the whole crate and dependencies, and avoid recompilng next time for a cfg changed which doesn’t affect anything.
+When only doing parsing, we can avoid recompiling for -C codegen flags.
+Would you like a 50% DISCOUNT on all human art (including #furry, chibi and #nsfw)?
+My girlfriend is offering a 50% DISCOUNT on ALL art commissions, go check her out.
+About me
+Hi! I'm Alejandra (a.k.a
+@blyxyas), a Spanish programmer, cat lover and girly girl ✨ I spend
+the majority of my time working on
+Rust, making it
+faster, reviewing contributor's PRs, and sending cat faces like
+(^._.^)ﾉ or (=｀ω´=). Please don't judge. If
+you'd like to know more about me, you can always send me an
+email at blyxyas (at) goose (dot) love
+So yeah, this
+is my blog, you can go to my special
+About Me page for more special
+effects!
+Supporting my work
+You can support my work by buying me a coffee or through
+GitHub Sponsors, it isn't obligatory and I (thankfully) have enough to live,
+but your support serves as motivation to make Rust more
+performant!
+If you choose to donate to me, you can click
+the GitHub Sponsors link above.
+RSS FEED
+You're currently sitting under my window, on a Raspberry Pi 5
+built on
+d5e8337
+
+=== ROW 153 | f008777 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-63 | 2026-01-21T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #63
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #63
+The Embedded Rustacean Issue #63
+Jan 16, 2026
+In partnership with
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag us on LinkedIn or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+⏪ Rust Foundation Review of 2025
+🧑‍💻 Rue is a Language Built with Rust & AI
+♾ Arduino Updates Its Open Source Ecosystem
+🤖 NXP Announces AI Development Tools
+📢 Espressif Announces New Devices & Tri-Band WiFi
+💬
+Quote of the Issue
+❝
+Debugging time increases as a square of the program’s size.
+Chris Wenham
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+Fjall 3.0 Released
+Rust News 🗞🦀
+Rust Foundation 2025 in Review ⭐
+Brickstorm analysis update with new Rust-based variants
+gccrs December 2025 Monthly report
+AI-built Rue language pairs Rust memory safety with ease of use ⭐
+Project goals update — December 2025
+What does it take to ship Rust in safety-critical?
+This Development-cycle in Cargo: 1.93
+What is maintenance, anyway?
+Infrastructure Team 2025 Q4 Recap and Q1 2026 Plan
+General Embedded News/Trends 📈
+NXP Ushers Agentic AI to the Edge with New AI Development Tools ⭐
+A 30B Qwen model walks into a Raspberry Pi and runs in real time
+GCC 16 Integrates Picolibc for Efficient Embedded Systems Development
+Raspberry Pi and mini PC home lab prices hit parity as DRAM costs skyrocket
+2026 Tech Predictions
+New Espressif Microcontrollers: ESP32-E22 and ESP32-H21 ⭐
+NXP Introduces A Central Compute Platform for Smart Vehicles
+Morse Micro Announces General Availability of HaLowLink 2
+Hubble Network Collaborates With Texas Instruments on Bluetooth Connectivity
+Celebrating a Decade of Zephyr—and the Journey Ahead
+Infineon, HL Klemove Partner on SDVs
+Arduino Open-Source Ecosystem Gets a Fresh GitHub Push ⭐
+Explore the latest: Arduino’s growing open source ecosystem
+Infineon and HL Klemove partner on SDV technology
+Infineon Introduces the Wi-Fi 7 IoT 20 MHz tri-radio Device Optimized for IoT
+Bring the World’s Largest Watch Face Catalog to Your RTOS Smartwatch
+SRC Awarded AF Contract to Develop Next-Gen Embedded Computing Capabilities
+Comparisons with Other Languages 🔍
+Rust Trait Runtime Polymorphism in C++
+Rust's Downfall: From Rising Star to Rejected by Major Projects
+6.5 GB/S JSON Parsing in Mojo – Beating Rust and C++ on Apple Silicon
+Rust (and Haskell) Win!
+How long until Rust overtakes C and C++?
+Hardware 🛠
+Aiden Chostner's Pico2DVI Is a Do-It-Yourself Graphics Card Powered by a Raspberry Pi RP2350
+Seeed Studio's ePaper Kits Go Big with a 13.3" E Ink Spectra 6 Six-Color Panel
+Quectel SRG091X and SRG093X NXP i.MX 9 industrial AIoT modules
+$1 ESP32 Dev Board with Screen
+Pikoo Shrinks the Raspberry Pi Pico Without Sacrificing GPIO
+WeAct CAN485
+Looking at a Real Fake Raspberry Pi RP2040 Board
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+Building an ML Library from Scratch
+Writing an eigenvalue solver in Rust for WebAssembly
+Fast and Safe Image Decoding in Rust
+ere: Compiling Regular Expressions at Build-Time
+How to Build a Local-First CLI Financial Tracker with Rust
+Interactive Newton's Cradle
+Dev Containers: Rust Quick Start
+Insights, Tools, & Case Studies 📑
+Favorite Rust Crates of 2025
+Rust At Scale: Scaleway's Big Bet To Become THE European Hyperscaler
+Octopii - Turn any Rust struct into a replicated, fault-tolerant cluster
+Rust Lifetimes explained like you are 12
+AI Engineers are Openly Choosing Rust Over Everything Else
+1160 PRs to improve Rust in 2025
+Rust in Robotics and Computer Vision: The New Frontier
+Comprehensive Testing of Embedded Software
+Rust's WASI Targets: What's Changing?
+Omnisor – High-Level Rust SSH Client for Network Devices 🦀
+How Safe is the Rust Ecosystem? A Deep Dive into crates.io
+Rust in Production: How Radar replaced Elasticsearch/MongoDB with a single Rust service
+Rust slow to compile? Here’s how to speed it up
+IBM Quantum: Rust is Real, but Quantum Advantage is Not (Yet)
+Embedded Rust in Production - Ulf Lilleengen - NDC TechTown 2025
+Extending MicroPython with Rust: Two Worlds Collide - Jan Matějek - NDC TechTown 2025
+Deploy to Raspberry Pi in One Command: Building a Rust-based Deployment Tool
+Rust Macros System
+General Embedded 📟
+Agentic Pipelines in Embedded Software Engineering: Emerging Practices and Challenges
+WARD: Efficient Memory Protection for WebAssembly on Tiny Embedded Systems
+Farewell to Portable Assembly: I've Been Running Swift on MCUs for Seven Years
+Building a virtio-serial FPGA device: Writing the RISC-V firmware
+Hidden costs for inference with deep network on embedded system devices
+2026 Embedded Systems Trends
+Practical AI Learning with Raspberry Pi : Neural XOR
+From experiment to production, AI settles into embedded software development
+Master Embedded SystemsThe Modern Way
+A UI-Focused Display Library For The ESP32
+A Review of Embedded Software Architectures for Multi-Sensor Wearable Devices
+Arduino TFT Simulator for Desktop Testing
+RT-Spark STM32 IoT-Based Real-Time Wearable Activity Tracker
+Face Expression Recognition Robot with Arduino UNO Q | DigiKey
+ESP32 WiFi Security Explained for Beginners
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Harvard CS249 Introduction to Machine Learning Systems
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+burn v0.20.0
+semihosting v0.1.24
+stm32f1-hal v0.12.3
+riscv-rt v0.17.1
+edge-nal-embassy v0.8.1
+embassy-net v0.8.0
+embassy-stm32 v0.5.0
+edge-nal v0.6.0
+Upcoming Events & Deadlines 🎭
+Rust Nation UK - February 18th & 19th, 2026 - London, UK
+Rust In Paris - March 27th, 2026 - CFP Open: Submission Link, Deadline: December 31st, 2025 - Paris, France
+RustMeet - March, 2026 (Projected) - Gliwice, Poland
+Rustikon - 19 & 20 March, 2026 - Warsaw, Poland
+Rust Asia - March, 2026 (Projected) - Hong Kong
+TokioConf 2026 - April 20th, 2026 - Portland, Oregon, USA
+RustWeek - May 18-23, 2026 - CFP Open: Submission Link, Deadline: January 15th, 2026 - Utrecht, Netherlands
+RustForge - August, 2026 (Projected) - Wellington, New Zealand
+RustConf - September 8-11, 2026 - CFP Open: Submission Link, Deadline: February 16th, 2026 - Montreal, Canada
+Oxidize - September 14-16, 2026 - Berlin, Germany
+EuroRust - October 14-17, 2026 - Barcelona, Spain
+RustLab - November, 2026 (Projected) - Florence, Italy
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (New) Systems Software Engineer (Rust) - ai-coustics, Berlin, Germany
+🦀 Embedded Rust (Medical) - Freelance, Munich, Germany
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+North America-Based Jobs 🌎
+🦀 Software Engineer, Flight Software - Heart Aerospace, Los Angeles, USA
+🦀 Rust Software Developer - PMES, Sr Specialist, RUST Software Developer, Sr. Specialist Software Engineer, Lead Rust Software Developer - LMES, &  Scientist, Software Engineer - Rust Expert - L3Harris, New Jersey & Virginia, USA
+🦀 Rust Embedded Engineer - Swarm Biotactics, San Diego, CA, USA
+🦀 Embedded Systems Engineer - Oxide, Remote, USA
+🦀 Embedded Software Engineer - Rivian/VW,  Palo Alto, CA, and Vancouver, Canada
+🦀 Principal Embedded Systems Engineer – Avionics / GNC - Orb Aerospace, Lowell, MI
+🦀 Embedded Systems Software Consultant (Rust / RTOS) - Seamgen, Remote
+🦀 Firmware Engineer - Mach Industries, Huntington Beach, CA
+🦀 Sr. Embedded Firmware Engineer (Rust and C) - Nanobiosym, Cambridge, MA
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Introducing the first AI-native CRM
+Connect your email, and you’ll instantly get a CRM with enriched customer insights and a platform that grows with your business.
+With AI at the core, Attio lets you:
+Prospect and route leads with research agents
+Get real-time insights during customer calls
+Build powerful automations for your complex workflows
+Join industry leaders like Granola, Taskrabbit, Flatfile and more.
+👉 Try Attio Pro for free
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 154 | f008787 | https://snaetwarre.github.io/My-Portofolio/blog/intelligent-disease-detection.html | 2026-01-28T00:00:00 | individual-blogs;twir-links ===
+Building a 24MB Offline AI with Rust + Burn | Warre Snaet
+4 captures
+28 Jan 2026 - 11 Feb 2026
+Jan
+FEB
+Mar
+11
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260211054925/https://snaetwarre.github.io/My-Portofolio/blog/intelligent-disease-detection.html
+Warre Snaet
+Projects
+Writing
+Jan 24, 2026
+Rust / Burn / Edge AI / Tauri
+Building a 24MB Offline AI with Rust + Burn
+TL;DR - Key Results
+Metric
+Value
+Deployment Size
+24MB (vs 7.1GB PyTorch)
+Inference Latency
+0.39ms (p50: 0.38ms, p99: 0.45ms)
+Throughput
+2,579 FPS on RTX 3060
+Model Size
+5.7MB weights
+Classes
+38 plant diseases
+Training Data
+30% labeled (SSL)
+Target Platforms
+Browser (WASM), iPhone 12 (Tauri), Desktop
+This is a technical breakdown of how I built an end-to-end ML pipeline entirely in Rust using the Burn framework, deployed it to my iPhone 12 via Tauri, and achieved inference times that make PyTorch look like it's running on a potato.
+The Problem: Edge AI Without the Cloud
+The use case: plant disease detection for farmers in areas with zero internet connectivity. Current solutions require either sending samples to a lab (3-day turnaround) or expensive cloud inference (requires connectivity). Neither works in a field in rural Portugal.
+Requirements were brutal:
+Must work 100% offline
+Must run on devices farmers already own (phones, laptops)
+No installation complexity (farmers are not sysadmins)
+Sub-second inference for real-time feedback
+Why Rust? The Burn Framework Decision
+I chose Rust and Burn for three reasons:
+1. Deployment Size
+A PyTorch deployment requires ~7.1GB of dependencies. Burn compiles to a single binary. My entire model + runtime comes in at 24MB. That's a 300x reduction.
+2. Multi-Platform from One Codebase
+Burn compiles to:
+wgpu backend for native GPU (Vulkan/Metal/DX12)
+ndarray for CPU fallback
+WASM for browser deployment
+Native binaries for Tauri mobile apps
+Same model code, same weights, multiple targets. No Python anywhere in production.
+3. Startup Time
+PyTorch cold start: ~3 seconds. Burn: instant (<100ms). For a mobile app, this is the difference between usable and frustrating.
+Benchmark Results
+I ran standardized benchmarks across three hardware configurations. All tests: 100 iterations, 10 warmup, batch size 1, 128x128 input images.
+Burn (Rust) - CUDA Backend
+Model Version
+Mean (ms)
+p50 (ms)
+p99 (ms)
+Throughput
+Baseline
+0.39
+0.38
+0.46
+2,559 FPS
+SSL
+0.42
+0.41
+0.53
+2,357 FPS
+SSL Optimized
+0.39
+0.38
+0.45
+2,579 FPS
+Hardware Comparison
+Device
+Latency
+Throughput
+Cost
+Laptop (RTX 3060)
+0.39ms
+2,579 FPS
+€0 (BYOD)
+Jetson Orin Nano
+~120ms
+~8 FPS
+€350
+iPhone 12 (Tauri/WASM)
+~80ms
+~12 FPS
+€0 (BYOD)
+CPU Only
+~250ms
+~4 FPS
+€0
+The Jetson numbers killed our original plan. €350 hardware that's 8x slower than a phone? We pivoted hard to BYOD (Bring Your Own Device).
+Figure 1: The Rust model running on my iPhone 12 via Tauri. Full offline capability, no server required.
+Model Architecture
+CNN with 4 convolutional blocks, implemented entirely in Burn:
+// Simplified architecture in Burn
+Conv2d(3, 32, 3x3) → BatchNorm → ReLU → MaxPool(2x2)
+Conv2d(32, 64, 3x3) → BatchNorm → ReLU → MaxPool(2x2)
+Conv2d(64, 128, 3x3) → BatchNorm → ReLU → MaxPool(2x2)
+Conv2d(128, 256, 3x3) → BatchNorm → ReLU → MaxPool(2x2)
+GlobalAvgPool → Linear(256, 256) → ReLU → Linear(256, 38)
+Input: 128x128 RGB. Output: 38 disease classes from PlantVillage dataset.
+The Burn model definition is clean and type-safe:
+#[derive(Module, Debug)]
+pub struct PlantClassifier<B: Backend> {
+conv1: Conv2d<B>,
+bn1: BatchNorm<B, 2>,
+conv2: Conv2d<B>,
+bn2: BatchNorm<B, 2>,
+conv3: Conv2d<B>,
+bn3: BatchNorm<B, 2>,
+conv4: Conv2d<B>,
+bn4: BatchNorm<B, 2>,
+fc1: Linear<B>,
+fc2: Linear<B>,
+}
+Semi-Supervised Learning Pipeline
+Labeled agricultural data is expensive. Expert annotation costs ~€2 per image. For 50,000 images, that's €100k we don't have.
+Solution: SSL with pseudo-labeling.
+Train on 30% labeled data
+Run inference on remaining 70%
+Accept predictions with >90% confidence as labels
+Retrain with expanded dataset
+Repeat until convergence
+Result: Accuracy comparable to 60% fully-labeled training. We effectively tripled our labeled data for free.
+Deployment: Rust All the Way Down
+This is where it gets fun. The entire deployment pipeline is Rust:
+Desktop GUI
+Native app using eframe (Rust immediate-mode GUI). Same Burn model, native GPU acceleration.
+Browser (PWA)
+Export pipeline: Burn → JSON weights → PyTorch (for ONNX export only) → ONNX → ONNX Runtime Web.
+The PWA runs entirely offline via Service Worker. First load caches the 5.7MB model, then it's airplane-mode ready.
+iPhone 12 (Tauri)
+This is the crown jewel. Tauri lets you build native mobile apps with a Rust backend. The ML inference runs in Rust, the UI is web-based.
+Deployment to my iPhone 12:
+cargo tauri ios build
+# Deploy via Xcode or TestFlight
+80ms inference on the A14 chip. Not as fast as desktop GPU, but plenty fast for real-time use. And it's running Rust on an iPhone.
+Figure 2: Native Rust GUI (eframe) showing model diagnostics and confidence distributions.
+Lessons Learned
+Burn is production-ready. The API is clean, the backends are solid, and the community is responsive.
+WASM performance is surprisingly good. 80ms on mobile Safari is usable.
+Dedicated edge hardware (Jetson) is often overkill. Consumer devices are fast enough for most inference tasks.
+Rust's compile times are... Rust's compile times. Plan for 5+ minute release builds.
+Tauri mobile is the future. One codebase, native performance, actual Rust on iOS/Android.
+Conclusion
+What started as "can we run ML on a farm?" became a full exploration of Rust's ML ecosystem. The answer is yes—and it's faster and smaller than Python.
+Key numbers:
+24MB deployment (300x smaller than PyTorch)
+0.39ms inference / 2,579 FPS on desktop GPU
+80ms inference on iPhone 12 via Tauri
+€350 hardware cost → €0 (BYOD)
+38 disease classes, 30% labeled training data
+Rust + Burn is a legitimate ML stack. Not for training transformers, but for edge inference? It's hard to beat.
+Research Project - Semester 5 - Howest MCT | Burn Framework | Tauri
+Liked this deep dive?
+Check out my other Projects →
+WARRE SNAET © 2026
+Let's Talk
+
+=== ROW 155 | f008940 | https://scientificcomputing.rs/monthly/2026-05 | 2026-05-27T00:00:00 | individual-blogs;twir-links ===
+Scientific Computing in Rust
+Scientific Computing in Rust
+Home
+Annual workshop
+Monthly newsletter
+All issues
+Latest issue
+Subscribe
+Scientific Computing in Rust Monthly #18
+Welcome to this month's issue of Scientific Computing in Rust Monthly.
+Scientific Computing in Rust Monthly can be viewed online at scientificcomputing.rs/monthly,
+you can sign up to receive an email copy at mailinglist.scientificcomputing.rs,
+or you can subscribe using the RSS feed at scientificcomputing.rs/monthly/rss.xml.
+Items can be added to the next issue of the newsletter by opening a pull request to the
+Scientific Computing in Rust Monthly repository on GitHub.
+You can find more information about adding items
+here.
+Crate of the month: hotpath
+crates.io ~ docs.rs ~ source ~ www
+Hotpath-rs is an easy-to-configure Rust performance profiler.
+It shows exactly where your code spends time, burns CPU, and allocates memory.
+Hotpath-rs helps you distinguish between functions that are slow
+because they wait on I/O and those that are CPU-intensive.
+Trying hotpath-rs out in self-profiling mode is as easy as typing
+ssh demo.hotpath.rs.
+New releases
+burn v0.21.0
+After five pre-releases over the last three months, burn v0.21.0
+was recently released.
+The gains span distributed workflows for training large models
+all the way down to small-model inference,
+where the reduced framework overhead becomes especially noticeable.
+Full release notes can be found
+on the GitHub release page.
+cuda-oxide v0.1.0
+Cuda-oxide is an experimental rustc backend
+for compiling CUDA GPU kernels written in pure Rust to PTX.
+It supports single-source Rust GPU programs where host
+and device code live together and are built through cargo oxide.
+delaunay v0.7.8
+Delaunay v0.7.8 provides D-dimensional
+Delaunay triangulations
+and convex hulls
+(2D through 5D explicitly tested)
+with PL-manifold (default)
+or pseudomanifold guarantees
+on finite point sets with Euclidean and toroidal global topologies.
+It uses exact predicates, Simulation of Simplicity,
+and Hilbert curves
+for robust degeneracy handling,
+deterministic insertion ordering, and efficient spatial indexing.
+It provides a 4-level validation hierarchy covering elements, data structure validity,
+manifold topology, and Delaunay adherence.
+It supports Pachner moves
+up to D=5 via bistellar flips, vertex insertion/deletion,
+and bounded flip/rebuild conversion of non-Delaunay triangulations.
+Auxiliary data may be stored in vertices and simplices,
+with external secondary maps for algorithm use,
+and the data structure is serializable/deserializable.
+Written in safe Rust with no unsafe code,
+it is inspired by CGAL
+and Spade
+and aims to be a lightweight,
+rigorous Rust-native option for workflows needing explicit topology settings,
+validation levels, deterministic construction controls, and repair behavior.
+numra v0.1.4
+numra is the umbrella crate of the Numra workspace,
+which consists of twenty native-Rust crates such as
+differential equations, optimization, sensitivity analysis,
+uncertainty quantification, linear algebra, and more.
+Dense linear algebra builds on faer;
+the rest is native Rust with no FFI to C or FORTRAN.
+pluot v0.1.0
+Pluot is a crate intended to facilitate the development of visualizations
+that can be rendered from multiple programming languages.
+This currently includes Rust, Python, and JavaScript.
+Further, Pluot aims to support both static and interactive use cases.
+For some demonstrations, see also the pluot website.
+rayon v1.12.0
+This new version of rayon contains a bug fix in parallel Range<char>
+and added a new method ParallelSlice::par_array_windows.
+Details can be found
+in the release notes.
+Events
+Scientific Computing in Rust, 8-10 July 2026, held virutally
+This year's scientific computing in Rust workshop is taking place on 8-10 July. The deadline for talk submissions
+is Friday 5 June: you can submit your talk at scientificcomputing.rs/2026/submit-talk.
+Publications
+Keller Mark S. and Gehlenborg Nils, Pluot: Towards 'write once, run everywhere' visualization software, arXiv 2605.14118
+This manuscript describes Pluot, a crate to facilitate write-once,
+render in many places visualizations.
+Pastel Arthur, 5× faster fast_blur in image-rs
+An interesting algorithm discussion on a new fast_blur implementation in image-rs.
+The article discusses the algorithm itself, profiling of the previous implementation,
+as well as the design choices in the new version.
+Especially interesting is the analysis and discussion of how fast various CPU instructions
+are in comparison with each other.
+
+=== ROW 156 | f009026 | https://c410-f3r.github.io/thoughts/work-stealing-vs-executor-per-thread-evaluating-different-http-server-workloads-with-tokio-smol-and-glommio | 2026-08-05T00:00:00 | individual-blogs;twir-links ===
+Caio's Stuff - Work Stealing vs. Executor-Per-Thread: Evaluating different HTTP server workloads with Tokio, Smol and Glommio
+Caio's Stuff
+Certifications
+Work Stealing vs. Executor-Per-Thread: Evaluating different HTTP server workloads with Tokio, Smol and Glommio
+Image by Andreas from Pixabay
+90 scenarios based on different balanced and unbalanced workloads were tested against four runtimes1 to evaluate the performance differences between Executor-Per-Thread2 and Work-Stealing architectures.
+All tests are based on Rust-written software and Rust-based technologies, although some information can also be applied to other programming languages or similar environments.
+All files are available at data.tar.xz. Feel free to reach out if you spot any misunderstandings or misconfigurations.
+Motivation
+The motivation to test Work-Stealing against Executor-Per-Thread originated from my early attempts to submit the WTX3 project to HttpArena using the default #[tokio::main(flavor = "multi_thread")] macro.
+To my surprise, the initial PRs showed a score ~8x lower than the best position in the WebSocket benchmark, which was highly unusual. I was left wondering: Is there a bug in the library or did I do something wrong?
+After manually scrolling through other projects in HttpArena as well as in the now-abandoned TechEmpower, it became clear that all Tokio-based libraries were spawning threads where each one had its own WebSocket server instance with a generous backlog, sharing the same address through SO_REUSEADDR.
+Another surprise occurred when the same trick was applied to WTX: It became number one in the echo test case. As you might have guessed, the culprit is balanced workloads.
+Executor-Per-Thread vs. Work-Stealing
+In the Executor-Per-Thread model, the system associates a runtime's executor with a specific thread. All asynchronous work must be contained within that thread, adopting a share-nothing approach. It is often labeled as "Thread-Per-Core".
+This approach improves tail latencies by maximizing local CPU cache hits. For Rust specifically it is a big deal because of creeping Send4 bounds that often yield confusing, incomplete and untraceable compile errors.
+In Work-Stealing, there is only a single runtime in the whole program that usually orchestrates all the available threads in the system, allowing idle workers to "steal" tasks from the queues of busy workers.
+It acts, roughly speaking, as an internal load balancer. Idle workers can pull tasks from the queues of busy workers, though this incurs overhead due to thread synchronization.
+The choice between the two usually comes down to the average workload of your specific business or project.
+HTTP server
+The HTTP servers expose three endpoints based on real-world scenarios:
+create_order: Validates user-provided data, creates an order in the database and then signals a gateway payment. Has two awaiting points5.
+index_page: Represents a chunk of sequential code without external IO calls where the thread is occupied in its entirety. Another analogy could be the processing of in-memory JSON content.
+read_order: Fetches an order from the database and then processes the returned data into an user-friendly format. Has a single awaiting point.
+To isolate runtime performance, all IO calls are simulated using asynchronous sleeps (yielding timers) in microseconds and sequential processing is simulated using busy-wait loops.
+CREATE_ORDER_DATABASE_LATENCY = 2000us
+CREATE_ORDER_GATEWAY_LATENCY = 10000us
+CREATE_ORDER_PROCESSING = 2us
+INDEX_PAGE_PROCESSING = 2us
+READ_ORDER_DATABASE_LATENCY = 1000us
+READ_ORDER_PROCESSING = 2us
+Unlike HTTP/1.1, where a single connection typically involves several network trips, the web servers in these tests are based on HTTP/2 that can handle long-lived, bi-directional streams, avoiding the need for frequent handshakes and streams also help exercise the system's ability to handle concurrent workloads.
+HTTP/2 streams
+Workloads
+The tests utilized three thread counts, two distribution ratios, three connection scales and five environment types, totaling 90 configurations. Each set was applied to a runtime, resulting in a grand total of 360 performed evaluations.
+tokio-ws is the only runtime configured with Work-Stealing (ws suffix), while the remaining runtimes spawn multiple threads in a share-nothing Executor-Per-Thread approach (ept suffix).
+tokio-ept: Based on epoll via mio; a LocalRuntime is created on each thread.
+tokio-ws: Based on epoll via mio; a single multi-thread Runtime is created in the main thread.
+glommio-ept: Based on io_uring via built-in syscalls; a LocalExecutor is created on each thread.
+smol-ept: Based on epoll via polling; a LocalExecutor<'static> is created on each thread.
+All runtime instances have an associated HTTP/2 server that shares the same port through SO_REUSEPORT.
+ThreadsBalanceScaleWorkload
+4, 8, 12even, unevenlow, medium, highcpu_heavy, io_heavy, mixed, pure_io, pure_cpu
+Threads
+The system has 24 threads with simultaneous multithreading (SMT) enabled, so each party (client and server) has up to 12 threads delimited by taskset as well as built-in mechanisms like tokio::runtime::Builder.
+In "Measuring Software Performance: Why Your Benchmarks Are Probably Lying", it is stated that SMT can introduce noise in CPU-bound benchmarks. However, it was kept enabled to figure out if a higher number of workers could cause degradation, as observed in "Throughput doesn't increase with cores/threads count".
+Balance
+In an even balance distribution, all requests made by clients are evenly distributed. In the uneven distribution, 10% of the clients generate 90% of the traffic, simulating a "Noisy Neighbor" effect.
+This is where the difference between Work-Stealing and Executor-Per-Thread should theoretically be the most noticeable.
+Scale
+In a low environment, 500 clients maintain a frequency of 4000 * 2 requests per second; in a medium environment, 4000 clients maintain a frequency of 15000 * 2 requests per second; and in a high environment, 15000 clients maintain 45000 * 2 requests per second. Requests per second are multiplied by 2 because of concurrent HTTP/2 streams that are called batches in k6 nomenclature.
+These ratios are purposefully kept high to ensure most of the tests run under heavy load across all clients.
+Workload
+Starting from pure_cpu and progressing toward pure_io, the workloads consist of an increasing percentage of IO-bound tasks.
+create_orderindex_pageread_order
+pure_cpu0%100%0%
+cpu_heavy10%70%20%
+mixed33%33%34%
+io_heavy50%20%30%
+pure_io100%0%0%
+Work-Stealing should theoretically benefit more from IO-intensive tasks.
+Results
+The k6 load generator was used to perform the requests, with its configurations stored in the k6.js file and invoked by the run.py application.
+The --release flag was the only optimization parameter used when compiling. CSV data, as well as all generated graphs, were produced though the calling of the run.sh script.
+CategorySpecifications
+HardwareAMD Ryzen 9 5900X (12-Core), 32GB DDR4, Corsair Force MP510
+Systemkernel 7.0.11-200.fc44.x86_64, gcc 13.3.0, glibc 2.39
+Cratestokio 1.53.1, smol 2.0.2, glommio 0.9.0
+CSV values
+Binary,Threads,Balance,Scale,Workload,RPS,P95_Create,P95_Index,P95_Read
+glommio-ept,4,even,low,cpu_heavy,70950.02,14.44,2.92,3.91
+glommio-ept,4,even,low,io_heavy,66821.48,17.08,3.96,4.46
+glommio-ept,4,even,low,mixed,68987.87,16.60,3.87,4.32
+glommio-ept,4,even,low,pure_io,62941.99,17.54,0.00,0.00
+glommio-ept,4,even,low,pure_cpu,73303.35,0.00,1.29,0.00
+glommio-ept,4,even,medium,cpu_heavy,34317.94,157.22,146.19,152.28
+glommio-ept,4,even,medium,io_heavy,34621.78,261.22,261.59,261.41
+glommio-ept,4,even,medium,mixed,36063.77,170.28,164.42,168.74
+glommio-ept,4,even,medium,pure_io,32095.13,214.64,0.00,0.00
+glommio-ept,4,even,medium,pure_cpu,37068.00,0.00,152.60,0.00
+glommio-ept,4,even,high,cpu_heavy,12080.71,815.87,807.06,809.14
+glommio-ept,4,even,high,io_heavy,12230.40,708.96,708.73,710.01
+glommio-ept,4,even,high,mixed,11248.34,1060.25,1058.83,1059.69
+glommio-ept,4,even,high,pure_io,12466.15,704.77,0.00,0.00
+glommio-ept,4,even,high,pure_cpu,12598.66,0.00,714.59,0.00
+glommio-ept,4,uneven,low,cpu_heavy,40716.79,12.57,0.29,1.41
+glommio-ept,4,uneven,low,io_heavy,17621.28,17.76,1.89,2.64
+glommio-ept,4,uneven,low,mixed,20517.02,18.26,1.01,2.17
+glommio-ept,4,uneven,low,pure_io,15549.74,13.42,0.00,0.00
+glommio-ept,4,uneven,low,pure_cpu,71967.04,0.00,0.37,0.00
+glommio-ept,4,uneven,medium,cpu_heavy,37346.67,215.54,213.13,223.82
+glommio-ept,4,uneven,medium,io_heavy,34401.98,226.70,220.42,223.64
+glommio-ept,4,uneven,medium,mixed,35966.26,233.12,224.24,235.61
+glommio-ept,4,uneven,medium,pure_io,32429.13,142.57,0.00,0.00
+glommio-ept,4,uneven,medium,pure_cpu,36002.73,0.00,226.46,0.00
+glommio-ept,4,uneven,high,cpu_heavy,15661.04,1029.01,1011.40,1032.76
+glommio-ept,4,uneven,high,io_heavy,16466.26,814.47,803.06,806.29
+glommio-ept,4,uneven,high,mixed,15851.59,823.77,813.68,822.35
+glommio-ept,4,uneven,high,pure_io,16289.70,986.86,0.00,0.00
+glommio-ept,4,uneven,high,pure_cpu,15973.12,0.00,910.24,0.00
+glommio-ept,8,even,low,cpu_heavy,71950.60,14.23,3.17,3.88
+glommio-ept,8,even,low,io_heavy,65896.46,17.73,4.75,5.08
+glommio-ept,8,even,low,mixed,68458.91,17.32,4.00,4.52
+glommio-ept,8,even,low,pure_io,60858.55,17.36,0.00,0.00
+glommio-ept,8,even,low,pure_cpu,72125.61,0.00,1.55,0.00
+glommio-ept,8,even,medium,cpu_heavy,31140.98,225.01,187.14,202.35
+glommio-ept,8,even,medium,io_heavy,33339.11,167.93,152.83,158.55
+glommio-ept,8,even,medium,mixed,34856.04,234.42,217.63,225.06
+glommio-ept,8,even,medium,pure_io,36150.47,174.83,0.00,0.00
+glommio-ept,8,even,medium,pure_cpu,33056.89,0.00,145.69,0.00
+glommio-ept,8,even,high,cpu_heavy,11437.37,754.59,745.82,746.81
+glommio-ept,8,even,high,io_heavy,11633.71,881.14,794.15,832.49
+glommio-ept,8,even,high,mixed,12230.06,701.89,678.54,694.37
+glommio-ept,8,even,high,pure_io,11636.94,864.48,0.00,0.00
+glommio-ept,8,even,high,pure_cpu,12655.48,0.00,671.77,0.00
+glommio-ept,8,uneven,low,cpu_heavy,38763.24,12.36,0.21,1.31
+glommio-ept,8,uneven,low,io_heavy,17675.83,12.53,0.85,1.56
+glommio-ept,8,uneven,low,mixed,20799.25,12.58,0.39,1.51
+glommio-ept,8,uneven,low,pure_io,15516.45,12.61,0.00,0.00
+glommio-ept,8,uneven,low,pure_cpu,71681.61,0.00,0.42,0.00
+glommio-ept,8,uneven,medium,cpu_heavy,36437.57,231.34,204.07,219.03
+glommio-ept,8,uneven,medium,io_heavy,38109.79,175.49,165.38,164.13
+glommio-ept,8,uneven,medium,mixed,33172.56,250.00,228.64,244.04
+glommio-ept,8,uneven,medium,pure_io,33236.31,175.32,0.00,0.00
+glommio-ept,8,uneven,medium,pure_cpu,38542.36,0.00,171.73,0.00
+glommio-ept,8,uneven,high,cpu_heavy,16256.96,779.10,778.88,780.61
+glommio-ept,8,uneven,high,io_heavy,16315.86,908.22,802.93,806.80
+glommio-ept,8,uneven,high,mixed,15809.32,801.38,788.13,790.64
+glommio-ept,8,uneven,high,pure_io,16466.18,819.18,0.00,0.00
+glommio-ept,8,uneven,high,pure_cpu,14772.67,0.00,849.48,0.00
+glommio-ept,12,even,low,cpu_heavy,71114.24,14.81,3.44,4.19
+glommio-ept,12,even,low,io_heavy,65826.35,18.14,4.92,5.13
+glommio-ept,12,even,low,mixed,68527.94,16.94,4.32,4.94
+glommio-ept,12,even,low,pure_io,61709.51,17.42,0.00,0.00
+glommio-ept,12,even,low,pure_cpu,72700.36,0.00,2.13,0.00
+glommio-ept,12,even,medium,cpu_heavy,34386.01,159.92,148.27,150.93
+glommio-ept,12,even,medium,io_heavy,30297.96,212.27,185.34,183.56
+glommio-ept,12,even,medium,mixed,33068.20,176.75,146.94,151.84
+glommio-ept,12,even,medium,pure_io,31475.24,176.21,0.00,0.00
+glommio-ept,12,even,medium,pure_cpu,34385.63,0.00,208.75,0.00
+glommio-ept,12,even,high,cpu_heavy,11228.15,1096.34,1077.98,1089.09
+glommio-ept,12,even,high,io_heavy,11170.10,872.90,858.75,867.49
+glommio-ept,12,even,high,mixed,12169.23,712.12,694.28,705.07
+glommio-ept,12,even,high,pure_io,11780.65,929.03,0.00,0.00
+glommio-ept,12,even,high,pure_cpu,11376.30,0.00,699.29,0.00
+glommio-ept,12,uneven,low,cpu_heavy,40153.06,12.33,0.19,1.25
+glommio-ept,12,uneven,low,io_heavy,17733.70,12.86,0.61,1.63
+glommio-ept,12,uneven,low,mixed,20921.84,12.89,0.45,1.39
+glommio-ept,12,uneven,low,pure_io,15603.06,12.75,0.00,0.00
+glommio-ept,12,uneven,low,pure_cpu,72796.50,0.00,0.37,0.00
+glommio-ept,12,uneven,medium,cpu_heavy,39516.53,169.97,155.03,161.14
+glommio-ept,12,uneven,medium,io_heavy,35135.04,231.08,215.53,216.59
+glommio-ept,12,uneven,medium,mixed,37980.37,176.40,171.09,173.31
+glommio-ept,12,uneven,medium,pure_io,32296.85,192.70,0.00,0.00
+glommio-ept,12,uneven,medium,pure_cpu,38115.72,0.00,162.20,0.00
+glommio-ept,12,uneven,high,cpu_heavy,16033.62,822.94,804.84,807.80
+glommio-ept,12,uneven,high,io_heavy,16887.30,818.66,810.93,811.40
+glommio-ept,12,uneven,high,mixed,17967.54,836.94,826.93,829.99
+glommio-ept,12,uneven,high,pure_io,14781.96,882.14,0.00,0.00
+glommio-ept,12,uneven,high,pure_cpu,17592.51,0.00,786.87,0.00
+smol-ept,4,even,low,cpu_heavy,71315.16,15.15,3.04,3.80
+smol-ept,4,even,low,io_heavy,66746.62,17.76,4.34,4.56
+smol-ept,4,even,low,mixed,68278.28,17.58,4.79,5.25
+smol-ept,4,even,low,pure_io,61322.55,17.53,0.00,0.00
+smol-ept,4,even,low,pure_cpu,72334.01,0.00,1.92,0.00
+smol-ept,4,even,medium,cpu_heavy,33641.55,266.04,265.47,265.77
+smol-ept,4,even,medium,io_heavy,34547.18,176.84,171.86,173.95
+smol-ept,4,even,medium,mixed,28858.76,222.82,226.81,226.46
+smol-ept,4,even,medium,pure_io,33137.43,178.68,0.00,0.00
+smol-ept,4,even,medium,pure_cpu,30870.55,0.00,266.28,0.00
+smol-ept,4,even,high,cpu_heavy,11258.83,1059.81,1056.81,1056.45
+smol-ept,4,even,high,io_heavy,12434.34,723.76,723.25,723.01
+smol-ept,4,even,high,mixed,11568.83,939.57,926.07,931.58
+smol-ept,4,even,high,pure_io,12296.52,721.41,0.00,0.00
+smol-ept,4,even,high,pure_cpu,12273.93,0.00,736.72,0.00
+smol-ept,4,uneven,low,cpu_heavy,40162.98,13.13,0.36,1.59
+smol-ept,4,uneven,low,io_heavy,17527.78,21.88,0.97,2.66
+smol-ept,4,uneven,low,mixed,20498.06,15.98,1.41,3.14
+smol-ept,4,uneven,low,pure_io,15603.80,14.46,0.00,0.00
+smol-ept,4,uneven,low,pure_cpu,72693.78,0.00,0.41,0.00
+smol-ept,4,uneven,medium,cpu_heavy,34860.17,229.38,225.15,221.82
+smol-ept,4,uneven,medium,io_heavy,33783.99,260.16,253.86,258.02
+smol-ept,4,uneven,medium,mixed,35110.69,227.66,211.14,223.06
+smol-ept,4,uneven,medium,pure_io,29250.74,240.32,0.00,0.00
+smol-ept,4,uneven,medium,pure_cpu,41154.31,0.00,167.16,0.00
+smol-ept,4,uneven,high,cpu_heavy,15341.58,957.24,954.93,949.82
+smol-ept,4,uneven,high,io_heavy,17319.11,806.87,798.32,802.80
+smol-ept,4,uneven,high,mixed,15619.90,1027.53,1029.14,1027.20
+smol-ept,4,uneven,high,pure_io,16002.24,887.65,0.00,0.00
+smol-ept,4,uneven,high,pure_cpu,14749.62,0.00,850.74,0.00
+smol-ept,8,even,low,cpu_heavy,70700.85,14.14,3.27,3.88
+smol-ept,8,even,low,io_heavy,66120.87,17.61,4.50,5.04
+smol-ept,8,even,low,mixed,69488.07,16.90,4.16,4.85
+smol-ept,8,even,low,pure_io,60993.38,17.59,0.00,0.00
+smol-ept,8,even,low,pure_cpu,72597.50,0.00,2.36,0.00
+smol-ept,8,even,medium,cpu_heavy,34505.96,181.14,172.08,174.49
+smol-ept,8,even,medium,io_heavy,32400.98,173.67,155.12,167.11
+smol-ept,8,even,medium,mixed,34886.01,164.37,147.88,150.83
+smol-ept,8,even,medium,pure_io,32302.54,151.09,0.00,0.00
+smol-ept,8,even,medium,pure_cpu,33456.99,0.00,258.62,0.00
+smol-ept,8,even,high,cpu_heavy,12754.10,726.60,710.96,715.83
+smol-ept,8,even,high,io_heavy,11193.55,1090.23,1087.06,1088.78
+smol-ept,8,even,high,mixed,11876.70,962.07,951.70,956.61
+smol-ept,8,even,high,pure_io,11340.48,1045.43,0.00,0.00
+smol-ept,8,even,high,pure_cpu,12355.55,0.00,690.53,0.00
+smol-ept,8,uneven,low,cpu_heavy,40422.48,12.67,0.21,1.36
+smol-ept,8,uneven,low,io_heavy,17741.09,14.43,0.55,1.86
+smol-ept,8,uneven,low,mixed,20796.36,13.60,0.58,1.71
+smol-ept,8,uneven,low,pure_io,15481.32,13.39,0.00,0.00
+smol-ept,8,uneven,low,pure_cpu,73191.28,0.00,0.47,0.00
+smol-ept,8,uneven,medium,cpu_heavy,35625.13,185.02,170.95,172.62
+smol-ept,8,uneven,medium,io_heavy,36002.00,224.09,203.74,205.64
+smol-ept,8,uneven,medium,mixed,42757.68,170.75,148.07,151.29
+smol-ept,8,uneven,medium,pure_io,32421.37,186.59,0.00,0.00
+smol-ept,8,uneven,medium,pure_cpu,36408.46,0.00,207.68,0.00
+smol-ept,8,uneven,high,cpu_heavy,17307.11,787.38,785.41,787.39
+smol-ept,8,uneven,high,io_heavy,16751.14,746.20,737.04,731.17
+smol-ept,8,uneven,high,mixed,14224.69,972.73,962.12,963.12
+smol-ept,8,uneven,high,pure_io,16975.27,842.08,0.00,0.00
+smol-ept,8,uneven,high,pure_cpu,15051.67,0.00,967.49,0.00
+smol-ept,12,even,low,cpu_heavy,71442.44,14.66,3.27,4.05
+smol-ept,12,even,low,io_heavy,65755.49,17.19,4.18,4.63
+smol-ept,12,even,low,mixed,68688.70,18.11,4.82,5.24
+smol-ept,12,even,low,pure_io,61038.63,16.39,0.00,0.00
+smol-ept,12,even,low,pure_cpu,73054.99,0.00,1.36,0.00
+smol-ept,12,even,medium,cpu_heavy,31482.62,202.43,162.21,166.49
+smol-ept,12,even,medium,io_heavy,36859.49,171.54,139.78,152.92
+smol-ept,12,even,medium,mixed,34805.12,182.24,171.81,177.50
+smol-ept,12,even,medium,pure_io,34207.15,222.12,0.00,0.00
+smol-ept,12,even,medium,pure_cpu,32058.80,0.00,145.79,0.00
+smol-ept,12,even,high,cpu_heavy,12638.26,714.36,691.11,699.23
+smol-ept,12,even,high,io_heavy,12337.69,715.70,688.74,696.46
+smol-ept,12,even,high,mixed,12334.73,709.01,688.96,697.51
+smol-ept,12,even,high,pure_io,12599.62,696.10,0.00,0.00
+smol-ept,12,even,high,pure_cpu,11132.37,0.00,1057.74,0.00
+smol-ept,12,uneven,low,cpu_heavy,40630.41,12.37,0.20,1.32
+smol-ept,12,uneven,low,io_heavy,17812.38,12.66,0.32,1.41
+smol-ept,12,uneven,low,mixed,21150.40,13.30,0.35,1.43
+smol-ept,12,uneven,low,pure_io,15629.15,13.46,0.00,0.00
+smol-ept,12,uneven,low,pure_cpu,71366.03,0.00,0.44,0.00
+smol-ept,12,uneven,medium,cpu_heavy,38968.66,228.45,214.29,216.92
+smol-ept,12,uneven,medium,io_heavy,38961.22,168.05,143.92,149.69
+smol-ept,12,uneven,medium,mixed,38701.58,175.50,156.00,171.47
+smol-ept,12,uneven,medium,pure_io,35397.88,178.61,0.00,0.00
+smol-ept,12,uneven,medium,pure_cpu,37474.36,0.00,165.36,0.00
+smol-ept,12,uneven,high,cpu_heavy,16201.79,838.87,837.76,833.17
+smol-ept,12,uneven,high,io_heavy,14781.16,944.93,926.83,932.26
+smol-ept,12,uneven,high,mixed,15541.74,854.03,854.15,856.42
+smol-ept,12,uneven,high,pure_io,16700.73,695.79,0.00,0.00
+smol-ept,12,uneven,high,pure_cpu,16234.85,0.00,661.57,0.00
+tokio-ept,4,even,low,cpu_heavy,71455.49,16.33,2.98,4.17
+tokio-ept,4,even,low,io_heavy,64623.22,18.87,3.22,4.83
+tokio-ept,4,even,low,mixed,68161.81,18.48,3.63,4.77
+tokio-ept,4,even,low,pure_io,54922.24,18.70,0.00,0.00
+tokio-ept,4,even,low,pure_cpu,72389.09,0.00,2.40,0.00
+tokio-ept,4,even,medium,cpu_heavy,34760.63,263.48,263.59,262.31
+tokio-ept,4,even,medium,io_heavy,34372.18,230.41,230.20,229.58
+tokio-ept,4,even,medium,mixed,35043.86,172.08,164.24,168.94
+tokio-ept,4,even,medium,pure_io,35396.84,158.72,0.00,0.00
+tokio-ept,4,even,medium,pure_cpu,32408.81,0.00,264.54,0.00
+tokio-ept,4,even,high,cpu_heavy,11170.83,956.00,956.87,954.50
+tokio-ept,4,even,high,io_heavy,12207.68,727.04,726.71,726.87
+tokio-ept,4,even,high,mixed,11134.30,1061.66,1060.61,1058.47
+tokio-ept,4,even,high,pure_io,11099.13,1052.40,0.00,0.00
+tokio-ept,4,even,high,pure_cpu,12261.33,0.00,723.07,0.00
+tokio-ept,4,uneven,low,cpu_heavy,34089.44,15.22,0.25,2.98
+tokio-ept,4,uneven,low,io_heavy,16160.10,15.70,0.75,3.60
+tokio-ept,4,uneven,low,mixed,18137.20,23.18,1.19,3.99
+tokio-ept,4,uneven,low,pure_io,14282.07,16.67,0.00,0.00
+tokio-ept,4,uneven,low,pure_cpu,70513.17,0.00,0.40,0.00
+tokio-ept,4,uneven,medium,cpu_heavy,39223.89,210.82,207.49,207.74
+tokio-ept,4,uneven,medium,io_heavy,32686.75,236.03,231.35,234.63
+tokio-ept,4,uneven,medium,mixed,35484.46,180.21,176.40,177.79
+tokio-ept,4,uneven,medium,pure_io,34275.42,178.89,0.00,0.00
+tokio-ept,4,uneven,medium,pure_cpu,41443.32,0.00,161.04,0.00
+tokio-ept,4,uneven,high,cpu_heavy,16920.80,822.38,820.01,821.39
+tokio-ept,4,uneven,high,io_heavy,16933.58,900.33,850.10,871.91
+tokio-ept,4,uneven,high,mixed,14060.48,1218.14,817.38,1189.83
+tokio-ept,4,uneven,high,pure_io,15433.60,1010.74,0.00,0.00
+tokio-ept,4,uneven,high,pure_cpu,16894.83,0.00,801.54,0.00
+tokio-ept,8,even,low,cpu_heavy,72125.79,16.74,3.14,4.46
+tokio-ept,8,even,low,io_heavy,64795.83,18.94,3.60,5.20
+tokio-ept,8,even,low,mixed,67371.74,18.72,3.96,5.16
+tokio-ept,8,even,low,pure_io,55497.58,18.24,0.00,0.00
+tokio-ept,8,even,low,pure_cpu,72665.86,0.00,2.97,0.00
+tokio-ept,8,even,medium,cpu_heavy,33282.26,173.78,146.68,158.03
+tokio-ept,8,even,medium,io_heavy,31578.40,216.04,202.94,210.26
+tokio-ept,8,even,medium,mixed,33646.20,165.76,149.14,153.62
+tokio-ept,8,even,medium,pure_io,34269.48,166.21,0.00,0.00
+tokio-ept,8,even,medium,pure_cpu,32993.98,0.00,167.30,0.00
+tokio-ept,8,even,high,cpu_heavy,11098.07,786.87,777.14,782.02
+tokio-ept,8,even,high,io_heavy,12188.72,701.80,670.87,692.25
+tokio-ept,8,even,high,mixed,11741.39,832.85,779.28,815.87
+tokio-ept,8,even,high,pure_io,12475.58,706.31,0.00,0.00
+tokio-ept,8,even,high,pure_cpu,11297.58,0.00,811.07,0.00
+tokio-ept,8,uneven,low,cpu_heavy,33267.02,15.32,0.28,2.84
+tokio-ept,8,uneven,low,io_heavy,16311.98,15.49,0.55,2.89
+tokio-ept,8,uneven,low,mixed,18560.86,23.33,1.10,3.08
+tokio-ept,8,uneven,low,pure_io,14496.14,15.55,0.00,0.00
+tokio-ept,8,uneven,low,pure_cpu,71391.12,0.00,0.39,0.00
+tokio-ept,8,uneven,medium,cpu_heavy,39214.25,178.83,151.50,159.76
+tokio-ept,8,uneven,medium,io_heavy,35872.96,181.34,164.77,172.30
+tokio-ept,8,uneven,medium,mixed,37205.66,186.54,162.59,174.59
+tokio-ept,8,uneven,medium,pure_io,31205.11,231.24,0.00,0.00
+tokio-ept,8,uneven,medium,pure_cpu,36956.25,0.00,201.29,0.00
+tokio-ept,8,uneven,high,cpu_heavy,16585.61,846.34,830.81,835.08
+tokio-ept,8,uneven,high,io_heavy,14893.14,958.02,857.73,945.39
+tokio-ept,8,uneven,high,mixed,15097.25,896.04,852.38,873.61
+tokio-ept,8,uneven,high,pure_io,16282.23,879.08,0.00,0.00
+tokio-ept,8,uneven,high,pure_cpu,14668.29,0.00,998.38,0.00
+tokio-ept,12,even,low,cpu_heavy,71605.68,16.55,3.01,4.40
+tokio-ept,12,even,low,io_heavy,64145.45,19.09,3.39,4.78
+tokio-ept,12,even,low,mixed,65917.21,19.41,4.88,5.57
+tokio-ept,12,even,low,pure_io,54577.21,17.71,0.00,0.00
+tokio-ept,12,even,low,pure_cpu,72489.71,0.00,1.60,0.00
+tokio-ept,12,even,medium,cpu_heavy,33830.69,196.84,150.44,153.61
+tokio-ept,12,even,medium,io_heavy,32083.10,259.60,242.97,250.62
+tokio-ept,12,even,medium,mixed,29612.31,204.25,159.68,178.00
+tokio-ept,12,even,medium,pure_io,33996.61,169.65,0.00,0.00
+tokio-ept,12,even,medium,pure_cpu,30181.45,0.00,168.39,0.00
+tokio-ept,12,even,high,cpu_heavy,11228.86,919.81,905.45,911.80
+tokio-ept,12,even,high,io_heavy,11434.96,889.16,831.95,849.00
+tokio-ept,12,even,high,mixed,12188.33,724.82,706.45,715.31
+tokio-ept,12,even,high,pure_io,12073.17,728.26,0.00,0.00
+tokio-ept,12,even,high,pure_cpu,12374.91,0.00,710.64,0.00
+tokio-ept,12,uneven,low,cpu_heavy,33720.01,15.40,0.31,2.88
+tokio-ept,12,uneven,low,io_heavy,16291.45,15.96,0.68,2.95
+tokio-ept,12,uneven,low,mixed,18602.65,15.24,0.53,2.89
+tokio-ept,12,uneven,low,pure_io,14393.69,18.25,0.00,0.00
+tokio-ept,12,uneven,low,pure_cpu,71238.12,0.00,0.39,0.00
+tokio-ept,12,uneven,medium,cpu_heavy,35839.56,142.86,122.26,133.82
+tokio-ept,12,uneven,medium,io_heavy,36573.86,183.26,166.40,170.45
+tokio-ept,12,uneven,medium,mixed,34711.55,246.99,213.51,217.36
+tokio-ept,12,uneven,medium,pure_io,30012.28,231.03,0.00,0.00
+tokio-ept,12,uneven,medium,pure_cpu,38509.43,0.00,153.57,0.00
+tokio-ept,12,uneven,high,cpu_heavy,17061.39,820.20,817.60,818.82
+tokio-ept,12,uneven,high,io_heavy,16173.19,769.28,764.99,766.67
+tokio-ept,12,uneven,high,mixed,15933.74,807.02,805.36,805.21
+tokio-ept,12,uneven,high,pure_io,15582.23,898.16,0.00,0.00
+tokio-ept,12,uneven,high,pure_cpu,17455.20,0.00,668.38,0.00
+tokio-ws,4,even,low,cpu_heavy,71978.27,17.34,3.31,4.81
+tokio-ws,4,even,low,io_heavy,63853.68,18.29,2.90,5.01
+tokio-ws,4,even,low,mixed,67594.17,18.54,3.55,4.70
+tokio-ws,4,even,low,pure_io,53857.29,18.00,0.00,0.00
+tokio-ws,4,even,low,pure_cpu,73248.76,0.00,1.69,0.00
+tokio-ws,4,even,medium,cpu_heavy,29705.87,230.72,217.21,229.58
+tokio-ws,4,even,medium,io_heavy,33217.17,179.89,176.85,179.59
+tokio-ws,4,even,medium,mixed,35589.97,171.80,154.96,158.27
+tokio-ws,4,even,medium,pure_io,30689.74,255.06,0.00,0.00
+tokio-ws,4,even,medium,pure_cpu,32106.65,0.00,187.08,0.00
+tokio-ws,4,even,high,cpu_heavy,12251.71,713.89,706.25,711.72
+tokio-ws,4,even,high,io_heavy,12314.94,726.12,726.99,725.99
+tokio-ws,4,even,high,mixed,967.34,686.01,674.20,679.92
+tokio-ws,4,even,high,pure_io,11154.68,1023.93,0.00,0.00
+tokio-ws,4,even,high,pure_cpu,12436.71,0.00,711.31,0.00
+tokio-ws,4,uneven,low,cpu_heavy,34454.69,14.98,0.28,2.89
+tokio-ws,4,uneven,low,io_heavy,16270.33,15.63,0.40,3.00
+tokio-ws,4,uneven,low,mixed,19039.99,15.32,0.35,3.04
+tokio-ws,4,uneven,low,pure_io,14661.21,15.08,0.00,0.00
+tokio-ws,4,uneven,low,pure_cpu,74126.29,0.00,0.41,0.00
+tokio-ws,4,uneven,medium,cpu_heavy,1219.00,235.84,234.02,240.45
+tokio-ws,4,uneven,medium,io_heavy,34927.43,179.41,170.14,172.20
+tokio-ws,4,uneven,medium,mixed,1074.27,248.52,240.34,241.57
+tokio-ws,4,uneven,medium,pure_io,32180.93,251.15,0.00,0.00
+tokio-ws,4,uneven,medium,pure_cpu,36606.98,0.00,225.42,0.00
+tokio-ws,4,uneven,high,cpu_heavy,1355.18,854.52,887.70,849.50
+tokio-ws,4,uneven,high,io_heavy,16181.88,831.93,794.46,804.15
+tokio-ws,4,uneven,high,mixed,14095.76,1065.08,1041.95,1051.58
+tokio-ws,4,uneven,high,pure_io,15906.61,704.02,0.00,0.00
+tokio-ws,4,uneven,high,pure_cpu,17533.71,0.00,754.33,0.00
+tokio-ws,8,even,low,cpu_heavy,71311.57,16.44,2.82,4.24
+tokio-ws,8,even,low,io_heavy,62947.70,18.41,2.74,4.69
+tokio-ws,8,even,low,mixed,68693.44,18.59,4.06,5.50
+tokio-ws,8,even,low,pure_io,53573.83,17.99,0.00,0.00
+tokio-ws,8,even,low,pure_cpu,71755.70,0.00,2.18,0.00
+tokio-ws,8,even,medium,cpu_heavy,34113.21,171.59,150.27,155.44
+tokio-ws,8,even,medium,io_heavy,33774.20,172.81,148.08,157.19
+tokio-ws,8,even,medium,mixed,30887.24,178.28,152.44,164.07
+tokio-ws,8,even,medium,pure_io,32550.49,168.31,0.00,0.00
+tokio-ws,8,even,medium,pure_cpu,1221.40,0.00,228.88,0.00
+tokio-ws,8,even,high,cpu_heavy,967.35,761.73,679.84,734.77
+tokio-ws,8,even,high,io_heavy,967.47,711.13,689.53,700.32
+tokio-ws,8,even,high,mixed,967.32,705.96,679.47,695.72
+tokio-ws,8,even,high,pure_io,967.32,706.04,0.00,0.00
+tokio-ws,8,even,high,pure_cpu,967.36,0.00,1016.30,0.00
+tokio-ws,8,uneven,low,cpu_heavy,33763.66,15.11,0.25,2.77
+tokio-ws,8,uneven,low,io_heavy,16448.63,15.46,0.23,2.93
+tokio-ws,8,uneven,low,mixed,18750.06,15.09,0.24,2.99
+tokio-ws,8,uneven,low,pure_io,14510.73,15.34,0.00,0.00
+tokio-ws,8,uneven,low,pure_cpu,75001.74,0.00,0.36,0.00
+tokio-ws,8,uneven,medium,cpu_heavy,1370.15,176.21,153.47,159.32
+tokio-ws,8,uneven,medium,io_heavy,38771.43,174.45,160.67,171.13
+tokio-ws,8,uneven,medium,mixed,1349.33,171.43,159.08,162.89
+tokio-ws,8,uneven,medium,pure_io,36184.73,179.17,0.00,0.00
+tokio-ws,8,uneven,medium,pure_cpu,41371.41,0.00,169.77,0.00
+tokio-ws,8,uneven,high,cpu_heavy,1204.60,793.16,792.48,794.46
+tokio-ws,8,uneven,high,io_heavy,1387.45,833.21,804.87,806.87
+tokio-ws,8,uneven,high,mixed,1301.86,827.64,825.78,824.77
+tokio-ws,8,uneven,high,pure_io,1462.10,939.63,0.00,0.00
+tokio-ws,8,uneven,high,pure_cpu,1302.80,0.00,924.64,0.00
+tokio-ws,12,even,low,cpu_heavy,71936.64,16.51,2.89,4.33
+tokio-ws,12,even,low,io_heavy,64234.63,18.51,2.61,4.93
+tokio-ws,12,even,low,mixed,2246.81,18.62,3.59,5.22
+tokio-ws,12,even,low,pure_io,55683.13,17.90,0.00,0.00
+tokio-ws,12,even,low,pure_cpu,72693.87,0.00,1.79,0.00
+tokio-ws,12,even,medium,cpu_heavy,34469.45,169.19,144.01,153.11
+tokio-ws,12,even,medium,io_heavy,1183.79,163.68,127.70,141.78
+tokio-ws,12,even,medium,mixed,33623.26,191.25,153.49,171.35
+tokio-ws,12,even,medium,pure_io,1086.39,197.17,0.00,0.00
+tokio-ws,12,even,medium,pure_cpu,37987.21,0.00,138.43,0.00
+tokio-ws,12,even,high,cpu_heavy,967.42,611.99,599.63,605.09
+tokio-ws,12,even,high,io_heavy,12774.84,689.52,675.38,682.14
+tokio-ws,12,even,high,mixed,967.23,408.53,352.11,375.24
+tokio-ws,12,even,high,pure_io,11370.73,996.67,0.00,0.00
+tokio-ws,12,even,high,pure_cpu,967.41,0.00,744.86,0.00
+tokio-ws,12,uneven,low,cpu_heavy,35213.23,15.05,0.27,2.81
+tokio-ws,12,uneven,low,io_heavy,16416.07,15.54,0.64,3.02
+tokio-ws,12,uneven,low,mixed,18932.86,15.07,0.25,3.04
+tokio-ws,12,uneven,low,pure_io,480.44,15.32,0.00,0.00
+tokio-ws,12,uneven,low,pure_cpu,75444.89,0.00,0.39,0.00
+tokio-ws,12,uneven,medium,cpu_heavy,1442.01,222.22,204.25,207.21
+tokio-ws,12,uneven,medium,io_heavy,1297.76,173.07,164.19,165.76
+tokio-ws,12,uneven,medium,mixed,34781.88,215.48,190.98,200.13
+tokio-ws,12,uneven,medium,pure_io,1127.22,181.86,0.00,0.00
+tokio-ws,12,uneven,medium,pure_cpu,41261.35,0.00,161.42,0.00
+tokio-ws,12,uneven,high,cpu_heavy,1199.92,879.61,830.52,838.10
+tokio-ws,12,uneven,high,io_heavy,1253.56,701.33,686.11,694.75
+tokio-ws,12,uneven,high,mixed,1281.12,279.83,269.34,272.04
+tokio-ws,12,uneven,high,pure_io,1305.29,820.38,0.00,0.00
+tokio-ws,12,uneven,high,pure_cpu,1253.18,0.00,808.22,0.00Pure CPU
+CPU heavy
+Mixed
+IO heavy
+Pure IO
+Final words
+Tokio configured with the multi-thread Work-Stealing showed anomalies when running with 8 or 12 threads and even after performing other runs with different timings, TCP kernel parameters or number of clients, the behavior did not change. Neither the server nor k6 showed any errors in the logs so it is unknown whether the root cause was an accidental misconfiguration or an issue within Tokio itself.
+The most surprising takeaway is that io_uring (via Glommio) did not strictly outperform epoll variants because scores remained similar across the board even in unbalanced scenarios where 10% of the clients made 90% of the requests.
+Generally speaking, the benchmarks aren't conclusive. The choice between Executor-Per-Thread and Work-Stealing doesn't seem like a simple matter of "which is faster" but rather which architecture best aligns with your specific application logic.
+Notes:
+In Rust a runtime is responsible for scheduling tasks (units of async work) in user-space.
+An executor, like tokio or glommio, is responsible for creating runtimes and its associated tools.
+WTX is a collection of web technologies written in Rust.
+Send indicates that a type can be shared across threads. See Send and Sync.
+Awaiting points are state machines created by the compiler where execution is halted or resumed according to external wakes.
+References:
+Apache Iggy's migration journey to thread-per-core architecture powered by io_uring
+Measuring Software Performance: Why Your Benchmarks Are Probably Lying
+Morsel-Driven Parallelism: A NUMA-Aware Query Evaluation Framework for the Many-Core Age
+Scalable server design in Rust with Tokio
+The Death of Thread Per Core
+The Impact of Thread-Per-Core Architecture on Application Tail Latency
+Thread-per-core
+Throughput doesn't increase with cores/threads count
+Made with Bulma
+and
+Zola.
+c410-f3r
+
+=== ROW 157 | f009074 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-79 | 2026-09-02T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #79
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #79
+The Embedded Rustacean Issue #79
+Aug 28, 2026
+In Partnership with
+Copyright ©️ 2026 JetBrains s.r.o. JetBrains and the JetBrains logo are trademarks of JetBrains s.r.o.
+Want something mentioned? email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+🐧 Linux Support on ESPs
+🧠 Neuromorphic AI is Here
+🍍 PINE64 Halts SBC Hardware
+📡 Turning any Controller to an IoT Device
+♾ Arduino Ventuno Q is Here
+🤖 Google’s AI-assisted C/C++ Rewrites
+💻 Ubuntu’s Rust Strategy
+📜
+Table of Contents
+News & Article Roundup
+Educational Resources
+Updates, Events, & Announcements
+Jobs & Adoption
+🦀 🌱
+Oxidize XIAO Community Program
+Subscriber September Monthly Draw 📆
+Answer the monthly question at the bottom of the newsletter to enter the draw.
+August Winner Announced Below!
+Subscriber Quarterly Draw 🌓
+Submit your XIAO projects here to enter the draw for the big prize!
+Community Program Details
+Subscribe to Newsletter
+💬
+Quote of the Issue
+❝
+It’s hardware that makes a machine fast. It’s software that makes a fast machine slow.
+Craig Bruce
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Back to Top
+Embedded Rust News 📰
+Rivet: An Open-Source Real-Time OS Written in Rust
+Rust News 🗞️🦀
+Built with Rust: Processing Foundation
+JetBrains Partners with the Rust Foundation for an AI Livestream Series
+Congratulations to the First Round of Rust Project Maintainers in Residence
+June 2026 Project Director Update
+Rust Team Health Summit: September 8 in Montréal
+Experiment in reducing target directory size on nightly
+Leadership Council September 2026 Representative Selections
+1.98.0 pre-release testing
+Announcing Rust 1.97.1
+Announcing Rust 1.98.0 ⭐
+Supply chain attack on arrayref
+Enabling the next-generation trait solver on nightly
+Announcing our first Maintainers in Residence
+Rust Function Overloading - Call for Experimentation
+Embedded AI/ML News 🤖
+Why Air-Gapped Matters: Rethinking AI Infrastructure for Defense, Aerospace, and Regulated Industries
+Agentic AI Is Coming for Your CPUs
+Harness Engineering: You Can’t Prompt Your Way to Reliable AI
+The BrainBoard1500 Brings Neuromorphic AI to Embedded Systems ⭐
+Tuning Zephyr Kconfig with AI: Stop Guessing at Build Options
+Vector Brings Natural-Language AI Automation to CANoe
+Claude Sonnet Takes the Wheel in Doom
+General Embedded News/Trends 📈
+Completing the Audit Trail: Why Embedded Teams Need Runtime Observability
+Google Chrome is now available for Arm Linux. We tested it on a Raspberry Pi 5
+PicoCamera: An Arduino-compatible camera library for the RP2040 / RP2350
+Will Embedded Software Remain an Afterthought?
+yocto-kiss: updated to the Wrynose Yocto LTS release
+Why Sensor Fusion Matters for Drone Navigation and Detection
+Arduino Cloud Gains Multi-Page Dashboards, Device Locking, and App Lab Integration
+Why are people suddenly adding Apple Lightning cables to Raspberry Pi Pico 2 boards?
+Espressif Systems releases a Linux BSP developer preview for ESP32-S31 RISC-V microprocessor ⭐
+Is it Good or Bad That Comcast Added Motion-Sensing to Your Xfinity Router?
+PINE64 Calls Time on the Linux Hardware Market, Ceases Production Until the AI Bubble Bursts ⭐
+Comparisons with Other Languages ⚖️
+Scaling Memory Safety: AI-Assisted Rewrites of C/C++ Dependencies to Rust ⭐
+From Go to Rust
+Experimenting with Function Overloading in Rust: Why It Matters
+Better Batteries
+RISC-V: They should have known better
+Hardware 🛠️
+Arduino Ventuno Q is Here ⭐
+The age of Physical AI is here, and it runs on the Arduino® VENTUNO™ Q board
+NVIDIA Announces End of Life for the Jetson AGX Xavier, Xavier NX Families
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Back to Top
+Tutorials & Walkthroughs 📫
+Embedded Rust BSPs with µFerris & Xiao: Intro to BSPs
+Embedded Rust BSP with µFerris & XIAO: Getting started with µferris-bsp
+Running Neural Networks on a Jetson with Nothing but Rust
+Insights, Tools, & Case Studies 📑
+Why do we even test?
+Building Tyr in Rust, part 3: Managing GPU memory
+GPU Offload in Rust: Portable, Safe, and Fast
+How Ubuntu Is Using Rust to Rebuild Core System Tools ⭐
+Protecting the Rust standard library from accidental breakage
+Advice to Young Developers
+From peripherals to processors: rethinking communication inside the Crazyflie
+Rusty Flying Robots: Learning a Full Robotics Stack with Real-Time Operation on an STM32 Microcontroller
+Zephyr is the DOS-to-Linux moment for embedded
+Rust Foundation Trusted Training Spotlight: Mainmatter
+General Embedded 📟️
+ESP-BIST in Action: A Self-Testing HMI using ESP32-P4
+ESP32 Bit Pirate: a multi-protocol workbench built on the ESP32-S3
+Creating an Arduino Demo With No Coding Experience Using AI
+Security challenges of neuromorphic intelligence on embedded systems
+Automating IoT firmware update orchestration with an AI agent on AWS
+Turn Any Microcontroller Into an IoT Device ⭐
+Reinforcement Learning for Robotics Part 3: Deploy AI Agent to Real Robot (Sim-to-Real)
+Reinforcement Learning for Robotics Part 4: Domain Randomization
+RISC-V Extension Landscape
+Scanning for Lifesigns with ESP32 and Raspberry Pi
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Back to Top
+Notable Device and/or Framework Crate Updates 🚨
+esp-hal v1.2.0-rc.0
+esp-rtos v0.4.0
+esp-storage v0.10.0
+smoltcp v0.14.0
+esp-println v0.18.0
+esp-backtrace v0.20.0
+Upcoming Events & Deadlines 🎭
+RustConf - September 8-11, 2026 - Montreal, Canada
+Oxidize - September 14-16, 2026 - Berlin, Germany
+C-to-Rust Migrations – AMA (Luca P. & Jonas K.) - October 1st, 2026 - Virtual
+EuroRust - October 14-17, 2026 - Barcelona, Spain
+RustLab - November 1-3, 2026 - Bologna, Italy
+Rust Nation UK 2027 – Call for Papers open (closes soon) - London, UK
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+Back to Top
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (New) Systems Software Engineer (Rust, Security) — NXP, Bucharest, Romania
+🦀 Senior Software Engineer, Backend (Rust) — Amo, Paris, France
+🦀 Embedded Rust Engineer — Anori Tech, Hamburg/Hybrid, Germany
+🦀 Software Engineer - Autonomous Air System V&V — Helsing, Berlin/Munich, Germany
+🦀 Software Engineer - Autonomous Air Systems — Helsing, Berlin/Munich, Germany
+🦀 Software Engineer - Airborne Mission Systems — Helsing, Berlin/Munich, Germany
+North America-Based Jobs 🌎
+🦀 Rust Software Engineer, Air Vehicle Autonomy — Anduril Industries, Costa Mesa / Seattle / Washington DC, USA
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 158 | f009090 | https://blog.implrust.com/posts/2026/09/swd-protocol-programmer-embedded-rust | 2026-09-16T00:00:00 | individual-blogs;twir-links ===
+Can You Use ESP32 as SWD Programmer for STM32 with Rust? • impl Blog for RustSkip to content
+impl Blog for Rust
+projects
+tags
+Can You Use ESP32 as SWD Programmer for STM32 with Rust? implFerris
+6th Sep 2026
+•13 min read
+•Tags:
+embedded-rust,
+esp32,
+swd,
+debug-probe,
+stm32,
+stm32f103,
+debugging,
+swd-programmer
+Updated on 16th Sep 2026
+Build a simple SWD debug probe with an ESP32 and Rust. Learn how the ARM Serial Wire Debug protocol works, communicate with an STM32 Blue Pill, and read the target's Debug Port IDCODE.ESP32 connected to the STM32 SWD pins (ignore the logic analyzer)
+INFO
+Yes. You can use an ESP32 as an SWD programmer for an STM32. In this tutorial, we implement the SWD protocol in Rust and use an ESP32 to communicate with an STM32F103C8T6 Blue Pill and read its DP IDCODE. In my next post, I will use it to actually program the STM32F103.
+I was browsing Reddit and came across someone asking how to program the STM32F103C8T6 without an ST-Link V2. They were asking whether it was possible to use an STM32F401RCT6 (Black Pill) board as an SWD programmer for an STM32F103C8T6 (Blue Pill).
+That post made me curious about how the SWD protocol works. Is it possible to build one myself?
+I did not have two STM32 boards at the time (I had broken my Black Pill in a different experiment). I had an ESP32 DevKit and a Blue Pill, along with other boards like the Pico. But I usually use a debug probe or another programmer with those boards. The ESP32 DevKit is the one where I can make fewer connections (since it does not require a debug probe), so I chose it for this experiment.
+SWD
+SWD stands for Serial Wire Debug. It is a debug protocol developed by Arm Limited for communicating with and debugging Arm microcontrollers.
+Before SWD, JTAG was commonly used for debugging and programming microcontrollers. Compared to JTAG, SWD uses only two pins: Clock (SWCLK) and Data (SWDIO).
+Hardware Setup
+We will use an ESP32 DevKit as the SWD programmer and an STM32F103C8T6 Blue Pill as the target.
+The ESP32 and Blue Pill are powered separately through their USB connections. We only need to connect the SWD signals and ground between them.
+ESP32WireSTM32
+GPIO18
+SWCLK (PA14)
+GPIO19
+SWDIO (PA13)
+GND
+GND
+How Does SWD Work?
+SWD uses two signals: SWCLK and SWDIO. The host, which in our case is the ESP32, drives the SWCLK signal and uses the bidirectional SWDIO line to communicate with the target STM32.Simplified SWD debug architecture
+NOTE: A target can have multiple Access Ports (APs). This diagram shows a single AP for simplicity.
+The SWD interface connects to the Debug Port (DP). The DP handles communication with the host and provides access to one or more Access Ports (APs). An AP provides access to different parts of the target system.
+Understanding the SWD Protocol
+A high level on SWDIO represents a logical 1, while a low level represents a logical 0. The host and target sample the SWDIO signal on the rising edge of SWCLK when receiving data.SWD clock and data signals
+SWD transfers data one bit at a time, with bits transmitted least significant bit (LSB) first.
+Implementing the SWD Signals in Rust
+Now that we understand the basic SWD signals, we can implement them in Rust. We will start with the basic operations needed to read and write bits over the SWD interface.
+Generating the SWD Clock
+The SWCLK signal provides the timing for SWD communication. We can generate one clock cycle by driving SWCLK low and then high, with a short delay between each transition.fn clock(&mut self) {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+self.swclk.set_high();
+self.delay.delay_micros(1);
+}
+Each call to clock() generates one SWCLK cycle.
+Switching SWDIO Direction
+Since SWDIO is a bidirectional signal, we will create the SWDIO pin as a Flex. This allows us to switch the pin between input and output.let swdio = Flex::new(peripherals.GPIO19);
+To switch the pin between input and output, we will create two helper functions:fn swdio_output(&mut self) {
+self.swdio.set_input_enable(false);
+self.swdio.set_output_enable(true);
+}
+fn swdio_input(&mut self) {
+self.swdio.set_output_enable(false);
+self.swdio.set_input_enable(true);
+}
+Writing a Bit
+To send a bit to the target, we first set SWDIO to the required logical level and then generate one clock cycle.fn write_bit(&mut self, bit: bool) {
+if bit {
+self.swdio.set_high();
+} else {
+self.swdio.set_low();
+}
+self.swclk.set_low();
+self.delay.delay_micros(1);
+self.swclk.set_high();
+self.delay.delay_micros(1);
+}
+Reading a Bit
+As we learnt, the SWDIO level is sampled on the rising edge of SWCLK. We read the value just before driving SWCLK high so that we capture the bit for that clock cycle.
+So, we first drive SWCLK low. We then read the SWDIO level. Finally, we drive SWCLK high.fn read_bit(&mut self) -> bool {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+let bit = self.swdio.is_high();
+self.swclk.set_high();
+self.delay.delay_micros(1);
+bit
+}
+Reading and Writing Multiple Bits
+Most of the time, we will need to read or write multiple bits as a whole, even though they are sent or received one by one. We will create convenient functions to handle reading and writing multiple bits.
+Because SWD transmits bits least significant bit (LSB) first, write_bits() sends the least significant bit first and shifts the value right after each bit.fn write_bits(&mut self, mut value: u32, count: usize) {
+for _ in 0..count {
+self.write_bit((value & 1) != 0);
+value >>= 1;
+}
+}
+For reading, the first bit received becomes bit 0 of the returned value, the next bit becomes bit 1, and so on.fn read_bits(&mut self, count: usize) -> u32 {
+let mut value = 0;
+for bit in 0..count {
+if self.read_bit() {
+value |= 1 << bit;
+}
+}
+value
+}
+Switching from JTAG to SWD
+Before we can communicate with the target using SWD, we need to switch the debug interface from JTAG to SWD. The ARM specification defines three steps for this:
+Send at least 50 clock cycles with SWDIO held HIGH.
+Send the 16-bit JTAG-to-SWD select sequence. This means sending 0xE79E as bits.
+Send at least 50 clock cycles with SWDIO held HIGH again.Switching from JTAG to SWD operation
+Once this is done, our SWD interface is ready for communication.
+Implementation code for Switching from JTAG to SWD
+First, we will create a helper function for the line reset:fn line_reset(&mut self) {
+self.swdio.set_high();
+for _ in 0..52 {
+self.clock();
+}
+}
+We send 52 clock cycles instead of the required 50 to provide a small margin.
+Now we can implement the JTAG-to-SWD switch:fn switch_to_swd(&mut self) {
+// 1. Put the interface into reset state.
+self.swdio_output();
+self.line_reset();
+// 2. JTAG -> SWD selection sequence.
+// SWD transmits bits LSB first.
+self.write_bits(0xE79E, 16);
+// 3. Put the SWD interface into line reset state.
+self.line_reset();
+self.swdio.set_low();
+// SWD requires at least 2 idle cycles
+for _ in 0..4 {
+self.clock();
+}
+}
+The first line_reset() sends the required clock cycles with SWDIO held HIGH. We then send the JTAG-to-SWD select sequence using 0xE79E.
+After the select sequence, we send another line reset. Finally, we keep SWDIO LOW and generate four clock cycles to leave the interface in the idle state.
+SWD Transaction
+A typical SWD transaction has three phases:
+The host sends an 8-bit request.
+The target responds with a 3-bit acknowledgment.
+A data phase follows. For a read request, the target sends the data to the host. For a write request, the host sends the data to the target.SWD successful read operation - From the ARM specification
+Because SWDIO is bidirectional, the host and target must take turns driving it. A one-cycle turnaround is inserted when control of SWDIO changes. During the turnaround cycle, neither side drives SWDIO.
+In our case, we will read the STM32’s DP IDCODE. The IDCODE is a register in the Debug Port (DP) that contains identification information for the debug port. The host first sends a request to read the register. The target responds with an acknowledgment. The target then sends the 32-bit IDCODE followed by a parity bit.
+SWD Request Packet
+An SWD request is an 8-bit packet sent by the host. It tells the target whether the host wants to access the Debug Port (DP) or an Access Port (AP), whether the operation is a read or write, and which register is being accessed.
+The request packet contains the following fields:SWD request packet and its transfer order.
+Some of the fields are constant in the request. I will explain only the bits that we can change.
+APnDP
+This bit selects which port the request is sent to. A value of 0 selects the Debug Port (DP), while a value of 1 selects an Access Port (AP). The DP provides access to the debug interface itself, while an AP provides access to resources such as the target’s memory system.
+RnW
+This bit selects the type of operation. A value of 0 selects a write, while a value of 1 selects a read.
+Address Bits
+The A2 and A3 bits are used to select the register address. The two lower address bits, A1 and A0, are not included in the request and are always 0. Together, A3 and A2 select one of four possible register offsets:
+A3A2AddressDP register
+000x00IDCODE on read, ABORT on write
+010x04CTRL/STAT
+100x08RESEND on read, SELECT on write
+110x0CRDBUFF on read
+Since we will be reading the IDCODE register, we use address 0x00.
+Parity
+The Parity bit is used to detect errors in the request. It is calculated from the APnDP, RnW, A2, and A3 bits. SWD uses even parity, which means the total number of 1 bits across these five bits must be even.
+For our IDCODE read request, APnDP will be 0 because we are accessing the DP, RnW will be 1 because we are performing a read, and the address will be 0x00, which is the address we saw earlier for IDCODE.APnDP = 0
+RnW   = 1
+A2    = 0
+A3    = 0
+As it is obvious, the number of 1 bits here is odd (only one). So, we have to set the Parity bit to 1 to make the total number of 1 bits even.
+With the Parity bit calculated, the complete request is transferred as follows:Request to Read the IDCODE
+SWD ACK
+After the host sends the request, the target responds with a 3-bit ACK. The ACK tells the host whether the operation was successful.
+There are three possible ACK responses:
+ACKResponseMeaning
+0b001OKThe read or write operation was successful
+0b010WAITThe target is not ready to complete the read or write operation
+0b100FAULTThe target detected a fault during the read or write operation
+If you saw the ACK table in the ARM specification, the values are reversed. For example, the specification shows 0b100 for OK. This is because it is showing the ACK[0:2] field in transfer order, with bit 0 first. Our program reads the bits in the order they arrive and constructs an integer value, so OK becomes 0b001.
+Implementing an SWD Transaction
+We have now seen what an SWD transaction looks like. Let’s implement it step by step, starting with the request packet.
+Building the SWD Request
+First, we need to construct the 8-bit request packet that will be sent by the host.const START_BIT: u8 = 0b1;
+const PARK_BIT: u8 = 0b1 << 7;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Port {
+Dp,
+Ap,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+Read,
+Write,
+}
+fn make_request(port: Port, access: Access, address: u8) -> u8 {
+let ap = u8::from(port == Port::Ap);
+let read = u8::from(access == Access::Read);
+let a2 = (address >> 2) & 1;
+let a3 = (address >> 3) & 1;
+let parity = ap ^ read ^ a2 ^ a3;
+START_BIT | (ap << 1) | (read << 2) | (a2 << 3) | (a3 << 4) | (parity << 5) | PARK_BIT
+}
+Reading the ACK
+After sending the request, the target responds with a 3-bit ACK. We can create a helper function to read and interpret this response.const ACK_OK: u8 = 0b001;
+const ACK_WAIT: u8 = 0b010;
+const ACK_FAULT: u8 = 0b100;
+fn read_ack(&mut self) -> Result<(), SwdError> {
+match self.read_bits(3) as u8 {
+ACK_OK => Ok(()),
+ACK_WAIT => Err(SwdError::Wait),
+ACK_FAULT => Err(SwdError::Fault),
+ack => Err(SwdError::InvalidAck(ack)),
+}
+}
+Reading a Register
+Before reading the register, we need a small helper to put SWDIO into the idle state:fn idle_cycle(&mut self) {
+self.swdio_output();
+self.swdio.set_low();
+for _ in 0..2 {
+self.clock();
+}
+}
+We can now implement the function to read a register. Once we have that, we can create a small wrapper function specifically for reading the DP IDCODE.const DP_IDCODE: u8 = 0x00;
+fn read_register(&mut self, port: Port, address: u8) -> Result<u32, SwdError> {
+let request = Self::make_request(port, Access::Read, address);
+self.swdio_output();
+// Request.
+self.write_bits(request as u32, 8);
+// Turnaround.
+self.swdio_input();
+self.clock();
+// ACK.
+self.read_ack()?;
+// Data.
+let value = self.read_bits(32);
+// Parity.
+let parity = self.read_bit();
+let expected_parity = (value.count_ones() & 1) != 0;
+if parity != expected_parity {
+return Err(SwdError::ParityError);
+}
+// Target -> host turnaround.
+self.swdio_input();
+self.clock();
+// Host now owns SWDIO.
+self.swdio_output();
+self.idle_cycle();
+Ok(value)
+}
+pub fn read_dp_idcode(&mut self) -> Result<u32, SwdError> {
+self.read_register(Port::Dp, DP_IDCODE)
+}
+We first call the make_request function with the port set to Dp, the access type set to Read, and the address of the IDCODE register, which is 0x00.
+As you noticed, the make_request function does not send the request. It gives us the value that needs to be sent. We then put the SWDIO pin in output mode and write those bits.
+After sending the request, we switch the SWDIO pin to input mode. Then we wait for one clock cycle to give control to the target. The target will now send the acknowledgment bits followed by the data bits.
+So, we first read the 3 acknowledgment bits. Then we read the next 32 bits as the IDCODE. Finally, we read the parity bit.
+We then calculate the expected parity from the received IDCODE and compare it with the parity bit we received. If they are different, it means the parity check failed, so we return a ParityError. If they match, we can return the received IDCODE.
+Putting It All Together
+In the main function, we can now call the functions we created. The flow is simple: we switch the target to SWD and then read the DP IDCODE.
+I have created Swd as a struct to keep all the SWD-related functionality together. You can check out the full code for the Swd struct.swd.switch_to_swd();
+esp_println::println!("Reading DP IDCODE...");
+match swd.read_dp_idcode() {
+Ok(idcode) => {
+esp_println::println!("SWD connected!");
+esp_println::println!("DP IDCODE = {:#010x}", idcode);
+}
+Err(error) => {
+defmt::error!("SWD error: {}", error);
+}
+}
+Verifying with a Logic Analyzer
+If you have a logic analyzer, we can use it to see the SWD communication on the wire. You can check out my blog post on using a logic analyzer. PulseView also has an SWD decoder that you can use to decode the captured communication.
+The capture below shows the complete sequence:SWD communication captured with PulseView
+The clock does not look perfectly symmetric in the capture, but an exact 50% duty cycle is not required for SWD. What matters here is that the data is sampled on the rising edge of SWCLK.
+Final Thoughts
+It Ain’t Much, But It’s Honest Work.
+I have not achieved the end goal yet: flashing the STM32 board with an ESP32. But this is the groundwork, and I believe I am on the right track. I am able to successfully communicate with the STM32 over SWD and read its IDCODE.
+You can find the complete project on GitHub.
+My next experiment is to flash the STM32. If I am successful and can fit everything into a blog post, you can read about it in my next blog post.
+Full Code#![no_std]
+#![no_main]
+#![deny(
+clippy::mem_forget,
+reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
+holding buffers for the duration of a data transfer."
+)]
+#![deny(clippy::large_stack_frames)]
+use defmt::error;
+use esp_hal::clock::CpuClock;
+use esp_hal::delay::Delay;
+use esp_hal::gpio::{Flex, Level, Output, OutputConfig};
+use esp_hal::main;
+use esp_println as _;
+#[panic_handler]
+fn panic(panic_info: &core::panic::PanicInfo) -> ! {
+error!("{}", panic_info);
+loop {}
+}
+esp_bootloader_esp_idf::esp_app_desc!();
+const ACK_OK: u8 = 0b001;
+const ACK_WAIT: u8 = 0b010;
+const ACK_FAULT: u8 = 0b100;
+const START_BIT: u8 = 0b1;
+const PARK_BIT: u8 = 0b1 << 7;
+const DP_IDCODE: u8 = 0x00;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Port {
+Dp,
+Ap,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+Read,
+#[allow(dead_code)]
+Write, // Will use later
+}
+struct Swd<'d> {
+swclk: Output<'d>,
+swdio: Flex<'d>,
+delay: Delay,
+}
+#[derive(defmt::Format)]
+enum SwdError {
+Wait,
+Fault,
+InvalidAck(u8),
+ParityError,
+}
+impl<'d> Swd<'d> {
+fn new(swclk: Output<'d>, mut swdio: Flex<'d>, delay: Delay) -> Self {
+swdio.set_input_enable(false);
+swdio.set_output_enable(true);
+swdio.set_low();
+Self {
+swclk,
+swdio,
+delay,
+}
+}
+fn clock(&mut self) {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+self.swclk.set_high();
+self.delay.delay_micros(1);
+}
+fn read_bit(&mut self) -> bool {
+self.swclk.set_low();
+self.delay.delay_micros(1);
+let bit = self.swdio.is_high();
+self.swclk.set_high();
+self.delay.delay_micros(1);
+bit
+}
+fn read_bits(&mut self, count: usize) -> u32 {
+let mut value = 0;
+for bit in 0..count {
+if self.read_bit() {
+value |= 1 << bit;
+}
+}
+value
+}
+fn write_bit(&mut self, bit: bool) {
+if bit {
+self.swdio.set_high();
+} else {
+self.swdio.set_low();
+}
+self.clock();
+}
+fn write_bits(&mut self, mut value: u32, count: usize) {
+for _ in 0..count {
+self.write_bit((value & 1) != 0);
+value >>= 1;
+}
+}
+fn swdio_output(&mut self) {
+self.swdio.set_input_enable(false);
+self.swdio.set_output_enable(true);
+}
+fn swdio_input(&mut self) {
+self.swdio.set_output_enable(false);
+self.swdio.set_input_enable(true);
+}
+fn line_reset(&mut self) {
+self.swdio.set_high();
+for _ in 0..52 {
+self.clock();
+}
+}
+fn switch_to_swd(&mut self) {
+// 1. Put the interface into reset state.
+self.swdio_output();
+self.line_reset();
+// 2. JTAG -> SWD selection sequence.
+// SWD transmits bits LSB first.
+self.write_bits(0xE79E, 16);
+// 3. Put the SWD interface into line reset state.
+self.line_reset();
+self.swdio.set_low();
+// SWD requires at least 2 idle cycles
+for _ in 0..4 {
+self.clock();
+}
+}
+fn make_request(port: Port, access: Access, address: u8) -> u8 {
+let ap = u8::from(port == Port::Ap);
+let read = u8::from(access == Access::Read);
+let a2 = (address >> 2) & 1;
+let a3 = (address >> 3) & 1;
+let parity = ap ^ read ^ a2 ^ a3;
+START_BIT | (ap << 1) | (read << 2) | (a2 << 3) | (a3 << 4) | (parity << 5) | PARK_BIT
+}
+fn read_ack(&mut self) -> Result<(), SwdError> {
+match self.read_bits(3) as u8 {
+ACK_OK => Ok(()),
+ACK_WAIT => Err(SwdError::Wait),
+ACK_FAULT => Err(SwdError::Fault),
+ack => Err(SwdError::InvalidAck(ack)),
+}
+}
+fn idle_cycle(&mut self) {
+self.swdio_output();
+self.swdio.set_low();
+for _ in 0..2 {
+self.clock();
+}
+}
+fn read_register(&mut self, port: Port, address: u8) -> Result<u32, SwdError> {
+let request = Self::make_request(port, Access::Read, address);
+self.swdio_output();
+// Request.
+self.write_bits(request as u32, 8);
+// Turnaround.
+self.swdio_input();
+self.clock();
+// ACK.
+self.read_ack()?;
+// Data.
+let value = self.read_bits(32);
+// Parity.
+let parity = self.read_bit();
+let expected_parity = (value.count_ones() & 1) != 0;
+if parity != expected_parity {
+return Err(SwdError::ParityError);
+}
+// Target -> host turnaround.
+self.swdio_input();
+self.clock();
+// Host now owns SWDIO.
+self.swdio_output();
+self.idle_cycle();
+Ok(value)
+}
+pub fn read_dp_idcode(&mut self) -> Result<u32, SwdError> {
+self.read_register(Port::Dp, DP_IDCODE)
+}
+}
+#[allow(
+clippy::large_stack_frames,
+reason = "it's not unusual to allocate larger buffers etc. in main"
+)]
+#[main]
+fn main() -> ! {
+let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+let peripherals = esp_hal::init(config);
+let delay = Delay::new();
+let swclk = Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
+let swdio = Flex::new(peripherals.GPIO19);
+let mut swd = Swd::new(swclk, swdio, delay);
+swd.switch_to_swd();
+esp_println::println!("Reading DP IDCODE...");
+match swd.read_dp_idcode() {
+Ok(idcode) => {
+esp_println::println!("SWD connected!");
+esp_println::println!("DP IDCODE = {:#010x}", idcode);
+}
+Err(error) => {
+defmt::error!("SWD error: {}", error);
+}
+}
+loop {
+core::hint::spin_loop();
+}
+}
+Reference
+Arm Debug Interface Architecture Specification
+Making my own Programmer/Debugger using ARM SWD.
+Programming Internal Flash Over the Serial Wire Debug Interface
+SWD
+Hardware Setup
+How Does SWD Work?
+Understanding the SWD Protocol
+Implementing the SWD Signals in Rust
+Generating the SWD Clock
+Switching SWDIO Direction
+Writing a Bit
+Reading a Bit
+Reading and Writing Multiple Bits
+Switching from JTAG to SWD
+Implementation code for Switching from JTAG to SWD
+SWD Transaction
+SWD Request Packet
+Parity
+SWD ACK
+Implementing an SWD Transaction
+Building the SWD Request
+Reading the ACK
+Reading a Register
+Putting It All Together
+Verifying with a Logic Analyzer
+Final Thoughts
+Full Code
+Reference     Copied!  Copy code to clipboard
+© 2026 ImplRust.com. All rights reserved.
+Search
+No results $NUMBER result $NUMBER results $NUMBER results $NUMBER results
+
+=== ROW 159 | f009104 | https://steveklabnik.com/writing/arguing-about-arguments | 2026-09-23T00:00:00 | individual-blogs;twir-links ===
+Arguing about arguments
+Skip to main content
+Steve Klabnik
+Home Writing Topics Series Notes Search
+Arguing about arguments  Sep 21, 2026
+Rust
+Here’s some Rust code:
+// define a function
+fn foo(x: i32, y: i32) -> i32 {
+// body elided
+}
+// call it
+let z = foo(5, 6);
+In programming language jargon, we call x and y parameters and 5 and 6
+arguments.
+Rust does not have many fancy features related to parameters and arguments. But
+other languages do. For example, here’s a function in Ruby,
+another language I’ve written a ton of:
+# its definition in Rails
+def redirect_to(options = {}, response_options = {})
+# body elided
+end
+# you can call it in all of these ways:
+# pass a string with a URL
+redirect_to "http://www.rubyonrails.org"
+# pass an instance of a model to go to it, if post.id = 5 then this might go to
+# "/posts/5"
+redirect_to @post
+# invoke an action directly, might be equivalent to the above in a Posts controller
+redirect_to action: "show", id: 5
+# redirect to a model's URL, passing a flash message
+redirect_to post_url(@post), alert: "Watch it, mister!"
+# do the same but also set a specific HTTP code
+redirect_to post_url(@post), status: :found
+# do both
+redirect_to post_url(@post), status: 301, flash: { updated_post_id: @post.id }
+I used to love Ruby, and now I love Rust. And to be honest, redirect_to and
+friends are a huge reason why I am so against Rust gaining these sorts of fancy
+features: they can be really concise, and beautiful to a certain kind of eye,
+but it also makes it really, really hard to know what all you can do with a
+function. You pretty much have to hope that someone has written good documentation,
+and while Rails’s documentation is pretty good, not every library is going to have
+it.
+To be clear about it, there are several things bundled together here: flexible
+argument types, options hashes, defaults, and keyword-looking syntax. It’s that
+whole style of API that shaped my skepticism, not argument labels by themselves.
+So, what exactly are all of these features?
+Named parameters
+The simplest one is named parameters. As you might guess, this means that we can
+explicitly use parameter names at the call site:
+// without named parameters
+let z = foo(5, 6);
+// if Rust had them
+let z = foo(x: 5, y: 6);
+Named parameters are nice because they can give you more information at the call
+site, but also they can be more flexible. Some languages also let you supply
+named arguments in a different order:
+// since we have names, we can write this:
+let z = foo(x: 5, y: 6);
+// but we can also write this:
+let z = foo(y: 6, x: 5);
+The downside of named parameters is that they can get quite verbose:
+# FastAPI in Python, UserOut class not shown
+@app.get(
+"/me",
+response_model=UserOut,
+status_code=200,
+tags=["Users"],
+summary="Get current user profile"
+)
+def get_current_user():
+I tried to not strawman this by showing an extreme example, but get can take
+23 different keyword arguments, and so this could get quite, quite long.
+Named arguments can be good when passing expressions, so we can understand
+something more at the call site. In the above, status_code=200 is much nicer
+than a bare 200, if you know HTTP well it’s kind of obvious what it is, but
+the additional clarity is nice. But it can be common to break truly complex
+examples down into variables that we end up forwarding to the function, and then
+it becomes verbose and redundant. As an example from inside FastAPI where
+get is invoked directly with all of those options:
+self.router.get(
+path,
+response_model=response_model,
+status_code=status_code,
+tags=tags,
+dependencies=dependencies,
+summary=summary,
+description=description,
+response_description=response_description,
+responses=responses,
+deprecated=deprecated,
+operation_id=operation_id,
+response_model_include=response_model_include,
+response_model_exclude=response_model_exclude,
+response_model_by_alias=response_model_by_alias,
+response_model_exclude_unset=response_model_exclude_unset,
+response_model_exclude_defaults=response_model_exclude_defaults,
+response_model_exclude_none=response_model_exclude_none,
+include_in_schema=include_in_schema,
+response_class=response_class,
+name=name,
+callbacks=callbacks,
+openapi_extra=openapi_extra,
+generate_unique_id_function=generate_unique_id_function,
+)
+We actually snuck in another two features into this example: how did we only
+pass five arguments into a function that has 23 parameters?
+Optional and/or Default arguments
+As the name implies, optional arguments is a feature where you can choose to not pass in an argument,
+and default arguments lets you set a default when an argument is not passed.
+To go back to that example:
+@app.get(
+"/me",
+response_model=UserOut,
+status_code=200,
+tags=["Users"],
+summary="Get current user profile"
+)
+def get_current_user():
+We only passed in five of the 22 possible arguments. If we had to pass all 22 every time, that would
+be extremely verbose. So by declaring defaults for some parameters, we can leave them off of the call
+site, and not pass arguments for them, and get the defaults instead. We saw this in the Ruby:
+# its definition in Rails
+def redirect_to(options = {}, response_options = {})
+The = {} are defaults for options and response_options: they’re an empty hash map.
+You’ll often find optional and default arguments come together: after all, if you don’t pass
+an argument in, what should the value of that parameter be? If your language has some sort of
+null value, that can be one solution, and it can feel like optional arguments without default
+arguments.
+But you can truly get one without the other with our next feature, function overloading:
+Function Overloading
+Languages that support function overloading allow you to define multiple
+functions with the same name, but different signatures. Which function gets
+invoked depends on which arguments you pass. This lets us truly have optional
+arguments without default arguments. In Java:
+// Version 1: Requires both arguments
+void connect(String url, int timeout) { ... }
+// Version 2: Timeout is optional to the caller, and handled internally
+void connect(String url) {  ... }
+Here, if you pass in a timeout, you get the first function, and if you don’t,
+you get the second. Instead of null, the parameter just doesn’t exist at all.
+This is a specific form of something called “function dispatch,” which basically
+means “hey when a function is invoked, what exactly gets called?” There are a
+lot of different ways to do this, and I don’t want this post to get into all
+of that right now, but there is a multitude of possibilities here: static vs
+dynamic, single vs multiple, predicate dispatch, pattern matching dispatch,
+prototype based dispatch… maybe I’ll write a post about that someday too.
+So, what are the pros and cons here?
+These features make me uneasy
+As I said above, Rust doesn’t support any of these three features right now. And
+they have been a persistent request from the community for years. Here is
+a 12 year old GitHub issue about this support, and it even includes something we
+didn’t talk about, “variable arity argument lists.”
+That gets me to the first thing that I don’t like about these features: there
+are a lot of them. And they are all intertwined. As we mentioned before, if
+you have optional arguments, you probably want default arguments. If you have
+named parameters, do you want to support only named parameters, or do you want
+to support both? It’s so tempting to just support all of them, and then you’ve
+added a huge mountain of complexity.
+In Rust right now, you have to write multiple functions with slightly different
+names:
+// a new empty vector
+let v = Vec::new();
+// one with a set capacity
+let v = Vec::with_capacity(5);
+For the simple cost of “write two different names for your functions,” you get
+to keep the rules very simple: there is one function definition, and you invoke
+it by name. Done. Would it be nice to be able to say all of these:
+let v = Vec::new();
+let v = Vec::new(5);
+let v = Vec::new(capacity: 5);
+Sure, maybe. But the cost feels very, very high to me. If you’re used to these
+features, maybe it doesn’t seem that high, but I have a Ruby tattoo on my body.
+I’ve seen some shit. And so I’ve grown to enjoy Rust’s simplicity in this area.
+Yes, if you have a function with tons of parameters, you may need to write a
+builder instead, and that comes with its own form of verbosity:
+// if Vec had a builder
+let v = Vec::new()
+.with_capacity(5)
+.build();
+// all of the code you have to write to make the builder elided
+But the language itself stays simple, and the rules are easy. For a language
+that’s already perceived as complex, this has always felt right to me. And that’s
+why I’ve pushed back against the various proposals to extend Rust in this way all
+of these years.
+But recently, I changed my opinion on one of these features, and one alone, and
+I would consider it okay if Rust gained them. Maybe. Also, it’s important to note
+that I haven’t worked on Rust in years, and so my opinions are kind of irrelevant,
+but whatever: it’s my blog, this is what opinions are for.
+I’m okay with named parameters now
+I think Rust could be okay with named parameters, but not optional or default
+ones. And what changed my opinion is coding agents, actually. I’m sorry, maybe
+you’re sick of me talking about AI, but hear me out.
+One of my beefs with named parameters, as mentioned above, is verbosity. But
+what you gain for that verbosity is clarity. I don’t think that verbosity and
+clarity are always the same thing; I like {} rather than do/end, and find
+it more readable, personally. But let’s take this function from the image crate:
+// definition
+pub fn crop_imm<I: GenericImageView>(
+image: &I,
+x: u32,
+y: u32,
+width: u32,
+height: u32,
+) -> SubImage<&I> { ... }
+// calling it
+let cropped = image::imageops::crop_imm(&img, 10, 20, 200, 100);
+// if we had named arguments
+let cropped = image::imageops::crop_imm(
+image: &img,
+x: 10,
+y: 20,
+width: 200,
+height: 100,
+);
+This does really increase readability, no question about it. But for me, typing
+all of that out just isn’t really super worth the squeeze. But when Claude is
+gonna write it? I care a lot less. And the readability advantage for humans is
+even stronger for agents: the extra clarity of the text inline seems to (I
+haven’t run real evals on this yet…) be more helpful and use less tokens and
+calls when looking at the actual call site. If an agent were reading that named
+example above, it could tell that 10 is the x value without having to go
+look up the function signature itself. “What’s good for humans is true for
+agents” strikes again.
+This is also why I’m still against optional arguments: they deliberately
+hide what is being passed in to the function, and obscure clarity at the call
+site. What’s nice about them is that you have to type less. But I’m not typing
+myself anymore. So the benefit just isn’t there, but the drawbacks are. This
+also doesn’t solve the verbosity side of passing foo=foo in our FastAPI
+example, it is still redundant. But one part of the downsides have been
+ameliorated.
+Notably, all of this reasoning also applies to the builder pattern, and it’s why
+I try to use builders sparingly in Rust. It can emulate named arguments, which
+is good, but it can also emulate optional/default/variable arguments, which is
+bad.  The juice is worth the squeeze sometimes, but not all the time, and
+probably not even the majority of the time.
+So we’ve ameliorated the largest downside, but get to keep the largest upside.
+That seems good. But even if we like the feature, there are still lots of
+practical concerns with Rust specifically that make it not a slam-dunk to add
+them to the language.
+There’s tons of practical issues though
+Now, “is this feature good in the abstract” is very different from “should this
+feature” be implemented? There are a lot of open questions and drawbacks to
+implementing named parameters. A simple one is that you don’t get rid of all of
+those previous functions, with_capacity will exist forever. That’s a
+relatively minor downside to some of the harder problems.
+First, strictly speaking Rust parameters aren’t names, they’re patterns. A
+name is a simple pattern, but you can get more complex:
+fn foo((x, y): (i32, i32)) {
+This parameter doesn’t have a name, it’s a pattern that introduces two bindings.
+You could come up with some syntax that gives things external names vs internal
+names, but there’s that complexity revealing its head again.
+What happens when functions become values? I can write this today:
+fn resize(width: u32, height: u32) {
+// body elided
+}
+fn offset(dx: u32, dy: u32) {
+// body elided
+}
+let f: fn(u32, u32) = if resizing { resize } else { offset };
+What name do we use for f’s parameters? They can be named different things.
+Does this become an error? What names can you use when invoking f? Making this
+more complicated, Rust actually will accept this code right now:
+type Callback = fn(width: u32, height: u32);
+fn f(g: Callback) {}
+fn bar(x: u32, y: u32) {}
+fn main() {
+f(bar) ;
+}
+The names in Callback are just documentation, as you can see they’re not
+required.  Does this become an error? Do we require bar to change its names?
+The same goes for trait definitions, actually:
+trait Writer {
+fn write(&mut self, data: &[u8]);
+}
+struct Sink;
+impl Writer for Sink {
+fn write(&mut self, bytes: &[u8]) {
+// body elided
+}
+}
+Is this an error? Is it okay?
+Here’s another problem: evaluation order.
+fn consume(data: Vec<u8>, length: usize) {
+// body elided
+}
+Right now, Rust always evaluates parameters from left to right at the call site.
+So if we use the named version:
+fn consume(data: Vec<u8>, length: usize) {
+// body elided
+}
+fn consume2(length: usize, data: Vec<u8>) {
+// body elided
+}
+fn main() {
+let data = vec![1, 2, 3];
+// this is an error, borrow after move
+consume(data, data.len());
+// this is okay
+consume2(data.len(), data);
+// does this compile or not?
+consume(length: data.len(), data: data);
+}
+If we keep left to right evaluation order according to the definition, but let
+you use named values in any order, suddenly some orders at the call site compile
+and some orders do not.  Do we change evaluation order to do whatever compiles?
+That feels very dangerous and confusing.
+Rust does let you do this with struct fields:
+struct Args {
+data: Vec<u8>,
+length: usize,
+}
+fn main() {
+let data = vec![1, 2, 3];
+// works
+let args = Args {
+length: data.len(),
+data,
+};
+// doesn't
+let args = Args {
+data,
+length: data.len(),
+};
+}
+This is one reason why a lot of proposals for named arguments try to unify them
+with structs. As I said before, not insurmountable, just things that need to be
+sorted.
+Another small thing is a compatibility hazard: if we start naming parameters,
+renaming them breaks callers. Is that okay? Could you introduce aliases to help
+with this? That’s more complexity…
+These are just some of the problems that come up in the design space, and this
+post is getting long, so I’ll leave it at this for now. But proposals for doing
+this have to engage with all of this and more, which is why language design is
+difficult.
+In conclusion
+I like to think that I change my opinions over time as the world or my
+understanding of it changes. So I thought it might be interesting to share a way
+in which an opinion that I’ve held for over a decade has changed a bit lately.
+I’m still not sure if named parameters are right for Rust, but I’m at least
+somewhat open to the idea these days. We’ll see what the language team decides
+if anyone does decide to keep trying to push this forward. And people do, for
+example, I am writing this in part because I saw this post go by today.
+This post isn’t intended to be support or a rebuttal of it, I actually didn’t
+even read it yet, it’s just that I’ve been thinking about this a lot lately
+(while working on Rue) and seeing that go by pushed me to write some of
+the thoughts down. You should probably go check it out, as it’s an actual
+proposal in this space and this post is more of an exploration of the general
+idea and my own thoughts on it.
+Here’s my post about this post on BlueSky:
+Steve Klabnik @steveklabnik.com
+Arguing about arguments
+steveklabnik.com/writing/argu...
+Arguing about arguments
+Here’s some Rust code: // define a function fn foo (x : i32 , y : i32 ) -> i32 { // body elided } // call it let z = foo ( 5 , 6 ); In programming language jargon, we call x and y parameters and 5 and 6 arguments . Rust does not have many fancy features related to parameters and…
+steveklabnik.com September 21, 2026 at 5:30 PM
+24  3
+Read 6 replies on Bluesky
+← Older So, what happened to my Claude Code series?
+More in  Rust  ·   All writing
+RSS
+·
+Bluesky
+·
+GitHub
+

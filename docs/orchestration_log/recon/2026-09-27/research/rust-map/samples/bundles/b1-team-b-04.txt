@@ -1,0 +1,2691 @@
+=== ROW 16 | f001022 | https://github.com/zed-industries/zed/pull/8632 | 2024-02-29 | domain-subframes ===
+linux: wayland: implement cursor style handling
+
+---
+
+@joelselvaraj · 2024-02-29T19:37:01Z:
+
+Release Notes:
+
+- Implemented cursor style changing in wayland
+
+[zed_cursor_wayland.webm](https://github.com/zed-industries/zed/assets/12579216/cbc03f85-41c1-4687-88b5-2aa5612d7129)
+
+
+
+---
+
+@cla-bot[bot] · 2024-02-29T19:37:04Z:
+We require contributors to sign our Contributor License Agreement, and we don't have @joelselvaraj on file. You can sign our CLA at https://zed.dev/cla. Once you've signed, post a comment here that says '@cla-bot check'.
+
+---
+
+@cla-bot[bot] · 2024-02-29T19:38:11Z:
+We require contributors to sign our Contributor License Agreement, and we don't have @joelselvaraj on file. You can sign our CLA at https://zed.dev/cla. Once you've signed, post a comment here that says '@cla-bot check'.
+
+---
+
+@joelselvaraj · 2024-02-29T19:39:38Z:
+@cla-bot check
+
+---
+
+@cla-bot[bot] · 2024-02-29T19:39:42Z:
+The cla-bot has been summoned, and re-checked this pull request!
+
+---
+
+@phisch · 2024-02-29T20:59:01Z:
+Still needs animated cursor support, but could be implemented in a later PR.
+
+---
+
+@joelselvaraj · 2024-02-29T21:55:36Z:
+> Still needs animated cursor support, but could be implemented in a later PR.
+
+Yes.
+
+---
+
+@phisch · 2024-02-29T22:43:01Z:
+Just for the record, wayland has the [cursor-shape-v1](https://wayland.app/protocols/cursor-shape-v1) protocol. It is currently implemented in kwin and wlroots (including sway). Mutter has an open issue for it: https://gitlab.gnome.org/GNOME/mutter/-/issues/3276
+
+Once this is implemented in the major compositors, this code can be simplified by a lot.
+
+---
+
+@joelselvaraj · 2024-03-01T00:20:42Z:
+> Just for the record, wayland has the [cursor-shape-v1](https://wayland.app/protocols/cursor-shape-v1) protocol. It is currently implemented in kwin and wlroots (including sway). Mutter has an open issue for it: https://gitlab.gnome.org/GNOME/mutter/-/issues/3276
+> 
+> Once this is implemented in the major compositors, this code can be simplified by a lot.
+
+Yes. I had a look at it earlier. Hope it gets implemented in other compositors too. Handling cursors in wayland seems unnecessarily complicated right now.
+
+---
+
+@flukejones · 2024-03-01T08:59:25Z:
+This will need adjusting if the #8365 is merged first (or vice versa)
+
+---
+
+@mikayla-maki · 2024-02-29T19:39:59Z:
+Let's remove this todo, since it's done!
+
+---
+
+@mikayla-maki · 2024-02-29T19:40:53Z:
+This cursor state should probably be added to the `WaylandClientStateInner`
+
+---
+
+@mikayla-maki · 2024-02-29T19:41:55Z:
+Add a todo!(linux) here?
+
+---
+
+@joelselvaraj · 2024-02-29T19:46:37Z:
+I wanted to track the cursor state as part of the `WaylandClientStateInner`. But I couldn't borrow it in  `set_cursor_style()`, because it panicked saying `"already borrowed"`. So I went with tracking the cursor state separately.
+
+---
+
+@joelselvaraj · 2024-02-29T21:54:50Z:
+Fixed.
+
+---
+
+@joelselvaraj · 2024-02-29T21:55:03Z:
+Added
+
+---
+
+@joelselvaraj · 2024-02-29T22:35:05Z:
+I have set the cursor size to 24, which seems to generally be the default size. But there doesn't seem to be a universal way to know what is the cursor size used by the Desktop Environment. Gnome does it in its own way and kde in its own way. Maybe later we can make this configurable from the settings?
+
+---
+
+@niklaswimmer · 2024-02-29T23:02:33Z:
+This boils down to the state being mutable borrowed during the window updates (which end up calling `set_cursor_style` through some indirection), [here](https://github.com/zed-industries/zed/blob/main/crates/gpui/src/platform/linux/wayland/client.rs#L266) and [here](https://github.com/zed-industries/zed/blob/main/crates/gpui/src/platform/linux/wayland/client.rs#L288). Your solution seems reasonable to me, unless we manage to not hold that borrow during the `update` call (which seems possible but not trivial to me).
+
+---
+
+@jansol · 2024-02-29T23:06:39Z:
+At the very least I would love to see the cursor scaled correctly according to the scaling factor of whatever display it is on. I have one monitor set to 200% scaling and some apps are very awkward to use because the cursor becomes *tiny* when moving over them.
+
+---
+
+@joelselvaraj · 2024-03-01T00:59:54Z:
+Seems to work. I set 200% scaling in my monitor and switched back. The cursor size scaled accordingly. Here is a video of my screen recording:
+
+[zed_cursor_wayland_scaling.webm](https://github.com/zed-industries/zed/assets/12579216/6a747356-2060-4cab-a090-98060204467a)
+
+I think the existing wayland fractional scaling support helps here.
+
+---
+
+@joelselvaraj · 2024-03-01T02:27:57Z:
+I added a new commit to handle a corner case. For example, in multi-monitor setup, I have zed in one monitor and some other app in another monitor.  When I move the mouse cursor from zed to the other app in another monitor and bring the cursor back on top zed, the cursor icon updates no longer happens until I explicitly click inside the zed app. This appears to be because the window doesn't get the focus back during the `wl_pointer::Event::Enter` event. So, to fix this, I have added code to focus when pointer enter's the window and unfocus when the pointer leave's the window. This already seems to be implemented for `wl_keyboard::Event:Enter` and `wl_keyboard::Event:Leave`. So, I guess this is ok. 
+
+---
+
+@furkanmustafa · 2024-03-01T06:02:40Z:
+Wouldn't this cause unintentional "focus on hover" behavior?
+
+That is how I use my desktop(i3/sway), but afaik, it is definitely an unconventional non-default behavior. And causes some issues for some programs (other focused popup window loses focus, and decides to close because of that and such)
+
+---
+
+@jansol · 2024-03-01T09:06:02Z:
+I also use focus-follows-mouse in KDE Plasma, but it's definitely something you have to go out of your way to enable.
+
+I'm surprised that window focus isn't something managed by the compositor all the way from the core protocol, though?
+
+---
+
+@flukejones · 2024-03-01T09:08:15Z:
+Please don't use hard panics like this. It would be best to log an error then provide some sort of fallback/failsafe. I think the `.expect()` above this one is probably okay but maybe a safe default would help?.
+
+I wrapped this use in an `if let Some(cursor)` myself.
+
+---
+
+@furkanmustafa · 2024-03-01T09:13:10Z:
+Afaik it is mainly managed by the window manager / compositor, but depending on the configuration, clients(windows) are also allowed to steal focus, and give it up as well?
+
+---
+
+@romgrk · 2024-03-01T15:26:19Z:
+I have the same issue in #8365, wayland event handlers borrow the state but then the actions caused by those events can call platform methods that also need the state. E.g. [key repeat with clipboard paste](https://github.com/zed-industries/zed/blob/9723ca95e3e959d44d347b449fdbbfd4690d273f/crates/gpui/src/platform/linux/wayland/client.rs#L504-L517) currently panics due to that issue, it would need to `drop(state)` before dispatching the event to stop the borrow (fixed in the clipboard PR).
+
+I'm not sure how to solve but we'll need to refactor and split our state to avoid running into this issue. Maybe turning the state fields into rc-refcells.
+
+But I don't like adding the cursor state at that location, `.1` doesn't sound semantic enough as a way to access it.
+
+---
+
+@romgrk · 2024-03-01T15:28:13Z:
+Group with the linux-specific dependencies, below.
+
+---
+
+@joelselvaraj · 2024-03-01T21:26:02Z:
+Right. Fixed. 
+
+---
+
+@joelselvaraj · 2024-03-01T21:26:16Z:
+Fixed it.
+
+---
+
+@joelselvaraj · 2024-03-01T21:38:37Z:
+> I have the same issue in https://github.com/zed-industries/zed/pull/8365, wayland event handlers borrow the state but then the actions caused by those events can call platform methods that also need the state. E.g. [key repeat with clipboard paste](https://github.com/zed-industries/zed/blob/9723ca95e3e959d44d347b449fdbbfd4690d273f/crates/gpui/src/platform/linux/wayland/client.rs#L504-L517) currently panics due to that issue, it would need to drop(state) before dispatching the event to stop the borrow (fixed in the clipboard PR).
+
+Interesting.
+
+> But I don't like adding the cursor state at that location, .1 doesn't sound semantic enough as a way to access it.
+
+Ok, I have slightly reworked the WaylandClientState to have named variables and not as tuples like before. Does this look better? 
+
+> I'm not sure how to solve but we'll need to refactor and split our state to avoid running into this issue. Maybe turning the state fields into rc-refcells.
+
+I do agree that having all state fields as rc-refcells will save us some trouble, considering so many events are getting triggered in wayland and we wouldn't want to hold onto the entire state just because one operation is borrowing it longer. But, I am still new to Rust and all of this, so I don't know much about this. Will it be ok to do further refactoring in a separate MR or part of your Clipboard MR? If the approach isn't too bad/entirely wrong, I would like to get this in as an initial MR and further improvements can be worked upon it later.
+
+---
+
+@joelselvaraj · 2024-03-01T21:42:20Z:
+Considering the cursor size scales automatically based on display scaling, making the cursor size configurable is not an immediate concern. I think we can work on that later. Marking as resolved for now. Feel free to discuss on this further if anyone has different opinion.
+
+---
+
+@joelselvaraj · 2024-03-01T22:56:21Z:
+> Wouldn't this cause unintentional "focus on hover" behavior?
+That is how I use my desktop(i3/sway), but afaik, it is definitely an unconventional non-default behavior. And causes some issues for some programs (other focused popup window loses focus, and decides to close because of that and such)
+
+I don't see any weird focus behavior with this change. For example, I opened zed in one monitor and another software in second monitor. I right clicked on the another software to open up usual right-click context menu (copy, paste, etc). While it is open, I moved the cursor into zed and the right-click menu doesn't automatically close when I hover over zed. It only get's dismissed when I click inside zed. So, only when i click inside zed the full focus/control gets transferred over to zed. Guess there are two different state like focus and activated or so :thinking: idk... Other apps also exhibit the same behavior. So far no unusual behavior. 
+
+
+---
+
+@furkanmustafa · 2024-03-02T00:00:04Z:
+I see.. It is probably not what I think then.. I will try to test it as well. Thanks!
+
+---
+
+@romgrk · 2024-03-02T18:19:01Z:
+> I'm not sure how to solve but we'll need to refactor and split our state to avoid running into this issue. Maybe turning the state fields into rc-refcells.
+
+Actually I'm not sure that would work. If I take as an example key press, I can imagine a scenario where we dispatch a key press on the `state.keyboard_focused_window`, which then triggers an action to change the keyboard focused window. So we'd get a panic there again. Not sure if there's a more elegant solution, but right now the only approach that works is to clone whatever refs we need before dropping the state, and then dispatching actions.
+
+Or iiuc, the rest of the codebase seems to be using the pattern of passing a `cx` context down the stack, which avoids this kind of issue. We could also try that.
+
+---
+
+@mikayla-maki · 2024-03-03T19:09:58Z:
+We should definitely double check this. 
+
+---
+
+@romgrk · 2024-03-03T20:06:24Z:
+Funny how warp faces the same issue:
+
+> We also use a RefCell to handle shared mutability when receiving platform events from the event loop–though it’s rare, we’ve had a few crashes from users in the wild due to concurrent calls to borrow_mut.
+
+https://www.warp.dev/blog/why-is-building-a-ui-in-rust-so-hard#why-is-ui-in-rust-so-hard
+
+=== ROW 17 | f001085 | https://github.com/zed-industries/zed/pull/8952 | 2024-03-06 | domain-subframes ===
+Add right-click menu to dock
+
+---
+
+@xyzqm · 2024-03-06T16:40:36Z:
+Fixes #8416
+
+---
+
+@cla-bot[bot] · 2024-03-06T16:40:39Z:
+We require contributors to sign our Contributor License Agreement, and we don't have @danielzsh on file. You can sign our CLA at https://zed.dev/cla. Once you've signed, post a comment here that says '@cla-bot check'.
+
+---
+
+@xyzqm · 2024-03-06T16:43:21Z:
+@cla-bot check
+
+---
+
+@cla-bot[bot] · 2024-03-06T16:43:26Z:
+The cla-bot has been summoned, and re-checked this pull request!
+
+---
+
+@xyzqm · 2024-03-06T16:53:22Z:
+@SomeoneToIgnore I have added a dummy dock menu item, but I can't figure out how to display the recent workspaces in their place...including `workspace` in `gpui` also creates a circular dependency. An ideas?
+
+---
+
+@SomeoneToIgnore · 2024-03-06T20:05:21Z:
+Nothing clever off top of my head.
+
+I think, we should try inverting the control here: let `Window` from `mac/window.rs` have a list of path strings, and a method to set that list.
+
+Later, somewhere near the top of the stack, where high-level window and workspace with its DB are initialized, we need to call that setter and have the list populated.
+
+---
+
+@xyzqm · 2024-03-06T20:15:27Z:
+How should `window.rs` communicate with the AppDelegate in `platform.rs`? (and also how should the high level DB communicate with `window.rs`? Sorry I'm very new to all of this 😅 )
+
+---
+
+@SomeoneToIgnore · 2024-03-07T15:55:06Z:
+If I knew answers to your questions, I'd be the one creating this PR 🙂 
+
+So now you have the way to open the menu, which is great.
+We've already discussed and I tried to emphasize that no way you're bringing the DB calls close to that `platform.rs` with our current architecture, and that seems to be fine — we can try populating something later.
+
+Ergo, consider `MacPlatformState` and, in particular, `set_menus`: https://github.com/zed-industries/zed/blob/d13de14c1be911a89881c426417e67bdf8f06eb7/crates/gpui/src/platform/mac/platform.rs#L756
+This is something, declared in the `Platform` trait, that is able to accept "external" information from Zed running, later, at some point when Zed starts up and is ready to set the menus.
+
+I think we should do the same for this case:
+* add a `set_????` method into the `Platform` trait to set the context menus of the icon
+* add a field that stores paths from that `set_????` into the `MacPlatformState` and wire the new macOs callbacks you've added in this PR to use that data
+* expose a similar counterpart into `AppContext`, as nothing works with `Platform` directly. Here's how we set those menus in real life: https://github.com/zed-industries/zed/blob/d13de14c1be911a89881c426417e67bdf8f06eb7/crates/zed/src/main.rs#L266
+* find a place where we've initialized the workspace and do `cx.set_????(` there, using the `WORKSPACE_DB` contents
+* ensure that when another workspace (which is ==window in this context) is open, the menus are also updated with the new data
+
+Last two points require finding a good place where all this happens in the workspace, I have no idea what is that — it has to track all new entries added, but should not overly updating those entries.
+A bad place which will work for testing purposes is `fn serialize_workspace`: that is definitely called frequently enough to be able to trigger it and write things into the low level.
+
+Maybe, `pub fn initialize_workspace` will work better?
+Also note that workspaces are of local and remote types, we do not care about the latter for this functionality.
+
+---
+
+@xyzqm · 2024-03-08T17:56:00Z:
+Thank you so much for the help, I think I understand the gpui architecture a lot better now! I have successfully exposed the dock menu to AppContext, all thats left is to actually populate with recent workspaces, and also figure out how to handle selections 🙏 
+
+By the way, do you know if there's any way to change this:
+```
+// this needs to be changed if DOCK_MENU_IVAR is changed
+let _: () = msg_send![app, setDockMenu:menu];
+```
+To directly incorporate DOCK_MENU_IVAR?
+
+edit: nvm, figured it out!
+
+---
+
+@xyzqm · 2024-03-14T17:49:51Z:
+@SomeoneToIgnore I believe it should work now; however, you'll have to actually bundle the app to test it (I used `source script/bundle-mac -l`). Let me know if there's any code practices I neglected; this is my first time using Rust!
+
+---
+
+@xyzqm · 2024-03-26T21:57:32Z:
+Hm, I'm on the latest preview build and there appear to be several bugs with the implementation...
+- [ ] the recents list is cleared every time zed is opened; is this intended? I originally had some code to initialize the workspaces on launch, but I noticed that you deleted it:
+<img width="901" alt="image" src="https://github.com/zed-industries/zed/assets/65467530/74d1ae98-3aff-4845-a737-4ee0fa384b3b">
+
+- [ ] when opening a folder with "cmd + o", the recents list doesn't update; it only updates when selecting a project from the list of recent workspaces
+
+Do you know why these might be? @SomeoneToIgnore 
+
+---
+
+@SomeoneToIgnore · 2024-03-26T22:55:23Z:
+Neither issue is intended, but the startup code removal was: the idea was not to set anything on the Zed startup, but rather update the list on the new workspace and/or worktree update — apparently, both of the issues could be solved with a single "update when a new worktree/workspace was added" adjustment if it's found right.
+
+---
+
+@xyzqm · 2024-03-27T00:14:02Z:
+I think we should probably avoid calling `clear_recent_documents` since a user would likely not anticipate a folder suddenly disappearing from their recents list (after all, the only thing that should be able to displace a "recent" item is an item that is more recent...)
+
+By the way, is `source script/bundle-mac -l` working for you? The built "Zed Dev" app keeps crashing instantly as soon as I try to open it...
+
+---
+
+@SomeoneToIgnore · 2024-03-27T08:55:18Z:
+> I think we should probably avoid calling `clear_recent_documents`
+
+But the whole point of the clearing is to call `cx.add_recent_documents(&updated_paths);` right afterwards, so I do not agree: *in theory*, the current code is supposed to empty the old collection and place the LRU-ordered list of recently opened projects.
+So, both methods used in pair are sort of "replace" call given that macOS platform APIs do what we expect them to do (clear everything existing, then set all new paths given).
+
+Apparently, on (re)opening of a window, something does not work right anymore (it did though when I tested the feature locally).
+We have to re-discover the place where the newly opened workspace/worktree is registered and check that we get the right list of paths there, then clear/set that into the list.
+
+If the platform misbehaves, we can try to mitigate things with https://developer.apple.com/documentation/appkit/nsdocumentcontroller/1514976-recentdocumenturls?language=objc and only add the ones that are missing in the current list — this way, we'll loose the proper LRU sorting which might be ok, if we keep the list with all entries in the end.
+
+To me, current bundling fails even worse with `cp: target/aarch64-apple-darwin/debug/WebRTC.framework: No such file or directory` which is sad, I will look into that.
+
+
+---
+
+@SomeoneToIgnore · 2024-03-27T10:42:03Z:
+Fixed all issues with the local bundling in https://github.com/zed-industries/zed/pull/9848 , thank you for spotting.
+Now local bundling does not install anything by default (use `-i` for that), but is able to run either built or installed *.app with `-o` without errors (during my local testing at least, interested in your experience).
+
+---
+
+@xyzqm · 2024-03-27T15:58:42Z:
+> So, both methods used in pair are sort of "replace" call given that macOS platform APIs do what we expect them to do (clear everything existing, then set all new paths given).
+
+If calling `noteNewRecentDocumentURL` on a document that's already in the recents list, that document will be brought to the bottom of the recents list automatically; therefore, this "replace" behavior only matters if we want to support removing workspaces and syncing that to the recents list, but I don't think that's necessary. In theory, if we just call `note_recent_documents` once a workspace is opened (and sync the list once initially), the recents list will always be accurate and sorted correctly. 
+
+The bundling script works now, but I've noticed the app is always bundled into `target/debug/bundle/osx` rather than `/Applications` like the script says; is that intended? Consequently, the `-o` flag also doesn't do anything for me. The command I ran was `source script/bundle-mac -lio`.
+
+---
+
+@SomeoneToIgnore · 2024-03-27T16:14:32Z:
+Ok, if we can push things downwards by just re-registering, the cleanup is indeed redundant, thank you for pointing out.
+
+In that case, I wonder if we should move the logic that does `cx.add_recent_documents` from `workspace.rs` into `worktree.rs`: there's a `Worktree::local` that might report the last opened worktree in the end of its creation.
+(similar alternative would be to alter `project.rs` instead, around `add_worktree` or `create_local_worktree`).
+
+This way, Zed's supposed to push recently opened files and directories in the list.
+Would you be interested to implement and test this?
+
+-----------
+
+As stated in the related PR, moving away the `/Applications` installation under `-i` was intentional: it was possible to `-o` for me without installing anything, straight out of the `target/` dir which seems less intrusive for iterating over the features like these.
+
+---
+
+@xyzqm · 2024-03-27T16:21:40Z:
+> In that case, I wonder if we should move the logic that does `cx.add_recent_documents` from `workspace.rs` into `worktree.rs`: there's a `Worktree::local` that might report the last opened worktree in the end of its creation.
+> (similar alternative would be to alter `project.rs` instead, around `add_worktree` or `create_local_worktree`).
+
+Sounds good, I can try and implement this :) 
+
+(btw, am I correct in understanding that the hierarchy goes something like `Project -> Workspace -> Worktree`? I'm still a bit confused in what exactly each of the three does/represents 😓 )
+
+---
+
+@SomeoneToIgnore · 2024-03-27T16:27:39Z:
+I've tried to document those recently, you might be interested to have a look at https://github.com/zed-industries/zed/pull/9772 or just at the corresponding docs.
+Generally, looking at Rust data structures explains most of such hierarchy questions.
+
+`Workspace` is the "main" one, being something very close to `Window`.
+It has a `Project` associated with it, stored inside.
+That `Project` contains 0 or more `Worktree`s associated with it.
+
+---
+
+@xyzqm · 2024-03-28T00:06:01Z:
+Does having Zed Preview installed conflict with the local bundling process? When I try to launch my local build, it asks to access my Documents folder, then prompts for a password:
+<img width="454" alt="image" src="https://github.com/zed-industries/zed/assets/65467530/26ac1dc2-ce50-44f0-8620-03bf0e139179">
+
+But doesn't respond at all after that. (BTW, neither `source script/bundle-mac -l -o` or `source script/bundle-mac -lo` actually open the executable after the build finishes...)
+
+I'm not sure if it's related to https://github.com/zed-industries/zed/issues/9805, but Zed Preview runs fine for me; it's just Zed Dev that's problematic...
+
+
+---
+
+@SomeoneToIgnore · 2024-03-28T10:44:36Z:
+For me, using `source` makes my terminal to disappear without any trace at all, not even showing any pop-ups.
+I've never used `source` in my regular shell work, and omitting it from your commands make them work.
+
+What is the point of source'ing a random script in the FS? 
+IIRC, `source` retains env var modifications that are made by the sourced subprocess/script/etc. which I barely ever want to happen.
+
+---
+
+@xyzqm · 2024-03-28T15:23:35Z:
+Oh yikes, I didn't know that...it's working now 😓 
+
+---
+
+@SomeoneToIgnore · 2024-03-14T19:53:14Z:
+I think, we would need a name more specific to what we try to do here, and name the method accordingly.
+
+`add_icon_context_menu_entry`? `add_recent_to_icon_menu`?
+Somewhat long, but the idea would be closer in this case, as more relevant to what are we doing here, thinking that this code could relate to Windows and Linux.
+
+-----------
+
+But more important thing would be to pick an appropriate method, I've posted another comment later with a proposal to change the approach, so some other name has to be picked here anyway.
+
+---
+
+@SomeoneToIgnore · 2024-03-14T19:55:26Z:
+Would be curious to know what is the meaning of the code from mac platform API standpoint, I'm somewhat far from this and cannot understand where the hack is.
+
+---
+
+@SomeoneToIgnore · 2024-03-14T19:56:36Z:
+That's what fails the tests as it looks like, we can leave it empty entirely.
+
+We could add some way to store the entries added and a test method to assert things, but that looks like an overkill right now.
+
+---
+
+@SomeoneToIgnore · 2024-03-14T19:56:47Z:
+Not needed.
+
+---
+
+@SomeoneToIgnore · 2024-03-14T20:05:49Z:
+This is the most important part, and I'm not sure the current approach is right.
+
+* Zed has a list of recent projects (cmd-alt-o by default), and that list is out of sync with the menu items people will see, since here we only add a project on the serialization.
+
+My first launch:
+<img width="584" alt="image" src="https://github.com/zed-industries/zed/assets/2690773/c10f6e95-4a0c-40ca-9ec1-70ba4248e939">
+
+<img width="207" alt="Screenshot 2024-03-14 at 21 45 22" src="https://github.com/zed-industries/zed/assets/2690773/8fc22447-cf8c-49d6-9bc4-2fddf40f5d6a">
+
+It is amazing that the menu icon list is persisted between the launches, and I wonder if there' a way to make it synchronized with the recent project pane list?
+People can also remove items from that recent project list, hence prefer having it removed from this context menu.
+
+* The DB part we were discussing in the beginning of this PR, is supposed to be needed for the sync, but I do not think we need to refresh it on every serialization of the workspace: it happens after every tab is closed or other events, not related to recent projects list change, happen.
+
+---
+
+@xyzqm · 2024-03-14T20:51:50Z:
+I actually was considering a sync with the DB, but I wasn't sure how to implement it. Specifically:
+1. How can I attach an event listener to the DB that runs whenever the DB updates?
+2. Can I even call `note_recent` directly from the DB, since it would require a reference to `AppContext`?
+
+---
+
+@xyzqm · 2024-03-14T20:52:34Z:
+Oh oops; this was an old artifact from my initial approach, it's not needed anymore.
+
+---
+
+@SomeoneToIgnore · 2024-03-14T21:00:05Z:
+The whole point of the changes proposed is not to actually do any listening or "directly from DB" things: we know that DB changes on workspace removal (that might be a bit hard, so feel free to skip) and workspace addition (`Workspace::new_local` method is fine for our cases since all that we care about is `abs_path` and the fact that the workspace is not remote).
+
+In either of these methods, and even in the line of the current PR, one could do
+`let ids = DB.recent_workspaces_on_disk().await;`
+and use the `WorkspaceLocation` data to get all available workspaces' paths out and set into the new menu.
+
+---
+
+@xyzqm · 2024-03-15T00:57:45Z:
+What do you think of just `add_recent_document` and `clear_recent_documents`? These are the names Electron uses [here](https://www.electronjs.org/docs/latest/tutorial/recent-documents).
+
+---
+
+@xyzqm · 2024-03-15T00:59:23Z:
+I just implemented your suggestions, let me know if I put anything in the wrong place!
+
+=== ROW 18 | f001160 | https://github.com/wasm-bindgen/wasm-bindgen/pull/3898 | 2024-03-19 | domain-subframes ===
+Don't use reflect in webidl dictionary setters
+
+---
+
+@Davidster · 2024-03-19T02:46:40Z:
+Implements solution 1 from https://github.com/rustwasm/wasm-bindgen/issues/3468#issuecomment-1589958213.
+
+Solution 3 will come after assuming this goes smoothly
+
+---
+
+@Davidster · 2024-03-19T02:57:59Z:
+woops, looks like the CI is failing. will check that tmrw.
+
+---
+
+@Davidster · 2024-03-20T23:17:55Z:
+I've run into the following error with the codegen:
+
+it generates some shim functions now such as:
+
+```rust
+#![allow(unused_imports)]
+#![allow(clippy::all)]
+use super::*;
+use wasm_bindgen::prelude::*;
+#[wasm_bindgen]
+extern "C" {
+    # [wasm_bindgen (extends = :: js_sys :: Object , js_name = RequestInit)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[doc = "The `RequestInit` dictionary."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+    pub type RequestInit;
+    # [wasm_bindgen (method , setter = body)]
+    fn body_shim(this: &RequestInit, val: Option<&::wasm_bindgen::JsValue>);
+    #[cfg(feature = "RequestCache")]
+    # [wasm_bindgen (method , setter = cache)]
+    fn cache_shim(this: &RequestInit, val: RequestCache);
+    #[cfg(feature = "RequestCredentials")]
+    # [wasm_bindgen (method , setter = credentials)]
+    fn credentials_shim(this: &RequestInit, val: RequestCredentials);
+    # [wasm_bindgen (method , setter = headers)]
+    fn headers_shim(this: &RequestInit, val: &::wasm_bindgen::JsValue);
+    # [wasm_bindgen (method , setter = integrity)]
+    fn integrity_shim(this: &RequestInit, val: &str);
+    # [wasm_bindgen (method , setter = method)]
+    fn method_shim(this: &RequestInit, val: &str);
+    #[cfg(feature = "RequestMode")]
+    # [wasm_bindgen (method , setter = mode)]
+    fn mode_shim(this: &RequestInit, val: RequestMode);
+    #[cfg(feature = "ObserverCallback")]
+    # [wasm_bindgen (method , setter = observe)]
+    fn observe_shim(this: &RequestInit, val: &ObserverCallback);
+    #[cfg(feature = "RequestRedirect")]
+    # [wasm_bindgen (method , setter = redirect)]
+    fn redirect_shim(this: &RequestInit, val: RequestRedirect);
+    # [wasm_bindgen (method , setter = referrer)]
+    fn referrer_shim(this: &RequestInit, val: &str);
+    #[cfg(feature = "ReferrerPolicy")]
+    # [wasm_bindgen (method , setter = referrerPolicy)]
+    fn referrer_policy_shim(this: &RequestInit, val: ReferrerPolicy);
+    #[cfg(feature = "AbortSignal")]
+    # [wasm_bindgen (method , setter = signal)]
+    fn signal_shim(this: &RequestInit, val: Option<&AbortSignal>);
+}
+impl RequestInit {
+    #[doc = "Construct a new `RequestInit`."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+    pub fn new() -> Self {
+        #[allow(unused_mut)]
+        let mut ret: Self = ::wasm_bindgen::JsCast::unchecked_into(::js_sys::Object::new());
+        ret
+    }
+    #[doc = "Change the `body` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+    pub fn body(&mut self, val: Option<&::wasm_bindgen::JsValue>) -> &mut Self {
+        self.body_shim(val);
+        self
+    }
+    #[cfg(feature = "RequestCache")]
+    #[doc = "Change the `cache` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestCache`, `RequestInit`*"]
+    pub fn cache(&mut self, val: RequestCache) -> &mut Self {
+        self.cache_shim(val);
+        self
+    }
+    #[cfg(feature = "RequestCredentials")]
+    #[doc = "Change the `credentials` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestCredentials`, `RequestInit`*"]
+    pub fn credentials(&mut self, val: RequestCredentials) -> &mut Self {
+        self.credentials_shim(val);
+        self
+    }
+    #[doc = "Change the `headers` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+    pub fn headers(&mut self, val: &::wasm_bindgen::JsValue) -> &mut Self {
+        self.headers_shim(val);
+        self
+    }
+    #[doc = "Change the `integrity` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+    pub fn integrity(&mut self, val: &str) -> &mut Self {
+        self.integrity_shim(val);
+        self
+    }
+    #[doc = "Change the `method` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+    pub fn method(&mut self, val: &str) -> &mut Self {
+        self.method_shim(val);
+        self
+    }
+    #[cfg(feature = "RequestMode")]
+    #[doc = "Change the `mode` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`, `RequestMode`*"]
+    pub fn mode(&mut self, val: RequestMode) -> &mut Self {
+        self.mode_shim(val);
+        self
+    }
+    #[cfg(feature = "ObserverCallback")]
+    #[doc = "Change the `observe` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `ObserverCallback`, `RequestInit`*"]
+    pub fn observe(&mut self, val: &ObserverCallback) -> &mut Self {
+        self.observe_shim(val);
+        self
+    }
+    #[cfg(feature = "RequestRedirect")]
+    #[doc = "Change the `redirect` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`, `RequestRedirect`*"]
+    pub fn redirect(&mut self, val: RequestRedirect) -> &mut Self {
+        self.redirect_shim(val);
+        self
+    }
+    #[doc = "Change the `referrer` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+    pub fn referrer(&mut self, val: &str) -> &mut Self {
+        self.referrer_shim(val);
+        self
+    }
+    #[cfg(feature = "ReferrerPolicy")]
+    #[doc = "Change the `referrerPolicy` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `ReferrerPolicy`, `RequestInit`*"]
+    pub fn referrer_policy(&mut self, val: ReferrerPolicy) -> &mut Self {
+        self.referrer_policy_shim(val);
+        self
+    }
+    #[cfg(feature = "AbortSignal")]
+    #[doc = "Change the `signal` field of this object."]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `AbortSignal`, `RequestInit`*"]
+    pub fn signal(&mut self, val: Option<&AbortSignal>) -> &mut Self {
+        self.signal_shim(val);
+        self
+    }
+}
+impl Default for RequestInit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+```
+
+Which seems to look ok except that it produces the following error:
+
+```rust
+5 | #[wasm_bindgen]
+  | ^^^^^^^^^^^^^^^ the trait `OptionIntoWasmAbi` is not implemented for `&wasm_bindgen::JsValue`
+```
+
+Looks like this is a case of https://github.com/rustwasm/wasm-bindgen/issues/2139. I'm not quite sure how to solve it. Any ideas?
+
+---
+
+@Davidster · 2024-03-20T23:48:43Z:
+Found a way to workaround the issue with some dark magic... let me know what you think. It basically modifies the shim from Option<JsValue> to JsValue and calls `val.unwrap_or(&::wasm_bindgen::JsValue::NULL)` to convert the Option<JsValue> into a JsValue in the body.
+
+---
+
+@Davidster · 2024-03-21T02:24:25Z:
+I will fix the merge conflict once this is ready to be merged. I needed to work on an older version in order be able to build my engine against my wasm_bindgen fork
+
+---
+
+@Davidster · 2024-03-24T17:57:00Z:
+I noticed when compiling my engine against this branch that the generated js file got substantially larger since the new 'shim' functions added by the generator are getting added regardless of whether the function is actually used. Any idea about how to mitigate this? 
+
+---
+
+@Davidster · 2024-03-24T19:13:14Z:
+Ran into another problem with this approach...
+
+```rust
+error: expected `,`
+  --> crates/web-sys/src/features/gen_WidevineCdmManifest.rs:19:42
+   |
+19 |     # [wasm_bindgen (method , setter = x - cdm - codecs)]
+   |                                          ^
+error: expected `,`
+  --> crates/web-sys/src/features/gen_WidevineCdmManifest.rs:21:42
+   |
+21 |     # [wasm_bindgen (method , setter = x - cdm - host - versions)]
+   |                                          ^
+error: expected `,`
+  --> crates/web-sys/src/features/gen_WidevineCdmManifest.rs:23:42
+   |
+23 |     # [wasm_bindgen (method , setter = x - cdm - interface - versions)]
+   |                                          ^
+error: expected `,`
+  --> crates/web-sys/src/features/gen_WidevineCdmManifest.rs:25:42
+   |
+25 |     # [wasm_bindgen (method , setter = x - cdm - module - versions)]
+   |  
+```
+
+is there any way to escape the `-` characters here?
+
+---
+
+@daxpedda · 2024-03-27T14:44:53Z:
+> is there any way to escape the `-` characters here?
+
+You will have to use quotation marks and parse it as a string instead of an ident.
+
+---
+
+Why are the `*_shim` functions necessary?
+
+---
+
+@Davidster · 2024-03-27T14:50:07Z:
+Wouldn't adding quotation marks be a breaking change though?
+
+I didn't consider whether the shims were needed or not tbh. But they would be necessary for the conversion from Option to JsValue since `OptionIntoWasmAbi` is not implemented for JsValue, like for RequestInit::body()
+
+---
+
+@daxpedda · 2024-03-27T14:54:22Z:
+> Wouldn't adding quotation marks be a breaking change though?
+
+You don't have to require it, just supporting it.
+I didn't look deeper in whats going on though and I don't know why you would need `-` in the first place.
+
+> I didn't consider whether the shims were needed or not tbh. But they would be necessary for the conversion from Option to JsValue since `OptionIntoWasmAbi` is not implemented for JsValue, like for RequestInit::body()
+
+I'm not following.
+But I remembered why this was necessary: to keep the API the same by returning `&mut Self`.
+So all good there!
+
+---
+
+@Davidster · 2024-03-27T15:04:15Z:
+the `-` is required because the WidevineCDMManifest webidl type has some attributes with `-` in the name 😢  see https://github.com/rustwasm/wasm-bindgen/blob/88efe468e68cf4f0d8cee87ee3a01de5f5739656/crates/web-sys/webidls/enabled/WidevineCDMManifest.webidl#L11
+
+Edit: 👍 about not requiring it. I will give that a shot.
+
+---
+
+For the Option thing, it's like I described in my comment: https://github.com/rustwasm/wasm-bindgen/pull/3898#issuecomment-2010887953.
+
+I'm not 100% sure I understand the compile error completely, but my guess is that the wasm-bindgen macro for body shim:
+
+```rust
+#[wasm_bindgen(method, setter = body)]
+fn body_shim(this: &RequestInit, val: Option<&::wasm_bindgen::JsValue>);
+```
+
+Is trying to use the OptionIntoWasmAbi trait on the val parameter in order to be able to pass it to JS. So the fix was to change the signature to this:
+
+```rust
+#[wasm_bindgen(method, setter = body)]
+fn body_shim(this: &RequestInit, val: &::wasm_bindgen::JsValue);
+```
+
+And convert from Option -> JsValue before calling the shim, like this:
+
+```rust
+#[doc = "Change the `body` field of this object."]
+#[doc = ""]
+#[doc = "*This API requires the following crate features to be activated: `RequestInit`*"]
+pub fn body(&mut self, val: Option<&::wasm_bindgen::JsValue>) -> &mut Self {
+    self.body_shim(val.unwrap_or(&::wasm_bindgen::JsValue::NULL));
+    self
+}
+```
+
+This sadly requires a special check for Option<&::wasm_bindgen::JsValue> in the code:
+
+https://github.com/rustwasm/wasm-bindgen/pull/3898/commits/c67717dc626e985767307594f1436733465bd7bc#diff-d8976bd33550e367803742179ae21879225e06a871ccfe1e29d8b89af9106d02R697
+
+---
+
+@Davidster · 2024-03-29T02:05:16Z:
+I've added support for the hyphens, this PR should be ready for review now :smile: thanks!
+
+---
+
+@Davidster · 2024-04-01T12:48:13Z:
+Nope I'm all good with the webidl, it's just a huge diff and I wasn't sure if those are generated by the CI. I'll commit them 
+
+---
+
+@Liamolucko · 2024-04-03T01:22:45Z:
+> I noticed when compiling my engine against this branch that the generated js file got substantially larger since the new 'shim' functions added by the generator are getting added regardless of whether the function is actually used. Any idea about how to mitigate this? 
+
+Could you elaborate a bit more? I'm not sure if you mean that the shims are never even referenced in Rust (in which case no JS for them should be getting generated), or that they could theoretically be used but aren't in practice (in which case I don't really have a good solution).
+
+---
+
+@Davidster · 2024-04-03T02:06:05Z:
+Looking at it again I think I was just confused at the time. It makes sense that a bunch of shims would get added to my JS file since they are indeed referenced from rust. 
+
+The part that confused me was that even the non-shim versions weren't showing up in my JS file before the changes from this PR. But this makes sense because those are compiled into the wasm, not the JS :smile: 
+
+---
+
+@daxpedda · 2024-04-01T06:56:17Z:
+```suggestion
+* Don't use reflect in WebIDL dictionary setters.
+```
+
+---
+
+@daxpedda · 2024-04-01T07:20:30Z:
+Note to self: figure out how to remove this requirement.
+
+---
+
+@Davidster · 2024-04-01T17:03:36Z:
+I took a quick look at it, I only added extra-traits here for the impl of Eq on syn::Type. One approach could be to do the check on the witter type here: https://github.com/rustwasm/wasm-bindgen/blob/a9f06701c78c9623772fe3f1a3e2cf0d60241114/crates/webidl/src/lib.rs#L380 and then pass along a boolean `is_js_value_ref_option_type`.
+
+---
+
+@daxpedda · 2024-04-02T07:29:20Z:
+I think the point here is not supporting hyphens, but strings in general.
+It would also be good to mention that Web API bindings are going to be larger now.
+
+---
+
+@daxpedda · 2024-04-02T07:29:38Z:
+Please go ahead and do that then.
+
+---
+
+@Liamolucko · 2024-04-02T09:23:30Z:
+It might be better to spell this out directly instead:
+
+```suggestion
+            quote! { val.unwrap_or(&::wasm_bindgen::JsValue::NULL) }
+```
+
+I did a double-take when I first saw that because it looks like it's supposed to be `<&JsValue>::NULL`, which isn't valid.
+
+---
+
+@Davidster · 2024-04-02T22:56:09Z:
+Looking at the generated code for `#[wasm_bindgen(method, setter = js_attr)]` I'm realising I really don't understand how it works.. I was never able to find the generated JS code that calls the setter or assigns the value even when closely inspecting a dummy project that makes use of it. But it somehow magically works :shrug: 
+
+Anyways, I updated the changelog as requested
+
+---
+
+@Davidster · 2024-04-02T22:57:55Z:
+I found a way to do it (590b06a) by matching the idl type and replicating the logic from IdlType::to_syn_type but I don't love it.. it feels much less robust. It's your call though.
+
+---
+
+@Davidster · 2024-04-03T01:20:53Z:
+lol, nice catch, the fact that this code actually worked was a total accident
+
+---
+
+@daxpedda · 2024-04-03T06:30:56Z:
+This is pretty ugly indeed, but I think it's very important for a library like `wasm-bindgen` to reduce its dependency footprint.
+
+---
+
+@daxpedda · 2024-04-03T06:33:18Z:
+```suggestion
+* Generate JS bindings for WebIDL dictionary setters instead of using `Reflect`. This increases the size of the Web API bindings but should be more performant. Also, importing getters/setters from JS now supports specifying the JS attribute name as a string, e.g. `#[wasm_bindgen(method, setter = "x-cdm-codecs")]`.
+```
+
+=== ROW 19 | f001206 | https://github.com/mozilla/uniffi-rs/issues/2051 | 2024-03-27 | domain-subframes ===
+uniffi-rs 0.27 throw error with Constructor return type must be Arc<Self>
+
+---
+
+@SoloJiang · 2024-03-27T14:07:01Z:
+## Screenshot
+<img width="1135" alt="image" src="https://github.com/mozilla/uniffi-rs/assets/14757289/e74fab7e-532a-46a8-b121-46c239accd7a">
+
+It's compile successful with 0.26.1
+
+## Minial Case
+
+```rust
+#[derive(uniffi::Object)]
+pub struct Client {
+}
+
+#[uniffi::export]
+impl Client {
+    #[uniffi::constructor]
+    pub fn new() -> Self {
+      Self{}
+    }
+}
+```
+
+
+---
+
+@SoloJiang · 2024-03-27T14:20:44Z:
+I have tried use Arc<Self> instead of Self, it's error too.
+
+---
+
+@mhammond · 2024-03-27T14:36:11Z:
+You need `Arc<>` - see https://mozilla.github.io/uniffi-rs/proc_macro/index.html#the-uniffiexport-attribute and for a concrete example, see https://github.com/mozilla/uniffi-rs/blob/dddcf4f677ea9f455e0637c3fc8679a39f9a2ddb/fixtures/proc-macro/src/lib.rs#L88-L92. The `Arc<>` is not needed when declaring the object in UDL - is it possible you changed from udl to procmacros?
+
+---
+
+@SoloJiang · 2024-03-27T15:23:11Z:
+I'm using procmacros not udl file, the error occurred when used procmacros. In the docs, Arc<> and Self is either supported. Avoid the cause of Self usage, I tried Arc, however it was failed too.
+
+---
+
+@SoloJiang · 2024-03-27T15:23:53Z:
+But uniffi-rs v0.26.1 is ok with the same code
+
+---
+
+@mhammond · 2024-03-27T15:26:57Z:
+What's the exact error you get when using `Arc<Self>`?
+
+---
+
+@SoloJiang · 2024-03-27T15:32:32Z:
+The same error.
+
+---
+
+@SoloJiang · 2024-03-27T15:35:36Z:
+So it's my curiosity too, I have used Arc<Self>, but it told me - I should use return Arc<Self>
+
+---
+
+@mhammond · 2024-03-27T15:50:14Z:
+I suspect there might be something else going on then - are you quite sure you are generating the bindings with the new uniffi version? As I linked above, we have many tests in the repo for this, all of which work.
+
+---
+
+@SoloJiang · 2024-03-27T15:56:25Z:
+Okay I can post my example repo for u tomorrow, I'm in night currently😓
+
+---
+
+@SoloJiang · 2024-03-28T02:31:26Z:
+My repo: https://github.com/SoloJiang/uniffi-rs-constructor-return-type
+
+You can try `cargo swift package -p=ios`
+
+When you downgrade uniffi-rs version to 0.26.1, it will be successful.
+
+---
+
+@SoloJiang · 2024-03-28T02:39:10Z:
+<img width="1120" alt="image" src="https://github.com/mozilla/uniffi-rs/assets/14757289/bc9dcf06-7d25-4086-9810-208cd540eb16">
+
+
+---
+
+@mhammond · 2024-03-28T14:31:37Z:
+This would appear to be an interop issue with `cargo swift`?
+
+---
+
+@SoloJiang · 2024-03-28T15:13:33Z:
+Yes, I use cargo-swift to transform swift package now. May you think it's bug of cargo-swift? But the uniffi -rs older version is ok
+
+---
+
+@mhammond · 2024-03-28T15:28:20Z:
+I'm sorry but I've no idea if it is a bug in cargo-swift as I don't know anything about it. However, if your error message is saying "constructor must return an Arc<>" when it *is* returning an Arc<> then it seems like something we don't understand is going on. For us to take this further we probably need either a patch to our existing tests which demonstrate the problem, or a reproduction in another repo that uses UniFFI as documented.
+
+---
+
+@bendk · 2024-03-28T15:30:32Z:
+I believe this is supported and the only issue is the macro error is confusing.   I agree with @mhammond that this looks like an interop issue:
+  - We have a [fixture that tests this](https://github.com/mozilla/uniffi-rs/blob/5854aef638b52feec73bdd0936eb28ab8804a639/fixtures/proc-macro/src/lib.rs#L94-L100)
+  - If I check out your repo, `cargo build` succeeds it's only when I run `cargo swift` that I get errors.
+
+If I had to guess, it's related to one of the changes in how we store metadata in the `.dylib` file.  I'm have no clue how `cargo swift`  is affecting that though.
+
+---
+
+@SoloJiang · 2024-03-28T15:39:16Z:
+I know your meaning. I don't know much about ffi before it.So I will try custom gen swift package without use cargo-swift. If I find the bug of cargo-swift, I will take a pr to fix. Thanks.
+
+---
+
+@mhammond · 2024-03-28T15:49:35Z:
+Sorry for the confusion - as Ben points it, it *should* be possible to return plain `Self` - we still don't understand the root of your problem though, but adding the `Arc<>` wrapper should not be necessary.
+
+---
+
+@SoloJiang · 2024-03-28T15:53:29Z:
+Not worry about this, when I have time I will see cargo-swift logic. Now I believe it's not your fault.
+
+---
+
+@mhammond · 2024-03-29T00:37:59Z:
+We'd be happy adding some optional tests using cargo-swift.
+
+---
+
+@SoloJiang · 2024-03-30T14:39:46Z:
+Alright this is cargo-swift compatible problem. https://github.com/antoniusnaumann/cargo-swift/commit/f8535b9e3d8568bc0732f407b8f643070049a5d1
+
+=== ROW 20 | f001246 | https://neon.com/blog/neon-developer-days-1-6-8-december-2022 | 2024-04-03 | domain-subframes ===
+Neon Developer Days 1: 6-8 December 2022 - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Company
+Neon Developer Days 1: 6-8 December 2022
+Join us virtually to build better with Serverless Postgres
+Raouf Chebri–Senior Developer AdvocateNov 18, 2022
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+In June 2022, we presented Neon as a fully managed Serverless Postgres built for the cloud. Since then, we have worked closely with the Postgres and developer communities to help address common challenges in building modern applications.
+We want to continue that partnership with the community and share some exciting things we have been working on.
+This is why we are excited to announce the first-ever Neon Developer Days, which will take place from the 6th to the 8th of December, 2022.
+Register now.
+Join us virtually to learn about Neon and how you can build better with Serverless Postgres.
+See you there!
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 21 | f001365 | https://github.com/loco-rs/loco/issues/561 | 2024-04-30 | domain-subframes ===
+Add RequestContext, and support request-scoped sessions
+
+---
+
+@jondot · 2024-04-30T12:49:57Z:
+We currently have not custom requestcontext, on which we can push a concept of a session.
+We currently are doing this kind of context by:
+
+* custom middlewares (e.g. the etag middleware)
+* custom data for ad-hoc usage (e.g. the request ID for logging)
+
+We want to let the user configure a persisted session (based on cookies or otherwise), and be able to store request-specific data on a per-request basis which forms the concept of a **request context** (we currently only provide an app context).
+
+Usage can be extractor based such as:
+
+```
+fn handler(ctx: AppContext, req: RequestContext) { 
+//req.session
+//req.id
+}
+```
+
+this opens up some tricky ergonomic questions such as:
+
+* should the currently authenticated user be part of `req.current_user`? (current answer: NO, because it has its own extractor, and this  is more axum-like
+* should we NOT build a request context, and go with a specific extractor for everything (e.g. `Session` extractor for getting a session) (current answer: maybe, but what about when we want to access a current request id?, is it important?)
+
+Moving forward:
+
+- [ ] integrate tower_session fully, and experience a per-request session store on cookies, see if the ergonomics are good enough to NOT require a request context at all. drive this all the way to configuration\
+- [ ] depending on previous experiment, maybe also implement a requestcontext as a generally available facility, which embeds sessions
+
+
+---
+
+@yinho999 · 2024-05-23T23:33:42Z:
+@jondot Would you mind assigning this ticket to me, please? I would like to give it a try
+
+---
+
+@jondot · 2024-05-24T06:14:14Z:
+@yinho999 I'll be happy to. let's start with some draft of how the API will work?
+
+---
+
+@yinho999 · 2024-05-24T10:56:00Z:
+@jondot I will provide a draft example with tower sessions to see how loco and tower sessions work together before working on the second task. 
+
+---
+
+@yinho999 · 2024-06-01T22:56:21Z:
+Hi @jondot,
+
+Sorry for the late response. I crafted a simple [Request Context](https://github.com/yinho999/loco-playground/blob/request-context/src/middleware/request_context.rs) example that contains the request ID and session in Axum, which we can easily migrate to Loco.
+
+I found that creating and persisting the same request ID through the request and tracing middleware is a bit of a hassle. Here is my approach:
+
+I extracted the [ID creation](https://github.com/yinho999/loco-playground/blob/request-context/src/middleware/request_id.rs) from the [tracing middleware](https://github.com/yinho999/loco-playground/blob/request-context/src/middleware/tracing.rs)(similar to loco's) into a standalone middleware. This is because tracing middleware is self-encapsulated, and I don't think it is possible to extend the request with an ID within it.
+
+What do you think about this approach? If there is a better way, please let me know. :+1: 
+
+[Draft Code](https://github.com/yinho999/loco-playground/blob/request-context/src/bin/main.rs)
+
+---
+
+@jondot · 2024-06-04T08:27:33Z:
+I think it's fantastic!
+the ergonomics look great. we can proceed with this, definitely.
+
+A few pointers to think about:
+
+### Name of the context
+
+We need to think about something short, but that differentiate itself from `ctx` which is app context. maybe `req` ?
+
+`foo_handle(context: RequestContext) -> { .. }`
+`foo_handle(req: RequestContext) -> { .. }`
+
+### Configuring a store
+This may be a big deal. Because if I remember correctly, in Rails, cookies are default. This is a very brave default to force on users. However if Rails does it -- I'm OK with doing exactly the same. I'm also pretty sure that we need some kind of secret in order to sign sessions, so this needs to come from configuration. Also, in Rails, initially they set a default cookie secret -- but that presented itself as a security flaw, then they moved into giving NO secret at all (one of the first steps you need to do is generate your own unique secret).
+
+I would summarize:
+
+  * Use default of cookie store for sessions. As per Loco's and Rust high configurability -- offer a section to easily switch providers (e.g. in memory or others).
+  * When using cookie store, we need to use an app-specific secret, which is generated per app, _no default_
+
+### Flash, Session, etc.
+Rails provides a "convenience" hashes in the session:
+
+* [Flash](https://api.rubyonrails.org/classes/ActionDispatch/Flash.html) - I believe this builds on top of a session, but has some kind of middleware to clear out -- it is something that lives only between actions. **this may be too complex to do in Rust and Axum, so if too complicated, we can skip it**
+* A normal session store that looks like a hash and is permanent e.g. `session["foobar"] = 3`, which I believe you already demonstrated
+
+### Store vs Cookies
+Note that Rails provides:
+
+* Session: which can be backed by almost anything: inmemory, database, **including on a cookie**
+* Cookie store: which stores information on user cookies
+
+These two are _different things_, and can be implemented separately.
+
+If you configure sessions to be stored on cookies -- you will have a single cookie on the user containing the data in addition to any other "custom" cookies a user set with the separate non-session cookie store. For the unique session store single cookie we need to pick a unique **app-specific** cookie ID (e.g. `__loco_myapp_session`)
+
+-----
+If in doubt, always good to read how Rails does it: https://guides.rubyonrails.org/action_controller_overview.html#session 
+Fantastic work, this should be exciting to see in Loco!
+
+
+
+
+
+
+
+
+---
+
+@yinho999 · 2024-06-04T19:06:26Z:
+> I think it's fantastic!
+> the ergonomics look great. we can proceed with this, definitely.
+> 
+> A few pointers to think about:
+> 
+> ### Name of the context
+> 
+> We need to think about something short, but that differentiate itself from `ctx` which is app context. maybe `req` ?
+> 
+> `foo_handle(context: RequestContext) -> { .. }`
+> `foo_handle(req: RequestContext) -> { .. }`
+> 
+> ### Configuring a store
+> This may be a big deal. Because if I remember correctly, in Rails, cookies are default. This is a very brave default to force on users. However if Rails does it -- I'm OK with doing exactly the same. I'm also pretty sure that we need some kind of secret in order to sign sessions, so this needs to come from configuration. Also, in Rails, initially they set a default cookie secret -- but that presented itself as a security flaw, then they moved into giving NO secret at all (one of the first steps you need to do is generate your own unique secret).
+> 
+> I would summarize:
+> 
+>   * Use default of cookie store for sessions. As per Loco's and Rust high configurability -- offer a section to easily switch providers (e.g. in memory or others).
+>   * When using cookie store, we need to use an app-specific secret, which is generated per app, _no default_
+> 
+> ### Flash, Session, etc.
+> Rails provides a "convenience" hashes in the session:
+> 
+> * [Flash](https://api.rubyonrails.org/classes/ActionDispatch/Flash.html) - I believe this builds on top of a session, but has some kind of middleware to clear out -- it is something that lives only between actions. **this may be too complex to do in Rust and Axum, so if too complicated, we can skip it**
+> * A normal session store that looks like a hash and is permanent e.g. `session["foobar"] = 3`, which I believe you already demonstrated
+> 
+> ### Store vs Cookies
+> Note that Rails provides:
+> 
+> * Session: which can be backed by almost anything: inmemory, database, **including on a cookie**
+> * Cookie store: which stores information on user cookies
+> 
+> These two are _different things_, and can be implemented separately.
+> 
+> If you configure sessions to be stored on cookies -- you will have a single cookie on the user containing the data in addition to any other "custom" cookies a user set with the separate non-session cookie store. For the unique session store single cookie we need to pick a unique **app-specific** cookie ID (e.g. `__loco_myapp_session`)
+> 
+> -----
+> If in doubt, always good to read how Rails does it: https://guides.rubyonrails.org/action_controller_overview.html#session 
+> Fantastic work, this should be exciting to see in Loco!
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+Thanks for providing such detailed guidance and feedback! I am going to dive deep and study Ruby sessions and cookies. Just to mention, `PrivateCookieJar` might be a good fit for the cookie store based on the description.
+
+---
+
+@yinho999 · 2024-06-18T20:23:35Z:
+@jondot Sorry for the late reply, I was unavailable last week due to illness. I was exploring the cookie section of [`tower-sessions`](https://docs.rs/tower-sessions/latest/tower_sessions/#secure-nature-of-cookies) and discovered that it stores only the session identifier within the cookie, not the data, due to security concerns.
+
+Currently, I am considering recreating a session using `PrivateCookieJar` as the default method. We can swap it out for `tower-sessions` when the user selects a different store/backend. How does that sound?
+
+---
+
+@jondot · 2024-06-24T06:14:39Z:
+No worries.
+My take on it, is that `tower-sessions` are right. storing data in the cookie over insecure channel is a risk.
+
+The way to mitigate it is:
+
+1. Run SSL in production
+2. Encrypt + sign cookies
+
+And this is the default in rails, they store inside the cookie by default but include encryption+signing: [https://guides.rubyonrails.org/security.html#session-storage](https://guides.rubyonrails.org/security.html#session-storage). Rails does admit that this is *something to argue about* but it is the default.
+
+I believe we should do the same by _starting with storing inside the cookie_ both encrypted and signed, having that `tower-sessions` allows to switch session stores, it will allow users to switch store seamlessly, exactly like Rails.
+
+
+---
+
+@schungx · 2024-06-24T06:50:58Z:
+One problem with storing session data on the client is that there is no way to force-invalidate a session, or to change permissions on the fly.  What effort you save by having data stored on the client is negated by rigid inflexibility...
+
+
+---
+
+@jondot · 2024-06-24T06:58:22Z:
+yes, that's completely true.
+lets draw it into a story:
+
+1. A loco developer starts out, generates a new app, uses the relevant defaults. they don't need to address any special session store, they get a cookie store by default, *this is in development*. so as little friction as possible
+2. The developer keeps building out their app, using the API for session store as needed. At this point they build the app and don't care about the mechanics of session or session store
+3. They now want to put their app to production. Our production YAML contains no defaults, and so, they will need to pick a _secure, best practice configuration_ for every aspect of their app. In this case, they should pick a database-backed session store (`tower-session` supports 7-8 providers), and this should be as transparent as possible (say, they have a live Redis instance in prod, so they switch provider via configuration and only provide the Redis connection URL).
+
+In step (3) the friction rises to the sky. But in steps (1), (2) it is smooth sailing and the best DX possible.
+What we can do as framework builders is make sure step (3) ("putting an app to production") is as automated and as easy as possible -- but still being a very mindful step, where a user should know exactly what configuration values they pick and how it affect security and performance.
+This can be done via documentation, or tooling, or both, and is definitely worth investing in -- but can also be separated into a different step for the evolution of Loco
+
+---
+
+@schungx · 2024-06-24T09:35:07Z:
+IMHO, security is something that you either need it, or you don't.  There are very few in-between where you need _some_ security without much control.  Most of the time those would be massive public API's where you don't really care much if they are used a bit more than you want.
+
+So starting out with a simplistic view of security (meaning "not much") then progressing to production, a dev is suddenly faced with the horror that he hasn't thought out the important issues -- such as what permissions are there, where to set them, who can set them, where/how to set them (is there even a UI?), what to do when they are revoked, and what to do with malicious intent.  And to do that without affecting much of the smooth UI that worked great when all those things were not a concern,  Most of the time that means slapping on something that is held together by duck tape in the interest of time, because the friction in step (3) is insurmountable.
+
+My suggestion to Loco is that it does it _right_ from the beginning, with all the necessary features of a real production system.  In Steps 1 and 2, simply omit the need for a store by saving the data on the client, but give a coherent API as if those things are actually persisted.  Thus, in the end when the dev moves into production (step 3), he simply turns on a flag (`session_store: true`) and it magically "Just Works".
+
+
+---
+
+@jondot · 2024-06-24T09:46:17Z:
+I agree about the security part, just also taking into account that using an encrypted and signed cookie store is not *insecure*, it is an option.
+
+Looking at Rails argument for picking a default cookie store that is both encrypted and signed:
+
+> Rails CookieStore saves the session hash in a cookie on the client-side. The server retrieves the session hash from the cookie and eliminates the need for a session ID. That will greatly increase the speed of the application, but it is a controversial storage option and you have to think about the security implications and storage limitations of it:
+> 
+> Cookies have a size limit of 4 kB. Use cookies only for data which is relevant for the session.
+> 
+> Cookies are stored on the client-side. The client may preserve cookie contents even for expired cookies. The client may copy cookies to other machines. Avoid storing sensitive data in cookies.
+> 
+> Cookies are temporary by nature. The server can set expiration time for the cookie, but the client may delete the cookie and its contents before that. Persist all data that is of more permanent nature on the server side.
+> 
+> Session cookies do not invalidate themselves and can be maliciously reused. It may be a good idea to have your application invalidate old session cookies using a stored timestamp.
+> 
+> Rails encrypts cookies by default. The client cannot read or edit the contents of the cookie, without breaking encryption. If you take appropriate care of your secrets, you can consider your cookies to be generally secured.
+> 
+> The CookieStore uses the [encrypted](https://api.rubyonrails.org/v7.1.3.4/classes/ActionDispatch/Cookies/ChainedCookieJars.html#method-i-encrypted) cookie jar to provide a secure, encrypted location to store session data. Cookie-based sessions thus provide both integrity as well as confidentiality to their contents. The encryption key, as well as the verification key used for [signed](https://api.rubyonrails.org/v7.1.3.4/classes/ActionDispatch/Cookies/ChainedCookieJars.html#method-i-signed) cookies, is derived from the secret_key_base configuration value.
+
+---
+
+@schungx · 2024-06-24T09:58:01Z:
+> I agree about the security part, just also taking into account that using an encrypted and signed cookie store is not _insecure_, it is an option.
+
+Totally agree.  My suggestion is that, if it is an option, it should (as you said) have a clear automated way to convert into a "proper" production-ready scheme.
+
+And that means that the dev should start dealing with the intricacies of proper security setup from day 1, even if he opts into use the cookie store option.  By doing this, when moving into production no code needs to change when the permissions get relocated from client-side to the server.
+
+That means, even for the cookie store option, Loco should have a standard set of API that works with permissions and updates the cookies (instead of updating the server store), leaving the dev with identical behavior regardless of the setup.
+
+---
+
+@schungx · 2024-06-24T10:00:17Z:
+For example, a simple permissions API can work with a cookie store by queuing changes and resetting the cookie during the next request.  Of course, after moving into a production sessions store, then it can simply update the store.  The user sees no difference.
+
+---
+
+@jondot · 2024-06-24T10:33:53Z:
+Yes, I think if we want, we could impose that cookie store cannot be used in release or in prod scenarios (easy to do), and by this way, to educate and force security-by-design. That seems like a good idea.
+
+---
+
+@schungx · 2024-06-24T10:48:12Z:
+Yes, the user will complain, but he/she will know later on that it is literally a life-saver.
+
+---
+
+@yinho999 · 2024-06-24T11:28:24Z:
+> Yes, I think if we want, we could impose that cookie store cannot be used in release or in prod scenarios (easy to do), and by this way, to educate and force security-by-design. That seems like a good idea.
+
+That is a great idea, I will start working on this.
+
+---
+
+@schungx · 2024-06-24T12:19:05Z:
+I always wonder whether we can make it more automatic to configure permissions:
+
+```rust
+pub async fn patch_one(
+    Path(id): Path<i32>,
+    session: Session,
+    State(ctx): State<AppContext>,
+    Json(params): Json<PatchParams>,
+) -> Result<Json<Model>> {
+    // Must be allowed to update Entity with id
+    // Similar to Rails' can? :read, item
+    session.can:::<Entity>(UPDATE, id)?;
+
+    // or...
+    let Json(item) = load_item(id, &ctx.db).await?;
+    session.can(UPDATE, item)?;
+
+    if let Some(foo) = params.foo {
+        // Check if the user has authority to update a particular field
+        session.can::<Entity>(UPDATE_FIELD id, "foo")?;
+    }
+    ...
+}
+```
+
+
+---
+
+@Kashuab · 2025-04-02T04:48:39Z:
+Any updates here? Encrypted cookies seems like a no-brainer for quick user auth. I just want to store `user_id: 12345` in an encrypted cookie when the user logs in, so I can remember who they are and that my app authenticated them. Is this not considered a viable solution in a production environment?
+
+I'm building a MPA with HTMX, I'm not really sure how else to implement this. It's not like I can inject an authorization header when someone clicks an anchor tag haha.
+
+---
+
+Anyway -- I'm excited about Loco! I have some experience maintaining production Rails apps and was puzzled that Loco doesn't have documentation on how to handle sessions. I tried adding a `PrivateCookieJar` extractor that `axum_extra` provides, but things started to fall apart in regards to attaching some sort of `AppState` (you can't call `.with_state(...)` on a `Routes` object)
+
+Admittedly, building a web service probably isn't the best introduction to Rust. Maybe my confusion doesn't warrant any action, but I felt I'd be doing a disservice by not mentioning anything in this regard 😄 
+
+---
+
+@yinho999 · 2025-04-02T04:59:56Z:
+> Any updates here? Encrypted cookies seems like a no-brainer for quick user auth. I just want to store `user_id: 12345` in an encrypted cookie when the user logs in, so I can remember who they are and that my app authenticated them. Is this not considered a viable solution in a production environment?
+> 
+> I'm building a MPA with HTMX, I'm not really sure how else to implement this. It's not like I can inject an authorization header when someone clicks an anchor tag haha.
+> 
+> ---
+> 
+> Anyway -- I'm excited about Loco! I have some experience maintaining production Rails apps and was puzzled that Loco doesn't have documentation on how to handle sessions. I tried adding a `PrivateCookieJar` extractor that `axum_extra` provides, but things started to fall apart in regards to attaching some sort of `AppState` (you can't call `.with_state(...)` on a `Routes` object)
+> 
+> Admittedly, building a web service probably isn't the best introduction to Rust. Maybe my confusion doesn't warrant any action, but I felt I'd be doing a disservice by not mentioning anything in this regard 😄 
+
+I had created a PR with the tower session functionality implemented and fully tested. 
+
+However the PR has been rejected by the core team members recently.
+
+Also the encrypted cookie is not a good practice in production environment since it can cause reply attacks and other vulnerabilities. Storing sensitive data on the server side is always a better idea.
+
+In the meantime, JWT token is always an option to do authentication.
+
+---
+
+@Kashuab · 2025-04-02T05:45:34Z:
+> I had created a PR with the tower session functionality implemented and fully tested.
+> 
+> However the PR has been rejected by the core team members recently.
+
+That was a lot of work you put in to be dismissed without providing a reason! I hope the maintainers get back to you and this effort can move forward.
+
+JWTs don't seem much different than what I had in mind. I'd still be essentially storing a signed user ID in a cookie, unless my understanding is naive. Though I do understand the JWT would have expiration checks out of box.
+
+---
+
+Edit: I feel a little silly. I don't think what I was after had much to do with this issue. I found the documentation that describes how to point the `auth::JWT` extractor to read from a cookie instead of a header. Apologies for the confusion here.
+
+=== ROW 22 | f001392 | https://github.com/ratatui/ratatui/pull/1089 | 2024-05-06 | domain-subframes ===
+fix: unicode truncation bug
+
+---
+
+@joshka · 2024-05-06T07:28:19Z:
+- Rewrote the line / span rendering code to take into account how multi-byte / wide emoji characters are truncated when rendering into areas that cannot accommodate them in the available space
+- Added comprehensive coverage over the edge cases
+- Adds a benchmark to ensure perf
+
+Fixes: https://github.com/ratatui-org/ratatui/issues/1032
+
+
+
+---
+
+@joshka · 2024-05-06T07:57:59Z:
+I'd suggest that for this PR it's probably worth:
+- fixing up any obvious simplifications / problems I've missed
+- disabling the broken tests (unless there's a really obvious test fix for the right alignment one)
+- merging this and making a 0.26.3 release pretty soon.
+- If there's an easy and obvious way that `unicode-truncate` helps simplify this, then we should consider that
+
+Note this stems from https://github.com/ratatui-org/ratatui/pull/1082 credit goes to @EdJoPaTo for making it easier to see a way to make a fix for this.
+
+Side note: there's also a [truncate](https://crates.io/crates/truncate) crate, which does various unicode split_at things, but it uses `unicode-segmentation` instead of `unicode-width` for calculating positions - there's some subtle incompatibilities with the approaches. The ideas / methods might be useful to consider for unicode-truncate however.
+
+---
+
+@EdJoPaTo · 2024-05-06T08:06:52Z:
+> Side note: there's also a [truncate](https://crates.io/crates/truncate) crate, which does various unicode split_at things, but it uses `unicode-segmentation` instead of `unicode-width` for calculating positions - there's some subtle incompatibilities with the approaches. The ideas / methods might be useful to consider for unicode-truncate however.
+
+I also suggested unicode-segmentation for unicode-truncation as it currently rips apart stuff that belongs together like Emoji combinations (Flags for example): https://github.com/Aetf/unicode-truncate/pull/11
+
+---
+
+@joshka · 2024-05-06T08:17:46Z:
+> > Side note: there's also a [truncate](https://crates.io/crates/truncate) crate, which does various unicode split_at things, but it uses `unicode-segmentation` instead of `unicode-width` for calculating positions - there's some subtle incompatibilities with the approaches. The ideas / methods might be useful to consider for unicode-truncate however.
+> 
+> I also suggested unicode-segmentation for unicode-truncation as it currently rips apart stuff that belongs together like Emoji combinations (Flags for example): [Aetf/unicode-truncate#11](https://github.com/Aetf/unicode-truncate/pull/11)
+
+There's an **EXTREMELY** lengthy debate on to use / not use segmentation in https://github.com/ratatui-org/ratatui/issues/75 (ratatui's longest open issue). I don't know which side of that debate has more merit, and it's likely that using unicode-segmentation within the truncation crate would break things in other ways for many terminals / use cases.
+
+---
+
+@joshka · 2024-05-06T09:09:14Z:
+> There's an **EXTREMELY** lengthy debate on to use / not use segmentation in #75 (ratatui's longest open issue). I don't know which side of that debate has more merit, and it's likely that using unicode-segmentation within the truncation crate would break things in other ways for many terminals / use cases.
+
+Also, I forgot that we do use segmentation when doing grapheme splitting, so maybe that is the right abstraction. I'm unsure how exactly to test an edge case on this one without delving a vast amount more into unicode than I want to right now.
+
+---
+
+@codecov[bot] · 2024-05-06T23:07:28Z:
+## [Codecov](https://app.codecov.io/gh/ratatui-org/ratatui/pull/1089?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=ratatui-org) Report
+All modified and coverable lines are covered by tests :white_check_mark:
+> Project coverage is 94.1%. Comparing base [(`aa4260f`)](https://app.codecov.io/gh/ratatui-org/ratatui/commit/aa4260f92c869ed77123fab700f9f20b059bbe07?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=ratatui-org) to head [(`d415fe9`)](https://app.codecov.io/gh/ratatui-org/ratatui/pull/1089?dropdown=coverage&src=pr&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=ratatui-org).
+> Report is 1 commits behind head on main.
+
+
+<details><summary>Additional details and impacted files</summary>
+
+
+```diff
+@@          Coverage Diff          @@
+##            main   #1089   +/-   ##
+=====================================
+  Coverage   94.1%   94.1%           
+=====================================
+  Files         61      61           
+  Lines      14619   14664   +45     
+=====================================
++ Hits       13764   13809   +45     
+  Misses       855     855           
+```
+
+
+
+</details>
+
+[:umbrella: View full report in Codecov by Sentry](https://app.codecov.io/gh/ratatui-org/ratatui/pull/1089?dropdown=coverage&src=pr&el=continue&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=ratatui-org).   
+:loudspeaker: Have feedback on the report? [Share it here](https://about.codecov.io/codecov-pr-comment-feedback/?utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=ratatui-org).
+
+
+---
+
+@joshka · 2024-05-06T23:10:00Z:
+I've updated the tests so that the document the current behavior even if it's wrong (as noted in the first post).
+This is better than panicking, so I'd suggest merge, release, and keep a bug open to fix the more minor issue.
+
+
+---
+
+@kdheepak · 2024-05-07T04:47:32Z:
+The code is very readable and merging this even with bugs is good to me! I like that there are tests that capture the behavior. 
+
+I don't quite understand why this works (haven't had a lot of time to go through it in detail). Maybe the PR description can have a high level description of why this works? 
+
+Unrelated to this PR but it would nice to collect links to resources on the developer guide sector of website about Unicode that for uninitiated potential contributors to read.
+
+---
+
+@joshka · 2024-05-07T05:28:27Z:
+> I don't quite understand why this works (haven't had a lot of time to go through it in detail). Maybe the PR description can have a high level description of why this works?
+
+Added an algorithm comment to help in the code
+
+---
+
+@EdJoPaTo · 2024-05-07T11:31:35Z:
+Added heavily inspired by unicode-truncate code to find the index in order to get the starting index. This allows for taking a reference rather than cloning into an ever-more-allocating String.
+
+I think this would be a great addition for unicode-truncate especially with all the related test cases specific for this.
+
+Some test cases expect `" c"` with a space in the beginning where the multi width Unicode was.
+This requires padding → Owned data → has a bigger performance impact. But it's something for step 2, ideally even solved within unicode-truncate too.
+
+(Mentioning @Aetf here as they might be interested in this discussion)
+
+Did not remove the split_at method which obviously annoys the CI.
+
+Benchmark after the change. (Results on a Raspberry Pi 3 are similar while taking ~10 times the time)
+
+```plaintext
+line_render/0           time:   [82.312 ns 82.321 ns 82.329 ns]
+                        change: [-13.630% -13.444% -13.279%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 148 outliers among 1000 measurements (14.80%)
+  100 (10.00%) low severe
+  3 (0.30%) low mild
+  16 (1.60%) high mild
+  29 (2.90%) high severe
+line_render/3           time:   [179.75 ns 179.88 ns 180.00 ns]
+                        change: [-26.027% -25.958% -25.891%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 1000 measurements (0.40%)
+  3 (0.30%) high mild
+  1 (0.10%) high severe
+line_render/4           time:   [202.37 ns 202.48 ns 202.60 ns]
+                        change: [-24.577% -24.503% -24.432%] (p = 0.00 < 0.05)
+                        Performance has improved.
+line_render/6           time:   [262.62 ns 262.75 ns 262.88 ns]
+                        change: [-20.892% -20.719% -20.522%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 1000 measurements (0.50%)
+  3 (0.30%) high mild
+  2 (0.20%) high severe
+line_render/7           time:   [281.92 ns 282.05 ns 282.20 ns]
+                        change: [-20.378% -20.302% -20.212%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 25 outliers among 1000 measurements (2.50%)
+  19 (1.90%) high mild
+  6 (0.60%) high severe
+line_render/10          time:   [359.13 ns 359.72 ns 360.49 ns]
+                        change: [-13.931% -13.808% -13.652%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 32 outliers among 1000 measurements (3.20%)
+  20 (2.00%) low mild
+  5 (0.50%) high mild
+  7 (0.70%) high severe
+line_render/42          time:   [518.82 ns 518.92 ns 519.03 ns]
+                        change: [-1.9234% -1.8597% -1.7990%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 1000 measurements (0.60%)
+  1 (0.10%) low mild
+  1 (0.10%) high mild
+  4 (0.40%) high severe
+```
+
+---
+
+@EdJoPaTo · 2024-05-07T11:39:52Z:
+> Some test cases expect `" c"` with a space in the beginning where the multi width Unicode was.
+> This requires padding → Owned data → has a bigger performance impact. But it's something for step 2, ideally even solved within unicode-truncate too.
+
+Oh… it actually doesn't in our use case as we can just increase the `x += n` and continue render further right (`Buffer::set_stringn` does something similar).
+
+---
+
+@EdJoPaTo · 2024-05-07T13:55:01Z:
+> I think there might be some general assumed area.x == 0 in here due to code that uses the span_offset. This works for the tests if the line is rendered at x=0 but i think it might break when that's not the case (for the partial rendered span part of the line at least).
+
+Yeah, this fails currently: 0a55e7618d2422377fe5b3704a81bbdb06a26c00
+
+---
+
+@joshka · 2024-05-09T00:37:18Z:
+All tests passing (and corrected so that the edge cases seem like they're the right result)
+E.g. right aligned text that does not have enough space to render the first emoji will not overwrite any first character(s) in that position.
+
+I think this is probably good to go now.
+
+Also removed the split_at / skip functions from span. We should consider adding those later as a separate PR in a tested, documented, public manner.
+
+---
+
+@joshka · 2024-05-09T09:55:55Z:
+There's another possible simplification (for future consideration on this) that teases apart the span selection and span rendering. Something like (pseudo code):
+
+```
+fn render_ref(...) {
+  for span in self.visible_spans(...) {
+    span.render_ref(area, buf)
+    let area = area.indent(span.width())
+    if area.is_empty() { break }
+  }
+}
+
+fn visible_spans(...) -> Iterator<&Span> {
+  skip non-visible spans
+  chain!(truncated first span, rest of spans)
+}
+```
+
+I experimented briefly with this, but I think it's only possible if visible_spans returns owned Spans instead of refs due to the truncation - it's worth another try (in a future PR).
+
+
+---
+
+@joshka · 2024-05-10T01:58:46Z:
+I'll wait on @EdJoPaTo's approval to merge this
+
+---
+
+@EdJoPaTo · 2024-05-10T10:12:06Z:
+Out of curiosity I enabled all pedantic and nursery lints for the affected files. They were annoyed about possible truncations and I found a bug with long lines because of that. Reason: When `.width() as u16` doesn't fit inside u16 this gets wrong. Doesn't panic so at least that's good. Adding a test case and fixing it.
+
+(Should probably continuing my journey of refactoring `ratatui` to enable more and more lints)
+
+---
+
+@EdJoPaTo · 2024-05-10T14:36:33Z:
+The logic is somewhat horribly complex as a lot of stuff isn't intuitive… The widths are usize and not u16 as the truncation of the end is implicitly done. That resulted in misunderstandings in what should happen. I don't think we can fully explain the code by comments. We need many tests to ensure it actually does what it is expected to do. Lines/Spans longer than u16 for example is a whole new mess which I haven't thought about before.
+
+Also, I refactored the code to iterator logic. I'm fine with reverting it. Benchmarks suggest it's similar in performance. But it might be even harder to follow what is going on?
+
+---
+
+@joshka · 2024-05-11T01:36:36Z:
+Some final tweaks:
+
+It's important to look the absolute magnitude of a perf gain, and not just the relative amount. On my M2 mac, removing the fast path costs ~30ns. For an app running at an absolutely absurd 1000FPS, the app would now run at 999.97 FPS. This isn't worth keeping the code to optimize.
+
+- Remove perf fast path for left aligned lines as the absolute perf diff
+  is negligible (30ns on an M2 Mac)
+- move the visible spans calculation to a method that returns an
+  iterator over the spans that are visible
+- replace truncation clippy lints with converions that clamp to u16::MAX
+- replace arithmetic_side_effects clippy lint with saturating_sub
+- remove debug_asserts
+- rewrite comments in the precise imperative mood ("when this, then that", rather than "if this then it's necessary / we only need to")
+
+---
+
+@joshka · 2024-05-11T02:47:17Z:
+I'd like to get this released (perhaps Monday if @orhun is up to it).
+
+Direct link to the current file as of the last commit: https://github.com/ratatui-org/ratatui/blob/43118c5494f5218332319a41eb742a51138d7e3c/src/text/line.rs#L555
+
+> It somewhat worries me that new test cases pop up and break stuff even when we thought we are done and only need documentation stuff. But it's way better than the current state of random panics.
+
+I'm not too worried - most text that's rendered in the context of a tui app isn't > u16::MAX, and when it is the resultant bug is easy to fix by pre-trimming the text instead of doing this in the rendering. (There's an actual bug in [turbo](https://github.com/vercel/turbo/issues/7843#issuecomment-2093439380) that is similar to this problem, but with `Rect::area`).
+
+> The logic is somewhat horribly complex as a lot of stuff isn't intuitive… The widths are usize and not u16 as the truncation of the end is implicitly done. That resulted in misunderstandings in what should happen. I don't think we can fully explain the code by comments. We need many tests to ensure it actually does what it is expected to do. Lines/Spans longer than u16 for example is a whole new mess which I haven't thought about before.
+
+The complexity of the implementation is now pretty much aligned with the inherent complexity of the problem, and it's documented well enough.
+
+> The approach of debug_asserts is somewhat I like here as it ensures that assumptions are actually true and documents these assertions in the process. And they only panic on debug, so production code will only be displaying stuff wrong, not panicking. Also, we have many test cases and users of ratatui will provide more when they run their stuff as dev builds.
+
+I replaced these with infallible code. I don't like debug_asserts at all, especially in a library. When you're wrong and they fail, you're slapping your user's users with a pain point which is hard to report, and which takes a release of both projects in order to fix.
+
+---
+
+@EdJoPaTo · 2024-05-11T09:13:41Z:
+> I'm not too worried - most text that's rendered in the context of a tui app isn't > u16::MAX, and when it is the resultant bug is easy to fix by pre-trimming the text instead of doing this in the rendering.
+
+I am not worried about the actual bug that came up. I am more worried that 3 people looked over it for days and missed yet another bug.
+
+> I replaced these with infallible code.
+
+What I liked about it were the assumptions actually tested. We wrote code with assumptions which are now hidden behind infallible code. But with all the tests, fine by me.
+
+> Remove perf fast path for left aligned lines as the absolute perf diff is negligible (30ns on an M2 Mac)
+
+I am not at all worried about way overpowered hardware. I know that `mqttui` is used on Raspberry Pi, personally I regularly use `mqttui` on Raspberry Pi 1.
+
+Line is one of the core constructs used by a lot of things. Relatively small improvements will impact a lot of code depending on it. So it's way more significant to improve the performance here. And also the `Alignment::Left` is the default for most things so it has the most impact.
+
+Even when it's not about lower power devices or hardware that is years old (My main device is ~9 years old now). It saves CPU cycles and therefore battery life.
+
+---
+
+@EdJoPaTo · 2024-05-11T09:51:00Z:
+To pick even more on the performance fast path of `Alignment::Left` on slower devices…
+
+Let's imagine a table rendered on a `100x100` terminal. Assume 5 columns and 90 rows. The table cell used `Text`, so many `Line`s. More cells vs. more lines per cells are probably irrelevant.
+
+`90 * 5` means 450 visible Cells to be rendered. The worst case time in the benchmark below is the Buffer wider than the Line width with `9.7 µs`. Let's assume `10 µs` for ease of calculation.
+`10 µs * 450 = 4.5 ms`. 60 FPS are `16.66 ms`. So we took 1/4 of that for the rendering of lines alone.
+
+And this is a Raspberry Pi 2 benchmark, I use `mqttui` on Raspberry Pi 1 regularly.
+
+Even an improvement of 12% is really good here already. The benchmark goes to a regression of 36%. So this is definitely significant. For the default of left alignment which is the most often used one.
+
+Benchmark on Raspberry Pi 2:
+
+```plaintext
+line_render/Left/3      time:   [2.7422 µs 2.7427 µs 2.7433 µs]
+                        change: [+34.945% +36.396% +37.329%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 68 outliers among 1000 measurements (6.80%)
+  48 (4.80%) high mild
+  20 (2.00%) high severe
+line_render/Left/4      time:   [2.9284 µs 2.9290 µs 2.9297 µs]
+                        change: [+33.260% +33.549% +33.885%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 23 outliers among 1000 measurements (2.30%)
+  13 (1.30%) high mild
+  10 (1.00%) high severe
+line_render/Left/6      time:   [4.7153 µs 4.7158 µs 4.7164 µs]
+                        change: [+23.409% +24.391% +24.993%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 63 outliers among 1000 measurements (6.30%)
+  30 (3.00%) high mild
+  33 (3.30%) high severe
+line_render/Left/7      time:   [4.9508 µs 4.9513 µs 4.9518 µs]
+                        change: [+23.962% +24.193% +24.427%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 44 outliers among 1000 measurements (4.40%)
+  24 (2.40%) high mild
+  20 (2.00%) high severe
+line_render/Left/10     time:   [7.0004 µs 7.0016 µs 7.0030 µs]
+                        change: [+16.254% +16.648% +16.980%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 46 outliers among 1000 measurements (4.60%)
+  21 (2.10%) high mild
+  25 (2.50%) high severe
+line_render/Left/42     time:   [9.7193 µs 9.7207 µs 9.7224 µs]
+                        change: [+12.279% +12.559% +12.887%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 131 outliers among 1000 measurements (13.10%)
+  57 (5.70%) low mild
+  35 (3.50%) high mild
+  39 (3.90%) high severe
+```
+
+Benchmark of Raspberry Pi 4: regression of 14.3 to 38.7%. Worst case takes `~2.03 µs`, so ~5 times faster than Pi 2.
+
+I will not benchmark this on Pi 1 as running the benchmarks on Pi 4 take ~10 min, on Pi 2 ~40 min. Pi 1 is single core in comparison to Pi 2 with 4 cores.
+
+---
+
+@joshka · 2024-05-12T02:26:37Z:
+> 10 µs * 450 = 4.5 ms. 60 FPS are 16.66 ms
+
+Let's look at the absolute magnitude of the change though: (10 * .125) = 1.25us per call
+
+1.25*450 = 0.563ms, so each frame now takes (16.667+0.563) = 17.23ms = 58 FPS. That's measurable sure, but rarely directly noticeable. Assuming a factor of 4 on the Pi 1, 18.92ms = 53 FPS.
+
+One thing I did note when removing the fast path was that the slow paths got slightly faster (1-4%), so the tradeoff is one that doesn't necessarily have a definitively good answer.
+
+For now, I'd like to keep it simplified, and keep this PR about fixing the bug and not trying to eek out all the performance of this. You've convinced me that there are some parts of this that matter to you, so let's continue the discussion about perf in an issue / forum topic if it's more a discussion.
+
+> Pi 1 is single core in comparison to Pi 2 with 4 cores.
+
+This raises an interesting point. I wonder (not for this PR), what parts of our rendering pipeline might be able to be done more in parallel.
+
+---
+
+@kdheepak · 2024-05-06T08:50:22Z:
+I _think_ this will cause issues with flag emojis:
+
+```
+[src/main.rs:43:5] s = "🇺🇸1234"
+[src/main.rs:44:5] s.len() = 12
+[src/main.rs:45:5] s.chars().count() = 6
+[src/main.rs:46:5] s.width() = 6
+[src/main.rs:47:5] s.graphemes(true).count() = 5
+```
+
+The crab's equivalent is the following:
+
+```
+[src/main.rs:34:5] s = "🦀1234"
+[src/main.rs:35:5] s.len() = 8
+[src/main.rs:36:5] s.chars().count() = 5
+[src/main.rs:37:5] s.width() = 6
+[src/main.rs:38:5] s.graphemes(true).count() = 5
+```
+
+The `s.chars().count()` is different for these. The issue in this case is that flags are represented by two unicode regional indicators, and in the current implementation the split might happen between the regional indicators, right?
+
+I haven't thought about it extensively but can we do something like this instead? 
+
+```suggestion 
+        for s in self.content.graphemes(true) {
+            for c in s.chars() {
+```
+      
+```
+
+---
+
+@kdheepak · 2024-05-06T08:57:11Z:
+Maybe it is fine? It'll get split like this:
+
+```
+[src/main.rs:50:9] c = '🇺'
+[src/main.rs:50:9] c = '🇸'
+```
+
+So it still won't panic.
+
+---
+
+@kdheepak · 2024-05-06T08:58:58Z:
+Oops, this is the same conversation that is happening on the main thread. Ignore these comments.
+
+---
+
+@joshka · 2024-05-06T09:03:37Z:
+```rust
+#[rstest]
+        #[case::flag_1(1, " ")]
+        #[case::flag_2(2, "🇺🇸")]
+        #[case::flag_3(3, "🇺🇸1")]
+        #[case::flag_4(4, "🇺🇸12")]
+        #[case::flag_5(5, "🇺🇸123")]
+        #[case::flag_6(6, "🇺🇸1234")]
+        #[case::flag_7(7, "🇺🇸1234 ")]
+        #[case::flag_8(8, "🇺🇸1234  ")]
+        #[case::flag_9(9, "🇺🇸1234   ")]
+        fn render_truncates_flag(#[case] buf_width: u16, #[case] expected: &str) {
+            let line = Line::from("🇺🇸1234");
+            let mut buf = Buffer::empty(Rect::new(0, 0, buf_width, 1));
+            line.render_ref(buf.area, &mut buf);
+            assert_buffer_eq!(buf, Buffer::with_lines([expected]));
+        }
+```
+passes
+
+---
+
+@kdheepak · 2024-05-06T09:47:04Z:
+Can you try `1234🇺🇸`?
+
+---
+
+@joshka · 2024-05-06T22:49:02Z:
+No difference
+```rust
+#[case::flag_1(1, "1")]
+        #[case::flag_2(2, "12")]
+        #[case::flag_3(3, "123")]
+        #[case::flag_4(4, "1234")]
+        #[case::flag_5(5, "1234 ")]
+        #[case::flag_6(6, "1234🇺🇸")]
+        #[case::flag_7(7, "1234🇺🇸 ")]
+        #[case::flag_8(8, "1234🇺🇸  ")]
+        #[case::flag_9(9, "1234🇺🇸   ")]
+```
+
+---
+
+@kdheepak · 2024-05-07T04:41:18Z:
+Is `x_offset` the byte offset into the string? and `span_offset` the offset in terminal width?
+
+---
+
+@kdheepak · 2024-05-07T04:43:45Z:
+I don't quite understand why we only render the right side when a `Span` is partially visible?
+
+---
+
+@joshka · 2024-05-07T04:54:13Z:
+The other way around - likely a better name would be `buffer_x_offset` perhaps?
+
+---
+
+@joshka · 2024-05-07T04:57:03Z:
+vec![Span::raw("Hello"), Span::raw("World")]
+width 4, alignment centered -> "lo" (right side of the first span that is past the offset) then "Wo"
+width 7, alignment right -> same
+
+---
+
+@joshka · 2024-05-07T05:22:49Z:
+Rect needs an easy way to increase the x value and decrease the width the same amount, but I'm not sure of a good name for it.
+
+Having that method would make for loops that have to be area constrained, but that write across horizontally easier to write, and the x_offset parameter would then go away and be already part of the area passed into the function.
+
+Something like 
+```rust
+area.indent_x(span_width);
+```
+
+---
+
+@EdJoPaTo · 2024-05-07T08:39:00Z:
+When first reading this I thought "oh, the span is visible, so it should be >=?"
+Inverting the `if` might clarify this: `fully_visible = span_offset == 0` → else only partial.
+
+---
+
+@EdJoPaTo · 2024-05-07T08:40:36Z:
+```suggestion
+            // render the partially visible span starting at the offset -> right side
+```
+
+---
+
+@EdJoPaTo · 2024-05-07T08:44:16Z:
+I think this might be a good overgeneralization example. We only need the right side here, but a bunch of stuff is done for the left side too.
+This will be called every time a Line or Text is rendered and should not do stuff that's not important here. Maybe its optimized away by the compiler again, but why overcomplicate the code which is not needed in the first place?
+
+---
+
+@EdJoPaTo · 2024-05-07T08:46:56Z:
+Using iterators or `with_capacity` will improve performance. `push` in a loop will create a bunch of allocs which can be prevented with knowing accurate or best effort width. Iterators also allow for a similar optimization without needing to write that.
+
+---
+
+@joshka · 2024-05-07T08:59:30Z:
+I prefer this direction for clarity as it any partial rendered span comes before all the fully rendered ones. Top to bottom reading order aligns with encounter order of spans.
+
+---
+
+@joshka · 2024-05-07T09:00:45Z:
+Mainly because there's a bug that's affecting users. This is a known good state that passes (most) tests from which we can definitely optimize / rewrite. Happy for this to be ripped out entirely if there's a simpler more obvious way to approach this. My constraints were working code, and it looks like it does the right thing.
+
+---
+
+@joshka · 2024-05-07T09:04:28Z:
+If there's an obvious fix that can be made which keeps this simple and obvious, and passes the tests please make it. (Especially if you can show there's a perf impact that is fixed with a quick benchmark).
+
+---
+
+@EdJoPaTo · 2024-05-07T09:04:33Z:
+Then improve the variable name to make this more clear
+```suggestion
+        let span_is_only_partially_visible = span_offset > 0;
+        if span_is_only_partially_visible {
+```
+
+---
+
+@joshka · 2024-05-07T09:06:58Z:
+Actually, I'll change this on second thoughts.
+
+---
+
+@joshka · 2024-05-07T09:13:32Z:
+Actually - I don't like the clippy lint that occurs here (or the allow that it necessitates) - it requires flipping the if / else blocks.
+
+---
+
+@joshka · 2024-05-07T09:20:03Z:
+Suggestion applied.
+
+---
+
+@joshka · 2024-05-07T11:54:24Z:
+Would special casing byte_index == 0 to return self instead of creating a new span help the perf here?
+
+---
+
+@joshka · 2024-05-07T11:54:32Z:
+I think this might filter out ANSI codes which currently pass through semi-scathed, is this a necessary part of the method, or a nice to have?
+
+See https://github.com/ratatui-org/ratatui/issues/1028#issuecomment-2078300439 for some kinda hacky code that might trigger the problem.
+
+(Put another way, I think this might make already broken code break a bit differently)
+
+---
+
+@joshka · 2024-05-07T11:58:01Z:
+Great idea. I like it. I wonder if scanning right to left on this could be a solution to solving the noted unit test bugs (by altering how the truncation is calculated)?
+
+---
+
+@joshka · 2024-05-07T12:02:26Z:
+```suggestion
+        // unwrap is safe as it comes from char_indices
+```
+
+---
+
+@joshka · 2024-05-07T12:07:46Z:
+https://github.com/ratatui-org/ratatui/pull/1089/commits/d64f785e8705f7da37f9d392746a914086ea7093
+
+---
+
+@joshka · 2024-05-07T12:07:54Z:
+https://github.com/ratatui-org/ratatui/pull/1089/commits/d64f785e8705f7da37f9d392746a914086ea7093
+
+---
+
+@EdJoPaTo · 2024-05-07T13:04:25Z:
+No it cant as the important part missing is the resulting width and the difference between the wanted and the actual width of the trimmed result.
+Solved that with b4c2930ea67a1ad0a2258f0248c38202cab16f17
+
+---
+
+@EdJoPaTo · 2024-05-07T13:11:33Z:
+ANSI codes shouldn't be relevant here as the Span has its own style. Also, ANSI escape sequences are interpreted as characters and not as escape sequences (screenshot of mqttui). So I don't think this changes behavior.
+
+But… in the end… add test cases for everything I guess?
+
+![image](https://github.com/ratatui-org/ratatui/assets/7953011/9a1523c0-d783-4cad-85ad-9cdecf73475a)
+
+
+---
+
+@EdJoPaTo · 2024-05-07T13:16:03Z:
+For this method… maybe? It skips the Into stuff, but the Cow is a reference and style a Copy.
+
+For this render? No, as this was only called when the width is smaller → it won't end up being 0.
+
+Calculating width is a way bigger performance impact as it has O(chars) while this has O(1) (both per Span).
+
+---
+
+@joshka · 2024-05-07T13:26:31Z:
+Does this work for area.x > 0? (should it be `area.x..area.x+x` perhaps?)
+
+---
+
+@joshka · 2024-05-07T13:32:31Z:
+Good catch!
+
+---
+
+@joshka · 2024-05-07T13:36:43Z:
+nice!
+
+---
+
+@joshka · 2024-05-07T13:38:03Z:
+I'm ok with breaking it for now, but it was worth noting this in case we do see this actually cause problems.
+
+---
+
+@EdJoPaTo · 2024-05-07T13:40:27Z:
+Wasn't me, was `cargo test` :ghost: 
+
+---
+
+@joshka · 2024-05-07T14:15:35Z:
+It's probably a little easier to immediately understand these tests by adding some of the padding around (e.g. "XXXXa🦀bc XXXX") (and the assertion becomes simpler too)
+
+---
+
+@joshka · 2024-05-08T08:35:50Z:
+Thinking a bit more about this, I don't think rendering spaces is necessarily the right thing for truncated wide emojis
+
+The underlying character of the cell might be a better choice. Consider an example where there is a block, with a border, and we render a title that is "🦀crab" right aligned (assume "/-\" represent the borders)
+- 8 => `"/--🦀crab\"`
+- 7 => `"/-🦀crab\"`
+- 6 => `"/🦀crab\"`
+- 5 => `"/ crab\"`. `/-crab\` would be a better rendering here
+- 4 => `"/crab\"`
+- 3 => `"/rab\"`
+
+
+---
+
+@EdJoPaTo · 2024-05-08T09:04:23Z:
+We can omit this code and add it later again when there seems to be a real need for this. The important part is aligning it to the right when the truncated width is shorter than the space (due to the emoji that doesn't fit)
+
+---
+
+@EdJoPaTo · 2024-05-08T09:07:44Z:
+I don't think the assertion becomes simpler as the buffer is wider than the truncation width. Truncate to 6 characters and put it somewhere into a 10 width Buffer introduces additional logic.
+
+Creating a Buffer starting at 0x0 and render into 2x2 would likely be simpler, but the diff would be annoying. For this x is only relevant so y could be left at 0.
+
+Side question… why is the Buffer not always based on 0x0 and only takes a size? where is the offset relevant?
+
+---
+
+@joshka · 2024-05-08T10:42:41Z:
+Simpler because the assertion is just the full contents of the buffer. xx123456xx. This makes it a direct comparison against a constant value rather than a comparison with a mutated expected buffer.
+
+Buffer doesn't start at zero for Fixed viewports which can be anywhere on the screen with the same coordinates as screen coordinates.
+
+---
+
+@joshka · 2024-05-09T00:30:52Z:
+I fixed this up in the latest push.
+
+---
+
+@kdheepak · 2024-05-09T00:58:22Z:
+Should we add functions called `shift_x` and `shift_y` that take signed integers? This is functionality that I've wanted as well.
+
+---
+
+@joshka · 2024-05-09T01:35:43Z:
+Yes - my two problems with introducing this are:
+- what to name it so that the name obviously evokes that we're increasing x, while decreasing the width
+- should it be able to work on all sides (left, right, top, bottom)
+- should it be a single method or multiple
+- counting points and not updating the number of points I'm making
+
+---
+
+@kdheepak · 2024-05-09T02:38:54Z:
+It might be possible to express it as a single method:
+
+```rust
+rect.shift(Corner::TopLeft, (-1, 5))
+```
+
+Alternatives:
+
+- `rect.move(::Corner, (x, y))`
+- `rect.drag(::Corner, (x, y))` (I'm picturing click and drag the corner, although this might not be intuitive)
+
+
+---
+
+@joshka · 2024-05-09T05:30:43Z:
+I don't like either name
+- shift implies moving without changing the size
+- move is a reserved keyword
+- drag is a bad name because it implies an event that we're not actually handliing
+
+"Indent" is the best I have for now, or perhaps some other verb that means to modify / change the size in some way.
+
+---
+
+@joshka · 2024-05-09T05:31:38Z:
+Either way - not something to fix in this PR - this method is private and useful here. We can iterate without breaking on what the public version of that looks like.
+
+---
+
+@EdJoPaTo · 2024-05-09T08:08:27Z:
+Rust has a [`AddAssign`](https://doc.rust-lang.org/std/ops/trait.AddAssign.html) trait which has the `add_assign` method. (or `sub_assign`, `mul_assign` and so on)
+Doesnt seem to improve the naming…
+
+`indent_x` would be a good name for it for my taste. Not sure whether there needs to be indent from the right. `indent_y` might be neat. But yeah, not part of this PR to stabilize this.
+
+---
+
+@EdJoPaTo · 2024-05-09T08:10:42Z:
+While this shouldn't be public / stabilized yet for the reasons in the other comment I would still move this to the Rect and add `#[must_use]` to ensure its not accidentally misused.
+
+In the rect file it would be `pub(crate)` but it seems way more sorted than having this somewhere in the line file.
+
+---
+
+@EdJoPaTo · 2024-05-09T08:14:21Z:
+The width naming is horrible. I have no clue what the variables mean without reading the code what is assigned and when.
+
+Before this change they were named `limit` and `width`. I still like `limit` as its way more clear what it means. `width` is definitely debatable.
+
+Other ideas:
+- `render_width` → `target_render_width` or `available_(for_span_)width`, maybe also the name of the input of the function: `max_width`
+- `display_width` → `actual_width` or `actually_rendered_width`
+
+---
+
+@EdJoPaTo · 2024-05-09T08:21:30Z:
+`as` can silently fail / apply different meaning on refactorings. Using `usize::from` ensures that there is actually an implementation for that change. `u64 as usize` works on 64 bit machines but truncates on 32 bit ones which won't be noticed with `as`.
+
+Using an approach that is sure to work even when it might never happen in this case is better code style in my opinion. Don't train yourself into using the pitfall normally.
+
+```suggestion
+                span.content.unicode_truncate_start(usize::from(render_width));
+```
+
+---
+
+@EdJoPaTo · 2024-05-09T08:26:21Z:
+It's not necessarily the first of them all. It's the first rendered one. The ones before might be skipped due to `offset >= span_width`. So the wording might be misleading here.
+
+```suggestion
+            // render the partially visible span, so truncate the start and render it starting at span offset. As this one is partially visible all the following ones are fully visible.
+```
+
+(`cargo fmt` the line width)
+
+---
+
+@EdJoPaTo · 2024-05-09T08:29:14Z:
+As the indentation math moved down here the check of emptiness should move down here too
+```suggestion
+            area = indent(area, render_width - display_width);
+            if area.is_empty() {
+                break;
+            }
+            let right = Span::styled(content, span.style);
+```
+
+---
+
+@EdJoPaTo · 2024-05-09T08:30:27Z:
+As the area math moved down move the check down too. (review comment before this one)
+
+```suggestion
+```
+
+---
+
+@joshka · 2024-05-09T08:49:56Z:
+done in a28718b19
+
+---
+
+@joshka · 2024-05-09T08:53:56Z:
+Fixed in bc32964e5
+
+---
+
+@joshka · 2024-05-09T08:57:18Z:
+`u16 as usize` can never fail. This is consistent with the rest of ratatui. I understand and acknowledge the potential refactoring pain, to change our sizing units from u16 is a much larger problem than this simple one line. usize::from adds no value here.
+
+---
+
+@joshka · 2024-05-09T09:15:28Z:
+7c6037bcf
+
+---
+
+@joshka · 2024-05-09T09:16:04Z:
+bd8f8cf17
+
+---
+
+@joshka · 2024-05-09T09:16:10Z:
+bd8f8cf17
+
+---
+
+@kdheepak · 2024-05-09T12:49:05Z:
+When `line_width` is less than `area.width`, offset is only used to "indent" the area rect, but when `line_width` is greater than `area.width`, offset is the "span offset".
+
+I think it may make sense to break this down into two parts? 
+
+```rust
+let line_width = self.width() as u16;
+let has_enough_room = line_width <= area.width;
+let offset = match (has_enough_room, alignment) {
+    (true, Some(Alignment::Center)) => (area.width.saturating_sub(line_width)) / 2,
+    (true, Some(Alignment::Right)) => area.width.saturating_sub(line_width),
+    (false, Some(Alignment::Center)) => (line_width.saturating_sub(area.width)) / 2,
+    (false, Some(Alignment::Right)) => line_width.saturating_sub(area.width),
+    (_, Some(Alignment::Left) | None) => 0,
+}
+if has_enough_room {
+    // we have enough room to render the entire line
+    // shift the x coordinate of the rect and render all the spans 
+    // starting from the 0th offset into the new inner area
+    let inner_area = area.indent_x(offset);
+    render_spans(&self.spans, inner_area, buf, 0)
+} else {
+    // we don't have enough room, and have to truncate the spans based on the starting offset
+    render_spans(&self.spans, area, buf, offset)
+}
+```
+
+---
+
+@EdJoPaTo · 2024-05-09T12:59:00Z:
+I thought about this, but I think the if else is more clear for this here? Putting both into match only creates more branch points… So I think it's both easier to understand in the if and probably more performant? But the latter is pure speculation as LLVM optimized so much stuff.
+
+---
+
+@kdheepak · 2024-05-09T13:32:29Z:
+Having `span_offset` be `mut` made it hard (for me personally) to understand but I think I get what is happening here now.
+
+Here's some of my comments.
+
+1. the name of the variable is `span_offset` but it really is some kind of width. I think of an "offset" as a point on a line, but here in every calculation you can see the other terms in an expression with `span_offset` are all "widths". fwiw, while reading this whenever I came across `span_offset`, I parsed it as `available_total_span_area_for_rendering`.
+
+2. the meat of this function is whether or not to render a partial span. After reading through it, I pictured the code as 3 parts. 
+    
+a) Skip everything before `span_offset`
+
+b) 
+- If the current span is partially renderable, truncate the span
+- If the current span is fully renderable, render it
+
+c) Render all the remaining spans
+
+Does it make sense to move the second part into a separate function like `render_maybe_partial_span`?
+
+Also, (I don't know it is possible) I was wondering if it were possible to present the code like so:
+
+```rust
+    let mut spans_iter = spans.iter().skip_while(|span| {
+       // skip till span_offset
+    });
+
+    if let Some(maybe_partial_span) = spans_iter.next() {
+       render_maybe_partial_span(...)
+    }
+
+    for span in spans_iter {
+        // render all the remaining
+    }
+```
+
+It would have been easier to track the 3 parts for me that way.
+
+All that said, the code + functionality looks good to me overall and happy to merge it to fix this issue. 
+
+---
+
+@kdheepak · 2024-05-09T13:39:17Z:
+> "1234🦀7890" right aligned into a 5 wide buffer renders as "🦀789" instead of " 7890" (definite error)
+
+We are getting this behavior at the moment because we loop through the spans left to right, right? If the `render_spans` function took a "direction" argument, and rendered in reverse for `Alignment::Right`, I think we'd resolve it.
+
+Again, I think the current code is good to me and calling this an error we can fix later is fine imo.
+
+---
+
+@EdJoPaTo · 2024-05-09T13:45:11Z:
+> 1. the name of the variable is `span_offset` but it really is some kind of width. I think of an "offset" as a point on a line, but here in every calculation you can see the other terms are all "width". fwiw, while reading this whenever I came across `span_offset`, I parsed it as `available_total_span_area_for_rendering`.
+
+The offset is the starting point within the line. So `total_span_width - actually_possible_to_display_here = offset`. The offset is definitely not a width. Its the about to be skipped to end up at the width that can be displayed.
+
+---
+
+> Also, (I don't know it is possible) I was wondering if it were possible to present the code like so:
+
+The first iter might be possible relatively easy.
+
+The second and third are kinda hard as the second is involving a condition. Partially or not.
+
+I read the current code kinda like that already. First part to skip everything until we are actually at our offset.
+
+What might simplify this code logic is to reverse the spans and go from right to left. That will be writable, until it isnt. Then abort. The last one might be partial.
+But that results in interesting logic to get the correct x. The current code increases the x while the reversed one would reduce it.
+
+I would think of this as an improvement in a later PR. It might be more performance efficient for many spans but I dont know. But we have the tests for many of these cases now so improving this code in the future will be way easier.
+
+---
+
+@EdJoPaTo · 2024-05-09T13:47:11Z:
+Thats fixed and tested now: https://github.com/ratatui-org/ratatui/blob/bd8f8cf17d5346182ed2c68e84acae7bfc9f42b1/src/text/line.rs#L1075
+
+---
+
+@EdJoPaTo · 2024-05-09T13:48:16Z:
+We should probably sort these or something… currently its somewhat of a mess, historically layered or something…
+
+---
+
+@EdJoPaTo · 2024-05-09T13:49:52Z:
+Is this actually used? I think this was used on a previous iteration and could be removed again / introduced in its own PR.
+
+---
+
+@kdheepak · 2024-05-09T14:17:42Z:
+Why do you use `.unicode_truncate_start` here? The docs say:
+
+> Truncates a string to be at most width in terms of display width by removing the start characters.
+
+Shouldn't we decide whether to use `.unicode_truncate` or `.unicode_truncate_start` depending on the `Line`'s alignment?
+
+---
+
+@kdheepak · 2024-05-09T14:47:00Z:
+> The offset is the starting point within the line.
+
+Having the "starting point within the line" change in the algorithm (i.e. be `mut`) made it difficult to read for me. I get that it is "the point that represents the summation of widths that are to be skipped". I guess I was wondering if there was a better way to name it?
+
+---
+
+@kdheepak · 2024-05-09T14:47:45Z:
+Ah, I missed that. Top level PR description need to be updated?
+
+---
+
+@EdJoPaTo · 2024-05-09T16:02:10Z:
+The right truncation at end end happens when the area ends all by itself. That’s way Alignment::Left starts at 0 and at some point area.is_empty().
+
+Center alignment is similar. Find the starting point and render until area.is_empty().
+
+Basically: truncation on the right side happens due to the limited area. Truncation on the left is calculated and then done by the truncation crate.
+
+---
+
+@joshka · 2024-05-09T21:57:46Z:
+Added comments and modified variable names to indent_width and skip_width in d64f0b89
+
+---
+
+@joshka · 2024-05-09T22:03:59Z:
+addressed.
+
+---
+
+@joshka · 2024-05-09T22:07:33Z:
+Updated the PR comment to clarify this.
+
+---
+
+@joshka · 2024-05-09T22:36:03Z:
+It's kinda a "width" of the spans to skip... I think `span_skip_width` might make sense as a name.
+
+I can see how offset could a bad name for this, as offset often carries an implication that something is being moved, but here it's referring to how much to move an implicit skip cursor in the spans.
+
+```rust
+    let mut spans_iter = spans.iter().skip_while(|span| {
+       // skip till span_offset
+    });
+```
+I actually attempted this at one point, but it's difficult to satisfy rust's borrowing rules. To skip the spans, you need to keep a variable that is updated in the closure, but you can't use that variable after the closure as it's moved within the closure. You need that remaining width in order to know the amount to truncate the first span by.
+
+```
+error[E0503]: cannot use `span_skip_width` because it was mutably borrowed
+   --> src/text/line.rs:606:27
+    |
+598 |     let spans = spans.iter().skip_while(|span| {
+    |                                         ------ `span_skip_width` is borrowed here
+599 |         if span_skip_width >= span.width() as u16 {
+600 |             span_skip_width -= span.width() as u16;
+    |             --------------- borrow occurs due to use of `span_skip_width` in closure
+...
+606 |     let span_skip_width = dbg!(span_skip_width);
+    |                           ^^^^^^^^^^^^^^^^^^^^^ use of borrowed `span_skip_width`
+607 |     for span in spans {
+    |                 ----- borrow later used here
+    |
+    = note: this error originates in the macro `dbg` (in Nightly builds, run with -Z macro-backtrace for more info)
+```
+
+> The first iter might be possible relatively easy.
+
+Famous last words of a Rust programmer
+
+We could write this first part as a while loop, but it ends up looking pretty much like the for loop. You have to special case the span that you got from `span.next()` when there is span is partially visible, so to do it outside of the loop means either putting the span back into the iterator (i.e. using peekable to not pull each element out, or using [put_back](https://docs.rs/itertools/latest/itertools/fn.put_back.html)), or storing it in a option variable at the end of the loop and checking it. Either way, the added complexity of that code is bad. A better factoring of this logic is to instead do the simplification mentioned in https://github.com/ratatui-org/ratatui/pull/1089#issuecomment-2102340388 (make an method that returns an iterator over the visible spans, including the first partial span).
+
+Rename and comments added in 2fa465c2
+
+---
+
+@joshka · 2024-05-09T22:39:30Z:
+5cc0072f
+
+---
+
+@joshka · 2024-05-09T22:41:01Z:
+Revoved in 65842dd1
+
+---
+
+@joshka · 2024-05-09T22:43:48Z:
+Clarified with a comment in c08cd0c4
+
+---
+
+@joshka · 2024-05-09T22:44:38Z:
+clarified with a comment in c08cd0c4
+
+---
+
+@joshka · 2024-05-09T22:44:53Z:
+removed in 65842dd15
+
+---
+
+@joshka · 2024-05-09T22:45:04Z:
+Fixed in 5cc0072f6
+
+---
+
+@EdJoPaTo · 2024-05-09T22:51:44Z:
+This is explained multiple times now.
+
+---
+
+@joshka · 2024-05-09T23:19:51Z:
+I generally agree that good variable names are better than comments and in my earlier years I would have probably died on the hill proclaiming an opinion that "comments are unnecessary if you write good code". Here though there's lots of ways to misinterpret the meaning of each of the variables due to the inherent complexity of what we need to do. The comments in this change serve as an apology of sorts for not being able to make the algorithm perfectly clear with just variable names. The increased quantity and verbosity of comments in an area like this also highlights the amount of intent that has gone into choosing to do things a particular way, and that needs to be understood before any refactoring / changes are made to this code.
+
+You're right that the area truncation is explained above in the render_ref function, and that is a duplicate of this comment, but given that @kdheepak asked about this in the PR, it's reasonable to assume that someone of lesser knowledge about Ratatui who wants to edit this code in the future might have the same questions (and may not look at the calling code for answers). So I think explaining this twice doesn't do too much harm here.
+
+---
+
+@EdJoPaTo · 2024-05-10T08:58:44Z:
+Im not against the comments explaining what is going on. Just that there is duplicated stuff now and in this case the one above is more clear to me.
+There shouldn’t be duplicate explanations for the same thing.
+
+when stuff is refactored the documentations also needs to be adapted and personally I would adapt the first thing I see describing the now changed behaviour. Another spot might be completely missed. Reviews should find something like this but it might be out of view for the changes so it might be missed.
+
+so my general approach would be to split into good variable names and function names, then comments and doc comments. The function comment should explain the general idea, the comments on code should explain specifics why things are done the way they are done.
+
+comments on tests explain why they are relevant to be tested and shouldn’t explain the behaviour of the function so they are out of scope in order to understand the function.
+
+yes, @kdheepak had questions, so others might be too, but I would try to prefer pointing to the relevant documentation rather than duplicating the same comment.
+
+(will look into it on a bigger screen)
+
+---
+
+@EdJoPaTo · 2024-05-10T09:41:50Z:
+What triggered me here was the "rest" of the line instead of the right of the line. Then I found the same comment with "right" above. 
+
+---
+
+@kdheepak · 2024-05-10T14:53:41Z:
+This looks a lot better to me! Nice find!
+
+The `if` block still executes just once, right? If so, can we add a comment?
+
+
+---
+
+@EdJoPaTo · 2024-05-10T15:22:25Z:
+Should be. (I don't think we can include a debug_assertion for that one in a neat and simple way?)
+
+But that depends on the `available_width` math from above which is further away. That should be stated in that comment then too.
+
+---
+
+@kdheepak · 2024-05-10T17:33:09Z:
+Maybe you can add `.enumerate()` before the `.map()` and `debug_assert!(i == 0)`? LLVM might optimize it away if it sees it is not being used anyway.
+
+---
+
+@joshka · 2024-05-11T02:17:03Z:
+This is unlikely to ever be a hotspot
+
+---
+
+@EdJoPaTo · 2024-05-11T09:18:14Z:
+@joshka You were against this as it changes the order execution and the code.
+
+Also return then else case could be just the else and omit the `return`.
+
+---
+
+@EdJoPaTo · 2024-05-11T09:24:22Z:
+I don't think moving this into its own method is very useful. Its very specific to the render_span method.
+
+Also, this was a pitfall for me in the past, this is not visibility. This is only skipping from the left. The right is still untouched and will only be trucated at the actual render. Visible would mean that everything can be u16, but that is not the case here. This should not be named `visible` as a function name is what is read first. It gives a very wrong impression about what this function is and for what it might be used in other cases.
+
+Also, the doc comment about `partially or completely visible` is somewhat fine for code inside `render_spans` but very wrong for its own method with its own assumptions.
+
+When this method is named maybe `skip_spans_by_width` it would be better, but it should not be named visible. Personally I would prefer it inside `render_spans` again as its very specific to the logic of `render_spans`. Otherwise state in the doc comments that this is very dependent on the assumptions of `Widget::render_ref` and move `render_spans` back into `render_ref`.
+
+```suggestion
+/// Returns an iterator over the spans that skips are visible
+///
+/// Visibility is determined by the spans that are partially or completely visible taking into
+/// account just the amount of width to skip from the start of the `Line`.
+fn skip_spans_by_width<'a>(
+```
+
+---
+
+@EdJoPaTo · 2024-05-11T09:30:34Z:
+`area.is_empty` is `O(1)` while `.width()` is `O(content.len())`. In other words: The written logic here still uses the expensive `line_width` even when the area is empty.
+LLVM does not notice this, and I would prefer to explicitly write it like it was before.
+
+Benchmark on Raspberry Pi 2:
+
+```plaintext
+line_render/Left/0      time:   [532.39 ns 532.45 ns 532.52 ns]
+                        change: [+681.68% +683.74% +684.94%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 62 outliers among 1000 measurements (6.20%)
+  30 (3.00%) high mild
+  32 (3.20%) high severe
+```
+
+---
+
+@joshka · 2024-05-11T10:52:59Z:
+Fixed in 10815513
+
+---
+
+@joshka · 2024-05-11T10:58:17Z:
+My heuristic for writing readable code is that a simple guard clause is usually a simplification worth pursuing when it removes a layer of nesting like this (even at the expense of the order that lines will be encountered like this). If this was more than 1 line like this I'd still want it to be handled as an `if { } else { }`
+
+More specifically: layers of nesting and the else statements here cost more to maintain. This is due to the cognitive burden when reading of carrying both branches in your head for the entire block of code.
+
+---
+
+@joshka · 2024-05-11T11:12:04Z:
+I'm allergic to long methods that do multiple things like the previous implementation of this (I have a doctor's note for this ;)).
+
+Extracting a method like this gives a highly defined input and output to this block of code. If you're told what it does (iterates the visible spans), and can trust the name not to be a lie, then you can reason easily about the method that calls it.
+
+Functions are not just a tool for reuse, they're a tool for communicating blocks of code like this.
+
+I agree with the name change though (and updated the comment and a variable name to be coherent with the change in d415fe96
+
+This could also be `Line::spans_after_width(&self)` instead of a bare function. Still private.
+

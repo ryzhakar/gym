@@ -1,0 +1,2047 @@
+=== ROW 23 | f001096 | https://github.com/huggingface/candle/pull/1819 | 2024-03-08 | domain-subframes ===
+Metal: Improved reduce and softmax
+
+---
+
+@ivarflakstad · 2024-03-08T14:48:23Z:
+* Separates strided and contiguous reduce impls
+* Online softmax impl
+* Block and simdgroup reductions
+
+Improvements in throughput on my machine (150GiB/s) using f32 ops 
+|            | before    | after     |
+|------- | -------- | ------- |
+| softmax | 21.453 GiB/s  | 92.261 GiB/s  |
+| reduce   | 14.861 GiB/s  | 132.95 GiB/s |
+
+
+Numerical accuracy. Difference between new and original implementation.
+| model        | tokens | max  diff        | avg diff |
+|------- | -------- | ------- | ------- |
+| llama v32-1b | 100    | 2.9802322e-7 | 6.4991475e-13 |
+| llama v32-3b | 100    | 2.3841858e-7 | 5.892976e-13 |
+| llama v32-3b | 250    | 2.3841858e-7 | 5.437812e-13 |
+| llama v32-3b | 500    | 2.3841858e-7 | 5.134475e-13 |
+| phi   v1.5   | 84     | 0.0          | 0.0 |
+| phi   v3     | 100    | 0.0          | 0.0 |
+| phi   v3     | 250    | 0.0          | 0.0 |
+| phi   v3     | 500    | 0.0          | 0.0 |
+| helium v1-p  | 100    | 2.3841858e-7 | 1.2197854e-12 |
+| helium v1-p  | 250    | 2.3841858e-7 | 1.0073067e-12 |
+| helium v1-p  | 500    | 2.3841858e-7 | 9.86934e-13 |
+
+Flux comparison. Left is new, right is old.
+<img width="1425" alt="flux-comparison" src="https://github.com/user-attachments/assets/c883921a-7a18-4d5d-8c99-579e479ac23d" />
+
+
+---
+
+@FL33TW00D · 2025-01-13T14:27:21Z:
+![image](https://github.com/user-attachments/assets/450de38d-caae-4508-8e50-11c7aed51e14)
+![image](https://github.com/user-attachments/assets/a7899eeb-6d09-4970-9af6-52fadc476bb0)
+
+
+Before and after, such a big improvement speed in decode is worth a look 👀 
+
+---
+
+@LaurentMazare · 2025-01-13T14:31:23Z:
+Looks pretty good indeed, @ivarflakstad what is required before this can be merged / any reason while it's still marked as draft ? (also you may want to include the latest changes to main as there are some conflicting files)
+
+---
+
+@ivarflakstad · 2025-01-13T15:43:10Z:
+Well I guess it's ready now. If anyone wants to test it on some other models etc feel free 🙇 
+
+---
+
+@EricLBuehler · 2025-01-13T16:09:54Z:
+This looks amazing @ivarflakstad!
+
+I tried Llama 3.2 3b on current `main`:
+```
+cargo run --release --features metal --example llama -- --which v32-3b
+    Finished `release` profile [optimized] target(s) in 0.22s
+     Running `target/release/examples/llama --which v32-3b`
+loading the model weights from meta-llama/Llama-3.2-3B
+starting the inference loop
+My favorite theorem is 2+2=4 and it’s a damn good one. However, it seems like maybe I may need to change my mind now that I’ve seen this.
+The theorem states: The sum of the angles in any triangle add up to 180 degrees.
+This sounds great but wait! What about the ones with an odd number?
+Great! So does the following:
+Okay so we know that the angle sums don’t quite add up in triangles but what if you took all triangles and put them together? Then… drum roll… the angles would add up to exactly 360 degrees!
+Let’s start by drawing our first triangle.
+Now let’s draw another one next to it:
+We’ll do the same with a third, and then a fourth…
+Finally we will make one more. (now the third point is on the line created from the 2nd and 4th points)
+Well, when I first saw this theorem, it was indeed my favorite until now.
+As a teacher of geometry I love taking complex problems and getting students excited about them. Much easier said than done though.
+
+220 tokens generated (20.058381492864637 token/s)
+```
+
+But on this branch (e8499c87), I'm getting an error which seems to indicate some numerical issues?
+
+```
+cargo run --release --features metal --example llama -- --which v32-3b
+    Finished `release` profile [optimized] target(s) in 0.25s
+     Running `target/release/examples/llama --which v32-3b`
+loading the model weights from meta-llama/Llama-3.2-3B
+starting the inference loop
+My favorite theorem is 2+2=4 and it’s a Euclidean Division Theorem!
+What kind of joking are you referring to? A mathematician might notError: A weight is invalid in distribution
+```
+
+---
+
+@ivarflakstad · 2025-01-13T18:09:34Z:
+> ```
+> Error: A weight is invalid in distribution
+> ```
+
+Nice, thanks!
+Should probably accumulate with float in softmax to preserve precision. Shouldn't affect performance at all.
+
+---
+
+@LaurentMazare · 2025-01-20T19:54:07Z:
+Could you actually try it on a bunch of f16 and bf16 models? I just got a "weigth is invalid in distribution" which doesn't occur on main.
+
+---
+
+@ivarflakstad · 2025-01-21T00:42:07Z:
+> Could you actually try it on a bunch of f16 and bf16 models? I just got a "weigth is invalid in distribution" which doesn't occur on main.
+
+I've just now tested a couple of llama and phi versions and helium preview. I did not get the error, but that doesn't necessarily prove it is gone.
+I thought it was fixed in [this](https://github.com/huggingface/candle/pull/1819/commits/4c949254d1f2cbdb35badd13d118f4439c48e440) commit, can you pull the latest changes and try again? I don't want to merge if you can reproduce the bug.
+
+---
+
+@LaurentMazare · 2025-01-21T07:44:47Z:
+I was actually testing past this point, the issue doesn't seem to be about accumulating with the proper type but something else: some of the probabilities past the softmax are negative. Interestingly, if I save the logits in a file then just load the logits and apply the softmax in a fresh binary then I don't get the negative values.
+You can reproduce the issue with the command Eric gave (using the llama 3.2 1b example with the default prompt). Fwiw I had the issue both on an M2 Pro and a M3 Max.
+I think to gain confidence in the change it would be good that you tweak the `sample` function so that it computes the softmax both in the fast and slow way and double check that the values are reasonably in line even on long generation.
+Also would be good to test diffusion models e.g. flux or stable diffusion before releasing. 
+
+---
+
+@ivarflakstad · 2025-01-21T10:24:58Z:
+> You can reproduce the issue with the command Eric gave (using the llama 3.2 1b example with the default prompt). 
+
+`cargo run --release --features metal --example llama -- --which v32-3b`
+No errors. 1217 tokens generated.
+`cargo run --release --features metal --example llama -- --which v32-1b`
+No errors. 59 tokens generated.
+
+Could it be that the machine(s) cached the slightly outdated compiled kernels or something?
+Seems unlikely, but I'm not able to reproduce.
+
+---
+
+@LaurentMazare · 2025-01-21T11:30:17Z:
+> Could it be that the machine(s) cached the slightly outdated compiled kernels or something? Seems unlikely, but I'm not able to reproduce.
+
+I just tried again after removing the `target` directory and got into the same error. If you can get access to another mac, that might be worth trying as I had the issue on the 3 different macs that I tried now (a macbook pro M2, a macbook pro M3 max, and a mac mini m4 pro).
+
+---
+
+@ivarflakstad · 2025-01-21T11:41:20Z:
+Finally got the bug. Had to restart my machine. Let the debugging begin!
+
+---
+
+@ivarflakstad · 2025-01-21T15:02:11Z:
+Figured it out. I'll push later 🫡
+
+---
+
+@LaurentMazare · 2025-01-21T15:05:10Z:
+Great! It would also be nice if you can also measure the differences between the optimized and non optimized softmax implementation on a couple models and check that it stays within reasonable bounds. 
+
+---
+
+@LaurentMazare · 2025-02-08T06:27:11Z:
+Thanks, great improvement!
+
+---
+
+@LaurentMazare · 2025-01-13T15:46:42Z:
+If this is just a copy of the old `reduce.metal` file and is not used, let's just remove the file and we can always get it from the git history.
+
+---
+
+@LaurentMazare · 2025-01-13T15:48:39Z:
+How related is this to the reduce/softmax changes? If it's somewhat orthogonal, maybe this should be in a separate PR?
+
+---
+
+@ivarflakstad · 2025-01-13T16:25:10Z:
+It is only related in the sense that I wanted to see if I could further improve performance.
+With a previous version of this PR it was a noticeable improvement, but I just tested and with the current kernels it's ~1% difference.
+
+---
+
+@ivarflakstad · 2025-01-13T16:25:44Z:
+In other words not needed at the moment
+
+---
+
+@ivarflakstad · 2025-01-13T16:30:05Z:
+@LaurentMazare 
+I'll have to remove this bench since this is metal specific (softmax lives in candle-nn ops so can't call it from candle-core), but I think softmax warrants a benchmark somehow. Thoughts?
+
+---
+
+@LaurentMazare · 2025-01-13T16:41:02Z:
+I think moving the benchmark to `candle-nn` would be good, (do it with `git mv` so as to preserve history).
+
+---
+
+@ivarflakstad · 2025-01-20T13:41:10Z:
+Removed
+
+---
+
+@ivarflakstad · 2025-01-20T13:43:08Z:
+Done. I'd like to bring it back at some point simply because including utils.metal etc is just better QOL.
+I feel like the results are slightly better with a precompiled lib as well, but I haven't put it to the test in a scientific manner. 
+
+---
+
+@ivarflakstad · 2025-01-20T14:09:34Z:
+Moved. Moving only part of a file with git alone seemed more complex than it was valuable.
+
+---
+
+@LaurentMazare · 2025-01-20T18:36:37Z:
+Why not use `next_power_of_two` as we were doing before?
+
+---
+
+@ivarflakstad · 2025-01-20T19:13:12Z:
+Ah, at one point of debugging I got paranoid hehe
+I simplified it to `(work_per_threadgroup / 2).next_power_of_two()` just now
+
+---
+
+@ivarflakstad · 2025-01-20T19:14:12Z:
+The `/ 2` is simply because each thread is reading more than one value
+
+=== ROW 26 | f001244 | https://neon.com/blog/nextjs-authentication-using-clerk-drizzle-orm-and-neon | 2024-04-02 | domain-subframes ===
+Next.js authentication using Clerk, Drizzle ORM, and Neon - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+Next.js authentication using Clerk, Drizzle ORM, and Neon
+Learn how to build a Next.js application that uses Clerk for authentication and Neon's Serverless Postgres with Drizzle ORM to store data.
+Evan Shortiss–Developer AdvocateApr 01, 2024
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Building an effective authentication and authorization system into your application is as equally fraught with challenges as managing database infrastructure. As the old wisdom says, never “roll your own” regarding authentication and authorization.
+In addition to the effort required to develop the login, logout, and social provider integration, you must consider compliance with standards such as SOC 2 and HIPAA, multi-factor authentication, and user management.
+Using Clerk enables you to seamlessly add advanced authentication and user management features to your application and comply with data security regulations by storing personally identifiable information in their compliant infrastructure.
+In this article, you’ll learn how to use Clerk to add authentication to a Next.js application and how to use Clerk’s Next.js helpers to obtain user details in your components. You’ll also learn to use Drizzle ORM to store non-PII data in Neon’s serverless Postgres.
+A complete example application with instructions for local development and deployment on Vercel can be found on GitHub at evanshortiss/neon-clerk-drizzle-nextjs. A live preview of the sample application is hosted on Vercel; try it out at neon-clerk-drizzle-nextjs.vercel.app and vote for your favorite periodic element!
+Solution Architecture
+Before diving into the implementation, let’s review the high-level architecture of this application.
+Vercel will provide serverless hosting for your Next.js application. The Next.js application will direct your users to Clerk for authentication. Clerk will redirect users to your application once they’ve completed an authentication flow using a supported provider such as Google or Discord OAuth.
+Once a user is signed in, they can access protected pages and routes in your application, and you can read their session data as needed to obtain the user ID to query or associate data with the authenticated user in your Neon Postgres database.
+Sign Up to Neon and Configure Postgres
+Sign up for Neon and create a project. This project will contain the Postgres database and a user_messages table that you will use to follow along with the rest of this article.
+Enter a project name.
+Use the default database name of neondb.
+Choose the region closest to the location where your application will be deployed.
+Click the Create project button.
+You’ll instantly be provided with a connection string you can use to connect to your serverless Postgres database.
+Sign Up to Clerk and Configure Application Sign In
+Visit dashboard.clerk.com and sign up, or sign in if you’re an existing user. Create a new application and enable some of the available sign-in options. You can see that I’ve enabled Discord and Google as sign-in options for my application.
+Once the application has been created on Clerk, you’ll find your API keys on the Home screen of your application in the Clerk dashboard. Specifically, you’ll need the API keys listed in the Next.js section soon!
+Using Neon’s Serverless Driver with Next.js and Drizzle ORM
+Create a Next.js Project and Install Dependencies
+Create a Next.js application in your development environment. This requires Node.js v18 or newer to be installed in your development environment. This article assumes you use the following options when creating your Next.js application using create-next-app.
+npx create-next-app@14.1 neon-clerk-next \
+--typescript \
+--eslint \
+--tailwind \
+--use-npm \
+--app \
+--src-dir \
+--import-alias "@/*"
+Once your Next.js application has been created, change to the project directory in your terminal, then add the Neon serverless driver and Drizzle ORM to your project’s dependencies using npm or your preferred package manager.
+npm install @neondatabase/serverless drizzle-orm
+Create a Schema and Database Connection
+Create a file named src/app/db/schema.ts and define a user_messages schema using the types provided by Drizzle ORM.
+// file: src/app/db/schema.ts
+import { pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+/**
+* This table stores quotes submitted by users.
+*/
+export const UserMessages = pgTable('user_messages', {
+// This will be the user ID provided by Clerk
+user_id: text('user_id').primaryKey().notNull(),
+createTs: timestamp('create_ts').defaultNow().notNull(),
+message: text('message').notNull()
+});
+To use Neon’s serverless driver with Drizzle ORM, create a file named src/app/db/index.ts and add the following code. Exporting the Drizzle instance from a file means it’s created on application startup and exported as a singleton that other modules can import and reuse to execute typesafe SQL queries against your Postgres database hosted by Neon.
+// file: src/app/db/index.ts
+import { neon } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-http';
+import { UserMessages } from './schema';
+if (!process.env.DATABASE_URL) {
+throw new Error('DATABASE_URL must be a Neon postgres connection string')
+}
+const sql = neon(process.env.DATABASE_URL);
+export const db = drizzle(sql, {
+schema: { UserMessages }
+});
+Next, create a file named .env.local in the root of the Next.js project directory and add your database URL from the Neon Console as an environment variable named DATABASE_URL.
+# Copy this from your project dashboard on https://console.neon.tech
+DATABASE_URL=postgresql://user:pass@ep-adj-noun-12345.us-east-2.aws.neon.tech/mydatabase?sslmode=require
+Start your Application
+Use the npm run dev command to start your Next.js application in development mode and confirm it’s available at https://localhost:3000. You won’t be prompted to authenticate since you haven’t added the Clerk middleware to your application yet – you’ll take care of that soon.
+Generate and Apply Database Migrations using Drizzle Kit
+Before using Drizzle ORM to perform database operations in your application, you’ll need to generate and apply schema migrations to your database. Drizzle Kit streamlines this process by detecting changes in your schema.ts file and generating the necessary SQL migrations to apply to your database.
+To get started, add Drizzle Kit and dotenv to your project’s development dependencies.
+npm i drizzle-kit dotenv -D
+Next, create a file named drizzle.config.ts at the root of your repository and add the following configuration.
+import type { Config } from 'drizzle-kit';
+import * as dotenv from "dotenv";
+// Read the .env file if it exists, or a file specified by the
+// dotenv_config_path parameter that's passed to Node.js
+dotenv.config();
+if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL not found in environment');
+export default {
+schema: './src/app/db/schema.ts',
+out: './src/app/db/migrations',
+driver: 'pg',
+dbCredentials: {
+connectionString: process.env.DATABASE_URL,
+},
+strict: true,
+} satisfies Config;
+Now you can use the generate command from the Drizzle Kit CLI to generate migration files. Run the following command to generate migrations for your user schema.
+npx drizzle-kit generate:pg -- dotenv_config_path='.env.local'
+A new src/app/db/migrations folder will be created, and an SQL migration file will be created that contains a CREATE TABLE statement for the user_messages table. You can read more about migrations in the Drizzle documentation.
+Use the push command from the Drizzle Kit CLI to apply the migrations to your Postgres database on Neon. The following command runs the push command from Drizzle Kit and sets the config path for dotenv to load the DATABASE_URL from your .env.local file.
+npx drizzle-kit push:pg -- dotenv_config_path='.env.local'
+Visit the Tables view in the Neon Console, and your new user_messages table will be listed once the push command has finished.
+Add Authentication to your Next.js Application using Clerk
+The Next.js documentation provides a comprehensive overview of authentication, session management, and authorization with sample code. This requires writing a non-trivial amount of code and middleware. Since you’re using Clerk, it will handle this complexity for you!
+To start, install Clerk’s Next.js package and add it to your Next.js project’s dependencies.
+npm install @clerk/nextjs
+Update your layout.tsx file to use the ClerkProvider and UserButton from the @clerk/nextjs package. The ClerkProvider provides access to the current session and user context. The UserButton renders a component that shows the user’s profile picture, provides access to account management, and a sign-out button.
+export default function RootLayout({
+children,
+}: Readonly<{
+children: React. ReactNode;
+}>) {
+return (
+<ClerkProvider>
+<html lang="en">
+<body className={inter.className}>
+<div className="p-4 bg-white">
+<UserButton showName={true}></UserButton>
+</div>
+{children}
+</body>
+</html>
+</ClerkProvider>
+);
+}
+Next, create a file named src/middleware.ts, and add the authMiddleware provided by Clerk as shown in the following snippet.
+import { authMiddleware } from "@clerk/nextjs";
+export default authMiddleware({
+// Routes that should be accessible without signing in can
+// be defined as strings in this array, e.g, your home page
+publicRoutes: []
+});
+export const config = {
+// Protects all routes, including api/trpc:
+// https://clerk.com/docs/references/nextjs/auth-middleware
+matcher: ["/((?!.+\\.[\\w]+$|_next).*)", "/", "/(api|trpc)(.*)"],
+};
+Lastly, add the API keys provided in Next.js format on the Clerk dashboard to your .env.local file.
+# Copy these from https://dashboard.clerk.com/
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_youruniquevalue
+CLERK_SECRET_KEY=sk_test_youruniquevalue
+Start your application using the npm run dev command, and visit https://localhost:3000 in your web browser. If you’re prompted to sign in to your application, everything is going as planned!
+Store Data in Postgres associated with a Clerk User ID
+The final step in the process is to add some interactivity to your application. You will let users store their favorite quote in your Neon Postgres database. This will involve defining Next.js Server Actions and a Server Component that uses them.
+Start by creating a file named src/app/actions.ts and add the following code to define createUserMessage and deleteUserMessage actions. Both actions obtain the user ID from the current session using Clerk’s currentUser helper.
+'use server';
+import { currentUser } from "@clerk/nextjs";
+import { UserMessages } from "./db/schema";
+import { db } from "./db";
+import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
+export async function createUserMessage(formData: FormData) {
+const user = await currentUser()
+if (!user) throw new Error('User not found');
+const message = formData.get('message') as string;
+await db.insert(UserMessages).values({
+user_id: user.id,
+message
+});
+redirect('/');
+}
+export async function deleteUserMessage() {
+const user = await currentUser()
+if (!user) throw new Error('User not found');
+await db.delete(UserMessages).where(eq(UserMessages.user_id, user.id));
+redirect('/');
+}
+Add the following code to src/app/page.tsx to create a minimalist web page that uses your actions. This enables users to create or delete a quote associated with their user ID. If you recall the schema you defined earlier using Drizzle ORM, it uses the user ID as the primary key. This means each user can store a single quote.
+import { createUserMessage, deleteUserMessage } from "./actions";
+import { db } from "./db";
+import { currentUser } from "@clerk/nextjs/server";
+async function getUserMessage() {
+const user = await currentUser();
+if (!user) throw new Error('User not found');
+return db.query. UserMessages.findFirst({
+where: (messages, { eq }) => eq(messages.user_id, user.id)
+});
+}
+export default async function Home() {
+const existingMessage = await getUserMessage();
+const ui = existingMessage? (
+<div className="w-2/3 text-center">
+<h1 className="text-3xl">{existingMessage.message}</h1>
+<form action={deleteUserMessage} className="w-full rounded px-8 pt-6 pb-8 mb-4">
+<div className="w-full text-center">
+<input type="submit" value={"Delete Quote"} className="bg-[#00E699] transition-colors hover:bg-[#00e5BF] text-gray-800 font-semibold py-2 px-4 rounded focus:outline-none cursor-pointer"/>
+</div>
+</form>
+</div>
+): (
+<form action={createUserMessage} className="shadow-md w-2/3 rounded px-8">
+<div className="mb-6">
+<input type="text" name="message" placeholder="Mistakes are the portals of discovery - James Joyce" className="text-center appearance-none border rounded w-full p-3 text-gray-700 leading-tight focus:outline-none" />
+</div>
+<div className="w-full text-center">
+<input type="submit" value={"Save Message"} className="bg-[#00E699] cursor-pointer transition-colors hover:bg-[#00e5BF] text-gray-800 font-semibold py-2 px-4 rounded focus:outline-none"/>
+</div>
+</form>
+);
+return (
+<main className="flex -mt-16 min-h-screen flex-col align-center justify-center items-center px-24">
+<h2 className="text-2xl pb-6 text-gray-400">{existingMessage? 'Your quote is wonderful...': 'Save an inspiring quote for yourself...'}</h2>
+{ui}
+</main>
+);
+}
+Start your application using npm run dev, visit https://localhost:3000, and sign in using one of your chosen providers. You will be redirected to your application after signing in. The application displays a web page that contains an input field where you can submit a quote to associate with your user account and a lovely header with your username and profile picture powered by Clerk’s UserButton component.
+Type in your favorite quote, for example, “To infinity and beyond!” by Buzz Lightyear. Click the Save Quote button or press Enter to save your quote. When you visit https://localhost:3000 in the future, the quote associated with your user ID will be displayed.
+Conclusion
+Congratulations, you’ve built a Next.js application that integrates with Clerk for user management and authentication and uses Neon’s serverless Postgres as its database.
+Now that you’ve got an application up and running, you should visit Clerk’s Next.js documentation to learn how to deploy your application to production. You can use Neon’s Vercel Integration to manage development and preview database branches when you deploy your Next.js application on Vercel, which uses Neon’s serverless Postgres.
+We would love to get your feedback. Follow us on X, join us on Discord, and let us know how we can help you build the next generation of applications.
+On this page
+Solution Architecture
+Sign Up to Neon and Configure Postgres
+Sign Up to Clerk and Configure Application Sign In
+Using Neon’s Serverless Driver with Next.js and Drizzle ORM
+Generate and Apply Database Migrations using Drizzle Kit
+Add Authentication to your Next.js Application using Clerk
+Store Data in Postgres associated with a Clerk User ID
+Conclusion
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 27 | f001271 | https://qdrant.tech/blog/hybrid-cloud-haystack | 2024-04-10 | domain-subframes ===
+Qdrant Hybrid Cloud and Haystack for Enterprise RAG
+Vector Space Stream: a research-first broadcast for engineers. Eight talks on compression, edge, hybrid search, and more. Sept 17. Tune in
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free0
+Qdrant Hybrid Cloud and Haystack for Enterprise RAG
+Qdrant·
+April 10, 2024
+Home
+/
+Blog
+/
+Qdrant Hybrid Cloud and Haystack for Enterprise RAG
+On this page:
+Share on X
+Share on LinkedIn
+We’re excited to share that Qdrant and Haystack are continuing to expand their seamless integration to the new Qdrant Hybrid Cloud offering, allowing developers to deploy a managed vector database in their own environment of choice. Earlier this year, both Qdrant and Haystack, started to address their user’s growing need for production-ready retrieval-augmented-generation (RAG) deployments. The ability to build and deploy AI apps anywhere now allows for complete data sovereignty and control. This gives large enterprise customers the peace of mind they need before they expand AI functionalities throughout their operations.
+With a highly customizable framework like Haystack, implementing vector search becomes incredibly simple. Qdrant’s new Qdrant Hybrid Cloud offering and its Kubernetes-native design supports customers all the way from a simple prototype setup to a production scenario on any hosting platform. Users can attach AI functionalities to their existing in-house software by creating custom integration components. Don’t forget, both products are open-source and highly modular!
+With Haystack and Qdrant Hybrid Cloud, the path to production has never been clearer. The elaborate integration of Qdrant as a Document Store simplifies the deployment of Haystack-based AI applications in any production-grade environment. Coupled with Qdrant’s Hybrid Cloud offering, your application can be deployed anyplace, on your own terms.
+“We hope that with Haystack 2.0 and our growing partnerships such as what we have here with Qdrant Hybrid Cloud, engineers are able to build AI systems with full autonomy. Both in how their pipelines are designed, and how their data are managed.” Tuana Çelik, Developer Relations Lead, deepset.
+Simplifying RAG Deployment: Qdrant Hybrid Cloud and Haystack 2.0 Integration
+Building apps with Qdrant Hybrid Cloud and deepset’s framework has become even simpler with Haystack 2.0. Both products are completely optimized for RAG in production scenarios. Here are some key advantages:
+Mature Integration: You can connect your Haystack pipelines to Qdrant in a few lines of code. Qdrant Hybrid Cloud leverages the existing “Document Store” integration for data sources.This common interface makes it easy to access Qdrant as a data source from within your existing setup.
+Production Readiness: With deepset’s new product Hayhooks, you can generate RESTful APIs from Haystack pipelines. This simplifies the deployment process and makes the service easily accessible by developers using Qdrant Hybrid Cloud to prepare RAG systems for production.
+Flexible & Customizable: The open-source nature of Qdrant and Haystack’s 2.0 makes it easy to extend the capabilities of both products through customization. When tailoring vector RAG systems to their own needs, users can develop custom components and plug them into both Qdrant Hybrid Cloud and Haystack for maximum modularity. Creating custom components is a core functionality.
+Learn How to Build a Production-Level RAG Service with Qdrant and Haystack
+To get you started, we created a comprehensive tutorial that shows how to build next-gen AI applications with Qdrant Hybrid Cloud using deepset’s Haystack framework.
+Tutorial: Private Chatbot for Interactive Learning
+Learn how to develop a tutor chatbot from online course materials. You will create a Retrieval Augmented Generation (RAG) pipeline with Haystack for enhanced generative AI capabilities and Qdrant Hybrid Cloud for vector search. By deploying every tool on RedHat OpenShift, you will ensure complete privacy and data sovereignty, whereby no course content leaves your cloud.
+Try the Tutorial
+Documentation: Deploy Qdrant in a Few Clicks
+Our simple Kubernetes-native design lets you deploy Qdrant Hybrid Cloud on your hosting platform of choice in just a few steps. Learn how in our documentation.
+Read Hybrid Cloud Documentation
+Ready to get started?
+Create a Qdrant Cloud account and deploy your first Qdrant Hybrid Cloud cluster in a few minutes. You can always learn more in the official release blog.
+Get Started with Qdrant FreeGet Started
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Pricing
+Use Cases
+Advanced Search
+Recommendation Systems
+Retrieval Augmented Generation
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Status Page
+Certification
+Resources
+Blog
+Benchmarks
+Technical Articles
+Events
+Startup Program
+Demos
+Bug Bounty
+Company
+About Us
+Customers
+Partners
+Careers
+Contact Us
+Sign up for Qdrant updates
+We'll occasionally send you best practices for using vector data and similarity search, as well as product news.
+© 2026 Qdrant.
+Terms
+Privacy Policy
+Impressum
+Recruitment Privacy Policy
+Cookie ConsentUp!
+
+=== ROW 28 | f001319 | https://iroh.computer/blog/iroh-0-14-0-dial-the-world | 2024-04-18 | domain-subframes ===
+Iroh 0.14.0 - Dial the world - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Iroh 0.14.0 - Dial the worldApril 18, 2024 by dignifiedquire
+Welcome to the first iroh release that allows you to dial by just a Node ID:
+Thanks to great work from @frando @rklaehn and @arnazeh we now have an iroh-dns-server that allows for looking up node information via DNS, based on the pkarr format.
+iroh blob get \ # download a blob
+--start     \ # start an iroh node while running this command
+--node p4augy7yocvwytsp4ygiayhqfygw7zpzudrg5otzk5ry5hl5ydya \ # the node id
+z5p3t7v2s3w5uifsyndr5wolx4fufdlktzoae76uqzwheqkfqdvairoh      # the hash of the blob
+CopyCopied!
+By default, iroh will connect to the DNS server run by number 0, but (as with our relays) you can configure iroh to use your own instance of iroh-dns-server.
+For more details checkout the PR: Node discovery via DNS (#2045)
+🏎️ Faster relay handshakes
+To speed up connections to our relay servers, we have refactored the connection handshake. This drops a full roundtrip, on every new connection. This reduces the time to connect to the relays, in general, but dramatically speeds up connections to farther-away relays.
+Unfortunately, this means the new relays can not talk to 0.13.0 nodes. To smooth out the upgrade path, we will keep the old relays running for at least another 4 weeks.
+The new relays are available under these DNS entries. Please ensure any custom iroh config files you use are updated appropriately.
+US: use1-1.relay.iroh.network
+EU: euw1-1.relay.iroh.network
+For more details checkout the PR: Simplify relay handshake (#2164)
+✍️  Basic Author API
+Authors are an important part of how documents are managed in iroh. We have finally provided an API to manage them!
+// Setup an in-memory iroh node.
+let node = Node::memory().spawn().await?;
+// Create a new author.
+let author_id = node.authors.create().await?;
+let authors_stream = node.authors.list().await?;
+// List of current authors, which is currently just the one we created above.
+let authors: Vec<_> = authors_stream.try_collect().await?;
+// Export the author for external usage.
+let author = node.authors.export(author_id).await?.unwrap();
+// I didn't like the author, let's delete it.
+node.authors.delete(author_id).await?;
+// Ah wait I still need it, import it again.
+node.authors.import(author).await?;
+CopyCopied!
+For more details checkout:  Implement basic author api (#2132)
+💾 Upgrade redb to v2.0
+Iroh relies on redb, both for storing data in iroh-bytes and storing document structure in iroh-sync. With the release of redb@2.0 we gained a nice performance boost, and smaller features under the hood, allowing us to simplify the code in our storage implementations.
+For more details checkout: Update redb to v2 (#2120)
+🤯 But wait there’s more!
+Many bugs were squashed and smaller features added. For all those details you can checkout the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.14.0.
+If you want to know what is coming up, checkout the 0.15.0 milestone, and if you have any wishes let us know in the issues!
+If you need help using iroh or just want to chat, please join us on discord!
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 29 | f001531 | https://neon.com/blog/how-to-create-previews-with-anonymized-production-like-data-in-seconds | 2024-05-28 | domain-subframes ===
+How to create previews with anonymized production-like data in seconds - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+How to create previews with anonymized production-like data in seconds
+Use Neon with Neosync to anonimize PII in your database branches
+Carlota Soto–Product Marketing LeadMay 28, 2024
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Database branching makes it easy to create database copies for your non-prod environments, but some companies face the obstacle of how to anonymize PII to ensure privacy. This can be solved with Neosync, an open-source tool that allows developers to anonymize data across branches. Try it with Neon.
+Developers worldwide are adopting Postgres to run their production workloads. But when it comes to setting up and maintaining lower-level environments, teams face some challenges. First, creating database copies for these environments gets expensive and time-consuming. Second, anonymizing sensitive production data to make it safe for previews or even dev environments can get complex.
+The first problem (how to create database copies efficiently) is being solved by Neon and the database branching model. The second problem (the data anonymization problem) is the one Neosync is focusing on.
+Creating database branches with anonymized data: a workflow by Neon and Neosync
+One of the standout features of Neon is its ability to perform database branching including data and schema via copy-on-write. This feature is inspired by code branching in Git, enabling developers to create lightweight, isolated database branches in seconds.
+These branches effectively act like database copies but without duplicating storage, saving you the time and money required to duplicate your entire dataset. Database branches can be added to your existing workflows via GitHub Actions. Preview deployments with prod-like data are a perfect application for database branches.
+But, how to anonymize PII in non-prod branches if your application demands it? Here’s where Neosync comes into play. Neosync is an open-source platform that helps developers anonymize production data and sync it across their environments for a better developer experience.
+By combining both tools, developers can anonymize data in their database branches, for example for their preview environments. Here’s the workflow:
+You can check out our docs for a complete walkthrough of the Neon and Neosync integration. For setting up your Preview workflows, follow the Actions on this page.
+PS: If you would like to see a tighter integration between Neon and Neosync, where database branches are anonymized without configuring them in Neosync, let us know on Twitter.
+Try it out
+Both Neosync and Neon offer generous free tiers. If you’re interested in trying this workflow for free, follow the steps in the guide and get started in just a few minutes.
+On this page
+Creating database branches with anonymized data: a workflow by Neon and Neosync
+Try it out
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 30 | f001578 | https://neon.com/blog/add-an-interface-to-your-neon-database-via-outerbase | 2024-06-07 | domain-subframes ===
+Add an interface to your Neon database via Outerbase - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+Add an interface to your Neon database via Outerbase
+Run queries in natural language, visualize data, and collaborate with your team
+Brandon Strittmatter–Co-Founder & CEO at OuterbaseJun 07, 2024
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+We are beyond excited to announce that the Outerbase integration for Neon is now publicly available.
+This integration enables you to instantly connect your Neon Postgres database to Outerbase’s Data Studio and invite your team to view, edit, query, and visualize your data with you. To learn how to connect Outerbase to your Neon project, check out this guide.
+What is Outerbase?
+Outerbase’s mission is to democratize data access, helping everyone get access to the data they need independently of their role or background.
+With Data Studio, users can easily edit and query data from various databases, including Neon. Its intuitive interface supports collaborative data exploration, allowing teams to invite teammates to view, edit, query, and visualize data together.
+Outerbase’s AI integration takes this a step further by enabling users to perform complex SQL tasks using natural language, making data manipulation accessible even to those without advanced SQL knowledge.
+Outerbase also includes data visualization tools that help create concise and beautiful charts and dashboards, making it easier to present and interpret data.
+Explore Neon collaboratively via Outerbase Data Studio
+Outerbase simplifies data exploration for everyone, whether you are a solo-founder or part of a large organization. Once you have connected your Neon Postgres database through the Outerbase integration, you can invite your teammates and start querying your data.
+With Outerbase’s Data Studio, you can edit data, update schemas, create tables, and more. You manage multiple Neon databases from a single interface. Its built-in filters, sorting, and queries make data management intuitive and efficient no matter your skill level. Outerbase also allows you and your team to write and save SQL queries, ensuring everyone has access to the same data views.
+Ask data questions in natural language
+Outerbase doesn’t just make data exploration easy—it makes querying easy too. Using Outerbase AI, powered by state-of-the-art AI models and their EZQL™ framework, you can generate SQL queries with natural language. Just ask a question, and let the AI do all the heavy lifting.
+It can also help you create new schemas and data to help you kick start your next project. AI can also generate data visualizations to present your data clearly.
+Data visualization and dashboarding
+You can also use Outerbase to create beautiful charts and share them with your team. It supports all the popular visualization types. You can also use SQL variables to filter time ranges, categories, and so much more.
+Start exploring
+We are so excited for you to try this integration. If you’re a Neon user, you can sign up to Outerbase for free and get started. We would also love your feedback: share it in the Neon Discord or email us at support@outerbase.com
+On this page
+What is Outerbase?
+Explore Neon collaboratively via Outerbase Data Studio
+Ask data questions in natural language
+Data visualization and dashboarding
+Start exploring
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 31 | f001650 | https://iroh.computer/blog/iroh-0-19-make-it-your-own | 2024-06-27 | domain-subframes ===
+iroh 0.19.0 - Make it your own - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.19.0 - Make it your ownJune 27, 2024 by ramfox
+Welcome to a new release of iroh, the open-source distributed systems toolkit with tools for connecting devices directly, moving data, and syncing state.
+This release is all about making iroh more customizable for your own particular use case!
+Better late than never 😂
+Iroh has committed to a two week release cadence, which, if you've been following along closely, we didn't hit this week! On Monday, our normal release day, we found a critical bug. It only showed up rarely, and under high load, but we felt it was important to clean it up immediately.
+Turns out, our RPC channels were not cancel-safe. We made the appropriate adjustment to the quic-rpc crate, which is a crate that we've written allowing many different RPC streaming options used in combination with a few different transports (including using QUIC streams or in memory channels). We then upgraded quic-rpc in iroh to fix the issue.
+Check out PR #2416 on iroh and PR #87 on quic-rpc for details.
+Custom Protocols
+We’ve made it even easier to use iroh as the networking layer for your protocol! You can now add custom protocols when building an iroh Node, using the new ProtocolBuilder:
+use std::sync::Arc;
+use anyhow::Result;
+use futures_lite::future::Boxed as BoxedFuture;
+use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
+#[tokio::main]
+async fn main() -> Result<()> {
+const MY_ALPN: &[u8] = b"my-protocol/1";
+#[derive(Debug)]
+struct MyProtocol {
+client: Iroh
+}
+impl ProtocolHandler for MyProtocol {
+fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
+todo!();
+}
+}
+// Build an in-memory node
+let unspawned_node = Node::memory()
+.build()
+.await?;
+// Create a handle to that node in the form of a `Client`, so
+// that your protocol has access to the underlying store.
+let client = unspawned_node.client().clone();
+let handler = MyProtocol { client };
+// Add your custom ALPN and handler code and spawn the iroh `Node`
+let node = unspawned_node
+.accept(MY_ALPN, Arc::new(handler))
+.spawn()
+.await?;
+node.shutdown().await?;
+Ok(())
+}
+CopyCopied!
+Take a look at the custom protocol work for a more fleshed-out example.
+Check out PR #2358 for details.
+Iroh without Docs
+We’ve made the iroh Node more versatile! Let’s say you want to use iroh for networking and storage but don’t have a use case for iroh docs. We’ve made it dead simple to disable docs, so you can use the iroh Node for your exact purposes without worrying that you are dragging around pieces you don’t need.
+Use Builder::disable_docs() when building the iroh Node; you’ll have just that. When called, the docs engine will not be spawned and the docs protocol will not be registered. Incoming docs connections will be dropped, and all docs-related RPC calls will return an error "docs are disabled".
+Check out PR #2390 for details.
+Easier RPC connections
+If you plan to run iroh in some unusual architecture, this is the release for you.
+We’ve added APIs to help launch an iroh Client that communicates to an iroh Node in a different process. Using Iroh::connect_addr, you can build an iroh Client that makes RPC calls to a given SocketAddr. We’ve also added Node::my_rpc_port to allow the iroh Node to communicate what RPC port it is running on.
+This, most notably, will help with running iroh in docker. Keep your eyes peeled for some news in the coming weeks…
+Check out PR #2398 for details.
+Relay Server cleanup
+The relay server got some much-needed love. Refactoring the code has allowed us to add the ability to run the relay behind a reverse proxy, disable captive portal responses, and run the server without TLS. The new configuration file has other options to allow for more customization, all of which are explained in the API Changes section below.
+Check out PR #2341 for details.
+⚠️ Breaking Changes
+Protocol Changes
+None!
+API Changes
+iroh
+Builder loses the E type parameter
+ProtocolBuilder loses the E type parameter
+rpc_endpoint takes a boxed::ServerEndpoint
+renamed
+client::Iroh::connect -> client::Iroh::connect_path
+added
+client::Iroh::connect_addr
+rpc_port field to client::NodeStatus
+iroh-net
+The configuration file format for the relay server has changed, deployments will need to updated. For the full format see struct Config in iroh-net/src/bin/iroh-relay.rs. Here a summary:
+The 3 parts of the server now have an independent enable setting: enable_relay, enable_stun and enable_metrics. If omitted they default to true.
+The way to specify which addresses the server listens on has changed: http_bind_addr is for the relay server, stun_bind_addr for the STUN server, metrics_bind_addr is for the optional metrics server and tls.https_bind_addr is for when TLS is enabled. Note these are now all full socket addresses. All have sensible defaults if omitted.
+There are new options in tls.cert_path and tls.key_path which allow more control over where the manual TLS keys are to be read from.
+removed
+iroh_net::config is removed.
+iroh_net::config::NetInfo -> removed
+iroh_net::config::LinkInfo -> removed
+Endpoing::my_addr_with_endpoints has been removed.
+renamed
+Endpoint::local_endpoints -> Endpoint::direct_addresses
+endpoint::LocalEndpointStream -> endpoint::DirectAddrStream
+config::Endpoint -> magicsock::DirectAddr
+config::EndpointType -> magicsock::DirectAddrType
+Endpoint::local_addr -> Endpoint::bound_sockets
+Endpoint::my_addr -> Endpoint::node_addr
+Endpoint::my_relay -> Endpoint::home_relay
+defaults::DEFAULT_RELAY_STUN_PORT → defaults::DEFAULT_STUN_PORT
+changed
+endpoint::Connecting::alpn returns Vec<u8> instead of String
+iroh-gossip
+net::Gossip::update_endpoints -> net::Gossip::update_direct_addresses
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.19.0.
+If you want to know what is coming up, check out the 0.20.0 milestone, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 32 | f001677 | https://forums.swift.org/t/proposal-set-literals/72929 | 2024-07-04 | domain-subframes ===
+[Proposal] Set literals
+
+@crontab · 2024-07-04T08:34:06.103Z:
+I am surprised this has only been discussed once and it was in 2016: [Proposal] Set literal and Set type syntax unless there were others that I can't find. Starting a new thread since the previous one is too old and too negative and dismissive towards sets (I wonder why!).
+Been thinking about making sets first-class citizens ever since I began coding in Swift. Seems like such a big omission and disregard of a data type that deserves to be in the front row seat.
+I do notice in open-source code people using arrays where sets would be more appropriate likely because arrays are easier to declare and use. For example, an array of days of week is almost always meant to be a set but you rarely see it declared as such for some reason. There are many more similar examples.
+So, set type:
+typealias IntSet = :[Int]
+typealias StringSet = :[String]
+typealias DaysOfWeek = :[DayOfWeek]
+Set literals:
+let empty: IntSet = :[] // alternatively = :[Int]()
+let longMonths = :[0, 2, 4, 6, 7, 9, 11]
+let weekend: DaysOfWeek = :[.saturday, .sunday]
+Overall the "price" of this suggestion is just the :[ which becomes a new multicharacter special symbol. To me, it beats the previously proposed [_: ]  and other possible variations as relatively more aesthetical.
+Optionally the following operators could be defined for sets, but I can see why someone would oppose these in favor of explicit functions:
+a * b // intersection, commutative
+a * i // membership test, commutative; alternatively could be `i ~ a`
+a + b // union, commutative
+a - b // subtraction
+Lovers of sets, unite!
+
+---
+
+@vns · 2024-07-04T08:45:51.105Z:
+typealias DaysOfWeek = Set<DayOfWeek>
+let weekend: DaysOfWeek = [.saturday, .sunday]
+That will literally work as of right now. With the previous thread pointing out that there are type inference available as well:
+let longMonths: Set = [0, 2, 4, 6, 7, 9, 11]
+You simply need to be explicit that type is Set and than initialize with literal. So I don't think there is a need for any additional syntax.
+
+---
+
+@Quedlinbug · 2024-07-04T08:53:02.926Z:
+Hovik Melikyan:
+an array of days of week is almost always meant to be a set
+OrderedSet is a better match.
+
+---
+
+@crontab · 2024-07-04T08:53:53.762Z:
+vns:
+let longMonths: Set = [0, 2, 4, 6, 7, 9, 11]
+Yes but I presume there is a cost of conversion if it's not an array literal, i.e.
+let set1: Set = [a, b, c]
+And actually I'm not sure if there isn't an overhead even in case of array literals. But I admit I know very little about how much Swift can do at compile time vs. run time.
+Besides, my point still stands I think that sets will get a chance of being used more often if they become first-class citizens.
+
+---
+
+@crontab · 2024-07-04T09:00:00.992Z:
+Quedlinbug:
+OrderedSet is a better match.
+Not for enumerable types, because they are already ordered. OrderedSet is good for e.g. LRU type storage and overall is more exotic I think than the ordinary sets.
+
+---
+
+@vns · 2024-07-04T09:07:20.137Z:
+I'm not sure Sets being less used because there is no specific literal syntax for them. It is more combination of unawareness (new developers tent to dig into collection types less and less), lack of ordering which is important quite often, and small size of data to operate on (I can argue that for most of the data we operate on, Array.contains is actually cheaper than using Set). Personally, I quite often find myself in last category when reach for Set: the need to add Hashable conformance + zero to negative win in performance on small collections make it actually less useful than array. You end up with relatively small portion of day-to-day tasks in which you'd be better with set.
+
+---
+
+@ktraunmueller · 2024-07-04T09:12:27.635Z:
+But the array literal could contain duplicates, which would be silently dropped in the Set initializer, right?
+Ideally the code shouldn't compile if the literal contains duplicate values (i.e. does not constitute a set).
+
+---
+
+@vns · 2024-07-04T09:18:16.134Z:
+Yes, which IMO perfectly expected behaviour as you reach for a set. And I don't think it should prevent from compilation (or even can, if we pass variables there). I can think of Python and C++ (kinda) right now as examples, and they behave the same way on literal init, e.g. in Python:
+x = {1, 1, 1}
+print(x)
+will output {1}
+
+---
+
+@ktraunmueller · 2024-07-04T09:25:14.525Z:
+Overall, I would second this feature. I see no reason why sets should be considered "lesser" collections than, say, arrays. Even though this discussion is just about literals.
+In general, I think using the right data types can make code simpler, easier to read, and more robust.
+If I have a problem at hand that requires exclusivity of values, I reach for Set. If I need an ordered collection that allows duplicates, I reach for Array. If I need both exclusivity and ordering, I would use OrderedSet.
+Using an Array for a problem that requires exclusivity opens the door for bugs which would simply not be possible when using a Set.
+
+---
+
+@crontab · 2024-07-04T09:25:33.811Z:
+vns:
+for most of the data we operate on, Array.contains is actually cheaper than using Set
+While true, it's a potentially dangerous assumption (that certain arrays will always be small) because you can easily overlook a situation with an array coming from user input which means opening the door for DoS attacks.
+vns:
+the need to add Hashable
+In the world of structured concurrency this is not a big problem anymore as most data (or all?) that's implicitly Sendable is also Hashable.
+
+---
+
+@vns · 2024-07-04T09:38:44.836Z:
+Hovik Melikyan:
+While true, it's a potentially dangerous assumption (that certain arrays will always be small) because you can easily overlook a situation with an array coming from user input which means opening the door for DoS attacks.
+That's not just an assumption, that derivable from the majority of the applications and end-up in preferability of arrays. And user input processing is completely another topic I'd say, where you should limit how much it is possible to send or how much you read (unbounded read from unknown source you cannot trust is bad despite data structure being used).
+Of course, one should be careful making decision, maybe add some assertion to catch cases when data size has grown if you made assumptions about size in particular case. But just using set, without understanding why, can also have dangerous implications.
+Hovik Melikyan:
+In the world of structured concurrency this is not a big problem anymore as most data (or all?) that's implicitly Sendable is also Hashable.
+That seem to be two unrelated things to me... I'm not sure how's that helps? You still need to deal with Hashable, maybe this type outside of your module, and hashing comes at price anyway.
+
+---
+
+@crontab · 2024-07-04T09:45:21.192Z:
+vns:
+You still need to deal with Hashable, maybe this type outside of your module, and hashing comes at price anyway.
+Not really, and actually I'm not sure anymore about your previous thesis that small arrays may be faster than sets.
+Imagine an array of 10 strings, that's up to 10 string comparisons for linear search. Compare that to a single .hash() call, a single pass on one string and some trivial 64-bit int operations for a set .contains(). Would be interesting to measure but I think Set will win even for small arrays.
+As for sendability and hashability: everything that's easily copyable is also easily hash-computable. Do you have examples of the opposite? I can't think of any.
+
+---
+
+@Quedlinbug · 2024-07-04T09:45:32.191Z:
+Hovik Melikyan:
+enumerable types …are already ordered.
+Hovik Melikyan:
+an array of days of week is almost always meant to be a set
+Your thread is not about the original enumeration. It is about collections based on it.
+Screenshot 2024-07-04 at 5.42.10 AM2280×550 180 KB
+
+---
+
+@Lancelotbronner · 2024-07-04T09:47:44.846Z:
+If there is an overhead to conversion from an array literal, then I’m pretty sure it can be considered an optimizer issue and fixed without the need for a proposal.
+For that reason I don’t feel like the proposed literal syntax adds much value.
+I would however like to have some operators for SetAlgebra types. I often use OptionSet for C bitsets and miss the simple operators.
+
+---
+
+@Karl · 2024-07-04T10:05:11.696Z:
+Hovik Melikyan:
+Not really, and actually I'm not sure anymore about your previous thesis that small arrays may be faster than sets.
+Imagine an array of 10 strings, that's up to 10 string comparisons for linear search. Compare that to a single .hash() call, a single pass on one string and some trivial 64-bit int operations for a set .contains(). Would be interesting to measure but I think Set will win even for small arrays.
+It depends on the strings. A string comparison can early-exit as soon as it is established that the strings are not equal. Hashing needs to visit the entire string (and then still needs to perform a string comparison if there is a potential match, because of the possibility of collisions). And hashing a string is not trivial - in the worst case it involves Unicode normalisation of the entire string.
+Hash tables also take much more memory, and their literals cannot be statically initialised by the compiler because they involve a random seed chosen at runtime.
+Each of these data types have their uses, and they are not universal. There are quantities and kinds of data for which some implementation strategies are better than others.
+So I disagree with your premise, and actually I think the opposite - that developers often overuse Set and Dictionary for very small amounts of easily-comparable data which would be better stored in an Array. That's not to say that Set literals are a bad idea, but that I would not make such sweeping assumptions as you do that people mostly use arrays out of ignorance.
+
+---
+
+@vns · 2024-07-04T10:07:52.922Z:
+Hovik Melikyan:
+Not really, and actually I'm not sure anymore about your previous thesis that small arrays may be faster than sets.
+Imagine an array of 10 strings, that's up to 10 string comparisons for linear search. Compare that to a single .hash() call, a single pass on one string and some trivial 64-bit int operations for a set .contains(). Would be interesting to measure but I think Set will win even for small arrays.
+I tested and there is no difference at all: either with Array or with Set it took same time. I still expected an array to be faster maybe, but even equal time makes sense. Because hashing is not free, for string this is passing whole string anyway. So linear search with contains or hashing has same timing (UPD: @Karl in the post above has made more detailed overview of the differences).
+And if you hash something more complex (some compound struct), I'd expect it to grow as well in time. Of course, you can find exceptions, even with same data types, yet that's why they exceptions.
+Hovik Melikyan:
+As for sendability and hashability: everything that's easily copyable is also easily hash-computable. Do you have examples of the opposite? I can't think of any.
+I'm not saying that implementation is hard, it is that you need to make additional steps to conform to it, which can be also easy as Swift will synthesise for you, yet if that type from outside of your current module, you'll have to write it by hand (and maintain later). That's all compared to an array is unnecessarily much more complicated, than just Array.contains, while you gain nothing (as rough generasization).
+
+---
+
+@crontab · 2024-07-04T10:32:05.465Z:
+vns:
+I tested and there is no difference at all: either with Array or with Set it took same time.
+For how many items, 10? You can't generalize based on a case of 10 strings because after all there are computational complexity truths that can't be beaten
+vns:
+it is that you need to make additional steps to conform to i
+I should have clarified that I meant trivial types like Int, String etc. then enums and also structs and arrays that enclose only trivial types. Anything that is not trivially and implicitly hashable, is also not trivially sendable which means you will tend to avoid it in your modern Swift code.
+
+---
+
+@crontab · 2024-07-04T10:37:58.379Z:
+Karl:
+So I disagree with your premise, and actually I think the opposite - that developers often overuse Set and Dictionary for very small amounts of easily-comparable data which would be better stored in an Array.
+Maybe, but the set type's primary purpose is a guarantee of exclusivity/uniqueness, that is what developers I think often overlook. (I don't know why this discussion slipped into performance and memory issues, to me it's not the most important thing in this case.)
+
+---
+
+@vns · 2024-07-04T10:49:20.993Z:
+Hovik Melikyan:
+For how many items, 10? You can't generalize based on a case of 10 strings because after all there are computational complexity truths that can't be beaten
+As there were pointed out, we actually can generalize for majority of strings that amount of work for linear search vs hashing and maintaining set at least require the same amount of work, not even measuring it. We cannot say that this is true in 100% cases, and that’s not what I am trying to say. I’m only saying that we can expect it to be true for majority of them.
+I am also not trying to say that sets inherently useless or bad of any kind. There are plenty of legitimate cases when it is beneficial to reach for it, sometimes despite hashing costs. We’ve started discussion on the topic from sets being often dismissed because of syntax details, and my point was (and remains) that lesser "popularity" driven by other factors. After all, what we actually need is better understanding of data structures and when to use them. I am not advocating for blind use of array instead of sets on small data just because there is no difference either, only that in more cases than not it turns out better strategy.
+Hovik Melikyan:
+I should have clarified that I meant trivial types like Int, String etc. then enums and also structs and arrays that enclose only trivial types. Anything that is not trivially and implicitly hashable, is also not trivially sendable which means you will tend to avoid it in your modern Swift code.
+Your premise lies in the land of concurrency, but so far there are a lot of valid use cases where you don’t need or don’t want concurrency, yet still will need hashing capabilities. Even in the concurrency, we have actors that can remove the need of sendability if all operations hold inside. That’s actually the same kind of generalization you are agains with array vs set: even through there are majority of cases when that is valid, there are exceptions to that.
+
+---
+
+@vns · 2024-07-04T10:54:54.261Z:
+I think this case falls into first category I’ve stated earlier: unawareness of set as data structure in overall that can hold such guarantees as uniqueness.
+
+---
+
+@crontab · 2024-07-04T11:05:57.721Z:
+vns:
+As there were pointed out, we actually can generalize for majority of strings that amount of work for linear search vs hashing and maintaining set at least require the same amount of work, not even measuring it.
+Not true at all. Seriously not true. I don't think you know how hash tables work. Try your experiment with 1000 strings. But this is getting too off-topic already.
+
+---
+
+@mickeyl · 2024-07-04T11:18:11.555Z:
+I love Set, but I don't think a special literal syntax for them is justified. If Swift had no type inference, I might see that differently.
+
+---
+
+@vns · 2024-07-04T11:47:16.533Z:
+Of course we can increase number of elements up to infinity, at some point it won't be true (probably). I don't know based on what you assume my understanding.
+Hovik Melikyan:
+But this is getting too off-topic already.
+I'd argue that adding more syntax to promote sets is relatable to how actually useful sets are at larger scale. So just out of curiosity I did test from 10 to 1 million strings (randomly generated 128 symbols each). Then try inserting existing and new values to them in non-duplicating way:
+Test functions
+func test(array: inout [String], existingValue: String) {
+if !array.contains(existingValue) {
+array.append(existingValue)
+}
+let newValue = "" // omitted actual string
+if !array.contains(newValue) {
+array.append(newValue)
+}
+}
+func test(set: inout Set<String>, existingValue: String) {
+set.insert(existingValue)
+let newValue = "" // omitted actual string
+set.insert(newValue)
+}
+At the 1 million values array is still faster by huge amount on simple non-duplicating insertion:
+Array: 0.024993896484375s, Set: 0.16235995292663574s
+
+---
+
+@maartene · 2024-07-04T12:16:52.987Z:
+I wasn't aware that this is actually possible. Especially the type inference is nice. This for me is good enough.
+
+---
+
+@vns · 2024-07-04T12:25:20.310Z:
+I didn’t as well until looked at previous topic, so thanks to @crontab for digging it up
+
+---
+
+@lorentey · 2024-07-06T01:02:24.246Z:
+vns:
+So just out of curiosity I did test from 10 to 1 million strings (randomly generated 128 symbols each). Then try inserting existing and new values to them in non-duplicating way:
+[...]
+At the 1 million values array is still faster by huge amount on simple non-duplicating insertion:
+Array: 0.024993896484375s, Set: 0.16235995292663574s
+That does not sound right. Please check that your code is measuring what you think it is measuring.
+A million random lookups(+appends) into an unsorted Array<String> are nowhere near the performance of a Set<String>'s insert method -- it's not even close.
+Benchmark code
+import CollectionsBenchmark
+var benchmark = Benchmark(title: "Collection Benchmarks")
+let someLatinSymbols: [UnicodeScalar] = [
+0x20 ..< 0x7f,
+0xa1 ..< 0xad,
+0xae ..< 0x2af,
+0x300 ..< 0x370,
+0x1e00 ..< 0x1eff,
+].flatMap {
+$0.map { UnicodeScalar($0)! }
+}
+extension UnicodeScalar {
+static func randomLatin(using rng: inout some RandomNumberGenerator) -> Self {
+someLatinSymbols.randomElement(using: &rng)!
+}
+}
+extension String.UnicodeScalarView {
+static func randomLatin(count: Int, using rng: inout some RandomNumberGenerator) -> Self {
+var result = String.UnicodeScalarView()
+for _ in 0 ..< count {
+result.append(UnicodeScalar.randomLatin(using: &rng))
+}
+return result
+}
+}
+extension [String] {
+static func randomLatin(
+count: Int,
+using rng: inout some RandomNumberGenerator
+) -> Self {
+var result: [String] = []
+result.reserveCapacity(count)
+for _ in 0 ..< count {
+result.append(String(String.UnicodeScalarView.randomLatin(count: 128, using: &rng)))
+}
+return result
+}
+}
+benchmark.registerInputGenerator(for: [String].self) { count in
+var rng = SystemRandomNumberGenerator()
+return [String].randomLatin(count: count, using: &rng)
+}
+benchmark.addSimple(
+title: "Input generation",
+input: Int.self
+) { count in
+var rng = SystemRandomNumberGenerator()
+blackHole([String].randomLatin(count: count, using: &rng))
+}
+benchmark.addSimple(
+title: "Array<String>",
+input: [String].self
+) { input in
+var result: [String] = []
+for string in input {
+if !result.contains(string) {
+result.append(string)
+}
+}
+blackHole(result)
+}
+benchmark.addSimple(
+title: "Set<String>",
+input: [String].self
+) { input in
+var result: Set<String> = []
+for string in input {
+result.insert(string)
+}
+blackHole(result)
+}
+benchmark.main()
+Results:
+Overall processing time (linear chart)2560×960 268 KB
+Note that the Array results cut off at 32k input strings; this is because I lost patience waiting for its calculations to finish. Set managed to work through 1 million items before I grew tired of waiting.
+The chart above shows overall execution time for the entire loop, on a linear scale. For reference, here is a chart with the same data, but displaying average per-element processing time on a log-log scale:
+Per-element processing time (log-log chart)2560×960 412 KB
+The linear chart is overemphasizing data at the high end. This log-log chart gives a far better picture of how these algorithms behave at every order of magnitude.
+(I'm generating my strings by selecting 128 random latin(ish) Unicode scalars, which gives a big advantage to Array -- for this data, String.== is typically able to give a false result up to a few hundred times faster than what it takes to hash them. In both cases, execution time is very much dominated by String operations. (Hashing a String costs about half as much time as the worst case of comparing two String instances that happen to be equal -- most of the time is spent on Unicode normalization.)
+Note how Set's behavior remains nice and flat no matter how large it gets -- for this hashing/==-dominated input, inserting into an empty set takes about the same time as inserting into one that holds a million items. Array.contains costs time proportional to the size of the entire array; while it starts with a huge initial advantage, it has no chance against Set.
+
+---
+
+@vns · 2024-07-06T08:43:55.467Z:
+Thanks for such detailed test, to be honest I was suspicious that on 1 million array performs better, maybe my test too synthetic, of just was for a bit different case as I simply checked how long it will take to insert new and existing elements into them, not build from the scratch.
+lorentey:
+while it starts with a huge initial advantage, it has no chance against Set.
+Still, it holds for initial statement that on a small data sizes arrays are winning in performance.
+I’m not advertising to replace sets with array at this level, just that it is still specific data structure to solve certain tasks, that doesn’t need specific literal syntax to make it use more often
+
+---
+
+@crontab · 2024-07-06T09:32:55.092Z:
+vns:
+just that it is still specific data structure to solve certain tasks, that doesn’t need specific literal syntax to make it use more often
+You could say the same about dictionaries. Why use dictionaries when there are arrays and linear search? I bet small dictionaries are slower than arrays and yet everybody uses them whenever they think in terms of mapping A to B. Dictionaries are chosen over arrays by default in any such case, I argue, because they are first class citizens in the language.
+
+---
+
+@taylorswift · 2024-07-06T14:18:19.474Z:
+Hovik Melikyan:
+Dictionaries are chosen over arrays by default in any such case, I argue, because they are first class citizens in the language.
+one day i hope OrderedDictionary will finally graduate. i keep running into bugs (or more common, non-deterministic serialization output) in libraries because the author thought they could get away with using a standard Dictionary, and it’s not hard for me to understand why. swift-collections is an old and decorated repo with a long history that takes far too long for SwiftPM to clone from anywhere that’s not a Bay Area corporate network, and that pushes people to avoid depending on it if possible, with all the predictable consequences. the incentives feel all wrong here.
+
+---
+
+@James_Dempsey · 2024-07-06T15:34:48.401Z:
+Without getting into the merits of arrays vs sets, I think with the proposed syntax it would be very easy to miss the colon when reading the code and accidentally mistake a set for an array:
+let daysOfWeek = :[“Monday”, “Tuesday”, “Wednesday”]
+let daysOfWeek = [“Monday”, “Tuesday”, “Wednesday”]
+In isolation, the difference is more obvious, but in the context of a property in a type declaration or a local variable in a function, I think it can easily be misread as an array.
+As another poster had mentioned, using element type inference with the existing literal notation is fairly concise already, but it's very clear that a Set is being created:
+let daysOfWeek : Set = [“Monday”, “Tuesday”, “Wednesday”]
+7ombie:
+No type has its own literals in Swift. Literals are generic (any type can be defined with any literal it wants to be definable by). Literals only have default types that are inferred when the type of a literal cannot be inferred by any other means.
+Yes, I think the argument could be made that ‘array literal’ is a bit of a misnomer. Its general case is a ‘list literal’ notation that any type can adopt when initializing with a list of elements makes sense. If no type information is present, it defaults to array, but it is intended for use by various types.
+Thought of that way, I think it would be strange to introduce a second style of ‘list literal’ for the sole purpose of having a different default type.
+It also raises the question, should you be able to use a set literal everywhere you can use an array literal as long as the type was explicit?
+For example, would this be expected to be valid?
+let daysOfWeek : Array = :[“Monday”, “Tuesday”, “Wednesday"]
+Would a type that currently implements ExpressibleByArrayLiteral also be expected to implement a new ExpressibleBySetLiteral protocol to be a good citizen?
+If the answer to these is yes, I think that adds a good deal of complexity to enable a slightly shorter way to declare sets with a literal. If the answer is no, I think it is really odd to add a literal notation that can only be used with one type. [1]
+There is the nil literal which is meant to be used only with optionals, but that is a much more fundamental language feature than sets. ↩︎
+
+---
+
+@crontab · 2024-07-06T15:43:21.239Z:
+James_Dempsey:
+For example, would this be expected to be valid?
+let daysOfWeek : Array = :[“Monday”, “Tuesday”, “Wednesday]
+No, because Set doesn't guarantee the order of elements. The initialization you showed might create an impression that the array will be initialized with elements in that order, so I'd say array constructors should not accept sets.
+James_Dempsey:
+I think with the proposed syntax it would be very easy to miss the colon when reading the code and accidentally mistake a set for an array:
+let daysOfWeek = :[“Monday”, “Tuesday”, “Wednesday”]
+let daysOfWeek = [“Monday”, “Tuesday”, “Wednesday”]
+Certain things in C-like syntax may be easy to miss, e.g. ! in expressions. In fact I'd argue that the case of :[...] is a less visually ambiguous one compared to the ! operator.
+
+---
+
+@itaiferber · 2024-07-06T16:30:22.153Z:
+I've been following this thread for a little bit, but to be honest, I'm not sure I'm seeing a new set-literal syntax giving us a significant-enough advantage over the existing array-literal syntax that we already have. Theoretically, warning about duplicate elements in the literal would be nice, but in order for the compiler to do this, it needs to have static knowledge about equatability and hashability for elements in that set, which means that:
+That knowledge needs to be hard-coded into the compiler; this is limited to stdlib types, but even of those types, very few types warrant static inclusion into the compiler itself
+The elements need to be statically defined in-line in the set (e.g., can't be variable references)
+i.e., you're only really likely to get this benefit for basic sets of [U]Int*/Float/Double/Strings.
+// `MyIntType: ExpressibleByIntegerLiteral`, but the compiler
+// has no knowledge of `MyIntType.==` and `MyIntType.has(into:)`
+// so it can't warn
+let a: Set<MyIntType> = :[1, 2, 1, 3] // oops
+// The compiler knows about `String`, but attempting to follow
+// variable definitions is a quickly-losing war
+let myStr = "hi"
+let b: Set<String> = :["hi", myStr, "hello"] // oops
+// Theoretically, this _could_ work if all of the requisite info
+// is hard-coded into the compiler, but type-checking alone for
+// deeply-nested literals is already really expensive
+let c: Set<Dictionary<String, Set<Array<String>>>> = :[
+["s1" : :[["a", "b"], ["c"]]],
+["s2" : :[["c"], ["d", "e"]]],
+["s3" : :[[]],
+["s4" : :[["z"]],
+["s1" : :[["a", "b"], ["c"]]],
+] // oops
+Is there another benefit I'm not seeing here?
+
+---
+
+@James_Dempsey · 2024-07-06T16:40:28.293Z:
+Hovik Melikyan:
+James_Dempsey:
+I think with the proposed syntax it would be very easy to miss the colon when reading the code and accidentally mistake a set for an array:
+let daysOfWeek = :[“Monday”, “Tuesday”, “Wednesday”]
+let daysOfWeek = [“Monday”, “Tuesday”, “Wednesday”]
+Certain things in C-like syntax may be easy to miss, e.g. ! in expressions. In fact I'd argue that the case of :[...] is a less visually ambiguous one compared to the ! operator.
+Yes and for years there has been a steady stream of forum threads by people who find the ! operator easy to miss, pitching various solutions. The current one is here.
+Why would it be a good thing to proactively introduce a new easy-to-miss syntax?
+
+---
+
+@James_Dempsey · 2024-07-06T16:48:49.278Z:
+Hovik Melikyan:
+James_Dempsey:
+For example, would this be expected to be valid?
+let daysOfWeek : Array = :[“Monday”, “Tuesday”, “Wednesday"]
+No, because Set doesn't guarantee the order of elements. The initialization you showed might create an impression that the array will be initialized with elements in that order, so I'd say array constructors should not accept sets.
+So, by that logic though, this also would not be allowed:
+let daysOfWeek : OrderedSet = :[“Monday”, “Tuesday”, “Wednesday"]
+It seems odd you would not be able to use a set literal to create an ordered set, especially since the literal itself is not a set, there is a clear order to the elements.
+
+---
+
+@crontab · 2024-07-06T17:29:31.769Z:
+itaiferber:
+Theoretically, warning about duplicate elements in the literal would be nice, but in order for the compiler to do this, it needs to have static knowledge about equatability and hashability for elements in that set
+As a user I wouldn't worry about the compiler's ability to detect duplicates at compile time since inserting duplicates is allowed at run time anyway, i.e. it is not an error for sets in general.
+itaiferber:
+// Theoretically, this _could_ work if all of the requisite info
+// is hard-coded into the compiler, but type-checking alone for
+// deeply-nested literals is already really expensive
+let c: Set<Dictionary<String, Set<Array<String>>>> = :[
+["s1" : :[["a", "b"], ["c"]]],
+["s2" : :[["c"], ["d", "e"]]],
+["s3" : :[[]],
+["s4" : :[["z"]],
+["s1" : :[["a", "b"], ["c"]]],
+] // oops
+To be honest I don't quite understand what the problem is here. In fact the type of the literal above could be inferred (without type annotation) if Swift had set literals, and it's probably the biggest advantage of having them.
+
+---
+
+@crontab · 2024-07-06T17:32:59.372Z:
+James_Dempsey:
+So, by that logic though, this also would not be allowed:
+let daysOfWeek : OrderedSet = :[“Monday”, “Tuesday”, “Wednesday"]
+Fair point, but I think the compiler could make it work just for the sake of consistency, i.e. ordered set is still a set.
+
+---
+
+@James_Dempsey · 2024-07-06T17:47:22.550Z:
+Hovik Melikyan:
+James_Dempsey:
+So, by that logic though, this also would not be allowed:
+let daysOfWeek : OrderedSet = :[“Monday”, “Tuesday”, “Wednesday"]
+Fair point, but I think the compiler could make it work just for the sake of consistency, i.e. ordered set is still a set.
+Yes, but by what mechanism? All other literals have an ExpressibleByXXXLiteral protocol that is implemented by types that can be initialized with that kind of literal.
+Are you proposing that the set literal would have an entirely different mechanism from all other literals?
+If that is the case, then since OrderedSet is not in the standard library, it sounds like the compiler would need to hard code that particular type. That also precludes someone from using the set literal syntax with something like a Swift version of NSCountedSet from Foundation.
+
+---
+
+@itaiferber · 2024-07-06T17:48:59.045Z:
+Hovik Melikyan:
+As a user I wouldn't worry about the compiler's ability to detect duplicates at compile time since inserting duplicates is allowed at run time anyway, i.e. it is not an error for sets in general.
+To be clear, are you saying that as a user,
+You don't mind if the compiler isn't able to warn about duplicate elements,
+You don't expect the compiler to try to warn about duplicate elements, or
+Something else?
+Hovik Melikyan:
+To be honest I don't quite understand what the problem is here. In fact the type of the literal above could be inferred (without type annotation) if Swift had set literals, and it's probably the biggest advantage of having them.
+The above code already works today, as-is, if you drop replace :[ with [. I'm trying to get a sense of the proposed benefit of introducing new syntax. There is a cost to introducing new syntax (and likely a new ExpressibleBySetLiteral protocol), and the question is whether the benefit outweighs that cost.
+If we see the benefit as "the compiler can warn about duplicate elements inside :[...]" (presumably because duplicate elements are not intentional in a set literal), then the question is whether we would see the benefit often enough to offset that cost.
+If we don't intend to have the compiler check for duplicate elements at all (since it's not a runtime error), then there'd be no difference between :[...] and [...], and I don't see the justification for introducing the change.
+
+---
+
+@crontab · 2024-07-06T20:36:15.573Z:
+itaiferber:
+If we don't intend to have the compiler check for duplicate elements at all (since it's not a runtime error), then there'd be no difference between :[...] and [...], and I don't see the justification for introducing the change.
+As I see it, the main benefits would be:
+type inference, i.e. in your gigantic nested initialization you may omit the type declaration, something that's impossible without set literals
+as a hypothesis, you will use sets more often since now you have a shortcut
+sets becoming first-class citizens and used more often means safer and more reliable (as a bonus also possibly faster) code due to enforced exclusivity where appropriate; sets also convey your intention better
+
+---
+
+@xwu · 2024-07-06T21:09:29.451Z:
+Hovik Melikyan:
+type inference, i.e. in your gigantic nested initialization you may omit the type declaration, something that's impossible without set literals
+It's actually completely possible today, at any level of nesting, without a type annotation as such. It's spelled [1, 2, 3] as Set. You can use this type coercion notation for any kind of literal (for example: 42 as Double, "Foo" as StaticString).
+
+---
+
+@Quedlinbug · 2024-07-06T22:26:21.325Z:
+It's way better than a bunch more colons, too.
+let c = [
+["s1": [["a", "b"], ["c"]] as Set],
+["s2": [["c"], ["d", "e"]]],
+["s3": [[]]]
+] as Set
+let c: Set<[_: Set]> = [
+["s1": [["a", "b"], ["c"]]],
+["s2": [["c"], ["d", "e"]]],
+["s3": [[]]]
+]
+I think this thread exists because of relative lack of prominent learning material featuring not-Array ExpressibleByArrayLiteral types. "First-class" is in the familiarity of the beholder.
+
+---
+
+@itaiferber · 2024-07-06T23:14:00.502Z:
+Quedlinbug:
+let c: Set<[_: Set]> = [
+["s1": [["a", "b"], ["c"]]],
+["s2": [["c"], ["d", "e"]]],
+["s3": [[]]]
+]
+can be taken a step further, too:
+let c: Set<_> = [ ... ]
+is sufficient.
+Edit: This is not correct; I misread the type annotation above — Set<_> here would be equivalent to Set<[_: Array]>, not Set<[_: Set]>.
+
+---
+
+@wadetregaskis · 2024-07-06T23:32:45.362Z:
+itaiferber:
+…warning about duplicate elements in the literal would be nice, but in order for the compiler to do this, it needs to have static knowledge about equatability and hashability for elements in that set…
+Indeed, but if Swift supported compile-time evaluation (a la constexpr) then it could actually be addressed in a general fashion.
+Hovik Melikyan:
+As a user I wouldn't worry about the compiler's ability to detect duplicates at compile time since inserting duplicates is allowed at run time anyway, i.e. it is not an error for sets in general.
+It is inherently different, though - static vs dynamic behaviour.  It's definitely suspicious to define a set of values all in one time & place and to have duplicates in there.  To the reader it creates distraction and confusion as it's not clear if there is a typo or a logic error or some other flaw.
+Technically it's also wasteful, although I think in most cases that's insignificant.
+Of course, sometimes by the nature of complex code you end up with duplicates, but you don't necessarily want the compiler to complain about it.  Given abstraction and indirection through constants and macros and other such things.
+Thus, I think this is less something that should be tied intrinsically to Set and more something you elect to use on a case-by-case basis.  I think that's what the proposed :[] syntax was getting at.
+However, there may be a better way - if Swift gains compile-time evaluation, one could simply write e.g. a constexpr func unique<Element: Equatable>(_ elements: Element…) -> Element… which fatalErrors if duplicate elements are encountered.
+There might also be synergy with compile-time layout of Sets (IIRC currently only the list literal is baked into the const data segment, and at runtime the relevant collection's init is called to actually construct the final in-memory form).  That would also address binary size wastage due to duplicate literals.
+
+---
+
+@Quedlinbug · 2024-07-06T23:42:03.960Z:
+No, that's a different type. These are all the same.
+let c: Set<_> = [
+let c: Set = [
+let c: Set<[_: Array]> = [
+let c: Set<[_: [_]]> = [
+
+---
+
+@itaiferber · 2024-07-06T23:43:22.108Z:
+You're absolutely right! I misread the code. Will fix.
+
+---
+
+@bbrk24 · 2024-07-07T00:09:37.944Z:
+Introduced in 5.6, _ inside a generic type means “infer this part of the type”. Mainly used when only some parts can be inferred, e.g.
+let x: [_: [String]] = [1: []]
+
+---
+
+@crontab · 2024-07-07T06:00:29.992Z:
+Quedlinbug:
+"First-class" is in the familiarity of the beholder.
+First-class is when you don't need to typecast every time  For the same reason I prefer 1.0 to Double(1), now that's first-class, Double(1) as the only way wouldn't be.
+
+---
+
+@xwu · 2024-07-07T06:27:35.997Z:
+Hovik Melikyan:
+First-class is when you don't need to typecast every time  For the same reason I prefer 1.0 to Double(1), now that's first-class, Double(1) as the only way wouldn't be
+There is no casting here. let x = Double(1) is nowadays equivalent to let x = 1 as Double, which as I discussed above is equivalent to let x: Double = 1. Note that Double.init(1), however, does involve casting (from Int to Double).
+
+---
+
+@crontab · 2024-07-07T07:13:56.392Z:
+xwu:
+There is no casting here. let x = Double(1) is nowadays equivalent to let x = 1 as Double
+Whether there's a physical typecast or not, what I meant was let's say syntactic typecast. 1.0 is not the same as 1 as Double, it's just... shorter. The less you type and read the better.
+
+---
+
+@xwu · 2024-07-07T08:10:59.920Z:
+Hovik Melikyan:
+Whether there's a physical typecast or not, what I meant was let's say syntactic typecast.
+No, I am not speaking about what the machine actually executes. What I'm saying is this: neither Double(1) nor 1 as Double is the syntax for a casting operation—that is a common misunderstanding.
+It was a deliberate choice on the part of Swift to reject C precedent where you can write 1.0f to indicate the type. Instead, in Swift the spelling is 1.0 as Float.
+
+---
+
+@crontab · 2024-07-07T09:31:03.465Z:
+xwu:
+No, I am not speaking about what the machine actually executes. What I'm saying is this: neither Double(1) nor 1 as Double is the syntax for a casting operation—that is a common misunderstanding.
+I'm sorry we seem to be talking about different things.
+One of the reasons I love Swift is how easily it adopts all kinds of syntactic shortcuts, from trailing closures to optional return etc, there are very many of them. Shorter code and fewer keywords and special characters make the language nicer and more readable. The semicolon was dropped for the sake of it, to remove another unnecessary mental tax of reading!
+So, just like 1.0 always, always wins against 1 as Double for me,
+let s = :["a", "b", "c"]
+(or something similar) wins against
+let s = ["a", "b", "c"] as Set
+// or
+let s = Set(["a", "b", "c"])
+The whole point of this post is to show that sets (1) deserve to have a syntactic shortcut and (2) should be and will be used more often if they have one.
+
+---
+
+@vns · 2024-07-07T09:53:50.603Z:
+As codebase grows, it is actually better to have type being explicitly declared, as it helps with compilation time and simplifies reading the code (since you as well have to infer types as you read the code).
+Shortcuts in languages, despite their usability in some cases, has a long history of ambiguity, hidden bugs, and other complications, for instance, I cannot remember any new language (say Swift age) that allows omitting figure braces as C does:
+if (someFlag) callFunc();
+Just as one of the examples. Or Swift's removal of increments and decrements. Or part of languages removal of ternary operator. And list goes on.
+
+---
+
+@crontab · 2024-07-07T10:20:10.729Z:
+vns:
+I cannot remember any new language (say Swift age) that allows omitting figure braces as C does:
+It's because those languages dropped the semicolon and now need to resolve ambiguity, not because it's "bad" to have a single-statement block without curly braces.
+vns:
+As codebase grows, it is actually better to have type being explicitly declared
+That's a very broad assertion that is actually wrong. As a codebase grows, nothing really changes if you keep up the good quality of your code. You won't notice a difference in compilation time if you use 1.0 instead of Double(1) and actually it's not even obvious which way it will go (in terms of build times).
+vns:
+Shortcuts in languages, despite their usability in some cases, has a long history of ambiguity, hidden bugs, and other complications
+Another very broad and unprovable assertion. Shortcuts added tastefully like they are done in Swift, only improve readability.
+
+---
+
+@vns · 2024-07-07T11:07:12.392Z:
+Hovik Melikyan:
+It's because those languages dropped the semicolon and now need to resolve ambiguity, not because it's "bad" to have a single-statement block without curly braces.
+It is exactly because it is bad – the number of issues created because of this is huge. Languages that still has semicolons (Rust) has still omitting disallowed exactly due to issues it brings, not because they can't resolve ambiguity.
+Hovik Melikyan:
+That's a very broad assertion that is actually wrong. As a codebase grows, nothing really changes if you keep up the good quality of your code. You won't notice a difference in compilation time if you use 1.0 instead of Double(1) and actually it's not even obvious which way it will go (in terms of build times).
+You can search only by this forum for "slow compilation" how many times this issue were faced. Each type inference adds up, and while for something like integer or double this is actually negligible, for collection types it can have huge impact. But even math operations for long has been resulting in compiler just giving up on resolving type on complex expressions. And still can if you eventually put Int inside expression on Doubles, making compiler confused.
+Hovik Melikyan:
+Another very broad and unprovable assertion. Shortcuts added tastefully like they are done in Swift, only improve readability.
+You can find tons of example how omitted curly braces has created major issues in codebases, even when maintained by extremely skilled developers. Or using ternary operator to call void functions. And so on.
+On the other hand, improved readability here is doubtful, as you have to bear additional cognitive load even to read something as simple as
+let x = 1.0
+While this statement seems to be an easy one, for a reader to evaluate, it requires to understand that 1.0 literal is for double, not float type, apart from other things. This example too simple to say it is actually hard to understand it, but as you go through a lot of code, keeping in mind various details, inferring type for each statement you read is load you can escape as well.
+Ternary operator, probably, better example of how readability is declines with shortcuts:
+let x = a ? y : b ? z : t
+vs
+let x: Int
+if a {
+x = y
+} else if b {
+x = z
+} else {
+x = t
+}
+Despite the need to write a little bit more code, readability has improved a lot, with a bonus of keeping away from making precedence mistake somewhere in the middle.
+On a side note, I don't see this as a productive discussion to just throw accusation of "everything said here wrong" just because you don't think so. It would be much better to have examples to support such claims.
+
+---
+
+@crontab · 2024-07-07T11:36:08.168Z:
+vns:
+Despite the need to write a little bit more code, readability has improved a lot
+Not to me, no. Sorry for this analogy, but your second form reminds me of kids that count the steps as they go up or down the stairs.
+
+---
+
+@ibex · 2024-07-07T11:57:34.696Z:
+crontab:
+vns:
+Despite the need to write a little bit more code, readability has improved a lot
+Not to me, no. Sorry for this analogy, but your second form reminds me of kids that count the steps as they go up or down the stairs.
+@vns has provided a good example to illustrate the point.
+Although I like the first form and always use it, because I like math and abstract things, I find the second form easier to read and understand, not to mention the fact that it is much easier to debug.
+
+---
+
+@crontab · 2024-07-07T12:09:22.912Z:
+ibex:
+Although I like the first form and always use it, because I like math and abstract things, I find the second form easier to read and understand, not to mention the fact that it is much easier to debug.
+Yes, programming is about this type of compromises. Regular expressions are an extreme example of unreadable mess, just try to find a canonical RE for validating email addresses
+However, all disputes aside, I wouldn't hire someone who has difficulty reading and understanding
+let x = a ? y : b ? z : t
+let alone making a mistake in it that would require step-by-step debugging. The more verbose form of it takes longer to read and understand because - well, it is longer. If you are not comfortable with the ternary operator or you don't have the intuition to know when to resort to if's, it means sorry, I'll pass and won't hire you.
+Just like I wouldn't hire someone who thinks that
+if cond {
+return true
+}
+else {
+return false
+}
+is "better" because it is more "readable". I actually had arguments around this (online) and not once. Even those who actually know how booleans work were telling me the above is "better"! That's how irrational it can get.
+In any case, anything that can shorten the code without making it too cryptic <- and this is where it gets tricky of course, but anything that can make your code shorter is good unless proven otherwise, not the other way around.
+
+---
+
+@vns · 2024-07-07T12:26:06.356Z:
+Hovik Melikyan:
+However, all disputes aside, I wouldn't hire someone who has difficulty reading and understanding
+let x = a ? y : b ? z : t
+let alone making a mistake in it that would require step-by-step debugging.
+A slight modification to make it more entertaining:
+let a: Int? = 1
+let b: Int? = nil
+let x = a > 0 ? y : b < 0 ? z : t
+That won't compile as comparative operators not allowed for optionals. How we can modify that one?
+let x = (a ?? 0) > 0 ? y : (b ?? 0) < 0 ? z : t
+Probably, correct? Maybe yes, maybe not. Maybe, better to have something like:
+let x = a != nil ? a! > 0 ? y : -1 : b != nil ? b! < 0 ? z : t : -1
+And this can be tweaked a bit depending on what you want to have if, e.g. a == nil: -1 or else clause? But to just parse what will happen here in the latter case requires non-trivial amount of work.
+
+---
+
+@taylorswift · 2024-07-07T14:58:00.808Z:
+xwu:
+What I'm saying is this: neither Double(1) nor 1 as Double is the syntax for a casting operation—that is a common misunderstanding.
+perhaps it would help to link the proposal that first introduced this (strange but probably unavoidable) behavior:
+github.com
+swiftlang/swift-evolution/blob/main/proposals/0213-literal-init-via-coercion.md
+# Literal initialization via coercion
+* Proposal: [SE-0213](0213-literal-init-via-coercion.md)
+* Authors: [Pavel Yaskevich](https://github.com/xedin)
+* Review Manager: [John McCall](https://github.com/rjmccall)
+* Status: **Implemented (Swift 5.0)**
+* Implementation: [apple/swift#17860](https://github.com/apple/swift/pull/17860)
+## Introduction
+`T(literal)` should construct T using the appropriate literal protocol if possible.
+Swift-evolution thread: [Literal initialization via coercion](https://forums.swift.org/t/literal-initialization-via-coercion/11251)
+## Motivation
+Currently types conforming to literal protocols are type-checked using regular
+initializer rules, which means that for expressions like `UInt32(42)` the
+type-checker is going to look up a set of available initializer choices and
+attempt them one-by-one trying to deduce the best solution.
+This file has been truncated. show original
+
+---
+
+@vns · 2024-07-07T15:03:22.029Z:
+Hovik Melikyan:
+In any case, anything that can shorten the code without making it too cryptic <- and this is where it gets tricky of course, but anything that can make your code shorter is good unless proven otherwise, not the other way around.
+BTW, as pointed in parallel thread, that is not what Swift aims for at all:
+Clarity is more important than brevity. Although Swift code can be compact, it is a non-goal to enable the smallest possible code with the fewest characters. Brevity in Swift code, where it occurs, is a side-effect of the strong type system and features that naturally reduce boilerplate.
+
+---
+
+@wadetregaskis · 2024-07-07T15:34:36.280Z:
+Hovik Melikyan:
+However, all disputes aside, I wouldn't hire someone who has difficulty reading and understanding
+let x = a ? y : b ? z : t
+Does "understanding" mean also knowing what the above expression actually does, re. operator precedence?  Because I for one have no idea whether that expression means:
+let x = (a ? y : b) ? z : t
+…or:
+let x = a ? y : (b ? z : t)
+I wouldn't expect anyone, not even an author of the language, to have operator precedence memorised to that level of detail.
+Personally I'd be fine if Swift flat-out rejected that code as ambiguous, and required explicitly parenthesis.  Doing so would be completely in line with Swift's language goals of clarity over brevity.
+Many places I've worked have required parenthesis for cases like that, specifically because it's considered dangerously easy to misinterpret.  Terse to a potentially literal fault.  I can say with confidence it would be broadly rejected at Google & LinkedIn, for example (it's explicitly banned by their style guides).
+Maybe accepted at Apple, but then I wouldn't use them as a role model on this specific topic.
+
+---
+
+@crontab · 2024-07-07T15:40:32.357Z:
+wadetregaskis:
+Does "understanding" mean also knowing what the above expression actually does, re. operator precedence? Because I for one have no idea whether that expression means:
+let x = (a ? y : b) ? z : t
+…or:
+let x = a ? y : (b ? z : t)
+Well if you are new to the language you google before you use it ;) Most languages inherit the precedence of the ternary operator from C, though there's at least one exception, PHP.
+If you are a seasoned developer of the X language, you are just expected to know. Corporations that hire people in bulk, conveyor-belt style, should protect themselves from dumb mistakes, that's understandable. It's why I've been avoiding big co.'s for many years now.
+
+---
+
+@Nobody1707 · 2024-07-07T20:43:30.254Z:
+This is (one of the reasons) why we now have if expressions!
+// look ma, no precedence!
+let x = if a { y } else { if b { z } else { t } }
+
+---
+
+@John_McCall · 2024-07-08T07:51:47.858Z:
+For what it’s worth, the ternary operator is right-associative. I assume that was intentional in C (or wherever C took it from) so that you can use it as a simple sort of case expression. It can be hard to read on a single line, but it “iterates” quite nicely on multiple lines:
+let x = cond1 ? result1 :
+cond2 ? result2 :
+cond3 ? result3 :
+otherwise
+Anyway, this thread is about set literals.
+
+---
+
+@Dmitriy_Ignatyev · 2024-07-08T11:22:40.108Z:
+What about using curly braces for Set literals?
+let digits: Set = {1, 2, 3, 4, 5}
+Are there any reasons why curly braces haven't been suggested or mentioned yet?
+
+---
+
+@crontab · 2024-07-08T11:44:55.362Z:
+Dmitriy_Ignatyev:
+Are there any reasons why curly braces haven't been suggested or mentioned yet?
+I think it was suggested in the 2016 thread, it causes ambiguity if you omit the type (is it code or a set?). On the other hand, if you are required to specify the type then what's the point of set literals?
+
+---
+
+@ibex · 2024-07-08T11:51:32.165Z:
+What about this:
+let u = \{1, 2, 3}
+print (u)
+// {1, 2, 3}
+print (type (of: u))
+// Set <Int>
+
+---
+
+@crontab · 2024-07-08T12:01:21.184Z:
+ibex:
+let u = \{1, 2, 3}
+The idea of curly braces isn't bad because it's closer to the math notation of sets, but the backslash kind of ruins it for me for aesthetical reasons
+
+---
+
+@7ombie · 2024-07-08T15:18:05.861Z:
+The syntax isn't the problem. The whole idea of a "set literal" conflicts with the concept of literal overloading (expressible by) in Swift.
+@crontab - I genuinely don't mean to condescend (I'm learning Swift still too), but you should take the time to understand how literals work in Swift (and how they differ from literals in other languages). As it stands, you're bike-shedding syntax for a feature that makes no sense conceptually.
+Even if Swift had found no use for parens, so we could use (1, 2, 3) for "set literals", you would still have all the issues @James_Dempsey raised earlier.
+
+---
+
+@tera · 2024-07-08T20:17:19.763Z:
+Hmm, which one is "correct" behaviour? Or are they both?
+let x: Set<Int> = [1, 1] // ✅
+let y: [Int: Void] = [1:(), 1:()] // 🛑 Fatal error: Dictionary literal contains duplicate keys
+ditto for variables instead of const expressions.
+Shouldn't they both be crashing or both non-crashing?
+
+---
+
+@Jumhyn · 2024-07-08T20:30:22.906Z:
+IMO the existing behavior is justifiable on the grounds that the result of inserting two different values under the same key in a dictionary will result in one value being dropped (which would probably be undesirable to do silently), but inserting a duplicate element into a set is usually a no-op (except in the rare cases where you care to distinguish set elements for some reason).
+
+---
+
+@tera · 2024-07-08T20:35:37.733Z:
+Even though the dictionary version should only trap on non-equal elements only and be silent on duplicating equal elements, right? Otherwise we have an inconsistency here... ok, I take this back (dictionary elements could be non equatable to begin with, so this is more complicated than I thought initially).
+
+---
+
+@Jumhyn · 2024-07-08T20:38:11.106Z:
+There's no Equatable constraint on a dictionary's Value type so whether two elements are 'duplicate' can't really be determined in the general case.
+
+---
+
+@tera · 2024-07-08T21:21:06.710Z:
+Interestingly this was different in Obj-C, where duplicate dictionary entries were silent:
+void objc(void) {
+//NSString* key = @"key";
+NSString* key = @"long key xxxxxxxxxxxxxxxxxxxxxxxxx";
+NSDictionary<NSString*, NSString*>* x = @{key : @"value", key : @"value"}; // ✅
+NSLog(@"x: %@", x);
+}
+
+---
+
+@lorentey · 2024-07-08T22:53:15.297Z:
+I do not think there is any need for Swift to introduce new literal syntax specifically for set types.
+The current ExpressibleByArrayLiteral functionality is good enough. Set types such as Set, OrderedSet, TreeSet or BitSet already conform to it. These types are already quite easy to initialize with pleasant-enough syntax:
+let a: Set = [1, 2, 3]
+let b: TreeSet = ["one", "two", "three"]
+let c: OrderedSet = [1.0, 2.0, 3.0]
+let d: BitSet = [2, 4, 6]
+// Coming soon, I hope:
+let e: SortedSet = ["Dorothy", "Rose", "Blanche", "Sophia"]
+I think it would be especially bad to choose syntax that isn't easily searchable, or one that is only applicable to some restricted subset of these types.
+I don't think set types are different enough from other one-dimensional containers (arrays, deques, heaps, lists, etc) to be worthy of their own syntax.
+(Rather than inventing unnecessary new syntax, I believe it would be more productive to think about how we could generalize ExpressibleByArrayLiteral to support noncopyable element types. How will we efficiently initialize a noncopyable array of noncopyable elements? We will need to come up with a reasonable way to directly feed an arbitrary number of items into a newly initialized construct, preferably without any allocations of temporary storage.)
+
+---
+
+@Slava_Pestov · 2024-07-08T23:05:50.246Z:
+lorentey:
+We will need to come up with a reasonable way to directly feed an arbitrary number of items into a newly initialized construct, preferably without any allocations of temporary storage.)
+Parameter packs?
+
+---
+
+@lorentey · 2024-07-08T23:11:40.416Z:
+Yes, I hope! We need to prototype such an API, to validate the idea (and to figure out how much work it will take to make it usable on heavily resource-limited platforms).
+
+---
+
+@Cgaafary · 2024-07-12T14:01:56.740Z:
+I don't see a need for Set Literal syntax. If anything it makes the language a bit more confusing to learn and I don't see a lot to gain by it to make it worth it.
+

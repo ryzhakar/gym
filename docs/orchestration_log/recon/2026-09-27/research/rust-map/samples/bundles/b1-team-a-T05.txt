@@ -1,0 +1,826 @@
+=== ROW 33 | f001837 | https://forums.swift.org/t/why-do-not-actor-isolated-properties-support-await-setter/73867 | 2024-08-09 | domain-subframes ===
+Why do not actor-isolated properties support 'await' setter?
+
+@edu.art · 2024-08-09T16:17:39.797Z:
+Hi everyone, I'd like to understand if there are any reasons not to support following syntax in Swift:
+class A {
+@MainActor
+var foo: Int
+func bar() async {
+await foo = 3 // Main actor-isolated property 'foo' can not
+// be mutated from a non-isolated context
+}
+func baz() async {
+await MainActor.run {
+foo = 3
+}
+}
+}
+Seems like MainActor.run(resultType:, body:) is excessive in such contexts.
+
+---
+
+@vns · 2024-08-09T16:30:09.957Z:
+Actors model implies that actors communicate with each other via messages – methods in Swift's case. The state is protected by the actor and can be mutated only be the actor. That's like basic building blocks of the whole model. Allowing state modification outside of an actor context breaks this foundation. I would also consider MainActor.run as a last resort in a small amount of cases/during migration, but not as a default tool to solve errors. Additionally, such explicit isolation makes it easy to reason about behaviour and analyse code in terms of isolation, logically structuring the app in that way too.
+
+---
+
+@edu.art · 2024-08-09T16:34:02.035Z:
+I just don't see much difference between:
+calling actor-isolated method with async keyword
+getting a value of actor-isolated variable with async keyword
+setting a value to actor-isolated variable
+I started this thread, so maybe someone can point me to the such difference
+
+---
+
+@vns · 2024-08-09T16:42:00.370Z:
+The difference is what that syntax communicates: await x = 1 tells nothing about where this state isolated, how it plays with other parts of the actor state, etc. It also allows to modify state in a much less obvious ways, so
+await someActor.x = 1
+await someActor.y = 2
+Isn’t the same as
+await someActor.update(x: 1, y: 2)
+And that can lead to unexpected results.
+At the same time, message is a clear communication point between isolation domains. As it was stated in one of the threads, thinking about actors as regular classes isn’t a good approach — they look like one, but there is a significant difference in programming paradigms.
+
+---
+
+@nkbelov · 2024-08-09T18:52:12.266Z:
+To elaborate on that, one of the best mental model shifts you can do when working with actors is to stop designing "cute" and "clean" interface like
+actor ImageLoader {
+func startLoadingImage(url: URL) async throws
+func addTagToImage(_ tag: String)
+func saveImageToDisk() throws
+}
+with the intent to "compose" these calls from the outside:
+try await myActor.startLoadingImage(url: url)
+await myActor.addTagToImage("cute")
+await myActor.addTagToImage("kitty")
+await myActor.saveImageToDisk()
+— these four calls can be interleaved in many possible combinations; you're more likely to corrupt your data this way than not.
+It really helps instead to turn a complete 180 when it comes to API aesthetics: the "unwieldier" a signature looks, the more likely it is that the function exhibits correct transactionality:
+func loadImage(at: URL, addingTags: [String], saveToDisk: Bool) async throws
+This is a very artificial example, but it aims to show that the interface of an actor should only offer indivisible, complete entry points to the whole "batch" of operations that needs to be performed. If you need variations, you should either parametrize the function or offer a separate function, so that your callers never have to "compose" logic out of smaller steps.
+
+---
+
+@edu.art · 2024-08-09T19:04:20.680Z:
+Interesting point, but I didn't quite understand how is it related to the topic
+
+---
+
+@nkbelov · 2024-08-09T19:16:26.211Z:
+What are your compiler settings? The 6.0 language mode doesn't allow the MainActor.run capture either:
+func baz() async {
+await MainActor.run {
+foo = 3 // Capture of 'self' with non-sendable type 'A'
+// in a `@Sendable` closure; this is
+// an error in the Swift 6 language mode
+}
+}
+
+---
+
+@glhaynes · 2024-08-12T04:53:55.604Z:
+Please correct me where I’m wrong.
+I think what’s being asked is something like this — We can easily add a function like:
+@MainActor
+func setFooTo3() {
+foo = 3
+}
+and then call it in a revised bar like so:
+func bar() async {
+//await foo = 3  // Will fail to compile
+await setFooTo3()  // Have to `await` since this needs to hop actors
+}
+so, why can we not just do await foo = 3, since that would seem to express that we’re potentially suspending and hopping to the main actor that protects foo?
+And I think the answer being given is: “that syntax could be allowed, but it’s been judged that it’d encourage a bad pattern, namely accessing little bits of state across multiple suspension points.”
+
+---
+
+@Jon_Shier · 2024-08-12T05:41:02.574Z:
+No, despite whatever discussion happened in this thread, no, that's not the reason why. We can read the reason why in the original proposal.
+Effectful settable properties
+Defining the interactions between async and/or throwing writable properties and features such as:
+inout
+_modify
+property observers, i.e., didSet, willSet
+property wrappers
+writable subscripts
+is a large project that requires a significant implementation effort. This proposal is primarily motivated by allowing the use of Swift concurrency features in computed properties and subscripts. The proposed design for effectful read-only properties is small and straightforward to implement, while still providing a notable benefit to real-world programs.
+In short, they would be complex, and so were deferred from the getter proposal. Hopefully once Swift's effects story is more complete we can revisit effectful setters.
+
+---
+
+@vns · 2024-08-12T05:56:04.866Z:
+I think actors proposal is more relative to the topic? As it has its own note on support cross-actor sets:
+Cross-actor references to an actor property are permitted as an asynchronous call so long as they are read-only accesses:
+func checkBalance(account: BankAccount) async {
+print(await account.balance) // okay await
+account.balance = 1000.0 // error: cross-> actor property mutations are not permitted
+}
+Rationale: it is possible to support cross-actor property sets. However, cross-actor inout operations cannot be reasonably supported because there would be an implicit suspension point between the "get" and the "set" that could introduce what would effectively be race conditions. Moreover, setting properties asynchronously may make it easier to break invariants unintentionally if, e.g., two properties need to be updated at once to maintain an invariant.
+
+---
+
+@Jon_Shier · 2024-08-12T06:30:15.311Z:
+That’s just one narrow example of the general problem. I don’t really find either issue that big of a deal given Swift already lets you hide arbitrary suspension points behind a single await. I especially disagree with the notion that async sets shouldn’t exist in order to encourage “correct” design. It actually does nothing of the sort, it just forces people to write setX methods which have the same problem. And actors already provide this footgun even without setters, as you can hide arbitrary suspensions within single methods and, even worse, be reentrant while doing it!
+
+---
+
+@vns · 2024-08-12T06:41:09.360Z:
+Jon_Shier:
+I especially disagree with the notion that async sets shouldn’t exist in order to encourage “correct” design. It actually does nothing of the sort, it just forces people to write setX methods which have the same problem
+Yet such cases easier to spot compared to property setters. Allowing setters gives an ability to change actor's state from any place, while idea of actors to protect this state. And I think this should be discouraged as much as possible. Isolating state changes on actor allow more thoughtful control on state modifications, and avoid more suspension points. If you need some shared state that is freely modifiable by any party, mutex suits better for the job, I don't see the benefit of using actor in such case. It also leads to problematic mix-up of isolations inside a single type, which also something that only complicates flow and code.
+
+---
+
+@edu.art · 2024-08-12T10:47:01.085Z:
+Yep, I was asking exactly this, in different words though :)
+
+---
+
+@edu.art · 2024-08-12T11:59:05.084Z:
+vns:
+And I think this should be discouraged as much as possible.
+Nevertheless, the set of actions that are considered to be in single transaction will be decided by the programmer on the basis of his intentions.
+Having a state, consisting of one variable can be a case. So I'll have to go through the ceremony of changing it in a special method
+
+---
+
+@vns · 2024-08-12T12:12:48.687Z:
+edu.art:
+Nevertheless, the set of actions that are considered to be in single transaction will be decided by the programmer on the basis of his intentions.
+That take is way out of a context of initial message — single sentence here isn’t capturing the whole idea. Not that a single state update is wrong in general, but that fragmented state updates are. In the same way this quote makes my message fragmented, and as result — hard to follow.
+In the end, allowing setters will make actors to act as just synchronization primitive for read/write, which is mutexes what for. But actor isn’t just a sophisticated mutex.
+edu.art:
+Having a state, consisting of one variable can be a case. So I'll have to go through the ceremony of changing it in a special method
+In example of global actor isolation, that’s wrong claim IMO: you don’t have state that consists of just one variable, you have this state spread across various abstractions. It would be highly unlikely that you introduce global actor for just one variable.
+If you have an actor with only one property, and you want to mutate it outside of it, then you probably don’t need an actor here, or this property should become a part of another isolation.
+
+---
+
+@Nathan-Molby · 2024-08-14T20:04:47.385Z:
+I brought this same concern up here, and I'm not necessarily convinced by the arguments against.
+@vns , if a variable cannot be safely mutated outside of the actor, it should be marked with a private set, just like you would with any other non-actor.
+Regarding the "transaction" argument, I don't see a convincing reason that my transaction cannot entirely consist of setting a variable. Every time I have tried to use an actor, I have ran into this same problem, and every time have had to create a "setter" function like I'm writing in Java.
+Additionally, adding an async set property (just like async get) would allow actors to conform to protocols of the following type:
+protocol SessionService {
+var user: User? { async get; async set }
+}
+At the moment, it isn't possible for an actor to conform to this without some modification of the protocol.
+
+---
+
+@vns · 2024-08-14T20:38:44.385Z:
+Nathan-Molby:
+if a variable cannot be safely mutated outside of the actor, it should be marked with a private set, just like you would with any other non-actor.
+As unexpected coincidence, I've been going few days ago through old threads on concurrency discussion, and there was a nice way to think about this: actor isolation is orthogonal to access control. So you don't fix isolation with access levels, and you don't fix access levels with isolation. This may seem as contradictory to disallowing async setters on actors, but if you think about it – it makes a lot of sense. So actors don't allow such mutations not because this something you would be able to address with access control, but to enforce state isolation.
+Nathan-Molby:
+Regarding the "transaction" argument, I don't see a convincing reason that my transaction cannot entirely consist of setting a variable. Every time I have tried to use an actor, I have ran into this same problem, and every time have had to create a "setter" function like I'm writing in Java.
+Transaction argument, while is important (that's number one post in thread you linked!), isn't the main player here IMO. If we go back to original proposal and review thread, as well as actors model itself, the core idea of actors is to be only holders and protectors of the state. So making async setters now violate this isolation, making isolation a bit blurry concept in general. Again, actor shouldn't be just used as some asynchronous locks, they are much more than that.
+Finally, let's consider example from the proposal:
+extension BankAccount {
+enum BankError: Error {
+case insufficientFunds
+}
+func transfer(amount: Double, to other: BankAccount) throws {
+if amount > balance {
+throw BankError.insufficientFunds
+}
+print("Transferring \(amount) from \(accountNumber) to \(other.accountNumber)")
+balance = balance - amount
+other.balance = other.balance + amount  // error: actor-isolated property 'balance' can only be referenced on 'self'
+}
+}
+Now, let's imagine we allow async setters on actors. How it will look like from usage point? Something like
+await other.balance = await other.balance + amount
+? That's clearly now what we want.
+What if we could eliminate second await to get
+await other.balance = other.balance + amount
+Is it one transaction to actor? Or will it first read balance (1st suspension point), then update it (2nd suspension point)? That's unclear from the code, and source of potential errors.
+Actor require a bit of shift into using them, so you don't write Java-like setters at all. While they look in Swift like classes from OOP, they aren't them at all.
+
+---
+
+@Andropov · 2024-08-15T08:28:38.885Z:
+vns:
+Allowing setters gives an ability to change actor's state from any place, while idea of actors to protect this state.
+Isn't one key use case for actors precisely to allow mutating a piece of shared state from "any place" in a safe manner? The state of the actor is still protected in a world with async setters: you still can't get memory corruption issues due to race conditions.
+Yes, actors can do so much more. But isn't this a use case that actors should also be able to do?
+vns:
+So you don't fix isolation with access levels, and you don't fix access levels with isolation. This may seem as contradictory to disallowing async setters on actors, but if you think about it – it makes a lot of sense. So actors don't allow such mutations not because this something you would be able to address with access control, but to enforce state isolation.
+If the issue is that a property shouldn't be modified unless it's done by code internal to the actor, it does look like the issue is one of access levels, not isolation. The property is isolated as it's part of an actor: no one can modify it while other actor code is executing. Async setters don't change that. If the issue is that the code in the actor doesn't expect that property to change between suspension points using a mechanism external to the actor (like a async setter), the issue does sound like an access level problem.
+That said, I understand that it's better if the actor only exposes a limited API to users, to avoid encouraging the kind of interleaving @nkbelov mentioned. And async setters would increase the surface available and open for misuse, by automatically making every non-private property modifiable from the outside independently.
+That's an obvious downside, but I'm not convinced that it's worth not being able to write things like await fooActor.foo = 3 when you need it.
+vns:
+If we go back to original proposal and review thread, as well as actors model itself, the core idea of actors is to be only holders and protectors of the state. So making async setters now violate this isolation, making isolation a bit blurry concept in general. Again, actor shouldn't be just used as some asynchronous locks, they are much more than that.
+I'm having a hard time picturing why async setters "violate isolation" but manually writing the corresponding setter doesn't. The only difference seems to be the ergonomics of it, and that shouldn't make-or-break isolation.
+
+---
+
+@vns · 2024-08-15T09:02:34.374Z:
+Andropov:
+Isn't one key use case for actors precisely to allow mutating a piece of shared state from "any place" in a safe manner? The state of the actor is still protected in a world with async setters: you still can't get memory corruption issues due to race conditions.
+There is a significant difference between "this state should be mutated by anyone concurrently" and "this state can only be mutated by this party, others ask to do so". In the first case, that's a one property that you need safely mutate from anywhere, and this can be done using locks – perfect tool for the job. While actors provide isolation: the state is guaranteed to live in this isolation, accessed from there, mutated, etc. Actor here define "autonomous unit" that performs some work, and other parts send messages to it.
+The latter is a completely different way to structure the program: instead of having multiple parties that operate on a single state, you have one entity that handles everything related to this state. That is making much easier to reason about the code, since now you have units that operate on some state, and only they can change it, so now you design how this units communicate with each other to perform work.
+Andropov:
+Yes, actors can do so much more. But isn't this a use case that actors should also be able to do?
+They able to do so, just with additional friction — because they aren't designed for this in the first place.
+Andropov:
+That's an obvious downside, but I'm not convinced that it's worth not being able to write things like await fooActor.foo = 3 when you need it.
+So the problem here is that if you need it, you are either using wrong tool for the job, or using tool not in the way it is supposed to be used.
+Side note on compiler fighting
+In languages like Swift (or Rust), where a lot of checks, that previously was a concern of a developer, moved to a compiler, it is often experience of "fighting a compiler" to make something, that seems obvious and simple, work. That's the case with Rust borrow-checker, now that's the case with Swift Concurrency. While at first this is really unpleasant, and sometimes can annoy experienced developers as well, I'd argue that in majority of cases the necessity to fight a compiler goes from the wrong use of a features it provides. It simply tells you that the design/way to implement things you have invisioned isn't correct in its world.
+We can argue about pros and cons of that, to me that's an obvious plus, somebody might want more freedom and not be told by the compiler what to do, but that's the state of the things. Actors model has certain properties it has to posses to work in intended way, so that compiler enforces them.
+Andropov:
+I'm having a hard time picturing why async setters "violate isolation" but manually writing the corresponding setter doesn't. The only difference seems to be the ergonomics of it, and that shouldn't make-or-break isolation.
+I have illustrated the issue with async setters that can be easily introduced here, as well as uncertainty they bring with previous post. How do you imagine async setter to work with the last example? I don't know tbh.
+As for writing setter, the first thing here for me is that if you need to write a setter, you are more likely using actors in a wrong way (I mean, if that's really just a setter, not some logical operation that happen to look like one). But even if we put this aside, explicit setters make you think if you need to update several properties, then probably use batch setter? Then they also state clearly what mutations on the actor happen, so you keep this isolated picture of a state and its mutations, compared to async setters can be invoked anywhere in the app, so that you don't know what happens to your isolated state. And the more friction you have to get through to make it happen, the more likely you won't do that at all.
+
+---
+
+@Andropov · 2024-08-15T09:58:01.715Z:
+vns:
+In the first case, that's a one property that you need safely mutate from anywhere, and this can be done using locks – perfect tool for the job.
+I don't think locks are the best tool for the job. You get zero compiler help when making the properties of a class thread-safe with locks. Forgot to acquire the lock before accessing or modifying a property? The compiler won't help you. In contrast, when you use an actor for the same purpose the compiler will guarantee that you don't access those properties without first switching to the correct isolation context.
+vns:
+The latter is a completely different way to structure the program: instead of having multiple parties that operate on a single state, you have one entity that handles everything related to this state. That is making much easier to reason about the code, since now you have units that operate on some state, and only they can change it, so now you design how this units communicate with each other to perform work.
+But that doesn't change with an async setter. Before setting a property, you hop to the actor, modify the property (while the caller awaits), and then hop back to the original context. You still have "one entity that handles everything related to this state". It may be better to do a few long hops instead of lots of small hops (not disagreeing with that one bit), but it feels like the granularity of those hops should be up to the programmer to decide, not the compiler.
+vns:
+But even if we put this aside, explicit setters make you think if you need to update several properties, then probably use batch setter? Then they also state clearly what mutations on the actor happen, so you keep this isolated picture of a state and its mutations, compared to async setters can be invoked anywhere in the app, so that you don't know what happens to your isolated state.
+Honestly it feels like all these arguments could be made for async getters as well. To use a similar example as yours, imagine we were writing a BankActor. You can write:
+Models
+struct Account {
+let balance: Double
+}
+actor BankActor {
+var mainAccount: Account = Account(balance: 53)
+var savingsAccount: Account = Account(balance: 1000)
+}
+let totalBalance = await bank.mainAccount.balance + bank.savingsAccount.balance
+And this code has almost the exact same problem as your example with async setters. There are two suspension points, so in-between those two suspension points, the actor may have changed state in a way that makes totalBalance have an unexpected value (for example, if some balance is transferred from mainAccount to savingsAccount between the access of mainAccount.balance and the access to savingsAccount.balance).
+The correct approach here would be to avoid composing totalBalance from outside the actor, with many tiny separate hops to the actor to fetch individual properties, and instead have a single method in the actor to perform the operation:
+extension BankActor {
+var totalBalance: Double {
+return mainAccount.balance + savingsAccount.balance
+}
+}
+Yet we allow async getters to exist for actors! No need to write getMainAccount() and getSavingsAccount(), even though doing so may have led you to think about writing a "batch getter", which would be the correct solution here.
+(Also, to circle back to my point about access control: if you were trying to prevent the former code from being written (where balances can be accessed separately), the way to do it would be... to mark the properties as private).
+
+---
+
+@vns · 2024-08-15T10:48:19.938Z:
+Andropov:
+I don't think locks are the best tool for the job. You get zero compiler help when making the properties of a class thread-safe with locks. Forgot to acquire the lock before accessing or modifying a property?
+That's easily addressable by proper structuring accesses to the property. Plus we have Mutex now.
+Andropov:
+But that doesn't change with an async setter. Before setting a property, you hop to the actor, modify the property (while the caller awaits), and then hop back to the original context. You still have "one entity that handles everything related to this state".
+Imagine actor in current version, without async setters as a box (mailbox? heh). Inside that box lies the state. You can take a look — like maybe this box is transparent – on what's inside that box. But we can't change what's inside by ourselves — instead we put a "request" to make a modification, that will be processed by the box.
+Async setters change this perception, as we can now take something out of this box by ourselves, play with it in any way, and put it back. Box only now can guard that we only one who play with the item, but in general it becomes kinda meaningless, as overseeing can be done by anything, so why to use the box?
+Actors propose different outlook on the state in the app. Instead of scattered across various types and domains, it is now isolated, and only in this isolation it gets changed.
+Andropov:
+let totalBalance = await bank.mainAccount.balance + bank.savingsAccount.balance
+And this code has almost the exact same problem as your example with async setters.
+Don't you think that this only proves point that async setters are bad? Exactly because you already can have such behaivour with getters. Just with the difference that getters in overall will bring a bit less harm potentially, while still can give undesired behaviour.
+And you further prove several points as well with this example
+Andropov:
+The correct approach here would be to avoid composing totalBalance from outside the actor, with many tiny separate hops to the actor to fetch individual properties, and instead have a single method in the actor to perform the operation:
+extension BankActor {
+var totalBalance: Double {
+return mainAccount.balance + savingsAccount.balance
+}
+}
+by isolating action to the actor's computed property. You've just improved code by isolating on actor, so why we should promote bad practices introducing async setters?
+We still have unresolved question how async setters will behave here
+await other.balance = await other.balance + amount
+or here
+await other.balance = other.balance + amount
+(note that both these cases cannot be mitigated by some computed property, because amount is external to actor state)
+or even with your example of computed property
+actor ATM {
+// ...
+var withdrawAmount: Int?
+}
+let atm = ATM()
+await atm.withdrawAmount = bank.totalBalance
+In which way any of these cases would be resolved? How clear it would be that there are several suspension points involved?
+Compared to (not perfect) isolating this action:
+extension BankActor {
+func withdrawAll(from atm: ATM) {
+await atm.request(amount: totalBalance)
+}
+}
+(note that this probably also a bit wrong from design point, but isolation makes me think about how better communicate the action, not just use async setter and don't think about it)
+Andropov:
+Also, to circle back to my point about access control: if you were trying to prevent the former code from being written (where balances can be accessed separately), the way to do it would be... to mark the properties as private
+That's still orthogonal to isolation. Yes, you might be better hiding mainAccount and savingsAccount, but not necessarily hiding them makes sense, while isolating does.
+
+---
+
+@Andropov · 2024-08-15T11:36:11.519Z:
+vns:
+Imagine actor in current version, without async setters as a box (mailbox? heh). Inside that box lies the state. You can take a look — like maybe this box is transparent – on what's inside that box. But we can't change what's inside by ourselves — instead we put a "request" to make a modification, that will be processed by the box.
+Async setters change this perception, as we can now take something out of this box by ourselves, play with it in any way, and put it back. Box only now can guard that we only one who play with the item, but in general it becomes kinda meaningless, as overseeing can be done by anything, so why to use the box?
+But this is not a good metaphor. We're not taking anything outside this "box", we're still putting a request to make modifications to the contents of the box, that will still be processed by the box. The syntax for this request may be different (with async setters), but it's still a request, performed inside the box. If the property had an effectful setter (like didSet), that code would also run inside the box.
+vns:
+Don't you think that this only proves point that async setters are bad? Exactly because you already can have such behaivour with getters. Just with the difference that getters in overall will bring a bit less harm potentially, while still can give undesired behaviour.
+It proves that both async getters and async setters can be misused (which I think we both agree on), not that they are intrinsically bad. If the behavior was deemed acceptable for getters, why not for setters? I'm not convinced that the potential for creating this kind of harmful effects of is much higher in setters vs getters.
+vns:
+And you further prove several points as well with this example
+The point I'm trying to make is that it's not the compiler's job to police the granularity of the writes to an actor's properties, just like it doesn't police the granularity of the reads to an actor's properties. And if it were (which I strongly disagree it is) then it's already failing spectacularly at that job: you can bypass it with a 3-line setter.
+Not all small writes to an actor property are wrong, just like not all big "unwieldy" methods that modify several actor properties at once are correct. The compiler can't possibly know which ones are correct without domain knowledge that only the programmer has.
+vns:
+by isolating action to the actor's computed property. You've just improved code by isolating on actor, so why we should promote bad practices introducing async setters?
+Because not all async setters are bad practices. Again, this same argument can be made to remove async getters from actors, as you can also misuse them in subtle and confusing ways.
+vns:
+We still have unresolved question how async setters will behave here
+await other.balance = await other.balance + amount
+or here
+await other.balance = other.balance + amount
+Well, this is definitely something worth discussing, but my intuition is that it should do the same thing a manual setter does. What does this do?
+await other.setBalance(await other.balance + amount)
+Or this:
+await other.setBalance(other.balance + amount)
+It must do something, because you can already write that code today.
+In any case, if reading and then modifying an actor-protected property in the same line is deemed to confusing (due to the implicit second suspension point between the read and the write), it's within the realm of possibility to have the compiler force splitting the two suspension points into separate lines, so it's clear that the property can change in the middle:
+await other.balance = other.balance + amount
+//                  ` error: suspension point between actor read and actor write requires explicit await
+With a fix-it to:
+let balance = await other.balance
+await other.balance = balance + amount
+Where it's obvious that balance can change between the two suspension points.
+
+---
+
+@vns · 2024-08-15T12:41:35.720Z:
+Andropov:
+But this is not a good metaphor. We're not taking anything outside this "box", we're still putting a request to make modifications to the contents of the box, that will still be processed by the box.
+Let's use regular OOP for the sake of an example (even though actors are not the same as classes at all)
+final class BankAccount {
+var amount: Int
+init(amount: Int) {
+self.amount = amount
+}
+}
+let myAccount = BankAccount(amount: 1_000_000)
+myAccount -= 10_000
+That seems legitimate with classes, arguable — but let's put aside encapsulation details here. Is this modification still processed within BankAccount? I'd say no, because modification happens somewhere outside of the class. There is a little control with didSet, and that's all.
+Now, back to actors, with async setters you don't put request for modification with async setter, you ask to put new modified state. Not that the box changed its state, you put new state into it outside. You first processed, then ask box to apply this change internally.
+That's may seem like just a matter of words choice, yet this is a significant implication on how you structure code: actors should isolate their state, allowing modifications of this state outside of an actor breaks this model.
+Andropov:
+The point I'm trying to make is that it's not the compiler's job to police the granularity of the writes to an actor's properties, just like it doesn't police the granularity of the reads to an actor's properties. And if it were (which I strongly disagree it is) then it's already failing spectacularly at that job: you can bypass it with a 3-line setter.
+We are talking about two different perspectives: I say that you need to think and design actors in the way that you don't need setters, not seek for bypassing; in the way where async setters simply doesn't needed.
+Compiler doesn't police you from granularity of the writes, it just makes you think twice. If you really need granular update, writing 3 lines occasionally isn't a problem, while the entire point of allowing based on the fact of their often use.
+Andropov:
+Well, this is definitely something worth discussing, but my intuition is that it should do the same thing a manual setter does. What does this do?
+await other.setBalance(await other.balance + amount)
+Or this:
+await other.setBalance(other.balance + amount)
+It must do something, because you can already write that code today.
+Let's assume async setter would transform into legit code with explicit setter as we can write manually today, that's reasonable choice of behaviour. How safe are this modification of a state? What is in between of getting balance and setting it, it gets modified? We end up with the wrong transaction! And that's exactly the issue: by permitting such modifications in easy way (write = is much simpler than define method and call it), we also would make it much easier to write wrong code.
+
+---
+
+@ktoso · 2024-08-15T12:59:51.555Z:
+I’d actually claim that actors are the most true to the actual intent and principles behind OOP, and the fact that you can grab innards of a class and do a += 1 on it is the doing model “breaking“.
+Turns out actors outright ban such loose treatment of the model — encapsulating is enforced and what previously sloppy accessing another objects inner state you could have gotten away with, now you don’t.
+This goes all the way back To Allan Kay terming the term “object” and OOP and SmallTalk, and a pretty interesting response he wrote in 1998.
+I'm sorry that I long ago coined the term "objects" for this topic because it gets many people to focus on the lesser idea.
+The big idea is "messaging" -- that is what the kernal of Smalltalk/Squeak
+is all about (and it's something that was never quite completed in our
+Xerox PARC phase).
+—
+But anyway, in practical terms looking at all this from the perspective of “what it looks like to be doing” and “what it’s actually doing” is helpful imho. both the await other.balance = other.balance + something.balance as well as chained writes which are quite scary IMHO such as: someActor.anotherActor.something = bla are  IMHO very difficult to understand what kind of transactionallity we’ll be getting here. And the answer is going to be “almost no guarantees, this code is very likely broken”.
+Because mutations often are more than a trivial +1, but include coordination between various domains and a number of operations that should perhaps be performed atomically etc… async setters are a footgun that we’d rather avoid IMHO.
+It’s the same reasons why not every actor has a func run(whatever: (isolated Self) -> T) async -> T on it, because actors (and OOP!), are a way to organize your code/logic, and not just bob.run { tons of code here } solve everything without actually centralizing logic. If all your actors have is boring “setX” methods… maybe they’re not actually containing any logic that’s important to isolate the state/logic with — to me that’s a smell to act on in the code which ends up having to write this, and not something to resolve by “just” allowing the property setters on actors.
+At the other hand, I am curious if perhaps this is somehow showing up here specifically because “so much of stuff is on main actor” AND “a lot of existing libraries require setting properties”. I would definitely welcome more real world examples of the problem showing up. The 3-10 line snippets we have so far in the thread IMHO (personal opinion) are not really justifying exposing the huge footgun to avoid a few lines of code that should often make you step back and rethink if you’re doing what you should be doing.
+
+---
+
+@Andropov · 2024-08-15T14:58:09.350Z:
+ktoso:
+I would definitely welcome more real world examples of the problem showing up. The 3-10 line snippets we have so far in the thread IMHO (personal opinion) are not really justifying exposing the huge footgun to avoid a few lines of code that should often make you step back and rethink if you’re doing what you should be doing.
+I recall one particular case in which I ended up needing to write lots of setters by hand.
+I'm writing a small application that renders the 3D structure of proteins using Metal. This had some interesting requirements:
+During a draw() call, the state of the renderer must not change (for example: can't change the rotation, or the number of objects to draw mid-call).
+Since the app can show multiple (independent) windows, it must be possible to run different draw() calls in parallel if they belong to different windows.
+Rendering must not happen in the main thread.
+The user is able to change some properties of the renderer's state (rotation, color...) from the UI. Ideally, these properties would take effect on ~the next frame, but it's fine for them to take much longer.
+So I created a Renderer actor to back each window. The properties protected by this Renderer actor conform the shared mutable state of the renderer.
+draw() is a synchronous method of this renderer, so while a draw call is in progress, nothing can modify the state of the renderer.
+Different actors can run draw() calls for different windows in parallel.
+All this happens outside the main thread.
+When a user makes some changes in the UI, it calls a method on the relevant instance of this actor. Here's where setters started to appear.
+Something like this:
+actor Renderer {
+private var modelBuffers: [MTLBuffer]
+// ...
+func draw(in layer: CAMetalLayer) {
+// Somewhat long operation, state must not change here!
+// ...
+}
+}
+This actor is designed with lots of "big" methods that change many properties of the actor at once. For example, when the user loads a new model, there's a (synchronous) method that populates all the Metal buffers:
+actor Renderer {
+private var modelBuffers: [MTLBuffer]
+private var frameData: FrameData
+private var needsRedraw: Bool
+// ...
+func populateBuffers(_ models: [Model], config: VisualizationConfig) async {
+// Some stuff is computed asynchronously first...
+let newModelBuffer = await createModelBuffers(
+models: models
+config: config
+)
+// Once everything is ready, other properties are updated all
+// at once.
+self.modelBuffers = newModelBuffer
+createColorBufferIfNeeded(models: models)
+self.frameData.atomCount = config.atomCount
+self.needsRedraw = true
+}
+}
+This has worked great in practice  The state of the renderer is always consistent, thanks to compiler checks. However, some properties, while being part of the shared mutable state, are safe to modify by themselves without needing to make changes to any other actor-protected properties. So I ended up with (lots) of setters like these:
+actor Renderer {
+// ...
+func setAutoRotating(to autorotating: Bool) {
+self.scene.autorotating = autorotating
+}
+// ...
+func setColorFill(_ color: CGColor) {
+self.scene.colorFill = color
+}
+// ...
+func setSunDirection(_ sunDirection: SunDirection) {
+self.scene.sunDirection = sunDirection
+}
+}
+It's still important for these properties to not change during a draw call. For example, it would be bad if the shadow map generation render pass saw a different sun direction than the main rendering pass. And yet, as long as you don't change this property in the middle of a draw, it's actually fine for the property to be changed from anywhere.
+In fact, I must say that this limitation related to setters confused me for a while, and led me to wrong design decisions before I realized I could just write a few small setters. The errors I got were something like:
+Actor-isolated property 'colorFill' can not be mutated from the main actor
+So I just assumed that this meant that it was fundamentally wrong to mutate this actor's properties from another actor, while all I actually needed was... a 3 line setter.
+
+---
+
+@j-f1 · 2024-08-15T15:42:19.834Z:
+Could you represent all of the view-controllable state (except the model choice) as a struct stored on an @MainActor view model, then synchronously grab a copy of that state before each render pass? That way, the UI will immediately see any changes the user makes reflected back in the controls, and value semantics mean it is impossible for that configuration to change out from under the renderer. For things like the 3D model, you’d still need an actor to manage fetching the updated model choice from disk, but that could be a separate actor from the renderer which could just grab a struct containing the current Metal buffers at the start of each render pass.
+
+---
+
+@Andropov · 2024-08-15T16:21:11.503Z:
+j-f1:
+Could you represent all of the view-controllable state (except the model choice) as a struct stored on an @MainActor view model, then synchronously grab a copy of that state before each render pass? That way, the UI will immediately see any changes the user makes reflected back in the controls, and value semantics mean it is impossible for that configuration to change out from under the renderer. For things like the 3D model, you’d still need an actor to manage fetching the updated model choice from disk, but that could be a separate actor from the renderer which could just grab a struct containing the current Metal buffers at the start of each render pass.
+Oh, the UI already has its own copy of the values, stored on a few @MainActor view models, so all UI controls see changes reflected immediately, even if the visualization takes a few ms longer to update. So when the UI is updated -> @MainActor View Model is updated -> a task to mutate the renderer is spawned. It's even possible to keep track of those tasks to disable the specific control while the action takes place.
+There are a few reasons I went with shared state with reference semantics instead of copying all state from the @MainActor View Models at the start of every frame:
+The combined state is not lightweight enough to copy all of it up to 120 times per second.
+It allows rendering to happen only when a value has changed, using minimal energy if there are no changes.
+It completely avoids requiring a switch to the main thread to render new frames. So even if the main thread is blocked for a few milliseconds, no frames are dropped.
+
+---
+
+@ktoso · 2024-08-16T12:36:33.233Z:
+Thanks for the writeup @Andropov ! I'll have to re-read deeper again soon.
+Meanwhile I wanted to share a PR which may be of interest to this thread. It's not changing any semantics, but the thread got me thinking that perhaps we can offer some more notes, here's an idea to suggest the method route when hitting the property setter restriction: [Concurrency] Suggest adding a method, when mutating actor property cross isolation by ktoso · Pull Request #75922 · swiftlang/swift · GitHub I'll also look into offering "long form" educational notes, which explain the "why" somewhat deeper.
+
+---
+
+@taylorswift · 2024-08-16T13:31:58.944Z:
+ktoso:
+If all your actors have is boring “setX” methods… maybe they’re not actually containing any logic that’s important to isolate the state/logic with — to me that’s a smell to act on in the code which ends up having to write this, and not something to resolve by “just” allowing the property setters on actors.
+i understand this argument but i am unconvinced of how useful it is in practice. a lot of actors are born simply because there is a piece of state (which may be as trivial as a monotonically increasing timestamp) that is shared between concurrency domains, and an actor is needed to resolve compiler errors. these named setters add boilerplate to the project and don’t always provide a lot of value in understanding the code.
+i’ll also say that i’ve run into more than a few instances where i’ve had the opposite problem where the file containing the actor definition simply got way too long because there was so much code that “had” to be written as methods on the actor due to the “run on” pattern being discouraged.
+
+---
+
+@ktoso · 2024-08-16T13:41:49.477Z:
+taylorswift:
+i understand this argument but i am unconvinced of how useful it is in practice. a lot of actors are born simply because there is a piece of state (which may be as trivial as a monotonically increasing timestamp) that is shared between concurrency domains, and an actor is needed to resolve compiler errors. [emphasis mine - ktoso]
+I see this viewpoint onto concurrency a lot, and it's the root cause of the frustrations, not the actual limitations.
+These warnings, errors and limitations are not here to annoy you, and you don't put them into place to "make the compiler happy".
+They're there to make you stop and think about your problem facing with concurrency, and resolve it in an appropriate way. They're there to "make the future you happy, who doesn't have to debug irreproducible races and weird states".
+Whenever people bring up "just a counter" or "just a variable" examples, I quite honestly say don't use an actor for those (and that's coming from someone entire career with actors pretty much). It's fine to use a lock or atomics, they're there for a reason. Not everything has to be an actor, a lot of things are, but not everything - in Swift at least (and not in some hypothetical actors-only language). I see people getting frustrated because they assume everything must be actors now, but that's not true. After all, we introduced Mutex and low-level atomics, just now, and there may be more things to follow.
+You do have to think about concurrency (you always should have but you might have gotten away with it), and sloppy programming won't fly anymore, but that's it, other synchronization mechanisms are viable as well -- especially for "just contains a bunch of values" things. It would not make sense at all to make a sophisticated concurrent datastructure an actor, there's a reason they're highly specialized for high performance using advanced locking or lock free programming techniques.
+Yes, we should be pushing the envelope of the ergonomics story and making it easier, but the setters are a touchy subject as they would almost definitely result in breaking assumptions about atomicity and result in more mysterious hard to debug bugs rather than in those situations having to rethink things.
+I really don't want to be dismissive here, but out of all the ergonomic improvements I'm personally just not sure we get the most gain, and least pain from the specific async setters topic. More specific real world examples would definitely help so we can think them through together. @Andropov's writeup was very interesting for example.
+
+---
+
+@CharlesS · 2024-08-16T22:13:15.644Z:
+In regards to all the comments recommending the use of a mutex, do we really want to use them in a Swift Concurrency context? A mutex or lock blocks the thread while it waits; blocking threads in the cooperative thread pool is something we're explicitly supposed to avoid.
+An actor can do much more than a mutex, yes, but AFAIK there's no real reason not to use it as a mutex if that's what you need, and it's a lot safer on the cooperative thread pool due to its re-entrancy.
+
+---
+
+@tclementdev · 2024-08-16T23:08:05.571Z:
+CharlesS:
+In regards to all the comments recommending the use of a mutex, do we really want to use them in a Swift Concurrency context? A mutex or lock blocks the thread while it waits; blocking threads in the cooperative thread pool is something we're explicitly supposed to avoid.
+Yes we really want to use them in a Swift Concurrency context. What you're saying is a very common misconception, blocking the thread is fine (for short period of times) if the code doesn't wait on future work (semaphores wait on future work and are not ok). There's plenty of locks in use today, including in Swift Concurrency itself, it's fine.
+CharlesS:
+An actor can do much more than a mutex, yes, but AFAIK there's no real reason not to use it as a mutex if that's what you need, and it's a lot safer on the cooperative thread pool due to its re-entrancy.
+Use the right tool for the job, that is what @ktoso is saying I believe. If a lock is the right tool, then absolutely use it.
+
+---
+
+@nkbelov · 2024-08-17T06:24:18.913Z:
+CharlesS:
+An actor can do much more than a mutex, yes, but AFAIK there's no real reason not to use it as a mutex if that's what you need
+Sometimes you just really need that your locking is synchronous and doesn't break up your transaction with a suspension point.
+
+---
+
+@Andropov · 2024-08-17T09:56:43.037Z:
+ktoso:
+here's an idea to suggest the method route when hitting the property setter restriction: [Concurrency] Suggest adding a method, when mutating actor property cross isolation by ktoso · Pull Request #75922 · swiftlang/swift · GitHub
+This sounds great, thank you!
+ktoso:
+I'll also look into offering "long form" educational notes, which explain the "why" somewhat deeper.
+This would be awesome​. It's hard to condense the subtle difficulties of concurrency in one-line errors/warnings.
+ktoso:
+Whenever people bring up "just a counter" or "just a variable" examples, I quite honestly say don't use an actor for those (and that's coming from someone entire career with actors pretty much). It's fine to use a lock or atomics, they're there for a reason. Not everything has to be an actor, a lot of things are, but not everything - in Swift at least (and not in some hypothetical actors-only language). I see people getting frustrated because they assume everything must be actors now, but that's not true. After all, we introduced Mutex  and low-level atomics, just now, and there may be more things to follow.
+I think locks have been demonized in Apple platforms for so long now that few developers choose them, even when they are the right tool for the job. There's been not one, but two concurrency frameworks (Grand Central Dispacth and now Swift Concurrency) launched in recent memory that put a heavy emphasis on how much better than locks they were. So, understandably, many people resist using locks now, which probably contributes to some of the frustration with Swift Concurrency.
+tclementdev:
+Yes we really want to use them in a Swift Concurrency context. What you're saying is a very common misconception, blocking the thread is fine (for short period of times) if the code doesn't wait on future work (semaphores wait on future work and are not ok). There's plenty of locks in use today, including in Swift Concurrency itself, it's fine.
+I've read everywhere that semaphores are not okay, but isn't the problem generally that you must not suspend while holding a synchronization primitive? For example, isn't this code with semaphores correct?
+actor LimitTo3ConcurrentJobs {
+private let semaphore = DispatchSemaphore(3)
+func performJob() {
+semaphore.wait()
+doLongSynchronousWork()
+semaphore.signal()
+}
+}
+Even though we use a semaphore here, its usage still creates a well-defined synchronous critical region between each wait() and signal(). Some threads could be blocked in performJob(), but there must be at least one thread alive and running in the concurrency pool that is doing forward progress. The only way this would deadlock is if it suspends before signaling the semaphore, as the cooperative thread pool may end up filled with threads that are all stuck blocked with no forward progress.
+nkbelov:
+Sometimes you just really need that your locking is synchronous and doesn't break up your transaction with a suspension point.
+True, and in those cases it's clear that an actor won't work and a lock must be used. But there are cases where you could use an actor as a mutex, because you don't need the mutation to happen synchronously and a suspension point doesn't break the transactionality of the code.
+
+---
+
+@tclementdev · 2024-08-17T13:21:59.492Z:
+Andropov:
+I've read everywhere that semaphores are not okay, but isn't the problem generally that you must not suspend while holding a synchronization primitive? For example, isn't this code with semaphores correct?
+Possibly yes but this suffers from other problems such as priority inversion because a semaphore isn't limited to this pattern and the OS can't know what threads are going to signal the semaphore. I'm also unsure long synchronous work, especially constrained by a count semaphore, is a good idea to perform on the limited cooperated thread pool as this seems like an easy way to starve the pool. All in all, I'd probably look into another way to achieve something like this.
+
+---
+
+@CharlesS · 2024-08-17T15:00:07.889Z:
+Andropov:
+I think locks have been demonized in Apple platforms for so long now that few developers choose them, even when they are the right tool for the job. There's been not one, but two concurrency frameworks (Grand Central Dispacth and now Swift Concurrency) launched in recent memory that put a heavy emphasis on how much better than locks they were. So, understandably, many people resist using locks now, which probably contributes to some of the frustration with Swift Concurrency.
+Well, that and the fact that with GCD, blocking the thread on a dispatch queue often caused the system to say, "oh, one of my threads is blocked, let's spin up a new one", and then if you had a lot of stuff going on, you'd end up with threads in the four digits.
+
+---
+
+@nkbelov · 2024-08-17T22:03:49.376Z:
+Andropov:
+There's been not one, but two concurrency frameworks (Grand Central Dispacth and now Swift Concurrency) launched in recent memory that put a heavy emphasis on how much better than locks they were.
+Can't speak for GCD, but with Swift Concurrency, I'm quite definitely not getting the impression that either locks are discouraged or that SC is claiming to offer a zero-cost replacement. I still heavily use locks when building SC-compatible primitives, and if actors iterate on anything, it's primarily GCD queues, as they most obviously resemble the actors' mailbox.
+The issue is perhaps that the mental model for concurrency is already heavy and not everybody would willingly dedicate time to learn all of the intricacies (although I personally would argue that in the modern times it's almost as essential as if statemtents), so people tend to rely on the promise that this one particular technique is going to solve all the problems — no, it won't, but this is how I would otherwise get the impression that actors are suggested to replace "older" primitives.
+
+---
+
+@tclementdev · 2024-08-18T08:44:02.499Z:
+Unfortunately I'm afraid the actor type might be playing a detrimental role and we might have been better served if Swift Concurrency offered isolation domains instead, which you could use to assign many pieces of you program to them (more or less what global actors are). It could have help shift the discourse from "you now need to make things actors" to "assign your existing types to isolation domains" (i.e. developers won't be making new isolation domains for everything but instead be encouraged to reuse them for more things).
+
+---
+
+@Andropov · 2024-08-19T06:18:55.879Z:
+nkbelov:
+Can't speak for GCD, but with Swift Concurrency, I'm quite definitely not getting the impression that either locks are discouraged or that SC is claiming to offer a zero-cost replacement.
+Oh, I may have worded that poorly. I'm not suggesting that the Swift project itself is pushing for Swift Concurrency as a one-size-fits-all alternative to locks (quite the contrary). However, in the wider community of developers for Apple platforms, it does feel like a lot of people are suggesting exactly that.
+It may be my personal experience only, though I can't help but notice that many of the most prominent blogs about Swift all have articles following a template similar to "Here's this code with locks. And now here's the same code using actors instead. Actors are much better!" with no mention to when or why locks would still be the best option.
+
+---
+
+@tclementdev · 2024-08-19T08:36:47.147Z:
+Sadly this is also something that you will not find on the documentation pages for Concurrency, Actor or Mutex at developer.apple.com. This would make a big difference if developers could read proper guidance from the documentation, right now all the bits are scattered on twitter, mastodon, wwdc videos and here, which makes it hard to find. And as Andropov said, it is lost in a sea of prominent blog posts sometimes telling you the opposite. The same thing happened with the libdispatch which pushed me to eventually write a collection of all the dos and donts I could find (from various posts made by the Apple engineers working on the libdispatch) because Apple would not do so itself.
+
+---
+
+@taylorswift · 2024-08-19T22:07:14.048Z:
+Andropov:
+It may be my personal experience only, though I can't help but notice that many of the most prominent blogs about Swift all have articles following a template similar to "Here's this code with locks. And now here's the same code using actors instead. Actors are much better!" with no mention to when or why locks would still be the best option.
+my personal feeling is that there was a lot of churn in “best practices” due to the order that Swift Concurrency features landed. this is probably a hyperbolic cartoon, but my experience in the past three years has often felt like driving a brand new Tesla that is missing its two rear wheels, leading us to spend a lot of time and effort researching how to do everything ‘the new way’ (new driving techniques? paving new roads for two-wheeled cars? attaching helicopter blades to the back?) and then adapting to the adaptations and ad infinitum.
+perhaps the fault lies with us for being too enthusiastic about driving Teslas (because they are new and shiny and you really really want to believe in the dream), because if we had waited until the cars had all four wheels we might have had a dramatically different experience. but everything is obvious in hindsight.
+i think every team has a different set of “rear wheels” but for me at least, i can name a few concrete examples:
+Sendable conformance for AsyncStream
+region-based isolation
+atomics in the standard library
+locks in the standard library
+first-class backpressure support
+better ordering guarantees around “submitting” work on an actor
+code bases that were written against Swift compilers that lacked these features look radically different from what they would look like if Swift Concurrency supported these things from the start. for example, without RBI, everything needs to be Sendable, and this design constraint propagates through entire projects causing a lot of distant code to evolve to adapt to the different environment. i suspect when the Synchronization module lands, a lot of types that evolved into actors during the 5.5–5.10 era will have to “climb down” from that tree as well.
+i doubt there would have ever been a realistic alternative to incrementalism. in that world, it might have been 2050 before Swift Concurrency shipped. however, in hindsight i think that leapfrogging “unstructured” technologies like locks and atomics until it became too obvious they were still needed was a mistake. Sendable and the compile-time checking around it should have waited until most of the other stuff landed.
+i understand that noncopyable types were a big part of why the features landed in the order that they did, but ultimately coupling one very complex set of features - concurrency - to another complex and very-in-flux set of features - ownership - made Swift concurrency harder to adopt.
+
+---
+
+@nkbelov · 2024-08-24T11:03:29.840Z:
+I apologize for how heavily this devolves from the original question of the thread, but I hope you let me indulge.
+With regards to concurrency, there are very few industry experts worth listening to in the first place, and the content is typically their talks on languages other than Swift. Concurrency is a fairly "mathematical" subject in the sense of having to provide almost thesis-like proof of the logic, and no Swift blogger I've seen so far has done that; they mostly recite and compact the recent proposals and WWDC videos because that's how they get ad revenue — without providing any "mathematical" guidance on how to work with councurrency and how to implement the common patterns.
+So while they exist and surely are red by many people, I think that the first point of action is that the community develops a habit of not consulting recitals and instead regards the proposal docs as the only source of truth, until better sources become available.
+
+---
+
+@NSExceptional · 2025-01-21T19:39:06.381Z:
+nkbelov:
+these four calls can be interleaved in many possible combinations; you're more likely to corrupt your data this way than not.
+Sorry to drudge up an old thread like this, but how can these be interleaved? Doesn't await guarantee that the next part of this section won't be run until it completes?
+If not, how else are you supposed to ensure async operations run "in order", if not awaiting them one after the other?
+
+---
+
+@nkbelov · 2025-01-21T19:46:26.213Z:
+Sorry for the confusion; the interleaving can happen when you have multiple instances of this function running concurrently. More generally, let's say I have a function that has blocks A, B and C with suspension points between them. If I have two instances of them running, the possible interleavings could be e.g.:
+1A 2A 1B 1C 2B 2C
+1A 2A 2B 2C 1B 1C
+// etc...
+— i.e. it's not guaranteed that the order will strictly be 1A 1B 1C 2A 2B 2C. In the second example especially, the second function finished much earlier than the first did, even though it started later.
+
+---
+
+@NSExceptional · 2025-01-24T21:57:18.265Z:
+Gotcha, yes, this is my understanding as well, with that cleared up
+
+=== ROW 35 | f001903 | https://forums.swift.org/t/can-we-make-swift-6-easier/74110 | 2024-08-22 | domain-subframes ===
+Can we make Swift 6 easier?
+
+@disc0infern0 · 2024-08-22T11:14:19.599Z:
+Apologies in advance if this has already been debated, but I didn’t see it if so.
+For those new to the language (v6), all the various protections for concurrency / data races will appear very confusing, and in fact are often unnecessary for a simple app that invokes no actions off the main actor.
+Assuming the compiler can detect that the app only runs in a single isolation level, I.e MainActor, can we silence a lot of the warnings and errors?
+E.g. Global variables can then be allowed without confusing (to a novice) error messages since the compile can assume @MainActor isolation.
+Otherwise the improvements made to swift risk making the language too esoteric/ hard to get into.
+
+---
+
+@Lua · 2024-08-22T11:32:45.135Z:
+This is very annoying in the embedded mode, where MainActor appears to be unavailable. I don't think my code could compile with -swift-version 6 no matter what I do.
+
+---
+
+@dima_kozhinov · 2024-08-22T11:44:04.164Z:
+disc0infern0:
+improvements made to swift risk making the language too esoteric
+Don't want to sound pessimistic, but this process began even before Swift 6. IBM abandoned their server-side Swift efforts along with their Kitura framework, and JetBrains sunsetted both their AppCode IDE and CLion Swift plugin.
+Please don't make Swift 6 hard to get into.
+
+---
+
+@vns · 2024-08-22T12:04:12.525Z:
+disc0infern0:
+Assuming the compiler can detect that the app only runs in a single isolation level, I.e MainActor, can we silence a lot of the warnings and errors?
+If your app doesn't have any concurrency, you'll be fine. You can write simple CLI app without any concurrency, and Swift won't bother you with this at all. Yet once you start using it, you'll start getting protections. And in that case you also can just isolate to main actor everything you have, and be OK.
+
+---
+
+@crontab · 2024-08-22T12:09:26.595Z:
+disc0infern0:
+in fact are often unnecessary for a simple app that invokes no actions off the main actor
+It depends on what the app is doing and on what platform. Part of me says that on some platforms and target types (e.g CLI on Linux or macOS) something like --assume-mainactor would be helpful. But another part says global vars are to be avoided anyway, so maybe it's a good thing that the compiler doesn't let you define them without being explicit about their isolation.
+Other than that, if you don't define global vars in a simple CLI app, then you should be fine as @main will take care of default isolation.
+For GUI apps though, writing single-threaded code means not taking advantage of the available multicore CPUs, which is a shame. In fact Swift makes the entry into concurrency so much easier and safer compared to the previous gen languages.
+
+---
+
+@vns · 2024-08-22T12:13:08.965Z:
+dima_kozhinov:
+IBM abandoned their server-side Swift efforts along with their Kitura framework, and JetBrains sunsetted both their AppCode IDE and CLion Swift plugin.
+I don't think IBM abandoned server-side Swift because it has became too complex, and any guesses why they did so would be a speculation, since we don't know their reasoning. And JetBrains sunsetted AppCode because keeping up with Xcode is a nightmare (they always behind) and simply not that profitable. Also, they focused on the Fleet, which has a great support of Swift and Xcode projects as well, so saying that JetBrains abandoned Swift is also not true.
+Anyway, putting in business decisions in relation to language and its complexity (I'd say C++ is extremely complex, for instance) is probably not the best indicator.
+
+---
+
+@disc0infern0 · 2024-08-22T19:51:49.547Z:
+I’d argue that starting out with a simple SwiftUI app , you shouldn’t have to care the least little bit about isolation levels. - and it should be possible to use “simple” asynchronous requests to get data from an image or data from a url where it is absolutely clear their is no possibility of a data race.
+
+---
+
+@vns · 2024-08-22T20:10:28.631Z:
+You cannot do that without knowing anything at all about concurrency, and that’s never was the case.
+You still can do that pretty easy though: you have everything isolated to main actor (with SwiftUI finally by default in Xcode 15), and then network requests aren’t isolated — and you even don’t need to care about that.
+But is it changed from before-Concurrency? I’d say not a lot, and where it did, it got better. Let me explain what I mean by that.
+Back with libdispatch all these bits were kinda hidden and not obvious for developers, and probably a significant part hasn’t bothered with getting into details for a pretty long time. But if you wanted to learn decently, you have to get an idea that all UI code (in some magic way tbh for a novice) should be on main thread and you are really concerned to ensure that. You don’t exactly see where it is running, but you have to operate under this assumptions. You might get off with a few basic things at first, but I still remember my first thread explosion trying to async some loading in a first month of work and that was a total chaos.
+Now, with new concurrency in SwiftUI you still concerned with main thread — which is now main actor. Instead of being magical creature, it is here explicitly marking everything you touch. You get acknowledged with the state of things that crucial to understanding early on and more likely understand your code better. You still can async request in a safe way and load as much as you want without any concerns about thread explosion. So while it require a bit more mindfulness on the start, it is for better.
+Also, I’d say that many has fall into illusion that writing apps for iOS is extremely easy, which is true only to some extent — you still work with a highly sophisticated system. If you a complete novice to a programming at all I’d say it is much better to start with the official book of Swift and learn how to program just using Swift, then get to iOS, because otherwise everything will be complex, no matter how simple programming language is — you can’t remove complexity from the system.
+
+---
+
+@vanvoorden · 2024-08-22T20:28:14.439Z:
+Lua:
+This is very annoying in the embedded mode, where MainActor appears to be unavailable. I don't think my code could compile with -swift-version 6 no matter what I do.
+massicotte.org
+Non-Sendable types are cool too you know
+Non-Sendable types are cool too you know
+Would anything in SE-0420 help (leveraging support for passing isolation without using a global actor)?
+
+---
+
+@Lua · 2024-08-22T21:00:26.393Z:
+I am not using Swift concurrency in the first place. In wasm I can't run for too long or the browser will freeze, so I use the requestAnimationFrame api to call into Swift every frame; it keeps some global state which Swift 6 is not happy about.
+It's a completely single threaded program, the compile errors are only getting in my way, I don't want to have them unless my program actually uses concurrency.
+vns:
+If your app doesn't have any concurrency, you'll be fine. You can write simple CLI app without any concurrency, and Swift won't bother you with this at all. Yet once you start using it, you'll start getting protections. And in that case you also can just isolate to main actor everything you have, and be OK.
+Do you mean that Swift starts doing this if even a single line of code vaguely relates to concurrency? That's not good, I mark trivial types as Sendable in case I want to reuse some of the code in a context with concurrency without having to go and modify everything. No concurrency is possible but I'm getting all the errors anyway, and I don't see a flag to turn it off.
+
+---
+
+@Karl · 2024-08-27T18:18:27.910Z:
+Lua:
+This is very annoying in the embedded mode, where MainActor appears to be unavailable.
+Embedded systems are inherently concurrent systems - and I think Swift concurrency could also be valuable there.
+I still need to find time to play around with it so I'm not sure about @MainActor specifically, but generally speaking embedded devices may not even have a main thread. In traditional desktop applications, the main thread is the thread on which main is called, and where its run-loop executes (because when main ends, the program ends).  But on an embedded device, your program doesn't end when main ends: interrupts directly invoke functions from hardware events rather than from main's run-loop. They can also be nested, so interrupt handlers can themselves be interrupted by higher-priority interrupts.
+Let's say you have a large struct which requires several stores to copy to memory - maybe an interrupt occurs between two stores, and your value is left in a torn state until the new interrupt is serviced and the processor resumes the original sequence of stores.
+The handler for that new interrupt shouldn't be allowed to read that torn value; that's undefined behaviour. It's valuable to say that a piece of data belongs to one execution context and shouldn't be accessed from other contexts without some kind of serialisation.
+I'm not sure what the plan is for all of this. It's possible we will need new language features to model this conveniently. Point is - concurrency and data isolation are not irrelevant to embedded systems, and in fact I would even argue the opposite - that they are exposed to the hardware's natural concurrency to a far greater degree than desktop applications typically are.
+
+---
+
+@ksluder · 2024-08-27T20:19:08.394Z:
+Karl:
+Embedded systems are inherently concurrent systems
+I think this statement is overly broad. People have ported Swift to microcontrollers, which are not intrinsically multiprocessors.
+
+---
+
+@Karl · 2024-08-27T21:06:54.160Z:
+Microcontrollers are concurrent systems, too. That's the point I was making.
+Pre-emptive multitasking is all about code being interrupted so other code can run. Even if you don't have an operating system, you'll still have hardware interrupts (e.g. a button was pressed, a hardware timer triggered, or some buffer is empty and needs to be filled).
+An interrupt is a signal (generally called an "interrupt request") to the CPU to immediately begin executing different code, code that is written to respond to the cause of the interrupt.  "Immediately" can be as soon as the end of the current instruction, in the best case.  The time between the generation of the interrupt request and the entry into the ISR is called the "interrupt latency," and faster (lower latency) is always better.  The CPU will remember the location of the next instruction it was going to execute by storing that instruction address in a register or memory location, and will then jump directly to the code designated by the programmer for that particular interrupt.  [...]
+A microcontroller CPU will be designed to respond to a number of different interrupt sources (perhaps 10 to 100 sources, typically), and each source can have specific user-written code which executes when that interrupt triggers.  The code that executes for an interrupt is called the "interrupt service routine" or ISR.  The "now you see it, now you don't" heading [of this article] refers to what you would see if you were watching the code execute in slow motion.  The program counter would be moving from one instruction to the next, and then when the interrupt triggered the PC would suddenly end up in some totally different area of the program (the entry point of the ISR).  Then, when the ISR was complete, the PC would just as suddenly be pointing back to the next instruction, as if nothing had happened.
+Embedded Related: Introduction to Microcontrollers - Interrupts
+Nothing about this requires multiprocessors.
+For instance, consider the PIC10F320 - a 6/8 pin MCU which you can buy for 59 Euro cents even without a bulk discount:
+Only 35 Instructions to Learn:
+All single-cycle instructions, except branches
+Operating Speed:
+DC – 16 MHz clock input
+DC – 250ns instruction cycle
+Eight-Level Deep Hardware Stack
+Interrupt Capability
+Processor Self-Write/Read access to Program
+Up to 512 Words of Flash Program Memory [Note: that's on the 322. The 320 only has 256]
+64 Bytes Data Memory
+High-Endurance Flash Data Memory (HEF)
+128B of nonvolatile data storage
+100K erase/write cycles
+Even this is a concurrent system (it will also probably never run Swift, either - it's designed for hand-written assembly; hence the "only 35 instructions to learn").
+
+---
+
+@Lua · 2024-08-30T14:16:01.382Z:
+I didn't say concurrency doesn't apply to embedded systems, but since I can't use concurrency features on wasm I would like to turn these errors off, or be able to take advantage of these features so at least the errors are useful.
+I wasn't able to find any documentation on using concurrency with Embedded Swift, only that it's "partially implemented".
+
+---
+
+@carlhung · 2024-09-02T10:40:08.464Z:
+Is Swift 6 really significantly harder?
+
+---
+
+@vns · 2024-09-02T14:25:07.177Z:
+I tend to think that qualifying how "hard" the language is mainly relevant for the beginning: how much concepts you have to gather before you are able to write some basic code? Take Rust for example, where you have to get borrow checker before you'll be able to do so: it is steep at first, making it definitely harder to learn, then you can cruise for a while just with that knowledge, unless you hit next (e.g. lifetimes). Swift still has progressive complexity exposure "built-in", which means you can start writing the code (even concurrent-one) pretty fast: if you write synchronous code, everything goes "as is", and with concurrency for starters you need mostly "main actor + async/await code" and compiler will take care of most of that.
+There are two differences that can be seen if we compare with earlier versions (which for a newcomer has much less sense still):
+Adoption for old projects.
+Exposing concurrency earlier in more explicit way.
+The first case is for project that has been existing for a long time, and haven't been using the whole spectrum of latest language features. They might be struggling to adopt it in one take, but they aren't expected to do so within language release anyway. For relatively new projects, especially ones that have had strict concurrency checks on all the time, the transition will be much easier, there will be breaking changes, but they more likely would be easy to address. And brand-new will be OK.
+The second case is that once you reach concurrency, Swift exposes it to you in a more explicit manner that it was before with GCD. See this comment earlier in the discussion with more details.
+
+---
+
+@dima_kozhinov · 2024-09-13T16:40:07.427Z:
+One more company (RemObjects) found Swift to be "difficult" (warning: harsh criticism there): Swift Evolution .
+Some context: RemObjects maintains a collection of their own compilers (codenamed Elements) for several languages, including Swift (codenamed Silver).
+
+---
+
+@Jumhyn · 2024-09-13T17:28:17.991Z:
+Complexity for new programmers (or simply new language users) strikes me as a very different problem from complexity for a parallel implementation maintainer. Apple has obviously thrown a huge amount of resources behind the canonical compiler, and implementation complexity has not generally been a top-level concern for language evolution, so its not surprising to me that an independent Swift compiler has struggled to keep up with the more implementation-heavy features. Subjective judgements about the value of those features aside, I do think its the right balance to treat the user model (and experience) of the language as a more primary concern.
+
+---
+
+@sliemeobn · 2024-09-13T18:35:12.266Z:
+dima_kozhinov:
+One more company (RemObjects ) found Swift to be "difficult" (warning: harsh criticism there): Swift Evolution  .
+I wonder how they really feel ; )
+
+---
+
+@taylorswift · 2024-09-13T20:04:12.336Z:
+dima_kozhinov:
+Some context: RemObjects maintains a collection of their own compilers (codenamed Elements) for several languages, including Swift (codenamed Silver).
+Silver has never been Swift, fundamental types like Array and Set have drastically different semantics in Silver to the extent that i would consider it a separate language that has only superficial similarities with Swift.
+
+---
+
+@Nobody1707 · 2024-09-13T22:24:09.746Z:
+I believe they have mostly fixed the semantics of the built-in collection types since that post, but it's been very clear from the dialogue on their forums that they never liked Swift nor did they ever try to understand why Swift is the it is.
+It's seemed to me for a while now that they only made Silver because they thought it would be a relatively quick and easy way to capitalize on the early Swift hype, and that they resent having to support new features.
+
+---
+
+@disc0infern0 · 2024-09-15T08:51:55.434Z:
+I wonder what they made of all the effort put into the nonCopyable /consumable variables? - (My two pence worth: I'm fine with that existing for some niche collection of users, but I don't think it should be a core language feature, and I would have pushed it, as far as is possible, to a separate framework/library.
+

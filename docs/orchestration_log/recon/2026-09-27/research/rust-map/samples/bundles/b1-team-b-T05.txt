@@ -1,0 +1,2985 @@
+=== ROW 51 | f002499 | https://github.com/esp-rs/esp-hal/issues/2884 | 2025-01-03 | domain-subframes ===
+Implement `wait_for_done` for `DpiTransfer`
+
+---
+
+@EliteTK · 2025-01-03T19:00:06Z:
+## Motivations
+
+`I8080Transfer` has this facility already, so this would introduce parity.
+
+In general it can be useful when animating content on a display to avoid re-drawing more often than is necessary to ensure a smooth animation.
+
+## Solution
+
+An async `wait_for_done` function on the `DpiTransfer` in the same style as the one on `I8080Transfer`.
+
+## Alternatives
+
+I think it should be possible to achieve the same effect by simply implementing an appropriate `DmaTxBuffer` which tracks how much data has been transferred and synchronizes rendering to which frame is currently being requested combined with using `Dpi::send` with `next_frame_en` as `true`. But I think both styles would be appropriate to support.
+
+## Additional context
+
+I've discussed this with @Dominaezzz on matrix (in the Embassy channel) and he recommended I submit this feature request.
+
+I have looked into this and may consider contributing this but please don't hold your breath as I think the `DmaTxBuffer` route would personally be preferable at the moment.
+
+---
+
+@Dominaezzz · 2025-01-19T13:32:02Z:
+We can't provide a `wait_for_done` but can provide a `wait_for_vsync`.
+
+---
+
+@yanshay · 2026-01-28T22:59:05Z:
+I also need this now.
+Why can't wait_for_done be implemented (like i8080) and wait_for_vsync can be implemented?
+Two scenarios I can see:
+1. Single dma that sends the entire large buffer from PSRAM, and need to switch and start another transfer from another buffer that just got new data. For this maybe vsync will work. 
+2. When doing PSRAM->SRAM->Display in chunks, then the transfer from SRAM needs to switch every time the SRAM chunk and transfer from another one. For this vsync won't work. maybe hsync and count those?
+
+Until this is implemented, what is a good workaround for now? Can manually wait for some interrupt?
+
+---
+
+@Dominaezzz · 2026-01-29T04:49:37Z:
+> Why can't wait_for_done be implemented (like i8080)
+
+The hardware simply doesn't support it.
+
+> what is a good workaround for now? Can manually wait for some interrupt?
+
+You can use the DMA to check if a frames worth of data has been sent. You'll have to use the PAC for this as the drivers don't expose this yet. 
+
+In my own projects however, I avoid restarting transfers and I always use an infinite DMA buffer. By default every frame buffer in my project has it's last DMA descriptor pointing to it's first DMA descriptor, so the hardware just sends the frame over and over again automatically. When I want to switch frame buffers, I change the current frame buffer's last DMA descriptor to point the first DMA descriptor of the new frame buffer, and the hardware just "switches" automatically.
+This generally works well until PSRAM is thrown into the mix and the bandwidth issues throws the data out of sync with the display signals.
+
+> 2\. For this vsync won't work. maybe hsync and count those?
+
+Why won't vsync work for this case? The peripheral can't tell the difference.
+Yes you could count hsync with the pcnt peripheral I suppose.
+
+---
+
+@yanshay · 2026-01-29T13:00:46Z:
+>  By default every frame buffer in my project has it's last DMA descriptor pointing to it's first DMA descriptor
+
+How do I do that?
+I have working code based on the dpi example but for full screen buffer.
+I tried modifying the last descriptor to point to the first (with and without `set_suc_eof(false)`).
+I expected the display to show the buffer, but it doesn't (I loop waiting after the call to send).
+ 
+```rust
+    const NUM_DMA_DESC: usize = (FRAME_BYTES + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    #[unsafe(link_section = ".dma")]
+    static mut TX_DESCRIPTORS: [DmaDescriptor; NUM_DMA_DESC] = [DmaDescriptor::EMPTY; NUM_DMA_DESC];
+    #[allow(static_mut_refs)]
+    let mut dma_tx: DmaTxBuf = unsafe { DmaTxBuf::new(&mut TX_DESCRIPTORS, psram_buf).unwrap() };
+    unsafe { 
+        TX_DESCRIPTORS[NUM_DMA_DESC-1].next = &mut TX_DESCRIPTORS[0]; 
+        TX_DESCRIPTORS[NUM_DMA_DESC-1].set_suc_eof(false);
+    }
+    info!("dpi.send result ok: {:?}", dpi.send(false, dma_tx).is_ok());
+```
+
+> Why won't vsync work for this case? The peripheral can't tell the difference.
+
+The way I thought about it is:
+
+Two buffers in SRAM.
+While B1 is going to display, B2 is filled from PSRAM. Assumption is that PSRAM->SRAM is faster than SRAM->Display.
+So I need to know when I can start a PSRAM->SRAM to a buffer when that buffer ended to display.
+For that I need to manage the DMA transactions one by one. Need to know when they end.
+
+Is there a way to do that w/o knowing when each buffer was fully transferred to display?  
+
+
+Also, A bit unrelated, but I noticed there is a burst mode and for external memory (PSRAM) it is 16 by default. Changing to 664 will be better for such large DMA transfers?
+
+---
+
+@Dominaezzz · 2026-01-29T13:36:19Z:
+> How do I do that?
+
+I suspect you're dealing with PSRAM issues or DmaTxBuf isn't actually using all the descriptors you've given it.
+
+Maybe try the DmaTxBuffer implementation in https://github.com/esp-rs/esp-hal/pull/2238 to avoid any PSRAM issues while testing this stuff out.
+
+> For that I need to manage the DMA transactions one by one. Need to know when they end.
+
+The peripheral and the DMA won't know about this at all. From the hardware perspective this is going to be one transaction where you are constantly tweaking the DMA descriptors to append the next chunk. Or actually you don't have to tweak the descriptors, you could just setup a descriptor loop between the buffers and and use an EOF marker to get DMA interrupts when a buffer/chunk is fully consumed.
+
+> Also, A bit unrelated, but I noticed there is a burst mode and for external memory (PSRAM) it is 16 by default. Changing to 664 will be better for such large DMA transfers?
+
+Yes, I believe so.
+
+---
+
+@yanshay · 2026-01-29T14:19:19Z:
+> I suspect you're dealing with PSRAM issues or DmaTxBuf isn't actually using all the descriptors you've given it.
+
+I tried also:
+``` rust
+    unsafe {
+        TX_DESCRIPTORS[0].next = &mut TX_DESCRIPTORS[0];
+        TX_DESCRIPTORS[0].set_suc_eof(false);
+    }
+
+```
+
+And the `xfer.wait()` returned (I expect it to not end ever).
+
+The PSRAM transfer is working fine at 80Mhz. The descriptors are not in PSRAM.
+
+I also see the following:
+1. If I use the full length descriptors with last descriptor pointing to the first, the code with the loop waiting and driving another DMA shows the screen fine, including graphics on the screen (not single color).
+2. If I do such decriptor in the middle of the descriptors array, I see the screen sort of split and the first part repeated again. So the loop in the descriptors work from DMA perspective. Again, this is with me continuously driving a send whenever one ends.
+3. But if I don't do the wait and just call the send once, nothing shows, and if I continue the loop after then display does show.
+
+From this I understand that the send stops the DMA transfer once it reaches end of screen. It doesn't continue DMA repeatedly. While the DMA could continue, the send seems to stop it. That's the only explanation I can see to the above.
+Maybe there is some flag to configure it to continue automatically to the next screen?
+
+If there isn't and code needs to trigger another send after every screen then I'm back to the original issue that started this thread. But you said you were able to achieve it in your projects (which I understand were not in rust) so maybe the rust implementation doesn't expose this?
+
+When I think about it, the example in esp-hal that cycles through colors has a cyclic descriptor, and it ends once a screen is filled and need to be sent again. It doesn't continue to the next screen automatically.
+
+To show the DMA loop working, but only with repeated send - here is an image:
+
+![image](https://github.com/user-attachments/assets/1f256d43-84bc-4ebb-9685-b0784ebab142)
+
+
+---
+
+@Dominaezzz · 2026-01-29T15:21:38Z:
+> And the `xfer.wait()` returned (I expect it to not end ever).
+
+Ah, in that case you should pass true to the send method. Passing false makes it only send a single frame. 
+
+(I'm mildly peeved that a lot of what I'm explaining now used to exist in a discussion but it's all been deleted now 😭😭😭)
+
+> From this I understand that the send stops the DMA transfer once it reaches end of screen. It doesn't continue DMA repeatedly. While the DMA could continue, the send seems to stop it. That's the only explanation I can see to the above.
+
+Yes! You have understood what is happening perfectly.
+
+> Maybe there is some flag to configure it to continue automatically to the next screen?
+
+🙂 
+
+---
+
+@yanshay · 2026-01-29T16:21:58Z:
+> Ah, in that case you should pass true to the send method. Passing false makes it only send a single frame.
+
+Oh, missed that.
+Now it starts showing signs of life...
+1. The xfer.wait hangs and screen shows.
+2. If I don't call xfer.wait nothing shows.
+3. So I just tried looiking what xfer.wait does, tried various things and this is somewhat crazy ... I have to call xfer.is_done for anything to show up. Then if I await immediately after, the display shows for that amount of time and then clears. Even though the next line that's running is just info and another await. Seems like some interaction between embassy and this...
+
+```
+    match dpi.send(true, dma_tx) {
+        Ok(xfer) => {
+            if !xfer.is_done() {
+                info!("Tested Transfer is done");
+                Timer::after_secs(10).await;
+            }
+        }
+        Err((e, _, _)) => {
+            error!("Initial DMA send error: {:?}", e);
+        }
+    }
+
+    loop {
+        info!("Done transfer");
+        Timer::after_secs(1).await;
+    }
+
+```
+4. On top of that I also see the display changes appear in somewhat strange way (so new pixels appear slowly and not in order they arrived to the data), and shifts right from time to time - I guess that's PSRAM issues.
+
+Would be interesting to hear your thoughts, but it looks like I've reached two dead-ends now with low level issues.
+
+> (I'm mildly peeved that a lot of what I'm explaining now used to exist in a discussion but it's all been deleted now 😭😭😭)
+
+Totally agree 
+
+
+
+---
+
+@Dominaezzz · 2026-01-29T17:38:35Z:
+I have no ideas about the wait and is_done stuff. Sounds like a weird compiler thing but idk
+
+> 4\. and shifts right from time to time - I guess that's PSRAM issues.
+
+Correct
+
+> 4\. On top of that I also see the display changes appear in somewhat strange way (so new pixels appear slowly and not in order they arrived to the data)
+
+Can you share a video of this?
+
+---
+
+@yanshay · 2026-01-29T18:07:22Z:
+This is how it should look like (code driving sends)
+https://github.com/user-attachments/assets/574d3ede-250e-458a-82ac-4aa625d5ca0c
+
+This is how it looks like with DMA. See how pixels start to appear with a significant delay from the time they are in memory with pixels stored after them appearing later. As if the display is being built gradually. As if some pixels come from historical cache which doesn't make sense. 
+
+And display is cleared as you can see at the end of the timer you see in the code.
+
+https://github.com/user-attachments/assets/ce97c484-ea01-4a16-ae11-3063043500d0
+
+
+
+---
+
+@Dominaezzz · 2026-01-29T20:39:16Z:
+How bizarre. I truly cannot think of a reason why the black pixels are fading in like that. DmaTxBuf should be flushing the caches.
+
+---
+
+@Dominaezzz · 2026-01-29T20:41:20Z:
+Oh actually, I can think of one reason. You might have the wrong clock phase for your screen perhaps? Try changing this config https://docs.espressif.com/projects/rust/esp-hal/1.0.0-rc.1/esp32s3/esp_hal/lcd_cam/lcd/dpi/struct.Config.html#method.clock_mode
+
+---
+
+@yanshay · 2026-02-02T15:35:01Z:
+> Oh actually, I can think of one reason. You might have the wrong clock phase for your screen perhaps? Try changing this config https://docs.espressif.com/projects/rust/esp-hal/1.0.0-rc.1/esp32s3/esp_hal/lcd_cam/lcd/dpi/struct.Config.html#method.clock_mode
+
+I tried all options, didn't change anything (for better or for worse) which is strange that nothing changed.
+
+Anyway, this is so wierd, I also went back to the sync version which is based on the example code jjust from PSRAMj and a full frame and with cyclic descriptors.
+It is as if the display shows historical data and updates in delay. 
+I also changed colors (from blue to red) to verify that it is not that one byte pass and the other doesn't (as it is two bytes per pixel). 
+
+The only way I can think of somewhat explaining it, is that the PSRAM is getting written to, but when read from by DMA still reflects historical data, as if the write takes time (long time, many seconds) to propogate into whatever PSRAM is electronically made of.  So it is able to contain simultaniously two values and with time the electricity propogates to the DMA read operations.Maybe the level goes up only gradually because of the fast reads. 
+
+No other way I can explain this wierd behavior - the correct data does evnantually appear but slowly and not in the order written to. It is not garbage data, it is eventually the correct data, just delayed by a long time and appears not in the order written to but in some random order with some average time to propogate to the DMA reads. 
+
+Familiar with such PSRAM behavior? I saw in the comments on the 80MHz the code reference that 120MHz is not safe becasue of some PSRAM termperature issues, so wonder if this is the effect when that happens. Maybe this board hits those issues already at 80Mhz?
+
+Could it be cache? any way to flush cache when writing to the PSRAM?
+
+
+---
+
+@Dominaezzz · 2026-02-02T16:06:03Z:
+How does the screen look if the frame buffer is in DRAM? Just so we're sure this is strictly a PSRAM issue.
+
+---
+
+@Dominaezzz · 2026-02-02T16:06:49Z:
+> Could it be cache? any way to flush cache when writing to the PSRAM?
+
+Yeah there's a rom function. Take a look at the DmaTxBuf prepare implementation
+
+---
+
+@yanshay · 2026-02-02T16:13:30Z:
+Yep, it is the cache... it is private so had to copy the definition of the function (worth making some public version available, it is required). Now data written to display shows correctly at least in the sync version, now will go back to async issues. Thanks!
+
+
+
+
+---
+
+@Dominaezzz · 2026-02-02T16:37:18Z:
+Nice!
+
+> worth making some public version available, it is required)
+
+https://github.com/esp-rs/esp-hal/issues/3982
+
+---
+
+@yanshay · 2026-02-02T17:01:32Z:
+Ok, basically working also in embassy async, also had to change the phase but that's my display specific.
+
+One last problem to take care of is that while it is working after some time the entire screen shifts to the right something like I think 8 pixels and the data that comes on the left is the right screen buffer one pixel down, and at the top left enter the last 8 pixels of the bottom right of the display.
+
+So it looks like some glitch or something that made it start filling the display at offset of around 8 pixels.
+The interesting thing is that it happens only once after about 23 seconds or so from the time I start running the program, and only once. So screen shows correct for 23 seconds, then jumps to the right, then stays that way for good. My code has nothing that happens at that time.
+
+Doesn't the dpi resets the starting point every vsync so should always start from the beginning of the descriptors even if there is once some glitch? Why would there be a sudden change in offset? 
+And even if there is, why that skip only once and not continue to increase the offset from time to time?
+
+Could some value from the configuration of the display make it behave that way? (all those porch values, widths, etc.)?
+
+Edit: Now I see that after a long time it shifted again by the same amount to the right. Really after a few minutes. So always happens after 23 seconds, and next time first time I see after a few minutes.
+
+
+---
+
+@Dominaezzz · 2026-02-02T17:31:48Z:
+This is PSRAM bandwidth issue at it purest.
+The DMA isn't able to deliver the data on time and the LCD_CAM does not wait and just sends garbage until the DMA starts delivering data again. This temporary garbage is what causes the offset because the dpi doesn't fix it's counters. 
+Looks like you're getting 8 pixels worth of garbage every so often.
+
+(I've managed to reproduce this with DRAM even by simply using too many descriptors, it's truly just a bandwidth issue)
+
+There's no "fix" and I don't think there's a reliable way to detect this.
+
+You can choose to restart the DMA transfer every few seconds to realign the display. Esp-idf offers something like this. 
+
+Or you can start looking into bounce buffers 😄
+
+---
+
+@yanshay · 2026-02-02T17:36:47Z:
+> This is PSRAM bandwidth issue at it purest. The DMA isn't able to deliver the data on time and the LCD_CAM does not wait and just sends garbage until the DMA starts delivering data again. This temporary garbage is what causes the offset because the dpi doesn't fix it's counters. Looks like you're getting 8 pixels worth of garbage every so often.
+> 
+> There's no "fix" and I don't think there's a reliable way to detect this.
+> 
+> You can choose to restart the DMA transfer every few seconds to realign the display. Esp-idf offers something like this.
+> 
+> Or you can start looking into bounce buffers 😄
+
+And it is so consistent after exactly 23 seconds every time (tried tens of times)? and then minutes after, many minutes.
+Isn't it more reasonable to be related to some clock offset that drifts with time and then cause the shift?
+The DMA doesn't restart from beginning of buffer every time there is vsync? If I had the vsync I guess I could trigger the transaction every vsync, right?
+
+How can I do this bounce buffer when I have no signals about where the DMA is? is there access to the DMA interrups or something (as the dpi drives the DMA if I get it right, not my code).
+
+---
+
+@yanshay · 2026-02-02T17:45:10Z:
+another observation:
+
+I configure the display using, see comment inside.
+```
+            vertical_active_height: 480,
+            vertical_total_height: 488,  // -> when changing to 480 it scrolls down, and takes much longer for the offset to appear
+```
+
+when changing total_height to 480 instead display scrolls down, which makes sense, and takes much longer for the offset to appear (several minutes). 
+From PSRAM perspective I think nothing changes, right?
+
+---
+
+@Dominaezzz · 2026-02-02T17:46:20Z:
+I'm 99.999999999% sure this is a bandwidth issue. The remaining 0.000000000001% is because I haven't seen your code 😂.
+
+Again, try using SRAM instead of PSRAM to see if this issue goes away.
+
+> The DMA doesn't restart from beginning of buffer every time there is vsync? If I had the vsync I guess I could trigger the transaction every vsync, right?
+
+The DMA has absolutely no idea where the data is going or how it's used. All it's doing is pushing data into a queue/buffer. It doesn't about vsync signals.
+
+> How can I do this bounce buffer when I have no signals about where the DMA is? is there access to the DMA interrups or something (as the dpi drives the DMA if I get it right, not my code).
+
+The DMA descriptors have a marker that tells you when the DMA has finished processing it. This is what I currently use in my project.
+
+You can also use DMA interrupts via the PAC.
+
+---
+
+@Dominaezzz · 2026-02-02T17:48:25Z:
+> when changing total_height to 480 instead display scrolls down, which makes sense, and takes much longer for the offset to appear (several minutes). From PSRAM perspective I think nothing changes, right?
+
+By reducing the height, you've reduced the bandwidth requirements too, which explains why the offset takes longer to appear.
+
+---
+
+@yanshay · 2026-02-02T18:00:49Z:
+> The DMA has absolutely no idea where the data is going or how it's used. All it's doing is pushing data into a queue/buffer. It doesn't about vsync signals.
+
+But during the porch time and after display end (480 - 488) the DMA doesn't send data. I provide data for just 480 lines, and there are 488 from timing perspective. So something must manage the DMA and can also tell it to start from scratch instead of just continue.
+
+> The DMA descriptors have a marker that tells you when the DMA has finished processing it. This is what I currently use in my project.
+
+The descriptors? How can I get notification from a descriptor?
+
+Two more key data points:
+1. I reduced the display frequency from 16Mhz to 15999990 Hz (so 10Hz lower), and for now, 6 minutes, no offset. I'll give it more time and see. Maybe the ESP32 source clock is not in a mode when it is accurate enough?
+
+2. In the sync program (which is prctically the same code, just in an embassy task) this doesn't happen (with the 16MHz), so maybe it's some source clock that's configured inside esp-hal that's different between embassy applications and standard sync applications? In the code I son't see a difference in configuration of clocks.
+
+
+
+
+---
+
+@Dominaezzz · 2026-02-02T18:26:25Z:
+> But during the porch time and after display end (480 - 488) the DMA doesn't send data. I provide data for just 480 lines, and there are 488 from timing perspective. So something must manage the DMA and can also tell it to start from scratch instead of just continue.
+
+So long as the queue/buffer is not full, the DMA will push data into it. It is up to the LCD_CAM to decide when to pop data from queue/buffer.
+DMA doesn't care.
+
+> The descriptors? How can I get notification from a descriptor?
+
+There is a field in the descriptor that changes value.
+
+---
+
+@yanshay · 2026-02-02T19:47:24Z:
+Ok, I think I give up for now, I believe it has to do with embassy in some way. 
+In short - I think dpi doesn't work well with embassy, feels to me like something at low levels of clocks/interrupts/etc.
+
+I'll summarize my results in case it helps anyone (or me) in the future. 
+
+In a new test I ran:
+
+1. In a sync program - everything works perfectly with  PSRAM for a long time - over 30 minutes w/o any glitch.
+2. Moving the exact same code - copy/paste into a single task program in an embassy program - everything works perfectly as well.
+3. The code has a delay in the loop that writes the data - when replacing it with Timer await - the display immediatley offsets to the right by about 300 pixels or so (out of 800).
+4. Adding a short Timer await before all the display code (keeping the timer await in the loop) - things go back to being perfect again (with the timer await in the loop, so seems like the first timer await initialized something earlier that made it work).
+5. Keeping the code that initializes the display in the main task and initiating the dpi send() (followed by endless loop), and moving the code that fills in data in the display to another task - display again offsets the image to the right by about 300 pixels or so. I couldn't find a way to workaround that one.
+
+In my previous embassy test with a bit different code but still very similar, organized a bit differently into tasks:
+1. The code worked but once in a while an extra 8 pixels shift took place. First after 23 seconds, next offsets added after minutes form time to time.
+2. Decreasing dpi clock to 15,999,990 Hz - changed the first time to see the offset to be after 12 minutes - significantly better but still happens. (in the sync code it never happens). Lower frequency (like 15,999,900) freaked the display - see next point.
+3. I tried to understand how 15,999,990 Hz can even be achieved with ESP32 and couldn't understand it since the dividers don't seem to support such frequency close to 16Mhz, and the closest below 16Mhz would be less than 15,999,900 which totally didn't work. So that's another point I don't really understand - how the 16,999,990 made a difference.
+
+Anyway, these are my findings, maybe will try to return to it in the future, but dpi with esp-hal is doesn't seem to be functional for embassy apps, and I don't think it is related to PSRAM since the symptoms I witness don't point to PSRAM as the reason unless it is very indirect through embassy - sync work perfectly, embassy doesn't.
+
+---
+
+@Dominaezzz · 2026-02-02T20:24:42Z:
+> I believe it has to do with embassy in some way.
+
+I won't be surprised if it's due to the scheduler code executing from flash, which is stealing bandwidth from the DMA.
+
+---
+
+@yanshay · 2026-02-02T20:34:13Z:
+> > I believe it has to do with embassy in some way.
+> 
+> I won't be surprised if it's due to the scheduler code executing from flash, which is stealing bandwidth from the DMA.
+
+If I look at all symptoms I've seen I can't see how it can explain all behaviors and fixes. I have the feeling it's more than just flash conflict.
+
+---
+
+@EliteTK · 2026-02-02T20:51:05Z:
+When I got it all running from PSRAM (at least I am pretty confident it was all running from PSRAM) I also ran into similar issues where things still were getting de-synched.
+
+My hunch was that esp-hal was initialising PSRAM wrong and therefore it wasn't able to run at the necessary speeds [^1].
+
+This is an interesting outcome... Can you share some of the code by any chance?
+
+Had a busy year last year, but this year I will probably look at this stuff again. It has got to work, I have a point to prove to someone :)
+
+[^1]: I also assume that the reason why @Dominaezzz got crashes running my code was due to data corruption when trying to run at the higher speeds.
+
+---
+
+@yanshay · 2026-02-03T10:18:50Z:
+Happy to share the entire project, it's just a total mess by now with multiple versions and trials mixed together... won't you need the same board I have to use it though?
+
+Will try to organize it a bit and share. Hopefully it won't be too embarrassing code...
+
+Do you have a version of the xip (running from PSRAM) that works with latest esp-gal I can try out?
+
+My last version (after last message here) I switched back  to non-cyclic descriptors and triggered a new transaction after every vsync interrupt.
+It worked perfectly when the main task did this and another task was building the graphics. So two embassy tasks running in parallel.
+
+When I moved the code from the main task to a third task and left the main task just looping with timer doing nothing the display started to flicker from time to to time starting somewhere from mid screen which seemed like PSRAM not up to it. 
+So seems there like what @Dominaezzz is saying that embassy running too much is causing the issues. 
+
+I don't fully understand - how does moving code to PSRAM solves this? It still needs code to run over the same SPI , so why does it solve things? Because flash is so much slower?
+
+In general this raise a big question to me. My end goal is to use it in an application where everything runs from PSRAM - all tasks state is in PSRAM, TLS sessions, all data, etc. and I wonder - even if we solve this for a simple program will it work with more PSRAM intensive applications? Are there examples in the C ecosystem that use PSRAM as intensively and drive a large screen? I question if ESP32S3 is up to the task with RGB in the first place.
+
+I saw there are I8080 based large displays just not as part of a ready made board but need to deal with connecting them to an ESP32 and the wiring is a bit of a hassle but seems like I8080 is better for a non gaming app where no need for high fps rate. Thoughts?
+
+P.S.
+This thread is less fit for this issue but no alternative location for such discussion now with the removal of the discussion area for whatever reason that was made... so have to continue it here.
+
+---
+
+@EliteTK · 2026-02-03T10:34:12Z:
+I have an ESP32S3 connected to an ST7262, your code will probably work with a little bit of twiddling.
+
+Regarding your question on whether the ESP32S3 is up to the task, I think so, arduino is certainly not the most efficient use of hardware resources but lots of people have made rather sophisticated things with boards based on this combination of ESP32S3 + a display driven via DPI using arduino. Mainly though I believe they use XIP from PSRAM in this scenario.
+
+I don't see why this should be any worse with bare rust, it's just a matter of methodically going through everything, figuring out what we're doing differently, making a change to re-align, and seeing if it helps.
+
+Edit: And to clarify, no I don't have any update XIP from PSRAM code right now.
+
+---
+
+@yanshay · 2026-02-03T11:42:07Z:
+@EliteTK  I shared the repo at https://github.com/yanshay/esp32s3-rgb-async
+It has several branches V1, V2 etc. with some comments. V3 is the latest with vsync interrupts, earlier versions were with cyclic DMA descriptors. I hope the branches arrived well. I'm using jujutsu so don't know if did everything correctly to create and push the branches.
+Pretty messy code but hope you'll be able to deal with it. Let me know if you have questions.
+
+If you have an xip (so running code from PSRAM) that I can try with esp-hal 1.0, I'd be happy to try it out and see if it helps.
+
+Also, if you can point me to example of complex ESP32 C code with large display that use PSRAM in parallel to driving RGB display, I'd appreciate it. I couldn't find any. I only found applications showing some sensor data or control panels to other systems. Nothing that both did UI and meaningful processing at the same time with large amounts of data, TLS, etc. that would require PSRAM both for UI and for the application.
+ 
+
+---
+
+@Dominaezzz · 2026-02-03T11:59:00Z:
+> I don't fully understand - how does moving code to PSRAM solves this? It still needs code to run over the same SPI , so why does it solve things? Because flash is so much slower?
+
+This was explained by Igor in a discussion but that's lost now. It had to do with arbitration. There's hints in the esp-idf docs.
+
+---
+
+@EliteTK · 2026-02-03T12:27:52Z:
+Regarding why moving code to PSRAM should help:
+
+The ESP32 has an MSPI peripheral which can be configured to expose SPI memory connected to SPI0/SPI1 (which incidentally share an SPI bus) to the cores as just normal memory (instead of your code having to manually use the SPI peripheral to load/store things). The normal program FLASH memory is accessed this way.
+
+You can also access PSRAM through the MSPI peripheral.
+
+Normally when you run code from FLASH, you use normal RAM, and you don't use SPI0/SPI1 for anything else, things work fine. But as soon as you access both FLASH and PSRAM then any read/write from/to PSRAM must wait for any outstanding FLASH read/write to complete first. This is just standard bus contention.
+
+The DMA controller will try to stream the necessary data from PSRAM when it is needed, if it so happens that when DMA expects to read PSRAM that you were reading instructions from FLASH, this will delay the DMA controller's read, but the DMA controller doesn't expect to have to wait. Meaning that when the DPI peripheral starts sending out a signal, it might do so before the DMA peripheral has actually managed to get the data out of PSRAM. This causes your image to get out of synch.
+
+If a read from flash can happen, it's very difficult to control when it will happen. As you noticed, calling a function in the wrong place can cause a flash read which would in turn stall the next DMA transfer. Or, at least, this is the hypothesis.
+
+---
+
+Now having written all that, I have to wonder why what I described can't also happen when you are only reading from PSRAM.
+
+Because at the end of the day, PSRAM reads can be slow anyway. Which means that you could be starving the DMA peripheral even when you're reading from just PSRAM, as a PSRAM read of instructions from the wrong part of memory could still be happening when the DMA peripheral asks for pixels from PSRAM.
+
+I will have to look into it, and it's entirely possible that I have made an error in my analysis above. I'd be happy to hear feedback.
+
+But I think if you do bounce buffers backed with PSRAM, you can get the best of all worlds.
+
+The way bounce buffers seem to be handled in e.g. LVGL is that you have two small buffers in RAM which get written to by LVGL directly and which are read from in a loop by the DMA controller. This is sub-optimal for various reasons, not least of all that you have to keep some kind of scene graph or data structure for your UI which you keep querying many times per refresh to render a sliver of screen.
+
+But I don't see why you couldn't just set up DMA from two bounce buffers and then separately repopulate them from PSRAM (maybe even with more DMA).
+
+The transfer into RAM can be started as soon as the current buffer has finished being read via DMA from the DPI peripheral. It needs to complete at any point between then and when that buffer is next needed, which should be more than enough time to avoid any problems with contention unless you're really pushing the chip to the limits.
+
+As long as you accurately keep track of the correct offset into the real vbuffer, and you never somehow stall a DMA read from RAM, you should never have an issue. If a DMA read from PSRAM takes longer than needed, you can just cancel it and experience a small glitch, rather than a complete desync.
+
+(Sorry for the close/reopen, I mis-clicked.)
+
+---
+
+@Dominaezzz · 2026-02-03T13:08:59Z:
+> Now having written all that, I have to wonder why what I described can't also happen when you are only reading from PSRAM.
+
+So two things need the SPI bus. CPU and DMA.
+
+If CPU accesses flash, the DMA has to wait until it can access PSRAM.
+
+If CPU accesses PSRAM instead, the DMA and CPU share the PSRAM bandwidth 50/50 (this is not configurable). There's an arbitar that lets this happen.
+
+So by moving code into PSRAM the DMA always has at least 50% of the bandwidth, as supposed to 0%.
+
+---
+
+@EliteTK · 2026-02-03T13:20:38Z:
+When you say they can share the bandwidth 50/50, I assume each read/write is interleaved. But how big is a read/write in this case and how much time is there from when the DPI peripheral triggers the DMA until the DMA must have something ready?
+
+What I am trying to ask is, even though the DMA controller can have 50% of the reads, could the CPU end up starving it if it was also reading/writing for the whole time?
+
+---
+
+@Dominaezzz · 2026-02-04T13:24:16Z:
+Good question, I don't have a neat and tidy answer for that. I just assume the arbitar is fair.
+
+---
+
+@yanshay · 2026-02-04T15:44:29Z:
+To implementing bounce buffers in RAM need to get an interrupt when DMA from RAM to DPI completes.
+From my tests, cyclic descriptors don't generate any dma done interrupts, only vsync. (when it is a single send it does).
+This means sending the buffers from RAM to DPI also need to be triggered.
+The current `send` API initializes the DPI transfer, it doesn't continue from where it left off, right? So need to add a different send that can continue? I didn't try that, just want to understand what's required to try and make bounce buffers work.
+
+
+---
+
+@Dominaezzz · 2026-02-04T17:58:50Z:
+> From my tests, cyclic descriptors don't generate any dma done interrupts,
+
+That's odd, did you set any of the descriptor EOFs to true?
+Which DMA interrupts are you trying to use?
+
+> The current `send` API initializes the DPI transfer, it doesn't continue from where it left off, right? So need to add a different send that can continue? I didn't try that, just want to understand what's required to try and make bounce buffers work.
+
+This is a hardware limitation. Neither the LCD_CAM nor DMA can really do this. Actually technically the DMA can do it but the peripheral would get very confused if you tried it. 
+
+You need a DmaTxBuffer implementation that will do the bounce buffer business. The idea here is very similar to how to DmaRxStreamBuf works. You just need to write to the descriptors/buffer and the DMA is reading from it. You're not going to be starting/stopping mid frame, that won't work.
+
+---
+
+@yanshay · 2026-02-04T19:06:42Z:
+This is what I did:
+```
+    lcd_cam
+        .lc_dma_int_ena()
+        .modify(|_, w| w.lcd_vsync_int_ena().set_bit());
+
+    lcd_cam
+        .lc_dma_int_ena()
+        .modify(|_, w| w.lcd_trans_done_int_ena().set_bit());
+
+```
+Both interrupts took place, just the lcd_trans_done happened only when used non cyclic descriptors.
+Yes, I used to set the eof. it had no effect. I even think I received the lcd_trans_done interrupt on send when it wasn't cyclic without it though not sure about that. 
+```
+unsafe { TX_DESCRIPTORS[NUM_DMA_DESC-1].set_suc_eof(true); };
+```
+I also tried several other descriptors and got nothing from them never.
+
+So I don't understand how it will work - how do I know when to trigger the DMA from PSRAM to RAM? Unless there is a way to get the interrupts. 
+
+You also said something above about a flag in the descriptor that change? what flag? Maybe I need to set it every time it fires? (though I think it never fired on cyclic descriptors).
+
+---
+
+@Dominaezzz · 2026-02-04T22:30:19Z:
+You're using the wrong interrupts. Those are the interrupt from the LCD_CAM. You need to use the interrupts from the DMA.
+See [these ones](https://github.com/esp-rs/esp-hal/blob/f16f46be72e4dd87c76d3b2c3a2fb2e1bec433a1/esp-hal/src/dma/gdma.rs#L312).
+The LCD_CAM interrupts won't be useful for bounce buffering. They're more useful for double buffering really.
+
+> just the lcd_trans_done happened only when used non cyclic descriptors.
+
+TIL. I actually didn't know that the hardware did this. Maybe `wait_for_done` can be done after all.
+
+> You also said something above about a flag in the descriptor that change? what flag? Maybe I need to set it every time it fires? (though I think it never fired on cyclic descriptors).
+
+https://github.com/esp-rs/esp-hal/blob/f16f46be72e4dd87c76d3b2c3a2fb2e1bec433a1/esp-hal/src/dma/mod.rs#L222
+Time to open the TRM and read about DMA descriptors. Newer T.R.Ms have better descriptor docs. (Just don't look at the P4 one.)
+
+---
+
+@yanshay · 2026-02-12T13:35:54Z:
+@EliteTK were you able to try my code on your device?
+
+@Dominaezzz how can I get to the Dma to handle its interrupts? the Dpi driver manage it. Some guidance would be appreciated.
+
+---
+
+@Limeth · 2026-02-15T01:27:54Z:
+I appreciate the in-depth discussion on this topic.
+
+Re https://github.com/esp-rs/esp-hal/issues/2884#issuecomment-3818751831:
+I think I may have encountered a similar issue. I pass a `DmaTxBuffer` with a circular descriptor to `Dpi::send(true, buf)`, and the screen goes blank if I don't wait in the same `async fn` it was created in.
+
+This causes the screen to go blank:
+```rust
+async fn perform_send() -> DpiTransfer</* ... */> {
+    let transfer = /* dpi.send(true, buf) and so on */;
+    transfer
+}
+
+async fn main() {
+    let transfer = perform_send().await;
+    // do more stuff and never return
+}
+```
+
+While this works fine:
+```rust
+async fn perform_send() {
+    let transfer = /* dpi.send(true, buf) and so on */;
+    loop {
+        Timer::after_secs(1).await;
+    }
+}
+
+async fn main() {
+    perform_send().await;
+    // do more stuff and never return
+}
+```
+
+I can't really come up with any reason why this is happening, but I do wonder whether the async runtime has something to do with it, or perhaps it's the custom `Drop` impl? But it shouldn't be getting dropped anywhere...
+
+My attempt at implementing bounce buffers can be seen [here](https://forgejo.limeth.cz/limeth/acid/compare/master...bounce_buffer). Notably, it is WIP-quality code.
+
+---
+
+@yanshay · 2026-02-15T10:11:51Z:
+Great to see I'm not the only one trying to get RGB working. What display size are you trying to use?
+
+As for your question - your included snippets are not full so hard to tell, but it is very likely Drop. I had this issue as well and eventually found something dropped without me noticing. 
+
+Is your attempt at bounce buffers working right now? 
+
+---
+
+@Limeth · 2026-02-15T13:37:16Z:
+> What display size are you trying to use?
+
+I am using [this 240x960](https://www.adafruit.com/product/5799) display, but it has a front porch of 120 pixels so it actually requires a frame of 360x960.
+
+> As for your question - your included snippets are not full so hard to tell, but it is very likely Drop. I had this issue as well and eventually found something dropped without me noticing.
+
+Could be, but I really don't see why it would be getting dropped anywhere. The transfer is bound to a variable that should be kept around.
+
+> Is your attempt at bounce buffers working right now?
+
+No, I am currently battling with interrupts. As an experiment, I tried reading the interrupt flags of a DMA channel, and I am able to see the flags change, but if I register an interrupt handler with the low-level API, it never gets called. Not sure what I'm doing wrong on my end.
+
+If you wanna chat about it I'm in the matrix server as @Limeth:matrix.org or @limedyevt on Discord.
+
+---
+
+@yanshay · 2026-02-15T14:34:07Z:
+I didn't do DMA interrupts, but did LCD_CAM and received the interrupts. 
+```
+    // Enable the LCD_CAM interrupt
+    esp_hal::interrupt::enable(
+        esp_hal::peripherals::Interrupt::LCD_CAM,
+        esp_hal::interrupt::Priority::Priority1,
+    )
+    .unwrap();
+
+    // Bind the handler
+    unsafe {
+        esp_hal::interrupt::bind_interrupt(
+            esp_hal::peripherals::Interrupt::LCD_CAM,
+            lcd_cam_handler.handler(),
+        );
+    }
+
+#[handler]
+fn lcd_cam_handler() {
+    let lcd_cam = unsafe { &*esp_hal::peripherals::LCD_CAM::PTR };
+
+    let raw = lcd_cam.lc_dma_int_raw().read();
+    // Check and clear VSYNC interrupt
+    if raw
+        .lcd_vsync_int_raw()
+        .bit_is_set()
+    {
+        lcd_cam
+            .lc_dma_int_clr()
+            .write(|w| w.lcd_vsync_int_clr().set_bit());
+
+        VSYNC_SIGNAL.signal(());
+        // print!(".");
+    }
+
+    if raw.lcd_trans_done_int_raw().bit_is_set() {
+        lcd_cam.lc_dma_int_clr().write(|w| w.lcd_trans_done_int_clr().set_bit());
+        // LCD_DONE_SIGNAL.signal(());
+        // print!("/");
+    }
+}
+
+```
+Looking at your code:
+1.  your code seems to be the same except it's Priority3 and not 1. Maybe that has to do with it? Shouldn't but maybe for some reason...
+2. You don't clear the interrupt, so maybe it triggers just once? And if not, then maybe need to clear it before you enable the interrupts to get the first one?
+
+When asking ChatGPT more about it (not that I trust it with esp-hal), it said to clear several bits for DMA, not sure if it's correct but maybe a direction? This is what it wrote:
+
+```
+let ch = 0;
+DMA::regs().ch(ch).out_int().clr().write(|w| {
+    w.out_done().set_bit();
+    w.out_eof().set_bit();
+    w.out_total_eof().set_bit()
+});
+interrupt::enable(esp_hal::peripherals::Interrupt::DMA_OUT_CH0, ...);
+```
+
+
+---
+
+@Limeth · 2026-02-15T18:06:16Z:
+Made a bunch more progress on it today. I changed the DMA channel that I was listening to the interrupts of to the one used by DPI and started getting interrupts now. I'm not sure why it didn't work with channel 0, but that was just an experiment anyway.
+I believe I am now getting interrupts after each descriptor sent to the LCD with the eof bit set to true.
+It currently looks like this. It should be displaying a static image with white to black gradients from each edge of the display. Strange, will have to investigate more tomorrow.
+https://github.com/user-attachments/assets/a38e1ab4-f0a5-4a8b-8001-02150a51a46e
+
+
+---
+
+@Limeth · 2026-02-16T23:59:16Z:
+Got the bounce buffers working with a static image so far. Cyclic descriptors wouldn't work after the first frame, but using acyclic descriptors and restarting the transmission after each frame seems to be fine, although not as nice.
+
+Code is available in the link I posted earlier, although it's still not as generic as I'd like it to be.
+
+I'd totally be open to upstreaming a generic solution to esp_hal, if we'd be able to come up with something suitable.
+
+Next step for me is to try and integrate it with my renderer.
+
+https://github.com/user-attachments/assets/ebf3bbd1-f4ab-4df2-97e3-16085dad0709
+
+---
+
+@yanshay · 2026-02-17T15:56:36Z:
+These are great news!
+
+Why doesn't the cyclic dpi descriptor work?
+
+The cyclic part is working (also with the example in esp-Hal) so what do you lack to use it as cyclic?
+
+You can get an interrupt on vsync if it's needed to start the bounce buffers DMA.
+
+Also - is this example with moving data from PSRAM? (Previous code I saw I think didn't use PSRAM)
+And is it a case where without bounce buffers you had problems to get stable display?
+
+---
+
+@EliteTK · 2026-09-06T10:36:52Z:
+@yanshay I've not had a chance to run your code yet, although I still might.
+
+That being said, I've made major progress on my own project in this regard. I have 31.1 FPS full depth, full resolution, double-buffered glitch-free output without relying on XiP from PSRAM. But you do need to run the flash at 80MHz which probably won't work reliably without adjusting the timing[^psram-timing].
+
+I allocate two framebuffers in PSRAM, I allocate two 1/16th bounce buffers in RAM. I set up a looping DMA transfer from the two bounce buffers to the LCD peripheral. The special trick I do is that I use 8x more descriptors than necessary, the descriptors alternate between the BBs. But by having descriptors which are in-sync with the screen, I can use the `DMA_OUT_CHx` interrupt to read ` OUT_EOF_DES_ADDR` which is enough information to figure out which exact screen slice just got emitted. This tells me exactly which portion of the current front buffer in PSRAM must be copied into the respective BB. I use Mem2Mem DMA to copy from PSRAM since doing it with the CPU is glacial (reads via cache, and then writes out via cache again) and ends up taking a huge chunk of the frame budget. If the Mem2Mem transfer is still running by the time the next BB must be refilled, I cancel it. Waiting at this point would likely just lead to cascading glitches. This happens very rarely.
+
+Most importantly, even if PSRAM stalls, or you enter a long critical section (`esp-println`'s default features can cause this) then you won't get _persistent_ misalignment/glitches unless somehow the RAM -> LCD transfer stalls which I've not seen happen yet regardless of what has been going on.
+
+The remaining obstacles are just how slow it is to write to PSRAM. A clear of a framebuffer takes milliseconds even with 64 byte cache lines, I am thinking I might use another M2M to do that, in order to avoid the cache and so I can do it eagerly after each frame. Double buffering eliminates screen tearing but complicates damage handling. Although there are plenty of optimisations left.
+
+Either way, very promising.
+
+[^psram-timing]: I'm working on a patch to implement auto-tuning for the 80MHz path, but you might have luck configuring the fallback timings that `esp-idf` uses in case it fails to tune, as I've found these to lie within my chips good range:
+    ```
+    let spi = esp_hal::peripherals::SPI0::regs();
+    let (din_mode, din_num, extra_dummy) = (4, 0, 2);
+    
+    spi.spi_smem_timing_cali()
+        .modify(|_, w| w.spi_smem_timing_clk_ena().set_bit());
+    
+    unsafe {
+        spi.spi_smem_din_mode().modify(|_, w| {
+            w.spi_smem_din0_mode().bits(din_mode);
+            // ... din1 through din6 ...
+            w.spi_smem_din7_mode().bits(din_mode);
+            w.spi_smem_dins_mode().bits(din_mode)
+        });
+    
+        spi.spi_smem_din_num().modify(|_, w| {
+            w.spi_smem_din0_num().bits(din_num);
+            // ... din1 through din6 ...
+            w.spi_smem_din7_num().bits(din_num);
+            w.spi_smem_dins_num().bits(din_num)
+        });
+    
+        spi.spi_smem_timing_cali().modify(|_, w| {
+            w.spi_smem_timing_cali().bit(extra_dummy != 0);
+            w.spi_smem_extra_dummy_cyclelen().bits(extra_dummy)
+        });
+    }
+    ```
+
+---
+
+@yanshay · 2026-09-06T19:24:30Z:
+I also implemented rendering slint using a similar method quite some time ago so I don't remember all details by now and it was working quite well (perfect fron UI pov), however due to the flash contention and high PSRAM bandwidth it slowed the application down (I am using PSRAM heavily) and it felt in responsiveness enough that I didn't like it for that application so didn't switch device and still use an I8080 display at lower size and resolution. 
+
+=== ROW 52 | f002501 | https://github.com/loco-rs/loco/issues/1133 | 2025-01-03 | domain-subframes ===
+allow_headers config allways falls back to *
+
+---
+
+@Mettwasser · 2025-01-03T22:21:27Z:
+**Description**
+The error in question:
+```
+Invalid CORS configuration: Cannot combine `Access-Control-Allow-Credentials: true` with `Access-Control-Expose-Headers: *`
+```
+This is the config I am using:
+```
+cors:
+  enable: true
+  allow_credentials: true
+  allow_methods:
+    - POST
+    - GET
+    - PATCH
+    - DELETE
+  allow_headers:
+    - Content-Type
+  allow_origins:
+    - http://test.mydomain.com:5173
+```
+
+Additionally, running `cargo loco middleware --config` yields this for cors
+```
+cors                   {"allow_credentials":true,"allow_headers":["Content-Type"],"allow_methods":["POST","GET","PATCH","DELETE"],"allow_origins":["http://test.mydomain.com:5173"],"enable":true,"max_age":null,"vary":["origin","access-control-request-method","access-control-request-headers"]}
+```
+which does look right to me.
+
+
+**To Reproduce**
+
+Use the config shown above
+
+**Expected Behavior**
+
+Start without this config error
+
+**Environment:**
+development
+
+
+---
+
+@kaplanelad · 2025-01-04T18:15:51Z:
+read this:
+https://stackoverflow.com/a/19744754/453641
+
+
+---
+
+@Mettwasser · 2025-01-04T18:48:18Z:
+> read this: https://stackoverflow.com/a/19744754/453641
+
+my issue is that I did not set `Access-Control-Expose-Headers` to `*`, and it looks like the config overwrites it either way.
+The config is set to `Content-Type`, but it still uses the wildcard..
+
+---
+
+@Mettwasser · 2025-01-04T23:20:17Z:
+@kaplanelad I'm completely desperate. The config seems to be ignored.
+
+Running this config:
+```yaml
+cors:
+  enable: true
+  # allow_credentials: true
+  allow_headers:
+    - content-type
+    - x-request-id
+    - x-powered-by
+    - content-length
+    - date
+    - connection
+  allow_origins:
+    - http://localhost:5173/
+    - http://localhost:5150
+```
+and requesting, result in these headers in the response:
+```
+HTTP/1.1 200 OK
+set-cookie: session=b5024bd0-fb62-4e44-a725-aa743af66c4a; HttpOnly; Expires=Sun, 05 Jan 2025 00:00:18 GMT
+content-type: application/json
+vary: origin, access-control-request-method, access-control-request-headers
+access-control-expose-headers: *
+x-request-id: dd8ac820-f9c8-4e45-972c-b866a5dd04e9
+x-powered-by: loco.rs
+content-length: 216
+date: Sat, 04 Jan 2025 23:00:18 GMT
+```
+I really don't know what I'm doing wrong here, since it looks right. Showing the config also looks right, but when actually running it, it seems like it's not applied correctly?
+
+---
+
+@Mettwasser · 2025-01-04T23:31:16Z:
+One more thing: 
+Manually adding a 
+```rs
+tower_http::cors::CorsLayer::new()
+    .allow_origin("http://localhost:5173".parse::<HeaderValue>().unwrap())
+    .allow_credentials(true)
+```
+in `after_routes`,results in this header:
+```
+HTTP/1.1 200 OK
+set-cookie: session=72075347-8f7c-4294-a98d-dafbe219a41e; HttpOnly; Expires=Sun, 05 Jan 2025 00:30:04 GMT
+content-type: application/json
+x-request-id: fdef5b56-6ba4-4934-ba8e-4ec58716b3e9
+x-powered-by: loco.rs
+vary: origin, access-control-request-method, access-control-request-headers
+access-control-allow-credentials: true
+access-control-allow-origin: http://localhost:5173
+content-length: 216
+date: Sat, 04 Jan 2025 23:30:04 GMT
+```
+which is correct. So I think this is 100% an issue with the config/how its applied.
+
+---
+
+@kaplanelad · 2025-01-05T10:35:15Z:
+Thanks for the catch, @Mettwasser!
+
+Could you take a look at our setup here and help us identify what we might have missed?
+https://github.com/loco-rs/loco/blob/master/src/controller/middleware/cors.rs
+
+---
+
+@Mettwasser · 2025-01-05T13:13:12Z:
+> Thanks for the catch, @Mettwasser!
+> 
+> Could you take a look at our setup here and help us identify what we might have missed? https://github.com/loco-rs/loco/blob/master/src/controller/middleware/cors.rs
+
+@kaplanelad No problem! 
+
+I might have found something, alltho I am not sure. Unfortunately I don't have the time to investigate further.
+https://github.com/loco-rs/loco/blob/master/src/controller/middleware/cors.rs#L182-L237
+Running the case
+```rs
+#[case("with_allow_headers", Some(vec!["token".to_string(), "user".to_string()]), None, None)]
+```
+Then debugging the [response variable](https://github.com/loco-rs/loco/blob/master/src/controller/middleware/cors.rs#L216), the `"token"` and `"user"` are nowhere to be found in the headers.
+![image](https://github.com/user-attachments/assets/5c7e8cbc-1f7f-4090-ace6-fe22abd3ed33)
+Might be a good point to continue searching from.
+
+---
+
+@kaplanelad · 2025-01-07T10:26:42Z:
+@Mettwasser  i'll check it
+
+---
+
+@kaplanelad · 2025-01-07T12:03:41Z:
+Hi @Mettwasser,
+
+I've resolved this issue. Could you please test it by working with the cors-issues branch? Here's the link to the pull request for reference: [#1152](https://github.com/loco-rs/loco/pull/1152).
+
+Let me know if it resolves your problem!
+
+---
+
+@Mettwasser · 2025-01-07T20:32:42Z:
+> Hi @Mettwasser,
+> 
+> I've resolved this issue. Could you please test it by working with the cors-issues branch? Here's the link to the pull request for reference: [#1152](https://github.com/loco-rs/loco/pull/1152).
+> 
+> Let me know if it resolves your problem!
+
+I'll get to it as soon as I can
+
+---
+
+@Mettwasser · 2025-01-08T16:42:57Z:
+@kaplanelad doesn't seem like it's fixed. Still the same error, using
+`loco-rs = { workspace = true, git = "https://github.com/loco-rs/loco", branch = "cors-issues" }`
+with this config:
+```yaml
+server:
+  # Port on which the server will listen. the server binding is 0.0.0.0:{PORT}
+  port: 5150
+  # The UI hostname or IP address that mailers will point to.
+  host: http://localhost
+  # Out of the box middleware configuration. to disable middleware you can changed the `enable` field to `false` of comment the middleware block
+  middlewares: 
+    static:
+      enable: false
+      must_exist: true
+      precompressed: false
+      folder:
+        uri: "/"
+        path: "frontend/build"
+      # fallback: "frontend/build/index.html"
+    
+    cors:
+      enable: true
+      allow_credentials: true
+      allow_methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        - OPTIONS
+      allow_headers:
+        - content-type
+        - x-request-id
+        - x-powered-by
+        - content-length
+        - date
+        - connection
+      allow_origins:
+        - http://localhost:5173
+        - http://localhost:5150
+```
+
+```
+thread 'main' panicked at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tower-http-0.6.2\src\cors\mod.rs:804:9:
+Invalid CORS configuration: Cannot combine `Access-Control-Allow-Credentials: true` with `Access-Control-Expose-Headers: *`
+```
+
+---
+
+@Mettwasser · 2025-01-08T16:54:22Z:
+Manually creating the CorsLayer works fine:
+```rs
+CorsLayer::new()
+    .allow_origin(AllowOrigin::list([
+        "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+        "http://localhost:5150".parse::<HeaderValue>().unwrap(),
+    ]))
+    .allow_methods(AllowMethods::list([
+        axum::http::Method::GET,
+        axum::http::Method::POST,
+        axum::http::Method::PUT,
+        axum::http::Method::DELETE,
+        axum::http::Method::PATCH,
+        axum::http::Method::OPTIONS,
+    ]))
+    .allow_headers(AllowHeaders::list([
+        HeaderName::from_lowercase(b"content-type").unwrap(),
+        HeaderName::from_lowercase(b"x-request-id").unwrap(),
+        HeaderName::from_lowercase(b"x-powered-by").unwrap(),
+        HeaderName::from_lowercase(b"content-length").unwrap(),
+        HeaderName::from_lowercase(b"date").unwrap(),
+        HeaderName::from_lowercase(b"connection").unwrap(),
+    ]))
+    .allow_credentials(true)
+```
+
+---
+
+@kaplanelad · 2025-01-08T17:30:40Z:
+I copied your Cors configuration again, and the server is successfully running. 
+![image](https://github.com/user-attachments/assets/437820d8-865a-4819-ae65-677761c68b4b)
+
+Can you make sure that you are working with the update code? working from the master is good also, the PR was merged
+
+
+---
+
+@Mettwasser · 2025-01-10T15:44:55Z:
+@kaplanelad I messed up my cargo config - I have the changes now, however there are so many breaking changes that I can't get my app to compile 🫠
+
+Could you make a branch that is based on `0.13.2`?
+
+---
+
+@Mettwasser · 2025-01-10T15:57:41Z:
+Welp I almost got it to run. It compiles, however axum really doesn't like it:
+```
+`Path segments must not start with `:`. For capture groups, use `{capture}`. If you meant to literally match a segment starting with a colon, call `without_v07_checks` on the router.`
+```
+
+---
+
+@kaplanelad · 2025-01-10T16:08:08Z:
+Yes, this is one of the breaking changes in Axum. You can follow the upgrade steps outlined [here](https://loco.rs/docs/extras/upgrades/).
+
+Unfortunately, I can't apply this fix to version 0.13.x. It's recommended to upgrade, as the new version introduces some excellent features.
+
+
+
+---
+
+@Mettwasser · 2025-01-10T16:11:05Z:
+> Yes, this is one of the breaking changes in Axum. You can follow the upgrade steps outlined [here](https://loco.rs/docs/extras/upgrades/).
+> 
+> Unfortunately, I can't apply this fix to version 0.13.x. It's recommended to upgrade, as the new version introduces some excellent features.
+
+@kaplanelad I just tried updating to 014.0, I get the same capture issue. However, this is library code, not mine:
+```
+thread 'main' panicked at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\loco-rs-0.14.0\src\controller\app_routes.rs:194:23:
+Path segments must not start with `:`. For capture groups, use `{capture}`. If you meant to literally match a segment starting with a colon, call `without_v07_checks` on the router.
+stack backtrace:
+   0: std::panicking::begin_panic_handler
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf\library/std\src\panicking.rs:665
+   1: core::panicking::panic_fmt
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf\library/core\src\panicking.rs:74
+   2: axum::routing::Router<loco_rs::app::AppContext>::route<loco_rs::app::AppContext>
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\axum-0.8.1\src\routing\mod.rs:52
+   3: loco_rs::controller::app_routes::AppRoutes::to_router<wrf::app::App>
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\loco-rs-0.14.0\src\controller\app_routes.rs:194 
+   4: loco_rs::boot::run_app::async_fn$0<wrf::app::App>
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\loco-rs-0.14.0\src\boot.rs:405
+   5: loco_rs::boot::create_app::async_fn$0<wrf::app::App,migration::Migrator>
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\loco-rs-0.14.0\src\boot.rs:373
+   6: loco_rs::cli::main::async_fn$0<wrf::app::App,migration::Migrator>
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\loco-rs-0.14.0\src\cli.rs:659
+   7: wrf_cli::main::async_block$0
+             at .\src\bin\main.rs:8
+   8: core::future::future::impl$1::poll<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> >
+             at C:\Users\Anwender\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\future\future.rs:123
+   9: tokio::runtime::park::impl$4::block_on::closure$0<core::pin::Pin<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> > >
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\park.rs:284
+  10: tokio::runtime::coop::with_budget
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\coop.rs:107
+  11: tokio::runtime::coop::budget
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\coop.rs:73
+  12: tokio::runtime::park::CachedParkThread::block_on<core::pin::Pin<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> > >
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\park.rs:284
+  13: tokio::runtime::context::blocking::BlockingRegionGuard::block_on<core::pin::Pin<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> > >
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\context\blocking.rs:66 
+  14: tokio::runtime::scheduler::multi_thread::impl$0::block_on::closure$0<core::pin::Pin<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> > >
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\scheduler\multi_thread\mod.rs:87
+  15: tokio::runtime::context::runtime::enter_runtime<tokio::runtime::scheduler::multi_thread::impl$0::block_on::closure_env$0<core::pin::Pin<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> > >,enum2$<core::result::Result<tuple$<        
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\context\runtime.rs:65  
+  16: tokio::runtime::scheduler::multi_thread::MultiThread::block_on<core::pin::Pin<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> > >
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\scheduler\multi_thread\mod.rs:86
+  17: tokio::runtime::runtime::Runtime::block_on_inner<core::pin::Pin<alloc::boxed::Box<enum2$<wrf_cli::main::async_block_env$0>,alloc::alloc::Global> > >
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\runtime.rs:370
+  18: tokio::runtime::runtime::Runtime::block_on<enum2$<wrf_cli::main::async_block_env$0> >
+             at C:\Users\Anwender\.cargo\registry\src\index.crates.io-6f17d22bba15001f\tokio-1.43.0\src\runtime\runtime.rs:340
+  19: wrf_cli::main
+             at .\src\bin\main.rs:8
+  20: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,enum2$<loco_rs::errors::Error> > > (*)(),tuple$<> >
+             at C:\Users\Anwender\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:250
+```
+
+---
+
+@Mettwasser · 2025-01-10T16:15:10Z:
+I should maybe make a new issue for this, right?
+
+---
+
+@kaplanelad · 2025-01-10T16:18:24Z:
+now, this is also axum breaking changes. 
+which middlewares are you using? 
+
+---
+
+@Mettwasser · 2025-01-10T16:20:10Z:
+> now, this is also axum breaking changes. which middlewares are you using?
+
+I am not 100% sure, but I don't think I use any other than loco uses.
+
+---
+
+@Mettwasser · 2025-01-10T16:22:14Z:
+oh, nevermind, found the guilty.
+
+And would you look at that! CORS works now! :D
+
+---
+
+@Mettwasser · 2025-01-10T16:22:40Z:
+@kaplanelad thank you for the assistance!
+
+=== ROW 56 | f002542 | https://bytecodealliance.org/articles/election-results | 2025-01-14 | domain-subframes ===
+Bytecode Alliance — Bytecode Alliance Election Results
+Home
+About
+News
+Projects
+Membership
+GitHub
+Zulip
+Calendar
+Bytecode Alliance Election Results
+Jan 14, 2025
+David Bryant
+Each December the Bytecode Alliance conducts elections to fill important roles on our governing Board and Technical Steering Committee (TSC). I’m pleased to announce the results of our just-held December 2024 election, in which our Recognized Contributors (RCs) selected three Elected Delegates to the TSC and one At-Large Director to represent them on the Alliance Board.
+TSC Elected Delegates
+The Bytecode Alliance Technical Steering Committee acts as the top-level governing body for projects and Special Interest Groups hosted by the Alliance, ensuring they further the Alliance’s mission and are conducted in accordance with our values and principles. The TSC also oversees the Bytecode Alliance Recognized Contributor program to encourage and engage individual contributors as participants in Alliance projects and groups.  As defined in its charter the TSC is composed of representatives from each Alliance Core Project and individuals selected by Recogized Contributors.
+Our new TSC Elected Delegates (and their GitHub IDs, as we know each other in our RC community) are:
+Andrew Brown (@abrown)
+Bailey Hayes (@ricochet)
+Oscar Spencer (@ospencer)
+They will each serve a two-year term on the TSC.
+At-Large Director
+Our RCs are also represented by two At-Large Directors they select to serve on our Board (as described in our organization bylaws), with overlapping two-year terms staggered to start each January. In this most recent election The Recognized Contributors chose Bailey Hayes (@ricochet) as At-Large Director.
+Congratulations!
+I look forward to working with each of our electees, and am happy to introduce them here as part of bringing them onboard in their new roles. You’ll find our full Board and TSC listed on the About page of our website.
+Thank you to all our Recognized Contributors for taking part in the election process and in general for their ongoing support of Alliance projects and communities. I’d also like to thank our outgoing leadership for their outstanding work - Nick Fitzgerald (@fitzgen) as TSC Chair and Elected Delegate, and Till Schneidereit (@tschneidereit) as Elected Delegate and At-Large Director.
+Bylaws | IP Policy | Copyright © 2019-2023 the Bytecode Alliance contributors.
+
+=== ROW 57 | f002550 | https://iroh.computer/blog/iroh-0-31-0-back-to-fighting-fit | 2025-01-15 | domain-subframes ===
+iroh 0.31.0 - Back At Fighting Fit - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.31.0 - Back At Fighting FitJanuary 15, 2025 by ramfox, matheus23
+Welcome to a new release of iroh, a library for building on direct connections between devices, putting more control in the hands of your users.
+For the holidays, we gifted you some regressions; in the new year, we fixed them 😅. We also refactored some code paths, added authentication to the relay servers, and made using relay-only mode for testing more programmatically sound!
+🎉 Features!
+🔰 Auth on relays!
+This will be fun news for those of you who run your own relays! Not only do you have rate-limiting, but now you have tools to restrict access to your relays. Whether you are narrowing it down to your customers or your friends, or if you need to blacklist a bad actor, you can now restrict access to your relay server.
+There is now a field access on iroh_relay::server::RelayConfig , that takes a fn you can supply. If it returns Access::Accept, the connection to the relay will be accepted, otherwise it will be rejected.
+If you are just starting to spin up a project using iroh and don’t need a sophisticated function for allowing or denying connections, you can also provide an allowList or denyList list with your relay server configuration:
+access.allowList = [
+"NODEID1",
+"NODEID2",
+"NODEID3",
+]
+CopyCopied!
+or
+access.denyList = [
+"NODEID1",
+"NODEID2",
+"NODEID3",
+]
+CopyCopied!
+The default is everyone and parsing your toml config file will error if you include more than one of these options in it.
+Check out PR #3086 for more information.
+☎️ relay-only mode for testing!
+The DEV_RELAY_ONLY compile time environment variable has been completely dropped and a PathSelection::RelayOnly option has been threaded through the entire stack when test-utils is enabled.
+So, if you have test-util enabled, you can do the following to build an endpoint to force all data to be sent and received via the relay:
+let endpoint = Endpoint::builder().path_selection(PathSelection::RelayOnly).bind().await?
+CopyCopied!
+We plan on improving this even more, so that it is easier to understand what might happen in your application if holepunching is unable to occur and all traffic is routed through the relay servers!
+Checkout PR #3056 for more information.
+🪲 Bug Fixes
+😅 Connection Flop
+If you noticed iroh’s connection establishment suddenly failed in some cases after version 0.30.0 you are not insane. We’ve fixed the bug and are back to our reliable connections in 0.31.0!
+To understand the issue, you need some background information. Discovery in iroh relates a NodeId to (mainly) a relay url. We use that relay url to attempt to communicate with that NodeId and ask it about its direct addresses to holepunch with.
+If you were not connected to a relay url, but did have a publicly available direct address you wanted to be discovered by, you could publish your direct addresses instead.
+In a refactor, we accidentally combined the two, publishing both the relay url and any known direct addresses. Unfortunately, because our discovery system was designed to expect a single relay URL, rather than a whole list of records that also include direct addresses, what ended up happening was that we only parsed the first DNS entry for the record, essentially grabbing either the relay url or one direct address by chance, and discarding the rest. Because we did not have a relay url in many of these cases, we could not coordinate holepunching!
+There’s a couple of things we’ve done to address this issue:
+We rolled back the change to publish direct addresses in the PkarrPublisher: #3082
+We’ve identified and fixed the bug that ignored all DNS record entries besides the first one: #3104
+We’ve added better testing infrastructure to make sure we’ll identify these issues earlier the next time: #3121
+💔 DNS / Pkarr segfault
+If you have been using your own relay servers, you may have noticed some suspect behavior. Unfortunately, one of our DNS dependencies had an out-of-bounds parsing error. Some CPUs and OSs handled this error gracefully, others…did not. So if you were running this on a linux machine or on MacOS with an intel chip, you may have run across this. Good news is, the bug is fixed, the dependency released, and there are some nice fuzz tests ensuring it won’t happen again!
+Checkout out this PR for more information.
+🔒 Deadlock on the relay (not released)
+We did a TON of work refactoring the iroh-relay story this release. One of those pieces was to refactor the server side of the connection to help simplify the code and not have so many layers between the connection and the structures the server uses to manage those connections. We did this by removing an unnecessary actor and using some higher-order data structures to ease some of the burden of reading through locks and mutexes. Unfortunately, we foot-gunned a bit there, and needed to do a follow up PR to un-footgun.
+So, if you were following along on main, your iroh-relay server may have seen an hiccup in there. The issue was fixed and was never in a released version of the iroh-relay, so most of you will not even know what we are writing about here.
+Checkout PR #3099 for more information.
+⚠️ Breaking Changes
+iroh
+changed
+iroh::Endpoint::close's future is now infallible, instead of returning a Result.
+removed
+regex feature (as the dependency is not used anymore)
+added
+relay-only mode for testing
+iroh-relay
+added
+added: field access to iroh_relay::server::RelayConfig
+changed
+renamed iroh_relay::server::ClientConnRateLimit to ClientRateLimit
+iroh_relay::client::Client has completely changed, see the new docs.
+removed
+iroh_relay::server::MaybeTlsStreamServer from the public API
+iroh_relay::client::SendMessage::NotePreferred
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog.
+If you want to know what is coming up, check out the v0.32.0 milestone, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 60 | f002584 | https://zed.dev/blog/vim-2025 | 2025-01-22 | domain-subframes ===
+Vim Roadmap 2025 — Zed's Blog
+Product
+Resources
+Extensions
+Docs
+Pricing
+Delta
+P
+Sign upS
+DownloadD
+Vim Roadmap 2025
+Conrad Irwin
+January 22nd, 2025
+On This Page
+So now what?
+Non-editor user experience
+Conformance
+A truly great multi-cursor experience
+Let's get to it
+See what's next:
+Delta Roadmap →Zed Roadmap →
+Zed’s Vim mode continues to improve! My newest favorite feature is the ! operator, which was the "last holdout" for common Vim operators:
+The ! operator in action.
+But we’ve also been making progress on fleshing out the command palette with things like g// and v// to execute a command on matching (or non-matching) lines.
+Demo of g// in the command palette.
+The broader community has also been working on pulling in top Vim plugins. We have versions of vim-surround, sneak, and as of recently, tree-sitter text objects:
+Showing off "change within function".
+All in all, if you use Vim today, the chances are that most of what you want to do on a daily basis in the editor will work in Zed exactly as it does in Vim.
+So now what?
+There are three areas of focus I’d like to push on in 2025 for Vim in Zed:
+Building out the non-editor user experience
+Raising the bar on matching Vim edge-case-for-edge-case.
+Creating a new, better, multi-cursor Vim integration
+Non-editor user experience
+Although Vim seems to have “no UI” this is a sleight of hand. After : you’re in ex mode, which is full of features that make it work well. In particular, I want to bring to Zed:
+Filename completion in the command palette :e README.md, or :w README.md.latest for example
+Command history, so you can fix a g// without typing it out again
+:norm to run a sequence of keystrokes (and a few other missing commands)
+There are also other Vim UI’s to bring into Zed:
+:registers to see your registers.
+:marks similarly.
+Interestingly both registers and marks are more powerful in Vim than Zed today because they persist state to disk across a restart. We need to build that too.
+Finally Zed has significant surface area that Vim does not have, and I'd like them to feel Vim-native:
+Keyboard shortcuts for collaboration features like ‘follow next person’, and a keyboard driven way to join and leave calls, mute/share etc.
+Better shortcuts for the AI edit predictor, and handling in normal mode. Similarly for the inline assistant, which also tends to bug out in Vim mode today.
+Bringing more netrw like bindings to the project panel
+Tighter integration with the upcoming Git panel
+Conformance
+People who switch to Zed from Vim are attracted by the “just works by default”
+aspect of Zed: language servers just work, and the advanced features (AI,
+collaboration). But, nothing is more frustrating than a Vim mode that doesn’t
+work exactly like Vim. We get a lot of VS Code Vim extension refugees, and the number
+one complaint is that “it just didn’t feel right”.
+Zed is already much closer to Vim. We have extensive "side-by-side" testing
+where we run headless Neovim to ensure our keyboard shortcuts do exactly the
+same thing. That said, there's always more to do, both to add the remaining
+minor motions zL/zH come to mind, and fix edge cases in things like d]}.
+A truly great multi-cursor experience
+Zed has multi-cursor, and Zed’s Vim mode works “as you’d expect” with multiple
+cursors for the most part. The problem I'd like to solve is two-fold:
+Tidying up the bindings so there's a coherent feature set around Vim with multi-cursor.
+In particular making sure you can easily rotate into multi-cursor as though it were another mode.
+Adding to Zed support for moving just one of your selections in case you make a mistake selecting.
+There are a few editors that have prior art here, particularly Kakoune and
+Helix; but also Vim plugins that I want to get inspiration from.
+Let's get to it
+If you'd like to help work on any of this, you can book time to pair with
+me. Also feel free to peruse the list in
+the Vim channel notes and pick up
+things that sound interesting to you. While I am happy to accept PRs out of the
+blue, I always prefer talking things through first.
+If there's something I'm missing, or not prioritizing, please add it to the
+issue tracker, or upvote things that
+are already there.
+Recent Posts
+Check out similar blogs from the Zed team.
+Replace PRs with Delta – Now in Public Beta
+|
+Featured|
+Sep 16, 2026
+Xanadu Was Waiting for Agents
+Sep 01, 2026
+Introducing Delta
+|
+Featured|
+Aug 12, 2026
+Looking for a better editor?
+You can try Zed today on macOS, Windows, or Linux. Download now!
+We are hiring!
+If you're passionate about the topics we cover on our blog, please consider joining our team to help us ship the future of software development.
+Zed Industries © 2026
+Sign Up · Have an account? Sign In
+Terms of Service · AttributionsManage Site Cookies
+Product
+Download
+Pricing
+Business
+Releases
+Extensions
+Roadmap
+Docs
+Compare
+GitHub↗
+Status↗
+Resources
+FAQ
+CLA
+Community
+Support
+Discussions↗
+Privacy
+Subscribe
+Theme Builder
+Yearly Recaps
+Company
+Blog
+About
+Values
+Team
+Jobs
+Press
+Brand
+Merch↗
+Social
+Twitter↗
+Bluesky↗
+Instagram↗
+YouTube↗
+Discord↗
+Reddit↗
+
+=== ROW 63 | f002755 | https://qdrant.tech/blog/enterprise-vector-search | 2025-03-04 | domain-subframes ===
+Introducing Qdrant Cloud’s New Enterprise-Ready Vector Search
+Vector Space Stream: a research-first broadcast for engineers. Eight talks on compression, edge, hybrid search, and more. Sept 17. Tune in
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free0
+Introducing Qdrant Cloud’s New Enterprise-Ready Vector Search
+Daniel Azoulai·
+March 04, 2025
+Home
+/
+Blog
+/
+Introducing Qdrant Cloud’s New Enterprise-Ready Vector Search
+On this page:
+Securely Scale Your AI Workloads
+Our New Qdrant Cloud Capabilities:
+Ok, now for the good part…
+Cloud API for Simplified Management
+Secure Access & Authentication - Control the Who and What
+Advanced Monitoring and Observability for Full Performance Insights
+Simply put, Qdrant is Enterprise-Ready
+Come Build with Us!
+Share on X
+Share on LinkedIn
+At Qdrant, we enable developers to power AI workloads - not only securely, but at any scale. That’s why we are excited to introduce Qdrant Cloud’s new suite of enterprise-grade features. With our Cloud API, Cloud RBAC, Single Sign-On (SSO), granular Database API Keys, and Advanced Monitoring & Observability, you now have the control and visibility needed to operate at scale.
+Securely Scale Your AI Workloads
+Your enterprise-grade AI applications demand more than just a powerful vector database—they need to meet compliance, performance, and scalability requirements. To do that, you need simplified management, secure access & authentication, and real-time monitoring & observability. Now, Qdrant’s new enterprise-grade features address these needs, giving your team the tools to reduce operational overhead, simplify authentication, enforce access policies, and have deep visibility into performance.
+Our New Qdrant Cloud Capabilities:
+Cloud API for Simplified Management → Automate and scale with API-driven control and Terraform support.
+Secure Access & Authentication → Control who gets in and what they can do with Cloud RBAC, SSO, and granular Database API Keys.
+Advanced Monitoring & Observability → Stay ahead of issues with Prometheus/OpenMetrics, Datadog, Grafana, and other third-party integrations.
+Ok, now for the good part…
+Cloud API for Simplified Management
+Skip the UI—manage Qdrant entirely through code. The Qdrant Cloud API lets you automate cluster creation, updates, and scaling, ensuring repeatable, version-controlled deployments. You can also programmatically generate and revoke API keys, update configurations, and adapt infrastructure as workloads change.
+You can manage the Qdrant Cloud lifecycle with Qdrant’s Terraform Provider. With this support, you can define and automate cluster provisioning using Infrastructure-as-Code (IaC) best practices.
+Why it matters: By automating cluster management and scaling, Qdrant helps you focus on building AI-powered applications, not maintaining infrastructure.
+Secure Access & Authentication - Control the Who and What
+Cloud RBAC (Role-Based Access Control) - The Who
+With Cloud RBAC, you can define precise role-based permissions for team members managing clusters, billing, and hybrid cloud deployments in Qdrant Cloud. Instead of granting broad, unrestricted access, teams can assign permissions based on roles, ensuring tighter security and compliance.
+Granular Database API Keys - The What
+Database API Keys let applications and services directly interact with data inside Qdrant. You can grant API access at the cluster, collection, or even vector level, specifying read-only or read/write permissions for each key.
+Unlike Cloud RBAC, which governs team permissions in the Cloud Console, Database API Keys control how external applications access stored data. You can define fine-grained API key permissions, apply Time-to-Live (TTL) expiration policies, and revoke keys instantly—without requiring a database restart (only available in Qdrant Cloud).
+To further refine access, payload-based filters allow you to restrict API keys to only retrieve vectors that match specific metadata conditions. Before finalizing an API key, you can preview its access settings to ensure it behaves as expected—reducing misconfigurations and improving security.
+Read more about Database API keys.
+Single Sign-On (SSO) for Simplified Authentication
+SSO eliminates password sprawl by allowing users to log in through Okta, Google Workspace, Azure AD (Entra ID), SAML, PingFederate, and more—enforcing authentication policies while reducing IT overhead. Instead of managing separate credentials, users simply enter their company email and are redirected to their organization’s authentication system.
+SSO setup is fully supported—to enable it for your company, contact Qdrant support, and our team will guide you through the setup process. SSO also works with multi-factor authentication (MFA) for additional security.
+SSO is only available for Premium Tier customers. Learn more about SSO.
+Why it matters: By integrating Cloud RBAC, granular Database API Keys and SSO, Qdrant Cloud helps your team have the right access at the right time—without unnecessary friction.
+Advanced Monitoring and Observability for Full Performance Insights
+Qdrant Cloud provides real-time visibility into database performance with built-in Prometheus/OpenMetrics support. You can monitor CPU usage, memory usage, disk space, request volumes, and query latencies directly in the Qdrant Cloud Console, giving you a live overview of system health.
+For deeper analytics, Qdrant lets you integrate with your existing monitoring stack, including Datadog, Grafana, and other enterprise observability tools. Every Qdrant Cloud cluster includes a metrics endpoint, accessible via a read-only API key, providing Prometheus and OpenTelemetry compatible data for easy ingestion into Grafana Cloud or any other supported monitoring system.
+Qdrant also provides a ready-to-use Grafana dashboard to help you visualize key database metrics, including historical performance data, cluster uptime, request latencies, backup schedules, and network I/O.
+You can set up customizable alerts in Grafana, Prometheus, or Datadog to track key performance indicators such as memory, storage, and query latency thresholds.
+For historical performance tracking, third-party integrations allow you to analyze trends over time, providing deeper insights into system performance and long-term optimization strategies.
+Why it matters: With detailed telemetry, automated alerts, and deep observability integrations, you can troubleshoot issues faster, optimize database performance, and scale AI applications.
+Read more about advanced monitoring.
+Simply put, Qdrant is Enterprise-Ready
+Our high-performance vector search engine already handles billion-scale use cases. Through Qdrant Cloud, you get our Cloud API, authentication & access tools, and monitoring & observability integrations.
+With this combination, you can simplify infrastructure management, implement secure access & authentication, and stay ahead of performance challenges. That’s why Qdrant is the enterprise vector database of choice—no matter the scale.
+Come Build with Us!
+Contact Us to enable enterprise features for your team, or start prototyping with a free Qdrant cluster.
+Get Started with Qdrant FreeGet Started
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Pricing
+Use Cases
+Advanced Search
+Recommendation Systems
+Retrieval Augmented Generation
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Status Page
+Certification
+Resources
+Blog
+Benchmarks
+Technical Articles
+Events
+Startup Program
+Demos
+Bug Bounty
+Company
+About Us
+Customers
+Partners
+Careers
+Contact Us
+Sign up for Qdrant updates
+We'll occasionally send you best practices for using vector data and similarity search, as well as product news.
+© 2026 Qdrant.
+Terms
+Privacy Policy
+Impressum
+Recruitment Privacy Policy
+Cookie ConsentUp!
+
+=== ROW 64 | f002775 | https://ferrous-systems.com/blog/rust-cortex-r52 | 2025-03-10 | domain-subframes ===
+Rust on Cortex-R52  - Ferrous Systems
+Training
+Rust Experts
+Ferrocene
+Open Source
+Blog
+Get in touch
+Github
+Imprint
+Privacy policy
+Menu
+Home
+Blog
+Rust on Cortex-R52
+Announcement
+Rust on Cortex-R52
+Jessie
+March 2025
+Article
+Rust on Cortex-R52
+Published on March 11, 2025
+3 min read
+Lauterbach
+Nxp
+Cortex-r
+Arm
+Embedded world 2025
+Ferrocene
+Do you need help with coding?
+Get in touch
+Get updates
+Ferrous Systems First to Run Rust on Cortex-R52 Under Open Source License
+See it in action at embedded world, Hall 4, Booth 4-402
+embedded world 2025 – Nuremberg, Germany – March 11, 2025 – Ferrous
+Systems, the leader in Rust solutions for
+safety-critical systems, announces that they have succeeded in porting Rust to
+the Armv8-R based Arm Cortex-R52 and are donating the resulting libraries and
+example programs to the Rust
+Project’s Embedded Devices Working Group under a permissive open source license.
+Making these libraries freely available will help accelerate the development of
+real-time systems using Rust on Arm Cortex-R52.
+In the Embedded space, while Rust has made great in-roads with microcontrollers
+based on the Arm Cortex-M, there has been a lack of public examples and support
+libraries for real-time-class processor like the Arm Cortex-R52. This has meant
+that getting started with Rust on mission- and safety-critical real-time systems
+has been more difficult than with microcontroller-based systems.
+To resolve this, Ferrous Systems has now published a collection of Rust library
+crates and examples for Rust on Arm Cortex-R, mirroring those available for Rust
+on Arm Cortex-M. These include the cortex-r-rt crate which implements everything
+required to get an Armv8-R CPU from Reset to running a ‘main’ function written
+in Rust. This provides a solid foundation for Rust on Arm Cortex-R52, ready for
+others to build upon; whether integrating Rust with traditional RTOSes like
+Eclipse ThreadX, or for building pure-Rust applications. The library has been
+developed and tested using an NXP® Semiconductors
+S32Z2 safe and secure high-performance
+real-time processor. This processor includes eight Arm Cortex-R52 cores.
+"As long-time advocates of open-source development, we are proud to be able to
+donate this project to the community," said Jonathan Pallant, Senior Embedded
+Engineer at Ferrous Systems. "We believe this implementation will be especially
+valuable to Rust developers within the growing area of business- and
+mission-critical real-time systems, especially in automotive where Arm Cortex-R
+processors play a big role."
+About Ferrocene
+Ferrocene is the first open-source qualified Rust compiler toolchain for safety-
+and mission-critical applications. It is qualified to automotive (ISO 26262,
+ASIL-D), industrial development (IEC 61508, SIL4) and medical (IEC 62304, Class
+C) standards, with more to come. The source code of Ferrocene is fully open
+source under the MIT or Apache-2.0 licenses, including the full qualification
+documents.
+The latest release, Ferrocene 25.02, is qualified for use on x86-64 Linux and
+Armv8-A (bare metal), as well as QNX Neutrino 7.1.0 for x86-64 and Armv8-A, and
+it offers Armv8-R (bare-metal) as a preview. Ferrocene 25.05 is planned to bring
+Armv8-R (bare metal) to Qualification Ready status. This means Ferrous Systems
+can make a Qualified version of this target available on request, alongside
+pre-certified versions of libcore and guidance on instruction tracing for
+software certification. Customers interested in this support are encouraged to
+reach out to discuss their requirements.
+Ferrous Systems to Showcase Rust-Powered Embedded Solutions at embedded world – Hall 4, Booth 4-402
+Join us at embedded world in Hall 4, Booth 4-402 for a live demonstration of
+Ferrocene examples for Cortex-R52 running on NXP’s safe and secure
+high-performance real-time processor, in conjunction with Lauterbach’s TRACE32
+debugger and PowerDebug X50 JTAG probe. Also, on display will be SEGGER’s
+J-Trace system analyzing the performance of Ferrocene applications running on
+STM32.
+See also the official PDF Press Release.
+You might be also interested in these.
+Announcement
+Ferrocene 26.05.0 now available!
+Ferrocene
+Ana
+July 2026
+Read more
+Announcement
+Where to Meet Us in 2026: Events & Conferences
+Events
+Marketing
+Open source
+Jessie
+June 2026
+Read more
+coding
+Query cycles: A compiler murder mystery
+Rust
+Ferrocene
+Jynn
+July 2026
+Read more
+Training
+Rust Experts
+Ferrocene
+Open Source
+Blog
+Github
+LinkedIn
+Mastodon
+Bluesky
+Get in touch
+Imprint
+Privacy policy
+
+=== ROW 65 | f002827 | https://qdrant.tech/blog/webinar-vibe-coding-rag | 2025-03-21 | domain-subframes ===
+Vibe Coding RAG with our MCP server - Qdrant
+Vector Space Stream: a research-first broadcast for engineers. Eight talks on compression, edge, hybrid search, and more. Sept 17. Tune in
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free0
+Vibe Coding RAG with our MCP server
+Kacper Łukawski·
+March 21, 2025
+Home
+/
+Blog
+/
+Vibe Coding RAG with our MCP server
+On this page:
+Vibe coding
+Understanding the Model Context Protocol (MCP)
+AI coding assistants
+Building the project
+Setting up the MCP server
+Building the knowledge base of the DaisyUI components
+Scoping the project: YouTube In-Video Search
+The vibe coding session
+Share on X
+Share on LinkedIn
+Another month means another webinar! This time Kacper Łukawski put some of the popular AI coding agents to the
+test. There is a lot of excitement around tools such as Cursor, GitHub Copilot, Aider and Claude Code, so we wanted to
+see how they perform in implementing something more complex than a simple frontend application. Wouldn’t it be awesome
+if LLMs could code Retrieval Augmented Generation on their own?
+Vibe coding
+Vibe coding is a development approach introduced by Andrej Karpathy where developers surrender to intuition rather
+than control. It leverages AI coding assistants for implementation while developers focus on outcomes. Through voice
+interfaces and complete trust in AI suggestions, the process prioritizes results over code comprehension.
+That sounds appealing, as code might be written by less technical people, and that’s what we wanted to achieve during
+our live vibe coding session to see if it’s really that easy.
+Disclaimer: We couldn’t promise the application will even run at the very end of the webinar, but we gave it a try
+either way! It’s less than an hour, and even having somehow functional demo within that time can already be considered a
+great success.
+Understanding the Model Context Protocol (MCP)
+Before diving into the tools, it’s important to understand what powers our approach. The Model Context Protocol
+(MCP) is an open protocol that enables seamless integration between LLM
+applications and external data sources and tools. Whether you’re building an AI-powered IDE, enhancing a chat interface,
+or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.
+Our mcp-server-qdrant implementation acts as a semantic memory layer on
+top of Qdrant. This combination allows AI agents to:
+Store and retrieve memories (code snippets, documentation, etc.)
+Perform semantic searches across your codebase
+Find the most relevant context for generating new code
+The server provides two primary tools:
+qdrant-store: Stores information with optional metadata in the Qdrant database
+qdrant-find: Retrieves relevant information using semantic search
+This architecture enables AI coding agents to maintain context awareness throughout your development process.
+AI coding assistants
+There isn’t a clear winner of the AI coding tools, and the choice depends on your preferences and requirements. We
+did some initial research and decided to test the following tools:
+There’s been a lot of excitement around Cursor recently, and for good reason. It’s a powerful IDE-integrated tool
+built on Visual Studio Code that promises to transform how we code with AI assistance. But those of you who had a
+somewhat complicated relationship with VS Code, like me, may prefer to stick with the familiar tools where you’re most
+productive, e.g. JetBrains IDEs. A huge benefit of Cursor is that it can integrate with the MCP servers, such as
+mcp-server-qdrant, which allows you to provide your own context to the AI model.
+GitHub Copilot might be an interesting option for you, especially if you are an open source contributor and qualify
+for the Pro plan at no cost. This is quite appealing, as the Pro plan comes without any usage limits. This is a
+significant advantage over Cursor, which does have certain usage limits. From a pure economics standpoint, Copilot would
+make a lot of sense if it delivered comparable results.
+Another contender we considered was Aider - a terminal-based agent for coding. It is a terminal-based tools that
+works directly with your git repository, making edits across multiple files. What’s particularly compelling is its
+flexibility - you can connect it to almost any LLM of your choice, including local models if you’re concerned about
+privacy or working offline. And it’s fully open source, which might be a huge benefit!
+Last but not least, we have Claude Code - another terminal AI coding assistant, but the only one tightly integrated
+with the specific model family - Claude models from Anthropic. Since it’s baked by the same team that created the
+models, it might be the most optimized for the task. The tool is still in beta preview, but the built-in support for
+the Model Context Protocol is a huge advantage, and we eventually decided to use it for our vibe coding session!
+Building the project
+The idea behind vibe coding is to let the AI do the heavy lifting while you focus on the outcome. However, real
+software development is more than just writing code. It’s about understanding the problem, designing a solution, and
+choosing the right tools and libraries. We don’t want the model to use an outdated version of the library it was
+possibly trained on, so we need to provide it with the right context. That’s why building an inline RAG (Retrieval
+Augmented Generation) for the AI coding agent may take it to the next level, as it can bring the context to the model
+when it needs it.
+In our case, we really wanted to use DaisyUI, a Tailwind CSS component library, to use semantic
+class names in CSS. The latest version (5.0.6, as of the webinar) is the preferred one, however all the LLMs we used
+were rather generating code based on the older 4.x version. Imagine, the LLM would not start with generating the code
+from scratch, but rather search for the most relevant examples in our knowledge base and generate the code based on
+the extracted examples, or even reuse the code snippets, if possible. That’s why we decided to use the MCP server
+to provide the context to the AI coding assistant.
+Setting up the MCP server
+The Qdrant MCP server acts as a semantic memory layer that can:
+Store code snippets, documentation, and implementation details using the qdrant-store tool
+Retrieve the most relevant information based on natural language queries with the qdrant-find tool
+For our live coding session, we configured Claude Code to work with this MCP server. When Claude needs to generate code,
+it can automatically search for relevant examples in our codebase and create new code based on the extracted examples.
+Moreover, when the assistant is done with generating the code, it can also store it in Qdrant for further reference. And
+if configured correctly, it will only do that when we accept the change.
+The latest version of the mcp-server-qdrant allows to specify the instructions for the AI agent, so it can understand
+when to use which of the tools. This way, the MCP server can not only be used for coding but virtually to any semantic
+search task, where the context is crucial. This is how we did that during the webinar:
+export TOOL_FIND_DESCRIPTION="Use this tool ALWAYS before generating any FRONTEND code. \
+It lets you search for relevant code snippets based on natural language descriptions. \
+The 'query' parameter should describe what you're looking for, and the tool will return the most relevant code \
+snippets. If this tool finds something similar, then create your code so it is consistent. Reuse existing code \
+as much as you can."
+export TOOL_STORE_DESCRIPTION="Store reusable FRONTEND code snippets for later retrieval. \
+The 'information' parameter should contain a natural language description of what the code does, while the actual \
+code should be included in the 'metadata' parameter as a 'code' property. The value of 'metadata' is a Python \
+dictionary with strings as keys. Use this always when you generate some code to store it for further reference."
+Both descriptions might be configured while you run the server:
+claude mcp add qdrant-code-search \
+-e QDRANT_URL="http://localhost:6333" \
+-e COLLECTION_NAME="mcp-server-qdrant-knowledge-base" \
+-e TOOL_FIND_DESCRIPTION="$TOOL_FIND_DESCRIPTION" \
+-e TOOL_STORE_DESCRIPTION="$TOOL_STORE_DESCRIPTION" \
+-- uvx mcp-server-qdrant
+The MCP server configuration is primarily done through environment variables. For those looking to set up their own
+instance, here are the key configuration options:
+NameDescriptionDefault Value
+QDRANT_URLURL of the Qdrant serverNone
+QDRANT_API_KEYAPI key for the Qdrant serverNone
+COLLECTION_NAMEName of the collection to useRequired
+QDRANT_LOCAL_PATHPath to the local Qdrant database (alternative to QDRANT_URL)None
+EMBEDDING_PROVIDEREmbedding provider to usefastembed
+EMBEDDING_MODELName of the embedding model to usesentence-transformers/all-MiniLM-L6-v2
+By default, the server uses the sentence-transformers/all-MiniLM-L6-v2 embedding model from
+FastEmbed to encode memories, which offers a good balance between performance and
+accuracy.
+Building the knowledge base of the DaisyUI components
+DaisyUI comes with a collection of components, and their documentation is LLM-friendly as they
+provide the llms.txt file with all the components listed.
+That makes it really easy to extract all the code snippets with the corresponding meaning and store for the reference
+while we vibe code an app. This extraction process is easy with LLMs, but we will skip this part for now. Qdrant
+snapshot
+contains the knowledge base we used during the webinar, so you can just import it to your Qdrant instance and start
+using it right away.
+Scoping the project: YouTube In-Video Search
+When learning a new skill, YouTube videos can be a great resource. However, in-depth content is often lengthy and may
+assume no prior knowledge. What if you could have a smart assistant to help you navigate through videos and find exactly
+what you need? This project aims to create a search engine for video content, helping you skim through and focus on what
+matters specifically to you.
+Would you like to recreate our vibe coded project? The repository
+contains all the necessary instructions and code to get you started.
+The vibe coding session
+If you are interested to see how well Claude Code performed in action, you can watch the full webinar recording below:
+No matter if you build an MVP, or want to build a more complex application with the help of AI, it’s key to give your
+agent a reliable source of information. That’s why we’ve built our MCP server, so you can easily connect your
+documentation and codebase to Claude Code, Cursor, Windsurf or any other AI agent that supports the Model Context
+Protocol.
+Get Started with Qdrant FreeGet Started
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Pricing
+Use Cases
+Advanced Search
+Recommendation Systems
+Retrieval Augmented Generation
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Status Page
+Certification
+Resources
+Blog
+Benchmarks
+Technical Articles
+Events
+Startup Program
+Demos
+Bug Bounty
+Company
+About Us
+Customers
+Partners
+Careers
+Contact Us
+Sign up for Qdrant updates
+We'll occasionally send you best practices for using vector data and similarity search, as well as product news.
+© 2026 Qdrant.
+Terms
+Privacy Policy
+Impressum
+Recruitment Privacy Policy
+Cookie ConsentUp!
+
+=== ROW 69 | f003044 | https://github.com/DioxusLabs/dioxus/issues/4195 | 2025-05-25 | domain-subframes ===
+Trying `subsecond` and: `Ignoring hotpatch since there is no ASLR reference`. What does it mean?
+
+---
+
+@frederikhors · 2025-05-25T08:29:19Z:
+I'm trying for the first time https://docs.rs/subsecond/0.7.0-alpha.0/subsecond/index.html.
+
+I have a small-size project (86642 lines of Rust code).
+
+I changed this function:
+
+```rust
+impl Player {
+    pub fn to_css(&self, css_source: &str) -> Result<String> {
+        let result = css_source
+            .replace("{{number}}", &self.number.to_string())
+            .replace("{{height}}", &calculate_height(&self));
+
+        Ok(result)
+    }
+}
+```
+
+to this:
+
+```rust
+impl Player {
+    pub fn to_css(&self, css_source: &str) -> Result<String> {
+        subsecond::call(|| {
+            let result = css_source
+                .replace("{{number}}", &self.number.to_string())
+                .replace("{{height}}", &calculate_height(&self));
+
+            Ok(result)
+        })
+    }
+}
+```
+
+and launched this:
+
+```
+cargo binstall dioxus-cli@0.7.0-alpha.0
+```
+
+and then:
+
+```
+dx serve --package app --hotpatch
+```
+
+after a few moments it starts and axum is listening on its 8080 port. Good!
+
+Then I change one line in the `to_css` function and boom:
+
+```
+[dev] Ignoring hotpatch since there is no ASLR reference. Is the client connected?
+```
+
+What does it mean?
+
+---
+
+@jkelleyrtp · 2025-05-25T12:41:55Z:
+Hey! We should probably change the logging here. This is because your client has not connected to the dioxus devtools server (we don't do this implicitly).
+
+Add a 
+```rust
+dioxus::dioxus_devtools::connect_subsecond();
+```
+
+to your main to connect to our devtools socket, and then things should start working.
+
+Also, currently, capturing closures are not working properly with subsecond (they worked at some point) - will need to use the closure as a function:
+
+```rust
+impl Player {
+    pub fn to_css(&self, css_source: &str) -> Result<String> {
+        subsecond::current(|css_source| { /* ... */ }).call(css_source)
+    }
+}
+```
+
+
+See this bevy demo as an example:
+
+https://github.com/jkelleyrtp/subsecond-bevy-demo/blob/b33b702dd30067d262c7d6b9ec89f489b3bf26e6/src/main.rs#L7
+
+---
+
+@frederikhors · 2025-05-26T00:18:05Z:
+Ok I tried. Unfortunately bad news.
+
+1. `dioxus::dioxus_devtools::connect_subsecond()` doesn't, `dioxus_devtools::connect_subsecond()` works;
+
+1. `subsecond::current`:
+
+    ```
+    error[E0425]: cannot find function `current` in crate `subsecond`
+    |
+    13 |         subsecond::current(|css_source| {
+    |                    ^^^^^^^ not found in `subsecond`
+    |
+    help: consider importing this function
+    |
+    1  + use std::thread::current;
+    |
+    help: if you import `current`, refer to it directly
+    |
+    13 -         subsecond::current(|css_source| {
+    13 +         current(|css_source| {
+    |
+    ```
+
+1. If I use `subsecond::call(|| {...})` I get in the console:
+
+    ```
+    Hot-patching: C:\project\css.rs took 2735ms
+    ```
+
+    so 2.7 seconds instead of 13 seconds with Cargo (night and day for me) BUT it seems like it's working and instead IT'S NOT WORKING! Poor me!
+
+    The function `to_css` gets called but it doesn't return the new (edited result). The string returned is always the one before the edit.
+
+---
+
+@jkelleyrtp · 2025-05-26T00:27:14Z:
+Subsecond::HotFn::current() - my bad!
+
+Use the bevy template as a light guide. 
+
+---
+
+@frederikhors · 2025-05-26T00:42:34Z:
+Ok, thanks.
+
+1. `subsecond::HotFn::current(|css_source: &str| {}}).call((css_source))` works but unfortunately the same as before: the function `to_css` gets called but it doesn't return the new (edited result). The string returned is always the one before the edit.
+
+I also tried removing subsecond completely, using only `dx serve --package app --hotpatch` and the result is the same:
+
+```
+Hot-patching: C:\project\css.rs took 2881ms
+```
+
+but the result doesn't change after the edit and save.
+
+What can be the cause?
+
+It's a simple function that replaces parts of a string.
+
+---
+
+@stefnotch · 2025-05-26T06:36:12Z:
+@frederikhors You might have to depend on the latest *git* version of subsecond. For me, the current alpha of subsecond did not work.
+
+A day ago, I successfully used these versions.
+
+```
+dioxus-devtools = { version = "0.7.0-alpha.0", git = "https://github.com/DioxusLabs/dioxus.git", rev = "b2bd1f" }
+```
+and
+```
+cargo install dioxus-cli --git https://github.com/DioxusLabs/dioxus --rev b2bd1f
+```
+
+[Copied from TheBevyFlock/bevy_simple_subsecond_system](https://github.com/TheBevyFlock/bevy_simple_subsecond_system). 
+
+---
+
+@frederikhors · 2025-05-26T21:58:10Z:
+Ok, thanks.
+
+Ok I added the git version at commit `b2bd1f`.
+
+I start `dx` and after one edit to one file (no subsecond code involved) I get this:
+
+```
+[dev] Build failed: Runtime Error: Build panicked! JoinError::Panic(Id(270), "failed to resolve patch symbols: RuntimeError(Failed to find ___aslr_reference symbol\n\nStack backtrace:\n   0: git_index_checksum\n   1: git_index_checksum\n   2: git_filter_source_repo\n   3: git_filter_source_repo\n   4: git_filter_source_repo\n   5: git_filter_source_repo\n   6: git_filter_source_repo\n   7: git_index_checksum\n   8: git_index_checksum\n   9: git_index_checksum\n  10: git_index_checksum\n  11: git_index_checksum\n  12: git_index_checksum\n  13: git_index_checksum\n  14: git_index_checksum\n  15: git_index_checksum\n  16: git_index_checksum\n  17: git_index_checksum\n  18: BaseThreadInitThunk\n  19: RtlUserThreadStart)", ...)
+```
+
+What is it?
+
+---
+
+@frederikhors · 2025-05-26T22:12:34Z:
+I fixed the issues with `Runtime Error: Build panicked! JoinError::Panic(Id(270)` by re-installing `cargo install dioxus-cli --git https://github.com/DioxusLabs/dioxus --rev b2bd1f`.
+
+But now I'm trying it and it doesn't work. The string of the function called from axum API is the same, no matter what changes I made to the .rs file.
+
+I'll create a reproduction ASAP.
+
+---
+
+@frederikhors · 2025-05-26T22:23:21Z:
+Ok I created a reproduction:
+
+Cargo.toml:
+
+```toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.4"
+dioxus-devtools = { version = "=0.7.0-alpha.0", git = "https://github.com/DioxusLabs/dioxus.git", rev = "b2bd1f" }
+tokio = { version = "1.0", features = ["full"] }
+
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
+```
+
+main.rs:
+
+```rust
+use axum::{Router, routing::get};
+
+#[tokio::main]
+async fn main() {
+    dioxus_devtools::connect_subsecond();
+
+    let app = Router::new().route("/", get(handler));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+        .await
+        .unwrap();
+
+    println!("listening on {}", listener.local_addr().unwrap());
+
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn handler() -> String {
+    let mut res = "Hello, World!".to_string();
+
+    res = res.replace("World", "Moon");
+
+    res
+}
+```
+
+Steps:
+
+1. start `dx` with: `dx serve --hotpatch`
+
+1. open the browser to http://localhost:3000
+
+1. edit "Moon" with something else
+
+1. reload the browser page
+
+1. the text is the same, Moon is still there
+
+---
+
+@stefnotch · 2025-05-27T06:16:01Z:
+@frederikhors Wait, I don't see the `dioxus_devtools::subsecond::HotFn::current` call in the reproduction?
+
+---
+
+@frederikhors · 2025-05-27T08:32:43Z:
+> [@frederikhors](https://github.com/frederikhors) Wait, I don't see the `dioxus_devtools::subsecond::HotFn::current` call in the reproduction?
+
+Doesn't work with or without it.
+
+---
+
+@stefnotch · 2025-05-27T08:51:45Z:
+Ah, subsecond has a bug with `async`!
+
+Apparently trying to do `dioxus_devtools::subsecond::HotFn::current(handler)` where handler is an `async fn` does not work for me (Windows 11).
+
+Meanwhile rewriting it to be a `fn -> impl Future` does work.
+
+```rust
+use axum::{Router, routing::get};
+
+#[tokio::main]
+async fn main() {
+    dioxus_devtools::connect_subsecond();
+
+    let app = Router::new().route("/", get(handler_wrapper));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+        .await
+        .unwrap();
+
+    println!("listening on {}", listener.local_addr().unwrap());
+
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn handler_wrapper() -> String {
+    dioxus_devtools::subsecond::HotFn::current(handler)
+        .call(())
+        .await
+}
+
+
+// Does NOT get hot patched
+/*
+async fn handler() -> String {
+    let mut res = "Booom, World!".to_string();
+
+    res = res.replace("World", "Moon");
+
+    res
+}
+*/
+
+// Does get hot patched
+fn handler() -> impl Future<Output = String> {
+    let mut res = "Booom, World!".to_string();
+
+    res = res.replace("World", "Moon");
+
+    async { res }
+}
+```
+
+
+
+---
+
+@stefnotch · 2025-05-27T08:52:14Z:
+@jkelleyrtp Should I open a new issue to track that async bug?
+
+---
+
+@pickfire · 2025-05-27T14:41:07Z:
+I am getting a different error for axum, after I changed the code it shows the error
+
+```
+22:38:20 [dev] Build failed: Runtime Error: Build panicked! JoinError::Panic(Id(31), "failed to resolve patch symbols: RuntimeError(Failed to find ___aslr_reference symbol\n\nStack backtrace:\n   0: dx::build::patch::create_undefined_symbol_stub\n   1: dx::build::request::BuildRequest::build::{{closure}}\n   2: dx::build::builder::AppBuilder::patch_rebuild::{{closure}}\n   3: tokio::runtime::task::core::Core<T,S>::poll\n   4: tokio::runtime::task::harness::Harness<T,S>::poll\n   5: tokio::runtime::scheduler::multi_thread::worker::Context::run_task\n   6: tokio::runtime::context::scoped::Scoped<T>::set\n   7: tokio::runtime::context::runtime::enter_runtime\n   8: tokio::runtime::scheduler::multi_thread::worker::run\n   9: <tokio::runtime::blocking::task::BlockingTask<T> as core::future::future::Future>::poll\n  10: tokio::runtime::task::core::Core<T,S>::poll\n  11: tokio::runtime::task::harness::Harness<T,S>::poll\n  12: tokio::runtime::blocking::pool::Inner::run\n  13: std::sys::backtrace::__rust_begin_short_backtrace\n  14: core::ops::function::FnOnce::call_once{{vtable.shim}}\n  15: std::sys::pal::unix::thread::Thread::new::thread_start\n  16: <unknown>\n  17: <unknown>)", ...)
+```
+
+<details><summary>Cargo.toml</summary>
+
+```toml
+[package]
+name = "axum-hello"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.4"
+tokio = { version = "1.45.1", features = ["full"] }
+dioxus-devtools = { version = "0.7.0-alpha.0", git = "https://github.com/DioxusLabs/dioxus.git" }
+```
+</details>
+<details><summary>src/main.rs</summary>
+
+```rust
+use axum::{response::Html, routing::get, Router};
+
+#[tokio::main]
+async fn main() {
+    dioxus_devtools::connect_subsecond();
+    let app = Router::new().route("/", get(handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+        .await
+        .unwrap();
+    println!("listening on {}", listener.local_addr().unwrap());
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn handler() -> Html<&'static str> {
+    dioxus_devtools::subsecond::call(|| {
+        Html("<h1>Hello, World!</h1>")
+    })
+}
+```
+</details>
+
+One surprising thing I noticed after bevy compiles is that the file was modified, I have to reload my editor (helix) manually with `:reload`.
+
+---
+
+@jkelleyrtp · 2025-05-27T15:12:19Z:
+You might have a different version of Dioxus and the CLI. In the most recent commit we moved from __aslr_reference to just using 'main'
+
+---
+
+@pickfire · 2025-05-27T16:49:09Z:
+Ah nice, seemed to work now.
+
+---
+
+@pickfire · 2025-05-27T17:05:52Z:
+![Image](https://github.com/user-attachments/assets/3bc6398d-5e47-4057-af5f-4b71ce25d99c)
+
+Can subsecond have serde being `^1` so that it can be more portable for packages that uses an older serde version? I wanted to add a hello world example to axum but it didn't work due to that error.
+
+---
+
+@frederikhors · 2025-05-27T20:46:02Z:
+With the devtools at main branch the axum small example works. My real case still doesn't work. The string is not replaced. I cannot understand why. And I cannot create a reproduction because it's complex. Lot of async calls.
+
+---
+
+@stefnotch · 2025-05-27T21:28:16Z:
+@frederikhors Have you been able to get it to work under some very specific circumstances in your real case? That might help the Dioxus team narrow it down.
+
+One of the first things I tried in the reproduction case was "avoiding async". That seemed to work reliably. And then I tried out more cases.
+
+```rust
+async fn handler() -> String {
+    dioxus_devtools::subsecond::HotFn::current(sync_handler)
+        .call(())
+        .await
+}
+fn sync_handler() -> String {
+    let mut res = "Booom, World!".to_string();
+
+    res = res.replace("World", "Moon");
+
+    res
+}
+```
+
+Another thing: If your real project has multiple crates, then it's very possible that it just outright won't work due to #4160 
+
+---
+
+@frederikhors · 2025-05-27T21:50:44Z:
+Yeah @stefnotch i have many crates. It may be.
+
+---
+
+@devnought · 2025-06-09T07:14:22Z:
+`dioxus_devtools::connect_subsecond();` was exactly what I needed.
+
+I've been trying to get a working binary hotpatching example [working on Windows](https://github.com/DioxusLabs/dioxus/discussions/4219), and up until now this was my latest stumbling block.
+
+I do have *other* issues regarding the linker I'm now trying to sort out, first upon initial build and now with the invoked linker on code change, but this helped me advance a step.
+
+
+
+---
+
+@stefnotch · 2025-07-07T21:18:50Z:
+The async issue was re-reported here https://github.com/DioxusLabs/dioxus/issues/4305
+
+
+---
+
+@jkelleyrtp · 2025-10-28T19:44:03Z:
+I think since the issue here was related to problems with setup, and subsecond now has a `serve` method as well as `dioxus::serve`, we can close this.
+
+=== ROW 72 | f003080 | https://forums.swift.org/t/redesigned-swift-org-is-now-live/80296 | 2025-06-04 | domain-subframes ===
+Redesigned Swift.org is now live
+
+@mishal_shah · 2025-06-04T18:59:40.397Z:
+This was also posted on the Swift.org blog
+Over the past few months, the website workgroup has been redesigning Swift.org. On behalf of the website workgroup, I'm pleased to announce that we have merged the initial changes.
+Our goal with the site redesign has been to make Swift.org more approachable for newcomers to Swift, highlight the language’s technical strengths, and make it easy to get started. That led to a focus on the website's appearance, improving the user experience, and emphasizing important features such as Swift’s multiplatform support.
+Today's release includes refreshed home and install pages. Additionally, new pages have been designed to explore Swift use cases, including cloud services, command line tools, and embedded software. Looking forward, we plan to take an iterative approach to improving the website, including pushing changes live as we complete their design and implementation.
+Brand new design
+We explored several design options and found that the latest design conveys the fluidity and creativity of Swift through the splash of orange and the bird animation in the background.
+home_dark@2x1476×1084 316 KB
+home_light@2x1476×1084 280 KB
+Curated content and examples
+The homepage now highlights Swift's strengths alongside code examples that illustrate them. Additionally, we showcase various types of software that can be developed using Swift; these new use case pages provide information such as relevant packages, examples of Swift in action, code snippets, and links to resources for further learning.
+code_dark@2x1476×970 271 KB
+cloud_light@2x1476×978 312 KB
+Next Steps
+We look forward to hearing your feedback on this first set of changes as we continue to redesign other sections of the site. There are several ways to offer feedback on the redesign and to get involved:
+The website itself is open source, and your contributions to the swiftlang/swift-org-website repository are welcome.
+The Swift Information Architecture Project is an ongoing effort that has helped inform decisions related to the site redesign.
+Thank you to the @swift-website-workgroup and community members for contributing to these improvements.
+
+---
+
+@Michael_Gottesman · 2025-06-04T19:01:03.004Z:
+Big congratulations to everyone involved!
+
+---
+
+@FlorianPircher · 2025-06-04T19:03:47.509Z:
+Beautiful design, congratulations to all involved!
+Now I am interested to see when String’s is-ASCII check switches to code similar to the one from the Fast section of the website .
+
+---
+
+@gwendal.roue · 2025-06-04T19:13:52.417Z:
+Congrats! Meanwhile, we're still waiting for Packages page on Swift.org: relevance of a “Persistence” or “Databases” category?. The pull request is stuck.
+
+---
+
+@Lancelotbronner · 2025-06-04T20:21:23.942Z:
+I think having type identifiers and keywords highlighted with the same colour looks a bit strange, am I the only one seeing that?
+
+---
+
+@austintatious · 2025-06-04T21:51:18.953Z:
+The design is beautiful. Gorgeous.
+Just wondering about this line here
+Swift is the only language that scales from embedded devices and kernels to apps and cloud infrastructure.
+
+---
+
+@Nevin · 2025-06-04T21:57:57.246Z:
+My first impression is that the new website looks very sleek!
+I’ll have to spend more time poking around, but a few things jump out to me right away:
+• • •
+1. Some of the text comes across as excessively self-aggrandizing:
+Swift is the powerful, flexible, multiplatform programming language.
+Swift is the only language that scales from embedded devices and kernels to apps and cloud infrastructure.
+I’ve been using Swift and contributing to Swift Evolution for a decade, it is by far my favorite and most used programming language, and I am a huge fan.
+Nonetheless, when I read those lines, my immediate reaction is “Wait, the, and the only? Are they saying that no other language does those things?”
+Even if true, statements like that make me question the reliability of the narrator, and they come across as somewhat disparaging of other languages rather than just building up this one.
+I think it would be more effective to change “the” to “a” in the first quote, and “the only” to “a” in the second.
+• • •
+2. Two things that I would hope and expect to see featured prominently on the splash page are “Learn Swift” with a link to A Swift Tour, and “Try it now” with either a coding playground or a link to one.
+Those seem like some of the first things that people new to Swift would want to reach for. Even better if the playground had an interactive tutorial, though that might be more work.
+• • •
+3. The header at the top has a mostly-transparent background (at least on my device), so when the page is scrolled down and has text behind the header, it is nigh-impossible to read the words in the header (eg. “Docs”, “Community”, etc.).
+I expect that should be easy to fix.
+
+---
+
+@nikola · 2025-06-04T22:16:03.365Z:
+Congrats to all involved, this looks really nice!
+That being said, may I suggest updating the example code of the "Expressive. Concise code. Powerful results." section on the homepage?
+Specifically: the sample code could also highlight Swift Concurrency by using AsyncParsableCommand
+Here’s a snippet from the docs, which illustrates this idea nicely:
+import Foundation
+@main
+struct CountLines: AsyncParsableCommand {
+@Argument(transform: URL.init(fileURLWithPath:))
+var inputFile: URL
+mutating func run() async throws {
+let fileHandle = try FileHandle(forReadingFrom: inputFile)
+let lineCount = try await fileHandle.bytes.lines.reduce(into: 0)
+{ count, _ in count += 1 }
+print(lineCount)
+}
+}
+I think adding an async/await example would be a small but meaningful win, as it further showcases Swift’s expressiveness. But, regardless of whether you do this or not, the site looks great!
+
+---
+
+@Karl · 2025-06-04T22:51:00.523Z:
+It has been a long time coming, but Swift finally has an official landing page I can actually recommend to people curious to learn more about the language.
+The recent case study about Apple's password monitoring service migrating to Swift is also fantastic. I've been begging the Apple folks since forever to release these kinds of numbers showing off Swift in their large-scale deployments, so I'm really, really thrilled about the direction the website is heading. We're making a much more persuasive pitch for Swift.
+So huge thanks and congratulations to everyone involved!
+--
+P.S. I think we should mention that Apple's Secure Enclave processors run software written in Embedded Swift, as was announced at WWDC last year. Apple shipped 225 million iPhones (just iPhones) in 2024, so that's a very large deployment by any industry's standards.
+I have some friends in the defence industry, and like any embedded developers they have big C++ codebases and struggle with the usual C++ challenges. They are considering options for a long-term successor language, of course considered Rust, and have the usual Rust challenges (steep learning curve, 'fighting the borrow checker'). Swift could be a great fit, and for those who don't already watch WWDC talks, hearing about Apple's large-scale deployment of Swift in critical security processors for millions of customers would be very compelling IMO.
+P.P.S. Also, I think we should make the links to the forums more prominent, and possibly add a link to the forums at the top. Basically, if anybody has questions, we should encourage them to come here as their first place to ask.
+
+---
+
+@talmeme · 2025-06-05T04:06:45.437Z:
+Looks nice, congrats!
+I suggest to bring back an 'announcements' page, or a section on the home page. Just a few days ago I saw the v6.1.1 announcement here on the forum. Now the new site says "Install (6.1.2)". I didn't find any indication on this forum, nor on the site, nor on the site's blog page, of the 6.1.2 release. Could be confusing especially to new users.
+
+---
+
+@umakgentong87 · 2025-06-05T04:36:26.516Z:
+It's very good, i hope it can be redesigned also in https://docs.swift.org/ also. Btw, is it using framework front end to build new fresh landing page?
+
+---
+
+@BlueSparrow · 2025-06-05T08:46:58.722Z:
+I love the design overall. But yeah, the text reads like someone trying to sell me an overpriced software package, not an open source language.
+Nevin:
+Some of the text comes across as excessively self-aggrandizing:
+Swift is the powerful, flexible, multiplatform programming language.
+Swift is the only language that scales from embedded devices and kernels to apps and cloud infrastructure.
+It might be worth pointing out that that first line:
+Swift is the only language that scales from embedded devices and kernels to apps and cloud infrastructure.
+Appears in a modified form further down the page:
+The only language that can span from embedded and kernel, to server and apps.
+When I see that kind of writing, I can only think "if they're willing to exaggerate to such an extent there, what can I trust on this page?"
+But I do think that's a minor thing that's easily fixed. I really do like the way it looks. Well done to everyone involved.
+
+---
+
+@Sarunas · 2025-06-05T13:06:29.843Z:
+The new images are quite big - the first load for me is visibly slow, especially hero-bottom.png or swoop-0.png are slow loading, as they weight in at 2302 KB and 1611KB respectively. They're served with just 3 minute cache header, which means that the CDN will almost be a cache-miss. How much control do you have over the headers?
+Converting images from png to webp or avif formats, there is some tiny loss of detail but one needs to be actively looking comparing what has changed, but this reduces the size by 4-8x times:
+convert swoop-0.png swoop-0.webp #down to 461KB
+avifenc swoop-0.png swoop-0.avif #down to 182KB
+There are some nice tools showing the site load times and suggestions:
+PageSpeed analysis - load time 5 seconds
+WebPage test analysis - main site also 5 seconds, and subpage is  6.5 seconds
+
+---
+
+@sliemeobn · 2025-06-05T14:11:06.579Z:
+While I generally like the overall effort, I have to say I am not impressed design-wise with this version. Maybe it's just me, but a few things look very wonky to my eye. I understand that many consider "beauty" to be a subjective thing, but basics like balanced spacing and contrasts (especially for text) could definitely be aligned better with UX "industry standards" in my opinion.
+Also, having an eye on loading times (especially for somewhat unnecessary images) is not exactly a matter of taste either.
+Here are a few things that immediately stuck out to me as a first impression with a desktop-view width in dark mode (see screenshot)
+the main header text "Swift is the ..." does not read well over the bright artwork in the background
+the contrast between the "pill" shapes for "iOS apps", "Windows apps", ... and the background is not great
+the vertical spacing of the boxes for "Cloud Services", "Command Line", ... feels off, also the icon size, title and text sizes are a bit wonky (at least to my eye)
+the "Install" text on the button feels unbalanced font/size/tracking width wise (to me at least)
+in general, spacing and sizing feels somewhat random and unsettled to me
+image1920×2184 279 KB
+And, a more subjective bonus opinion:
+I am not sold on the big, playful background artwork and scroll animations. I think they add more chaos and distraction than they bring value. At the very least these things should not mess up text legibility or create "ugly" contrasts with other UI elements.
+
+---
+
+@plemarquand · 2025-06-05T17:34:24.583Z:
+@Sarunas Thanks for pointing this out. I took a shot at compressing these images with pngquant. I ran it with pngquant --quality=45-60 and it many cases it compressed images ~80-90%. PR is up here: Compress large PNGs by plemarquand · Pull Request #1057 · swiftlang/swift-org-website · GitHub
+
+---
+
+@wes1 · 2025-06-05T17:41:12.006Z:
+austintatious:
+Just wondering about this line here
+Swift is the only language ...
+Meaning Java? https://github.com/swiftlang/swift-org-website/issues/1044
+
+---
+
+@jaleel · 2025-06-05T18:45:56.707Z:
+I definitely agree that readability and spacing should be improved, e.g. this bothers me whole day
+IMG_51321179×2556 131 KB
+(also I found some rounded corners radius sometimes questionable)
+
+---
+
+@austintatious · 2025-06-05T18:56:06.663Z:
+Thank you for showing me that link!
+
+---
+
+@Val · 2025-06-05T19:56:14.703Z:
+sliemeobn:
+While I generally like the overall effort, I have to say I am not impressed design-wise with this version
+I share this impression. I really appreciate the intention behind the redesign: making the site more colorful and playful is a refreshing contrast to other language's landing pages. That said, I feel the execution falls short in several key areas. Honestly, I was surprised to see an Apple associated project miss the mark on design fundamentals like this.
+Building on @sliemeobn’s observations, here are a few additional points:
+The “Install” button is disproportionately large, which unintentionally gives off a childish or desperate impression.
+The navigation bar is unusually tall, awkwardly overlapping with the hero illustration and detracting from its impact.
+The icon and font weights are mismatched, which creates visual dissonance.
+Clickable containers like “Cloud Services” lack clear affordances to suggest interactivity.
+Generally, hover effects across the site are either non-existent or inconsistent.
+Some text and border elements use opaque grays that clash with the vibrant background; these would benefit from being transparent shades of the primary label color.
+Design tokens — including font sizes, spacing, colors, and corner radii — appear inconsistent or arbitrary.
+The site doesn’t apply font smoothing, which causes fonts (especially SF Pro) to render poorly.
+The brush stroke illustrations vary in scale, leading to inconsistent texture fidelity across the layout.
+The animation on the hero illustration feels unnatural, likely due to a linear easing curve — and as mentioned, it’s partially obscured by the nav bar.
+Simon already pointed this out, but it bears repeating: the hero title clashes with the illustration in both light and dark modes. This looks unpolished and jarring (and fails accessibility standards in dark mode).
+To be fair, the old site wasn’t particularly exciting, but it also didn’t try to be. The new site sets its sights higher, which I appreciate, but the execution doesn’t carry it across the finish line. In the end, the contrast between ambition and outcome makes the shortcomings feel even more glaring.
+
+---
+
+@dima_kozhinov · 2025-06-05T20:58:29.010Z:
+I am not a designer, so probably most of your criticism is valid, but I cannot agree to everything you mentioned:
+Val:
+The “Install” button is disproportionately large
+There is plenty of empty space on the page, like on any modern website. A smaller button would look even more disproportionate and will get lost on the page.
+Val:
+The icon and font weights are mismatched
+Not sure about that. To my eye they quite match, both on the left of the navigation bar, and on the "Cloud Services", "Command Line", and "Embedded" sections.
+Val:
+Some text and border elements use opaque grays that clash with the vibrant background; these would benefit from being transparent shades
+I'm for opaque grays for color consistency.
+Val:
+The site doesn’t apply font smoothing
+On my Windows 11 PC with Mozilla Firefox the text definitely uses subpixel antialiasing:
+font_smoothing1268×216 13.2 KB
+I did not know that a site should do something special to enable font smoothing.
+Update: Good to know: font-smooth - CSS: Cascading Style Sheets | MDN
+Val:
+The animation on the hero illustration feels unnatural, likely due to a linear easing curve
+It's definitely non-linear. Unnatural? Don't know. What is natural? Simple ease-in-ease-out?
+
+---
+
+@Val · 2025-06-05T21:33:53.989Z:
+dima_kozhinov:
+On my Windows 11 PC with Mozilla Firefox the text definitely uses interpixel antialiasing:
+I did not know that a site should do something special to enable font smoothing.
+I was thinking specifically about -webkit-font-smoothing: antialiased;. Without this, Safari on macOS renders fonts using subpixel antialiasing (for backwards compatibility reasons I suppose, macOS abandoned it some years ago). As a result of applying this CSS snippet, fonts are rendered visually lighter and more consistent with other operating systems.
+
+---
+
+@FlorianPircher · 2025-06-05T21:44:51.359Z:
+Val:
+more consistent with other operating systems.
+But less consistent with the rest of the Mac. If you prefer the thinner font display, you can enable it system-wide on your Mac.
+
+---
+
+@taylorswift · 2025-06-05T22:56:01.877Z:
+i personally thought the new website was a massive improvement over the old one. truly, i had no love for the previous design, it made me sad that that (and the design that came before that one) was the public-facing image of the Swift language for so many years.
+i think there is absolutely nothing wrong with the “self-aggrandizing” text in the landing page. if Swift doesn’t promote itself, who else will? i wouldn’t expect people to choose a programming language that not even its marketers have confidence in.
+
+---
+
+@willft · 2025-06-05T23:07:00.907Z:
+I LOVE this new design. It’s beautiful and does a much better job of selling the language as well as explaining why you might want to use it. I particularly enjoy seeing the big, honkin’ “Install” button up top which links to the swiftly install instructions.
+The banner image looks gorgeous at big sizes, but I agree that there’s a contrast/legibility issue with the top text when the size of the window forces it to overlap the white/pink part of the image.
+
+---
+
+@xwu · 2025-06-05T23:15:15.284Z:
+taylorswift:
+i think there is absolutely nothing wrong with the “self-aggrandizing” text in the landing page. if Swift doesn’t promote itself, who else will? i wouldn’t expect people to choose a programming language that not even its marketers have confidence in.
+I think there is a distinction to be made between marketing speak that merely self-aggrandizes and statements that can be read as putting down the competition. It's fair to question if it reflects well on the community that as an opening bid we claim to be "the" or "the only" programming language with positive qualities X, Y, and Z—particularly if some of those qualities are judged subjectively. Whether intended or not, some proportion of the audience will read into those statements the corollary: namely, that we find other languages lacking in those qualities.
+
+---
+
+@taylorswift · 2025-06-05T23:19:50.648Z:
+xwu:
+I think there is a distinction to be made between marketing speak that merely self-aggrandizes and statements that can be read as putting down the competition.
+we… should be putting down the competition? that is what is meant by competition, after all.
+i choose my cell carrier because it talks about how slow the other carriers are. i choose my insurance because it talks about how expensive the other insurers are. i think this is just an inherent part of participating in a free market system.
+
+---
+
+@BlueSparrow · 2025-06-06T00:42:27.451Z:
+taylorswift:
+i think there is absolutely nothing wrong with the “self-aggrandizing” text in the landing page. if Swift doesn’t promote itself, who else will? i wouldn’t expect people to choose a programming language that not even its marketers have confidence in.
+I avoided using the word "lie" when I was describing the text previously, because it felt a shade too harsh. But Swift describing itself as "the only language that can span from embedded and kernel, to server and apps" is a lie*. Self promotion is good, lying is bad because the reader knows it's a lie, and will assume everything else is a lie.
+(* I suspect people will fall on different points on the "it's just marketing" to "lie" spectrum, and where they fall determines how they feel. It's not a huge deal, such things are only intended to get people to try it, and then be forgotten about. I feel that being plain is better, and the verbiage does make me personally cringe, but it's not the end of the world. I still think the design is a massive improvement.)
+
+---
+
+@hassila · 2025-06-06T04:59:39.973Z:
+I also think it is a massive improvement, some of the ”issues” mentioned above will surely be iterated on if relevant over time, in future point releases - this was clearly a major release
+With regard to the verbiage, I think the key point for a visitor is whether they feel they are a targeted use case for the language.
+I was super happy to see the emphasis on server-side, embedded, etc, this is the correct approach to widen the pitch for the language to newcomers - especially important for those who might view Apple tech as insular.  Really the right call - no one will doubt Swift will be great for building Apple-specific apps, even if that is not front and center on the language web site. (Then at Apple.com I would expect a different emphasis). Kudos.
+The corollary to this is then that the important thing is ”wow, swift really targets my server-side/embedded/xxx platform”, not that it is ”the only one” that can do it - I don’t really care. I care if it targets what I need it for.
+For our customers, having server-side development on Linux there is super important (the macOS support is taken for granted!).
+
+---
+
+@sspringer · 2025-06-06T05:06:29.428Z:
+Great new look. Some details of the layout maybe should get improved, but above all, the texts mentioned above should be corrected very soon (starting with “Swift is the powerful …” which does not make much sense to me in this form).
+
+---
+
+@Andropov · 2025-06-06T06:11:57.290Z:
+The redesigned website looks great. Love the design and animations. Congratulations to everyone involved!
+
+---
+
+@ibex · 2025-06-06T07:39:09.114Z:
+Looks good, but the marketing hype should be toned down.
+Provide information as much and accurate as possible, but let the users decide.
+
+---
+
+@BlueSparrow · 2025-06-07T08:48:31.751Z:
+Random data point: I see that the redesign was on the orange site a few days ago. The hyperbole was immediately noticed.
+
+---
+
+@Lancelotbronner · 2025-06-09T14:06:38.814Z:
+we… should be putting down the competition? that is what is meant by competition , after all.
+I thought competition meant trying to make the best product, not lying and defacing (marketing lies are still lies, it doesn't excuse them). This aggressive and dishonest attitude usually makes things worse for everyone as the focus becomes fighting instead of innovating.
+Instead of lying and putting others down, let's try explaining what value we bring to the table.
+I believe in cooperation to improve things and build a better world, not lies and deceit.
+
+---
+
+@taylorswift · 2025-06-09T16:05:16.649Z:
+Lancelotbronner:
+not lying and defacing (marketing lies are still lies, it doesn't excuse them)
+“Swift is the only language that scales from embedded devices and kernels to apps and cloud infrastructure” isn’t a lie, it’s just Puffery.
+you could write an entire embedded-to-cloud spanning stack in x86_64 assembly, that doesn’t mean it will be easy or enjoyable. the word only here comes with an implicit want to use – no reasonable person could conclude that only should be taken literally in that sentence since it would be a nonsensical statement – any language could be used to build anything, what we are really comparing here is how easy and/or enjoyable the language is to use to accomplish that goal.
+puffery is a component of presentation in marketing. not including puffery in your marketing materials is a lot like showing up to a first date in sweats and no makeup. at some level, it’s an indicator of effort, it shows that you actually care about the potential customer’s perception of your product.
+
+---
+
+@dima_kozhinov · 2025-06-09T16:40:37.236Z:
+taylorswift:
+it’s just Puffery
+general praising speech, typically produced by a seller, which is not expected to be relied upon
+a statement that no reasonable person would take seriously
+Is this desirable?
+
+---
+
+@Finagolfin · 2025-06-09T16:48:25.371Z:
+No, it isn't, I've submitted a pull to tone it down.
+
+---
+
+@taylorswift · 2025-06-09T17:28:07.520Z:
+dima_kozhinov:
+Is this desirable?
+well, think about all the advertisements you are bombarded with every day. some of these ads are more effective than others.
+when i get a hair product ad, the ad shows a video of a glamorous supermodel with a breathy voice who says if i buy the product then i will have supermodel hair! is this an honest depiction? of course not, buying a bottle of hair product will not turn me into a supermodel. but at an emotional level, this type of ad works, and it’s a lot more effective than a earnest analysis of the pharmacological tradeoffs of using that particular hair product. if the potential customer is interested in that information, they can always read the label on the back of the bottle. but you do not lead an advertisement with a balanced analysis of tradeoffs.
+
+---
+
+@Lancelotbronner · 2025-06-09T18:53:39.293Z:
+well, think about all the advertisements you are bombarded with every day. some of these ads are more effective than others.
+Counterpoint: are we targeting consumers or developers and businesses?
+I’m not going to chose my technology stack based on feeling, if I’m gonna invest a lot of money in something I don’t care about marketing I want to know the tradeoffs.
+Rust could’ve called itself a lot of things but it called itself “A language empowering everyone to build reliable and efficient software.” instead of the only one. That’s also marketing but it doesn’t take me for an idiot.
+Other examples:
+“.NET is the free, open-source, cross-platform framework for building modern apps and powerful cloud services.”
+“Oracle Java is the #1 programming language and development platform. It reduces costs, shortens development timeframes, drives innovation, and improves application services. Java continues to be the development platform of choice for enterprises and developers.”
+This is a lie as it’s no longer #1, this is one of the many reasons I don’t like Java.
+Kotlin is “Concise. Multiplatform. Fun.”
+“Zig is a general-purpose programming language and toolchain for maintaining robust , optimal and reusable software.”
+“Python is a programming language that lets you work quickly and integrate systems more effectively.”
+I feel those are a lot more reasonable and also don’t set you up with huge expectations that multiplies your frustration when the compiler crashes or the build system can’t adapt to your existing project.
+
+---
+
+@taylorswift · 2025-06-09T19:00:04.207Z:
+Lancelotbronner:
+Counterpoint: are we targeting consumers or developers and businesses?
+“we“ are targeting both, but the website homepage is going to be primarily geared towards “consumerish” casual audiences more so than businesses.
+businesses would probably be choosing a programming language based on the experiences of their employees, and the content on the homepage probably wouldn’t factor into their decision at all.
+compiler crashes and the shortcomings of SwiftPM are absolutely not things we should be mentioning in our 60 second pitch.
+
+---
+
+@Lancelotbronner · 2025-06-09T19:03:28.188Z:
+taylorswift:
+compiler crashes and the shortcomings of SwiftPM are absolutely not things we should be mentioning in our 60 second pitch.
+Of course not, but we know they exist so let’s not set unrealistic expectations on ourselves either.
+I absolutely love Swift and I want to share and teach it but I’d be uncomfortable recommending it with this marketing in place.
+
+---
+
+@carlynorama · 2025-06-09T19:56:35.891Z:
+Val:
+on already pointed this out, but it bears repeating: the hero title clashes with the illustration in both light and dark modes. This looks unpolished and jarring (and fails accessibility standards in dark mode).
+It appears the site was designed mobile first? Because it doesn't clash there, and many of the other critiques also are improved there.
+Good on getting something up for this week though!
+I like the blue / the palette over all.
+
+---
+
+@rayx · 2025-06-10T03:11:58.286Z:
+Lancelotbronner:
+Other examples:
+“.NET is the free, open-source, cross-platform framework for building modern apps and powerful cloud services.”
+“Oracle Java is the #1 programming language and development platform. It reduces costs, shortens development timeframes, drives innovation, and improves application services. Java continues to be the development platform of choice for enterprises and developers.”
+This is a lie as it’s no longer #1, this is one of the many reasons I don’t like Java.
+Kotlin is “Concise. Multiplatform. Fun.”
+“Zig is a general-purpose programming language and toolchain for maintaining robust , optimal and reusable software.”
+“Python is a programming language that lets you work quickly and integrate systems more effectively.”
+The text on Apple web site is in line with the above standard. It's hard to understand how the text on community site becomes so exaggerated.
+Swift is a powerful and intuitive programming language for all Apple platforms. It’s easy to get started using Swift, with a concise-yet-expressive syntax and modern features you’ll love. Swift code is safe by design and produces software that runs lightning fast.
+I'm glad many people like the new design, which is an indication of the project's success. I personally find the new design is too flashy, which makes it hard to focus on content. I like the old web site much more. It was easy to read and had a similar design style as Apple and Github web sites.
+
+---
+
+@wowbagger · 2025-06-10T14:37:56.600Z:
+taylorswift:
+is this an honest depiction? of course not
+I think you already answered yourself on why the statements in question are not ok.
+
+---
+
+@taylorswift · 2025-06-11T01:00:31.438Z:
+wowbagger:
+I think you already answered yourself on why the statements in question are not ok.
+please do not maliciously quote fragments of my posts. i was referring to common tropes used in television advertisements for cosmetics, not the content on the Swift website.
+if you ask me, taking someone’s words out of context to claim they were saying something completely different than they actually did is far more dishonest than exaggerating the capabilities of a hair care product, or a programming language.
+
+---
+
+@jawbroken · 2025-06-12T16:09:11.425Z:
+it's unfortunate that the analytics script causing cmd-click to not open links in a new tab hasn't been fixed in the redesign, something that has been an issue for at least 7 years. better luck next redesign, i guess
+

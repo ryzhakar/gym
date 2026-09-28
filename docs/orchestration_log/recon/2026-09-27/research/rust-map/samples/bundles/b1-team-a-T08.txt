@@ -1,0 +1,2891 @@
+=== ROW 69 | f003266 | https://forums.swift.org/t/is-this-a-bug-in-automatic-reference-counting/81167 | 2025-07-17 | domain-subframes ===
+Is this a bug in automatic reference counting?
+
+@theundergroundsorcerer · 2025-07-17T16:48:49.152Z:
+When I run the following code
+class OwnedValue {
+var value: Int
+init(_ value: Int) {
+self.value = value
+}
+}
+struct ValueOwner {
+let ownedValue1: OwnedValue
+let ownedValue2: OwnedValue
+}
+func updateValue(owndedValue ownedValue: consuming OwnedValue, with newValue: Int) {
+if isKnownUniquelyReferenced(&ownedValue) {
+print("Value \(ownedValue.value) is unique")
+} else {
+print("Value \(ownedValue.value) is not unique")
+}
+ownedValue.value = newValue
+}
+func testOwnership() {
+let valueOwner = ValueOwner(
+ownedValue1: OwnedValue(10),
+ownedValue2: OwnedValue(15))
+let valueOwner2 = consumeValueOwner(valueOwner: consume valueOwner)
+print("\(valueOwner2.ownedValue1.value), \(valueOwner2.ownedValue2.value)")
+}
+@discardableResult
+func consumeValueOwner(valueOwner: consuming ValueOwner) -> ValueOwner {
+let ownedValue1 = valueOwner.ownedValue1
+let actualOwnedValue1 = ownedValue1.value
+let ownedValue2 = valueOwner.ownedValue2
+let actualOwnedValue2 = ownedValue2.value
+_ = consume valueOwner
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+return ValueOwner(
+ownedValue1: OwnedValue(actualOwnedValue1),
+ownedValue2: OwnedValue(actualOwnedValue2))
+}
+testOwnership()
+the output is
+Value 15 is not unique
+Value 10 is unique
+If I reorder the last lines in testOwnership the output becomes
+Value 10 is not unique
+Value 15 is unique
+Now, after this line
+_ = consume valueOwner
+there should be only one reference for each one of the ownedValues. Yet, for some reason, a reference stays alive during first call.
+Now replacing
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+with
+updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: consume ownedValue1, with: actualOwnedValue2 + 10)
+does result in correct output. (it is enough to do it in the first line TBH)
+Value 15 is unique
+Value 10 is unique
+Is it a bug or a feature?
+It looks like a bug TBH.
+It occurs in release mode.
+
+---
+
+@bbrk24 · 2025-07-17T16:50:49.253Z:
+Not exactly. From what I remember, objects are held until end of scope by default, so that weak references continue to work after what would otherwise be the last use. Years ago there was an experiment to change this that broke a lot of idiomatic Cocoa code, iirc.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T16:51:50.051Z:
+But the object is explicitly consumed by
+_ = consume valueOwner
+Should not it end its lifetime?
+Also, has it been the case - ValueOwner alive until last use, why after changing
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+to
+updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+we do gt the expected behavior?
+If valueOwner is alive until
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+then consume should not have any effect - we still have two references - one in the alive valueOwner and second local to updateValue.
+
+---
+
+@jrose · 2025-07-17T17:03:33.306Z:
+It makes a difference whether the local variables are consumed, as you already noticed. If they are, then yes, inside updateValue the references should always be unique. If not, then you’re leaving it up to the optimizer. It would be valid for both ownedValue1 and ownedValue2 to be kept alive until the end of consumeValueOwner.
+So, why doesn’t the optimizer treat them the same? I’m a bit bemused by this too; it feels like if the optimizer can “forward” the last use of one refcounted object, it should be able to do the same for another, independent refcounted object. Even if they were dynamically the same object, there are distinct, immutable local references to it. Maybe an optimizer person can answer your actual question; all I’ve done is elaborate on bbrk’s point that this is permitted behavior.
+To summarize: this is a missed optimization, and a missed optimization is not a bug, even if it’s observable by the program.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:10:08.546Z:
+Okay. But is not
+_ = consume valueOwner
+supposed to explicitly end the lifetime of valueOwner? Or only end its scope?
+Correct me if I am wrong, but accessing members of valueOwner, using a weak reference, after it has been explicitly consumed is not idiomatic Cocoa code, but undefined behavior. (Old idiomatic Cocoa code exists from times long before consume, borrow, became a thing as far as I am aware).
+
+---
+
+@ksluder · 2025-07-17T17:13:18.838Z:
+I think Jordan is saying you need to make this change:
+@discardableResult
+func consumeValueOwner(valueOwner: consuming ValueOwner) -> ValueOwner {
+let ownedValue1 = valueOwner.ownedValue1
+let actualOwnedValue1 = ownedValue1.value
+let ownedValue2 = valueOwner.ownedValue2
+let actualOwnedValue2 = ownedValue2.value
+_ = consume valueOwner
+-      updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+-      updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
++     updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
++     updateValue(owndedValue: consume ownedValue1, with: actualOwnedValue2 + 10)
+return ValueOwner(
+ownedValue1: OwnedValue(actualOwnedValue1),
+ownedValue2: OwnedValue(actualOwnedValue2))
+}
+
+---
+
+@jrose · 2025-07-17T17:21:39.694Z:
+Formally, let ownedValue2 = valueOwner.ownedValue2 creates an independent owned reference to ownedValue2. It doesn’t matter to the local variable that valueOwner gets destroyed afterwards. In manual-retain-release terms, it’s closer to id ownedValue2 = [valueOwner.ownedValue2 retain]. (Just like ObjC ARC, for the record.)
+In practice, there’s almost never an actual retain performed here, because the compiler can see that it would be redundant (this is better than ObjC ARC, which often can’t be quite as confident). But when we’re talking about what is and isn’t permitted, and what is and isn’t a bug, the answer is that the local variable is an independent owner. Which is why you can consume it at all.
+If you can use an object after it’s been destroyed, that’s a bug. But that shouldn’t be possible in Swift without going through an API labeled “unsafe”, sidestepping the concurrency rules to make a data race, or calling back to an ObjC API that does something Swift can’t check.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:24:27.538Z:
+I am aware making this change works, and I've mentioned it in my original post. The thing I don't understand is - why is it necessary.
+Citing E366
+In this document, we propose adding a new operator, marked by the context-sensitive keyword consume, to the language. consume ends the lifetime of a specific local let, local var, or function parameter, and enforces this by causing the compiler to emit a diagnostic upon any use after the consume. This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers. As an example
+In this document, we propose adding a new operator, marked by the context-sensitive keyword consume, to the language. consume ends the lifetime of a specific local let, local var, or function parameter, and enforces this by causing the compiler to emit a diagnostic upon any use after the consume. This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers. As an example:
+useX(x) // do some stuff with local variable x
+// Ends lifetime of x, y's lifetime begins.
+let y = consume x // [1]
+useY(y) // do some stuff with local variable y
+useX(x) // error, x's lifetime was ended at [1]
+// Ends lifetime of y, destroying the current value.
+_ = consume y // [2]
+useX(x) // error, x's lifetime was ended at [1]
+useY(y) // error, y's lifetime was ended at [2]
+It seems that
+_ = consume valueOwner
+is supposed to end the lifetime, not just the scope.
+
+---
+
+@jrose · 2025-07-17T17:25:21.967Z:
+It ends the lifetime of valueOwner, but just like in ObjC that doesn’t immediately end the lifetime of its members. It merely releases them.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:28:30.704Z:
+But what about
+This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers
+part?
+This is a toy example, but it does rely on the fact that valueOwner is not alive, with naive assumption that its members are not alive either.
+
+---
+
+@jrose · 2025-07-17T17:31:28.108Z:
+You are the one who assigned its members to local variables. Now you need to consume those to get the forwarding guarantee you’re looking for.
+
+---
+
+@ksluder · 2025-07-17T17:47:16.261Z:
+I had deleted my post because I realized that @theundergroundsorcerer had written updateValue() to take consuming arguments, so I assumed I had misunderstood the problem. But it seems like you’re saying the consume at the call site is necessary.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:49:54.404Z:
+jrose:
+You are the one who assigned its members to local variables. Now you need to consume those to get the forwarding guarantee you’re looking for.
+This is not always an option. What happens if there are more “wrapping levels” but my code relies on the fact that the object (and its part as well) ended its lifetime, but consuming the wrapped references is not an option? (They could be private for example).
+
+---
+
+@John_McCall · 2025-07-17T17:55:11.645Z:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value). If Swift always consumed in these situations (as Rust does), making a parameter consuming would be source-breaking, and we did not want programmers to have to make that choice. The consequence is that, for now, clients have to be explicit about wanting to consume.
+It would be good if Swift could promise to consume in cases like this one where it can clearly see that the variable is not used after the potentially-consuming use. As was noted earlier in the thread, however, this could also be source-breaking (in a different sense) because it could end the lifetime of an object that the code was implicitly relying on staying alive, whether through weak references or something spookier. It’s something we’re still interested in, but it’s not an easy change to make.
+
+---
+
+@John_McCall · 2025-07-17T17:57:09.988Z:
+theundergroundsorcerer:
+This is not always an option. What happens if there are more “wrapping levels” but my code relies on the fact that the object (and its part as well) ended its lifetime, but consuming the wrapped references is not an option? (They could be private for example).
+If you cannot consume it explicitly, I don’t know how you’re expecting the compiler to do it implicitly.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T22:38:21.589Z:
+John_McCall:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value). If Swift always consumed in these situations (as Rust does), making a parameter consuming would be source-breaking, and we did not want programmers to have to make that choice. The consequence is that, for now, clients have to be explicit about wanting to consume.
+Please correct me if I am wrong, but I recall that one of the SE proposals said that copyable variable is copied instead of being consumed if it is being used later. My issue not with consuming parameters, but with consume operator which is supposed to end the life of an object, but seemingly doesn't and is "subject to optimization". An object is being consumed explicitly, using consume operator.
+Citing SE-0377
+SE-0366 introduced an operator that explicitly ends the lifetime of a variable before the end of its scope. This allows the compiler to reliably destroy the value of the variable, or transfer ownership, at the point of its last use, without depending on optimization and vague ARC optimizer rules. When the lifetime of the variable ends in an argument to a consume parameter, then we can transfer ownership to the callee without any copies.
+In addition, almost all examples using consume seem to imply that it ends the lifetime of operator, while things still seem to happen behind the scenes and "depend" on the optimizer.
+John_McCall:
+If you cannot consume it explicitly, I don’t know how you’re expecting the compiler to do it implicitly.
+I can consume the wrapper, but I don't see whether it guarantees that references it stores are consumed as well, or implicitly alive references that are part of another object that was consumed earlier, as in my example.
+
+---
+
+@John_McCall · 2025-07-17T23:29:20.227Z:
+theundergroundsorcerer:
+Please correct me if I am wrong, but I recall that one of the SE proposals said that copyable variable is copied instead of being consumed if it is being used later. My issue not with consuming parameters, but with consume operator which is supposed to end the life of an object, but seemingly doesn't and is "subject to optimization".
+The consume operator is not itself subject to optimization. But consume on a storage location of copyable type only transfers ownership of the value stored in that specific location. Other locations will have independent ownership of the values they store. So if you have a reference to an object in two locations, and you transfer ownership of only one of them, the object will stay alive.
+Allow me to simplify your example:
+func consumeValueOwner(valueOwner: consuming ValueOwner) {
+// At this point, `valueOwner` has ownership of its current value, which
+// is a struct value consisting of two strong object references.
+// Let's assume these are references to different objects, which we'll
+// call A and B, and that this value is the only remaining reference
+// to them.
+let obj = valueOwner.ownedValue1
+// `obj` now has independent ownership of the object A.
+// There are two references to this object.
+_ = consume valueOwner
+// We have consumed the value out of `valueOwner`, leaving it empty.
+// Ownership is transferred to a temporary, which is immediately dropped.
+// In other words, we destroy the value that was previously stored in
+// `valueOwner`, which is to say, we destroy the two strong references
+// by decrementing the reference count on the objects they refer to.
+// There is still a reference to A in `obj`.
+// There are no longer any references to B, and the object will be
+// immediately destroyed at this point.
+let propertyValue = obj.value
+// The set of extant references to object A has not changed.
+updateValue(ownedValue: obj, with: propertyValue + 10)
+// Because arguments passed to consuming parameters are copied,
+// the parameter to `updateValue` is an independent reference to
+// object A, and `obj` continues to have its value. Therefore there are
+// two references to object A, and the unique reference test within
+// `updateValue` fails.
+// When we reach the end of the scope, all local variables (that have
+// not already been consumed from) are destroyed, dropping the
+// last reference to object A and causing it to be immediately
+// destroyed.
+}
+So whether consume consumes the value in the named location is not subject to optimization — it must do so, and if that is the only reference to the value, you should see that reflected in reference counts and so on. But if there are other copies of the same value (or its component values) in other locations, they will maintain independent ownership. Those other locations are not somehow magically affected by an independent copy of their value having been consumed from somewhere else.
+Explicitly using consume on the argument to updateValue forces the compiler to transfer ownership from obj to the consuming parameter, rather than copying, and is the right thing to do if you need a guarantee of no copies. This could also be done automatically by Swift's optimizer, but currently this does not happen reliably for reasons already discussed.
+This sensitivity of reference counts to optimization — and the finickiness of manually optimizing it — definitely makes unique-reference tests somewhat semantically frustrating. That is why we encourage them to be used mostly for things like copy-on-write data structures, where the expected cost of a non-unique reference is just a performance hit. (And that performance hit, and the difficulty of optimizing it, is definitely something that programmers have also noted as frustrating when doing Swift performance work.)
+
+---
+
+@theundergroundsorcerer · 2025-07-18T06:14:35.960Z:
+Thanks. Great explanation. So the problem is not that valueOwner stays alive, but with the fact that whether consuming ownedValue parameters are copied or not is a subject to optimization, independent of valueOwner being consumed?
+Hence, if we are interested in forcing forwarding, every consuming function argument should be passed with preceeding consume word (when it's possible)?
+John_McCall:
+That is why we encourage them to be used mostly for things like copy-on-write data structures, where the expected cost of a non-unique reference is just a performance hit
+The origin of my question was dealing with some COW issues - it just boiled to this toy example.
+Correct me if I am wrong, but using consuming parameters together with copyable allows modifiying the function argument, which can be a good thing in some use scenarios. Previously we needed either to make a local copy within the function (which introduces extra overhead) or pass them as inout which breaks protection mechanisms (because I want to modify the copy, not the object itself) Is this intended use or just a "side effect"? Or we are not supposed to use them in this way?
+
+---
+
+@CrystDragon · 2025-07-18T06:47:46.398Z:
+Thanks for your elaboration. Can you please clarify in what circumstances are consuming parameters for copyable types not implicitly copied? Is it what you put in the parentheses?
+John_McCall:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value)
+For example, for one of the motivating examples of consuming parameter in the proposal:
+extension String {
+// Append `self` to another String, using in-place modification if
+// possible
+consuming func plus(_ other: String) -> String {
+// Modify our owned copy of `self` in-place, taking advantage of
+// uniqueness if possible
+self += other
+return self
+}
+}
+// This is amortized O(n) instead of O(n^2)!
+let helloWorld = "hello ".plus("cruel ").plus("world")
+Although String is copyable, this optimization can still work here if we can rely on self not being implicitly copied when passed to plus. It is crucial that self does have an exclusive ownership of the string buffer, otherwise the following += will trigger COW.
+So what do you mean by saying "if the expression (does or) does not naturally produce an owned value"?. Does this implicit copy happen on the callee's side?
+
+---
+
+@John_McCall · 2025-07-18T15:11:15.789Z:
+theundergroundsorcerer:
+Thanks. Great explanation. So the problem is not that valueOwner stays alive, but with the fact that whether consuming ownedValue parameters are copied or not is a subject to optimization, independent of valueOwner being consumed?
+I would say that the core problem is just that code is allowing the caller to still have an independent copy by not consuming ownedValue1. The optimization question is just something that adds some unpredictability on top of that, because it could have saved you here by implicitly consuming, it just didn’t.
+theundergroundsorcerer:
+Hence, if we are interested in forcing forwarding, every consuming function argument should be passed with preceeding consume word (when it's possible)?
+Correct.
+theundergroundsorcerer:
+Is this intended use or just a "side effect"? Or we are not supposed to use them in this way?
+This is an intended use. If you don’t semantically want to modify the caller’s copy of the value, it shouldn’t be inout. Having decided that, if it’s still good for performance for the callee to have ownership of the value, then yeah, you should take it consuming. This works well in some ways with Swift’s semantics of copying into consuming parameters because the caller isn’t forced to worry about it — they’ll get the optimization opportunistically, and if they want to cooperate to get it in more places, they can explicitly consume. But you should understand the flip side of that: if this optimization is really important to you — if you would actually prefer it if callers had to explicitly copy when they cannot cooperate with the optimization — the language is going to be somewhat at odds with that goal because of the copying into consuming thing.
+
+---
+
+@John_McCall · 2025-07-18T15:53:29.436Z:
+CrystDragon:
+So what do you mean by saying "if the expression (does or) does not naturally produce an owned value"?
+Many expressions have to produce an independent value that the evaluating context will has independent ownership of: functions have to return independent values, getters have to return independent values, and so on. Other expressions don’t: most importantly, references to stored variables or properties. (This is all getting more complicated as we introduce more support for lifetime-dependent values, but for now, this is the big picture.)
+The big concern about implicitly forwarding values is that forwarding necessarily means the caller loses access to the value. If the caller actually needs the value to stay alive, either because it’s going to use it again or because the program as a whole has an implicit dependency on its lifetime (e.g. because of a weak reference somewhere else), the forward can break behavior.
+But that’s really only a problem with expressions that don’t naturally produce an independent value. If you use a call expression directly as an argument for a consuming parameter, the current context doesn’t have any other way of referring to that result, so it obviously can’t directly use it again later. Along similar lines, forwarding it could end up shortening its lifetime and invalidating weak references earlier, but it doesn’t really seem reasonable that someone would expect the the current context to keep this temporary value alive arbitrarily. So there’s no good reason not to implicitly forward into the parameter.
+CrystDragon:
+Does this implicit copy happen on the callee's side?
+Yes. The callee simply receives a value that it has ownership of, with no idea how that was produced.
+
+---
+
+@CrystDragon · 2025-07-22T14:53:12.978Z:
+John_McCall:
+Yes. The callee simply receives a value that it has ownership of, with no idea how that was produced.
+Thank you for tirelessly explaining this to us, but I'm a little bit confused by your last statement in this post. You replied to my question with "Yes.", but I suppose you actually mean "No", right?
+My understanding of your other lines is this: in a scenario of a function func foo(_ a: consuming A) being invoked as foo(someExpressionOfA), the compiler will insert implicit copies from the "caller" (not the "callee") side when it cannot tell someExpressionOfA can produce an independent value. Am I right?
+
+---
+
+@John_McCall · 2025-07-22T17:11:08.100Z:
+CrystDragon:
+Thank you for tirelessly explaining this to us, but I'm a little bit confused by your last statement in this post. You replied to my question with "Yes.", but I suppose you actually mean "No", right?
+Ah, yes, sorry. The problem with caller/callee terminology is that I misread it about 20% of the time. It is the caller’s responsibility.
+CrystDragon:
+My understanding of your other lines is this: in a scenario of a function func foo(_ a: consuming A) being invoked as foo(someExpressionOfA), the compiler will insert implicit copies from the "caller" (not the "callee") side when it cannot tell someExpressionOfA can produce an independent value. Am I right?
+Correct. The semantics are that we emit the expression in a way that produces an independent value, which may require copies.
+
+=== ROW 70 | f003375 | https://iroh.computer/blog/message-framing-tutorial | 2025-08-12 | domain-subframes ===
+Tutorial: Message Framing with iroh - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Tutorial: Message Framing with irohAugust 12, 2025 by ramfox, matheus23, b5
+This tutorial is a written version of the youtube tutorial published on the n0computer youtube channel:
+Intro
+The first time you dig into iroh to write your own protocol, you quickly realize that what you mostly interact with is the QUIC API.
+The QUIC API can feel extremely low level: you are dealing with raw streams and sometimes need to use methods that involve literally reading and writing a single byte at a time.
+In this post, we are going to talk about message framing as a technique to get you away from having to think of your protocol in terms of bytes and instead thinking of it in terms of logical messages.
+Message framing is a generally applicable concept, and by no means limited to working with protocols on iroh!
+Framed Messages
+QUIC connections are made of streams and those streams can be bi-directional or uni-directional. Bi-directional streams are streams you can read from and write to in both directions. Uni-directional streams are streams that can only be written to on one side and read from by the other.
+A single QUIC connection to another endpoint can have many streams, some uni-directional, some bi-directional.
+For the purposes of this tutorial, we are going to focus on a single, uni-directional stream, where one side writes to the stream and the other side reads from it.
+Streams are made up of bytes. You write bytes to the stream and you read bytes out of it.
+But the big question here is: once side A has written to the stream, how does side B know how much data to read?
+The first thing you might do when trying to get familiar with working with streams, is you might just use APIs like write_all and read_all, to write a chunk of data to the stream and then read that full chunk of data off of it, then close the stream.
+This is fine while you are getting familiar, but when you go to write your protocols you will want something more sophisticated.
+What we really want to do is send multiple logical messages on the stream, and have some format for figuring out how to separate out those messages. We also must deal with the fact that not all messages are going to be the same length.
+That's where message framing comes in. In message framing, you prepend the length, in bytes, of your message data to your message before sending over the data. On the receiving side, you read that length data first, then you create or adjust your buffer to accommodate that length, and finally read the exact number of bytes off your stream and into your buffer.
+The next time you read off the stream, you read off another length, and repeat the process.
+For an in-depth look at message framing, including a look into other forms of framing that already exist in networking, watch the youtube video that this tutorial is based on.
+Code setup
+First, head to your coding directory and run cargo init frame_me, which is what we are calling this project locally.
+Open up your IDE and take a look at your main.rs, which should simply show a main function that prints "Hello, world!" For sanity, run cargo run in your terminal to ensure everything is set up correctly.
+Now, let's add a few crates that we will be using in this example:
+cargo add tokio iroh anyhow
+Tokio is our async runtime, iroh is our networking library, and the Anyhow crate allows us to do easy error handling.
+Setting up our main function
+Heading back to main.rs, let's prep our main function to work with tokio:
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+Ok(())
+}
+CopyCopied!
+This doesn't do anything yet, but run cargo run to make sure everything is peachy!
+For this example, we are going to show the send and receive sides in the same main function. This just makes the example easier to illustrate and keeps it down to a single file. Normally, we would create a whole CLI with different commands associated with the send and receive sides. Our examples of dumbpipe and sendme show this pattern off nicely.
+For this demo, we are going to set up the receiving side, set up the sending side, write on the sending side, read from the receiving side, and then clean up and close down.
+use iroh::{Endpoint, Watcher, protocol::Router};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+Ok(())
+}
+CopyCopied!
+The iroh::Endpoint is the endpoint on which we make connections. By default, an iroh::Endpoint allows us to dial by endpoint_id without having to manually send address information.
+We use the EndpointBuilder to create the receive endpoint, recv_ep.
+The iroh::protocol::Router is where we will eventually add our custom protocol. We've already created the ALPN for our custom protocol, which we are calling ALPN.
+The ALPN string is formatted based on the conventions we recommend. The first section indicates this is an iroh protocol, the second indicates that the protocol is called smol, and the last section shows this is version 0 of the protocol, all delimited by a "/".
+We use the RouterBuilder to create the recv_router, which won't do much for us until we add our custom protocol later.
+The addr is the endpointAddr of the receive endpoint, which contains all the address information we know about ourselves, including our endpoint_id. We will use the addr to connect from the send endpoint to the receive endpoint, using the Endpoint::connect method.
+Scaffolding out write_frame and read_frame
+Now that we have a connection, let's open a stream and send some data!
+We can use the Connection::open_bi to create a bi-directional stream, or Connection::open_uni to create a uni-directional stream. In this case, we will create a uni-directional stream.
+To be more explicit, using open_bi would give us both a SendStream and RecvStream, while using open_uni will give us only a SendStream. In our example, we will be using open_uni.
+Once we have our SendStream, we have many different options for how we want to write to the stream, but we will cover that in a later section. For now, let us continue with our main function, and we'll scaffold out write_frame and read_frame functions that we will include in the code for now, but actually implement later.
+use iroh::{
+Endpoint, Watcher,
+endpoint::{RecvStream, SendStream},
+protocol::Router,
+};
+const ALPN: &[u8] = b"iroh/smol-msgs/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+todo!();
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+todo!();
+}
+CopyCopied!
+So, as you see, we're using todo! in the write_frame and read_frame functions. This allows the program to compile, but if we run the program and write_frame or read_frame are called, it will throw a panic. It's very useful in development!
+In our main function, we call write_frame to send "hi" and then "fren!" to the receiving side. This is the data that will get framed.
+Then we do some clean up!
+stream.finish()? tells the stream "hey, I'm done sending data".
+conn.closed().await will wait until the other side of the connection calls conn.close() before returning and won't let you send any other data across while it's waiting. conn.close (without the "d") informs the other side of the connection "hey, I'm closing the connection, and here is why".
+send_ep.close().await closes the endpoint. The endpoint won't close until all the connections have closed and cleaned up.
+recv_router.shutdown().await? stops the accept loop, closes all the connections, and closes the underlying endpoint.
+If you call cargo run at this point, the example will compile, but it will error at runtime: the Router is expecting at least one protocol and will error when it builds.
+Smol Protocol
+We've already defined the ALPN. The next thing we want is to create a SmolProtocol that implements the ProtocolHandler trait. This requires us to implement the accept method on the ProtocolHandler trait.
+use iroh::{endpoint::Connection, protocol::{ProtocolHandler, AcceptError}};
+const SMOL_ALPN: &[u8] = b"iroh/smol/0";
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(
+&self,
+connection: Connection,
+) -> Result<(), AcceptError> {
+todo!();
+}
+}
+CopyCopied!
+Again, we are using todo! here, but we will come back to it.
+One thing we can now do, is add the SmolProtocol to our router!
+let recv_router = Router::builder(recv_ep)
+.accept(ALPN, SmolProtocol)
+.spawn();
+CopyCopied!
+Our code so far:
+use iroh::{
+Endpoint, Watcher,
+endpoint::{Connection, RecvStream, SendStream},
+protocol::{AcceptError, ProtocolHandler, Router},
+};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).accept(ALPN, SmolProtocol).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+todo!();
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+todo!();
+}
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+todo!();
+}
+}
+CopyCopied!
+Implementing write_frame and read_frame
+Now we get to the actual message framing part! When we go to write data to the stream, we first need to write the size of the data, then the data itself.
+But what write methods should we use?
+Thankfully, message framing is so popular that tokio provides extension traits for reading and writing that allow you to read and write specific integers to the stream. We are going to use write_u8 to do our length prefixing.
+You'll note that by using a u8, we are limiting our message size to 255 bytes. In a protocol that sends larger messages, you would want to use a larger integer size. (Check out varints that use space-saving techniques when sending smaller numbers, but allow you to express very large numbers as well.)
+But it's u8s for us in this example! So first, we will ensure that the length of the message is smaller than an 8-bit integer. Then, we write the u8 using the write_u8 method, and then we will use write_all to write the entire contents of the message onto the stream:
+use iroh::endpoint::SendStream;
+use tokio::io::AsyncWriteExt;
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+assert!(message.len() <= u8::MAX as usize);
+stream.write_u8(message.len() as u8).await?;
+stream.write_all(message.as_bytes()).await?;
+Ok(())
+}
+CopyCopied!
+The read side first reads a u8 from the stream. If there is no u8 to read, then there are no current messages on the stream to read, and it will return Ok(None). The Ok indicates that there were no read errors during this read, but the None indicates that no data was read off of the stream.
+Next, we create a buffer the size of the u8 that we read. Then, we read that number of bytes from the stream and into the buffer using read_exact, which will fill the buffer with data from the stream.
+We then need to create a UTF-8 string from the bytes in the buffer. Finally, we return the String:
+use iroh::endpoint::RecvStream;
+use tokio::io::AsyncReadExt;
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+let Ok(frame_len) = stream.read_u8().await else {
+return Ok(None);
+};
+let mut buf = vec![0u8; frame_len as usize];
+stream.read_exact(&mut buf).await?;
+let smol_msg = String::from_utf8(buf)?;
+Ok(Some(smol_msg))
+}
+CopyCopied!
+Implementing SmolProtocol
+Time to implement the accept handler on SmolProtocol. This is what will get called each time we get an incoming connection to the Router.
+First, we will take the given connection and create a uni-directional stream using the accept_uni method. This will give us a RecvStream.
+Then we will use the above read_frame function to read messages from the stream and print them to stdout, looping until we find no more messages (i.e., read_frame returns None). If any errors occur while reading, we will convert them from an anyhow::Error to a standard library error before returning.
+Then we will close the connection using connection.close, giving an integer close code and a close reason. In a production-grade protocol, you may have a list of close codes and close reasons to communicate to the other side of the connection why the connection was closed. Sending 0 typically means that the connection closed without error.
+Finally, we return Ok:
+const ALPN: &[u8] = b"iroh/smol/0";
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+let mut stream = connection.accept_uni().await?;
+while let Some(msg) = read_frame(&mut stream)
+.await
+.map_err(anyhow::Error::into_boxed_dyn_error)?
+{
+println!("Got a smol message! {msg}");
+}
+println!("Done reading smol messages");
+connection.close(0u32.into(), b"thx for all the msgs :)");
+Ok(())
+}
+}
+CopyCopied!
+The full example:
+use iroh::{
+Endpoint, Watcher,
+endpoint::{Connection, RecvStream, SendStream},
+protocol::{AcceptError, ProtocolHandler, Router},
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).accept(ALPN, SmolProtocol).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+assert!(message.len() <= u8::MAX as usize);
+stream.write_u8(message.len() as u8).await?;
+stream.write_all(message.as_bytes()).await?;
+Ok(())
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+let Ok(frame_len) = stream.read_u8().await else {
+return Ok(None);
+};
+let mut buf = vec![0u8; frame_len as usize];
+stream.read_exact(&mut buf).await?;
+let smol_msg = String::from_utf8(buf)?;
+Ok(Some(smol_msg))
+}
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+let mut stream = connection.accept_uni().await?;
+while let Some(msg) = read_frame(&mut stream)
+.await
+.map_err(anyhow::Error::into_boxed_dyn_error)?
+{
+println!("Got a smol message! {msg}");
+}
+println!("Done reading smol messages");
+connection.close(0u32.into(), b"thx for all the msgs :)");
+Ok(())
+}
+}
+CopyCopied!
+Further exploring
+We hope you've learned a bit about writing protocols on this journey, specifically how framed messages are an incredibly useful technique.
+In this example, we sent simple strings on our streams, but in a real-world use case, we often send structured data. For a more in-depth example exploring how you might send structured data, including how we at n0 like to serialize and deserialize data to and from the wire, take a look at the framed messages example in iroh-examples.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 71 | f003389 | https://neon.com/blog/azure-native-integration-ga | 2025-08-14 | domain-subframes ===
+Neon’s Microsoft Azure Native Integration is Generally Available - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Product
+Neon’s Microsoft Azure Native Integration is Generally Available
+Deploy and manage Neon Serverless Postgres as a deeply integrated Azure-native service
+Monica Steinke–Technical Product ManagerMay 07, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Neon’s Microsoft Azure Native Integration has reached General Availability, providing developers with a powerful, serverless Postgres solution on Azure. Neon integrates with your existing Azure workflows, including unified billing, Microsoft single-sign on (SSO), and full MACC eligibility. Whether you’re building new apps or scaling global workloads, Neon brings the power of serverless Postgres to your Azure environment with zero friction.
+context
+Neon is working with Microsoft to bring serverless Postgres to the Azure ecosystem. Review our original announcement for a refresher.
+What Is the Neon Azure Native Integration?
+Neon’s Azure Native Integration lets you use Neon like any other native Azure service, fully embedded within your Azure workflows, identity systems, and billing structure.
+You can provision Neon Serverless Postgres directly from the Azure portal, where it appears alongside Microsoft’s own database offerings in the Databases section, complete with a partner badge:
+Once provisioned, you can manage Neon projects, branches, and connection strings using the Azure Command-Line Interface (CLI) and SDK.
+This deep integration also simplifies security and procurement:
+Authenticate using Microsoft Entra ID (formerly Azure Active Directory)
+Consolidate Neon usage into your Azure bill—no separate account or payment required
+What’s New with General Availability?
+While in preview, developers were able to create a Neon organization through Azure; now, with general availability, they can also manage Neon projects, branches, and connection strings directly through Azure.
+This update makes it easier to operationalize Neon across your team, enabling tighter CI/CD integration, more granular environment management, and a faster path from provisioning to production.
+And while we’re excited about the improvements available today, we’re already working on our next enhancement, designed to further simplify identity and access management, making your workflow even more streamlined within the Azure ecosystem.
+Who Benefits From the Neon Azure Native Integration?
+Enterprises with Azure MACC
+If your organization has a Microsoft Azure Consumption Commitment (MACC), Neon is now an eligible partner. Any Neon usage through the Azure Marketplace contributes toward your committed Azure spend, with no additional procurement steps or vendor onboarding required. This makes it simple for enterprises to adopt serverless Postgres within their existing Azure contracts and governance structures.
+Why Neon for Enterprise
+Enterprises choose Neon due to its efficient scalability, strong recovery guarantees, and developer workflows that align with modern software development practices:
+Efficient scalability: Neon’s compute layer scales automatically based on workload, including CPU, memory, and active connections. There’s no need to overprovision resources or worry about connection limits. The benefits are smoother performance during peak traffic, lower infrastructure costs, and reduced operational overhead for engineering teams.
+Reliable recovery options: Neon also enables instant restores, even for multi-terabyte databases. This significantly reduces downtime in the event of failures, providing a strong safety net for production environments. Every database on Neon also includes high availability by default, with no need to manage replicas or monitor replication lag.
+Smoother development workflows: Neon’s database branching makes it easy to create isolated, production-like environments for testing, CI/CD, and feature development. Teams can spin up branches in seconds, iterate quickly, and launch with confidence. And with scale-to-zero, idle dev and staging environments incur no cost, keeping budgets lean across the SDLC.
+All of this is backed by Neon’s commitment to enterprise-grade security and compliance. We follow industry best practices for encryption, access control, and data protection.
+talk to us
+If you’re just discovering Neon, schedule a meeting with our team. Our Solutions Engineers are ready to review your requirements and help you evaluate whether Neon is the right fit.
+AI Startups scaling on Azure
+If you’re a startup, especially if part of the Microsoft for Startups program and embracing the AI wave, the Neon Azure Native Integration is also a perfect fit. Neon’s serverless Postgres architecture delivers the speed, flexibility, and automation that modern AI applications demand. Here’s how AI startups are building on Neon:
+AI agents powered by Neon
+Replit Agent and Create.xyz are using Neon as a foundation for agentic app creation. These AI agents automatically spin up Neon databases in response to user input, whether it’s a new AI workspace, a micro SaaS, or a proof-of-concept app.
+Neon’s instant provisioning, fully managed storage, and powerful API enable agents to deploy Postgres completely autonomously. No manual setup, no disk provisioning, no credential management. Neon handles it all in the background, so the agent can stay focused on the user experience.
+RAG pipelines with pgvector
+Neon is also an ideal vector store for Retrieval-Augmented Generation (RAG) workflows. Startups are building pipelines that generate embeddings with Azure OpenAI Service and store them in Neon using the pgvector extension, unlocking fast, SQL-native semantic search inside a fully managed Postgres environment.
+There’s no need for a separate vector database or added infrastructure. With Neon, you get native vector search, seamless scaling, and the simplicity of standard Postgres tooling to insert, index, and retrieve vectors efficiently.
+And if you’re building with Microsoft-native tools, Neon integrates directly with Semantic Kernel. Using the Postgres memory connector, you can orchestrate a full RAG pipeline:
+Generate embeddings with Azure OpenAI Service
+Store and query them in Neon with pgvector
+Retrieve relevant results in milliseconds, all with SQL
+A Big Milestone, But We’re Just Getting Started
+This release is the result of close collaboration between Neon and Microsoft engineering teams. With a roadmap and ongoing co-investment, we’re working to make Neon truly native to the Microsoft developer ecosystem.
+Whether you’re an individual developer or part of an enterprise engineering team, log in to the Azure Marketplace and try Neon’s Native Integration today.
+Find us at MS Build
+If you’re attending Microsoft Build 2025, come find us at booth 518. We’d love to meet you and hear your feedback on how we can build the best serverless Postgres experience on Azure!
+On this page
+What Is the Neon Azure Native Integration?
+What’s New with General Availability?
+Who Benefits From the Neon Azure Native Integration?
+A Big Milestone, But We’re Just Getting Started
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 76 | f003594 | https://github.com/zed-industries/zed/issues/39031 | 2025-09-27 | domain-subframes ===
+AI: Agent & tools just stop working no matter the model/provider
+
+---
+
+@kinoute · 2025-09-27T19:19:53Z:
+### Summary
+
+<!-- Please insert a one line summary of the issue below -->
+The Agent panel works for a few time then it either goes in an infinite loop doing something, either it says it will do something (like listing or searching) and it doesnt do it. The "loader" disappears after a few seconds just like that, without any errors.
+
+### Description
+<!--  Describe with sufficient detail to reproduce from a clean Zed install. -->
+Steps to trigger the problem:
+1. Run Zed
+2. Open Agent Panel, ask something to do
+3. The Agent sometimes starts answering but it might have to use one tool, it just stops (see video).
+
+It seems to have getting worse in the latest versions. Earlier (one week or two weeks ago?) I got the infinite loop thing a lot but not this "no action done" thing.
+
+**Expected Behavior**: The agent does its thing
+**Actual Behavior**: The agent stops just like it thinks it has done its job, no matter the model picked. I have no problem running VSCode+Cline with these models.
+
+https://github.com/user-attachments/assets/42d3b891-494d-40a0-a540-c48ea014d1fa
+
+### Model Provider Details
+- Provider: Mistral API or custom OpenAI provider (with Mistral Small behind)
+- Model Name: Codestral, devestral, magistral...
+- Mode: Agent Panel
+- Other Details (MCPs, other settings, etc):
+
+Zed Settings:
+
+```json
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+  "context_servers": {
+    "mcp-server-gitlab": {
+      "source": "extension",
+      "enabled": true,
+      "settings": {
+        "gitlab_personal_access_token": "xxx",
+        "gitlab_api_url": "xxx"
+      }
+    },
+    "mcp-server-git": {
+      "source": "custom",
+      "enabled": true,
+      "command": "uvx",
+      "args": ["mcp-server-git"]
+    }
+  },
+  "icon_theme": "Material Icon Theme",
+  "journal": {
+    "hour_format": "hour24"
+  },
+  "collaboration_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": false
+  },
+  "linked_edits": false,
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  },
+  "tabs": {
+    "activate_on_close": "neighbour"
+  },
+  "languages": {
+    "Shell Script": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "shfmt",
+          "arguments": [
+            "--filename",
+            "{buffer_path}",
+            "--indent",
+            "4",
+            "--space-redirects"
+          ]
+        }
+      }
+    },
+    "Markdown": {
+      "format_on_save": "on",
+      "use_on_type_format": false,
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Python": {
+      "language_servers": ["!ty", "pylsp", "!pyright", "ruff"],
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "ruff"
+          }
+        },
+        {
+          "code_actions": {
+            "source.organizeImports.ruff": true,
+            "source.fixAll.ruff": true
+          }
+        }
+      ]
+    }
+  },
+  "lsp": {
+    "ruff": {
+      "initialization_options": {
+        "config-file": "pyproject.toml"
+      },
+      "settings": {
+        "python": {
+          "pythonPath": "./.venv/bin/python"
+        }
+      }
+    },
+    "pylsp": {
+      "settings": {
+        "python": {
+          "pythonPath": "./.venv/bin/python"
+        },
+        "plugins": {
+          "mypy": {
+            "enabled": true,
+            "settings": {
+              "python": {
+                "pythonPath": "./.venv/bin/python"
+              }
+            }
+          },
+          "autopep8": { "enabled": false },
+          "black": { "enabled": false },
+          "flake8": { "enabled": false },
+          "isort": { "enabled": false },
+          "mccabe": { "enabled": false },
+          "pycodestyle": { "enabled": false },
+          "pydocstyle": { "enabled": false },
+          "pyflakes": { "enabled": false },
+          "pylint": { "enabled": false },
+          "yapf": { "enabled": false },
+
+          // keep the others
+          "jedi": { "enabled": false },
+          "rope": { "enabled": true },
+          "rope_autoimport": { "enabled": true },
+          "rope_completion": { "enabled": false },
+
+          // disable pylsp ruff in favor of `ruff server`
+          "ruff": { "enabled": false }
+        }
+      }
+    }
+  },
+  "ui_font_size": 14,
+  "buffer_font_size": 12,
+  "base_keymap": "SublimeText",
+  "buffer_font_family": "RobotoMono Nerd Font Mono",
+  "ui_font_family": ".SystemUIFont",
+  "theme": {
+    "mode": "system",
+    "light": "Hivacruz",
+    "dark": "Hivacruz"
+  },
+  "indent_guides": {
+    "enabled": true,
+    "line_width": 1,
+    "active_line_width": 1,
+    "coloring": "indent_aware",
+    "background_coloring": "disabled"
+  },
+  "show_wrap_guides": true,
+  "terminal": {
+    "font_family": "RobotoMono Nerd Font Mono",
+    "font_size": 11,
+    "detect_venv": {
+      "on": {
+        "activate_script": "pyenv",
+        "directories": [".env", "env", ".venv", "venv"]
+      }
+    }
+  },
+  "cursor_blink": true,
+  "telemetry": {
+    // Send debug info like crash reports.
+    "diagnostics": false,
+    // Send anonymized usage data like what languages you're using Zed with.
+    "metrics": false
+  },
+  "agent": {
+    "always_allow_tool_actions": false,
+    "enable_feedback": false,
+    "default_profile": "write",
+    "profiles": {
+      "write": {
+        "name": "Write",
+        "tools": {
+          "copy_path": true,
+          "create_directory": true,
+          "delete_path": true,
+          "diagnostics": true,
+          "edit_file": true,
+          "fetch": true,
+          "list_directory": true,
+          "project_notifications": true,
+          "move_path": true,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "grep": true,
+          "terminal": true,
+          "thinking": true,
+          "web_search": true,
+          "open": true
+        },
+        "enable_all_context_servers": true,
+        "context_servers": {
+          "mcp-server-gitlab": {
+            "tools": {
+              "search_repositories": true,
+              "push_files": true,
+              "get_file_contents": true,
+              "fork_repository": true,
+              "create_repository": true,
+              "create_or_update_file": true,
+              "create_merge_request": true,
+              "create_issue": true,
+              "create_branch": true
+            }
+          }
+        }
+      }
+    },
+    "default_model": {
+      "provider": "mistral",
+      "model": "codestral-latest"
+    },
+    "notify_when_agent_waiting": "never"
+  },
+  "language_models": {
+    "openai_compatible": {
+      "Sahar": {
+        "api_url": "xxx.com/v1",
+        "available_models": [
+          {
+            "name": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+            "display_name": "Mistral Small 3.1",
+            "max_tokens": 128000,
+            "capabilities": {
+              "tools": true,
+              "images": true,
+              "parallel_tool_calls": true,
+              "prompt_cache_key": false
+            }
+          }
+        ]
+      }
+    },
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1"
+    }
+  }
+}
+```
+
+### Zed Version and System Specs
+
+Zed: v0.205.6 (Zed) 
+OS: macOS 15.7
+Memory: 16 GiB
+Architecture: aarch64
+
+---
+
+@kinoute · 2025-09-27T19:24:03Z:
+I also tested with Zed Preview (0.206.3) but still the same. The logs just show random things like:
+
+> 2025-09-27T21:22:30+02:00 INFO  [agent2::agent] Received prompt request for session: 00513767-855a-476b-b037-5ecb2fc15100
+2025-09-27T21:22:30+02:00 INFO  [agent2::thread] Thread::send called with model: codestral-latest
+
+And nothing else
+
+---
+
+@timjonaswechler · 2025-09-29T08:43:03Z:
+Hey, I’ve noticed some similar behavior. With every Mistral model I tested, it either gets stuck in a loop (see image), says “I will start …” but then does nothing, or the prompt runs and nothing shows up at all. Most of the time, when I retry, the chat is broken with errors.
+
+
+<img width="779" height="1235" alt="Image" src="https://github.com/user-attachments/assets/7d91354d-5b3c-4862-bc22-98e51b86da83" />
+
+---
+
+@MrSubidubi · 2025-09-30T15:31:46Z:
+Thanks for the report and details provided! That does not sound good, we'll try to reproduce this and take a look.
+
+---
+
+@mikebronner · 2025-10-03T21:29:04Z:
+I'm seeing the same behavior with this in the logs, this is happening with any model provided by Zed that I choose (when it does happen it happens across the board for Zed models, not for Copilot or Claude Code)
+
+```
+2025-10-03T14:27:18-07:00 INFO  [agent2::agent] Received prompt request for session: d9c00dac-e60a-4bdc-a76a-42f844a6e022
+2025-10-03T14:27:18-07:00 INFO  [agent2::thread] Thread::send called with model: Claude Sonnet 4 Thinking
+2025-10-03T14:27:19-07:00 INFO  [lsp] Language server with id 2 sent unhandled notification indexingStarted:
+[
+  null
+]
+```
+
+When I switch to Copilot I see the following error:
+
+<img width="603" height="394" alt="Image" src="https://github.com/user-attachments/assets/b91046b7-cdc0-4065-9c24-fbac30cddfed" />
+
+Not meaning to hijack the thread (it might be related): why is the error message giving a different token count than zed? Zed show 48k, and the error is saying 134k.
+
+---
+
+@kinoute · 2025-10-05T18:54:17Z:
+I had to switch unfortunately to VSCode + Cline for the moment, Zed with AI is unusable like this for me :(
+
+I start a new thread, the model starts responding like "let me check this file". The loader still appears for a few seconds then stops just like that, no error.
+
+---
+
+@timjonaswechler · 2025-10-05T21:56:08Z:
+I get everytime from the ACP with Claude Code and Copilot - Claude 4.5 Model and sometimes with Copilot-GPT Codex "Bad Tool usage" error. Right at the start of model ever prompt where I have some files as context🫠
+
+**Edit:** Ok Some how Claude Code ACP works now 🤷‍♂️ as well as the copilot models. maybe i later can show a error image 
+
+---
+
+@mikebronner · 2025-10-05T22:22:05Z:
+> I get everytime from the ACP with Claude Code and Copilot - Claude 4.5 Model and sometimes with Copilot-GPT Codex "Bad Tool usage" error. Right at the start of model ever prompt where I have some files as context🫠
+
+Yea, I have been seeing that recently as well
+
+
+---
+
+@kinoute · 2025-10-06T13:39:28Z:
+In my case, it is really linked to Mistral API/models. I don't have any problems with Sonnet 4 or Gemini models. As soon as I switch to Mistral models through their API, it does (almost) nothing.
+
+Another video:
+
+https://github.com/user-attachments/assets/fb70f1b8-78c7-47d1-b659-7c670d1b6207
+
+---
+
+@olejorgenb · 2025-10-16T12:34:04Z:
+I use the Zed agent/model provider and today it has been impossible to use. It stops randomly during processing with no indication of what went wrong (I checked Zed: logs)
+
+---
+
+@olejorgenb · 2025-11-03T16:12:38Z:
+Happens again now (Zed provider, Sonnet 4, old style subscription, Zed 0.210.4). No error messages in the logs:
+
+```
+2025-11-03T17:11:16+01:00 INFO  [agent] Received prompt request for session: c7bb0ce1-c68b-463c-8962-4310e0c391b6
+2025-11-03T17:11:16+01:00 INFO  [agent::thread] Thread::send called with model: Claude Sonnet 4
+```
+
+The request is not counted though against the quota though.
+
+---
+
+@Sh4rK · 2025-11-21T18:31:32Z:
+This, more specifically the random stopping, has been happening to me too, I tried with various models on OpenRouter.
+
+Also, the agent responses generally seem to start way slower than in other editors. Even with a fast model on OpenRouter, I have to wait a lot sometimes to see some output.
+
+---
+
+@berlund · 2025-11-28T11:42:38Z:
+I had similar problems with Mistral models, I could narrow it down the call id for the tool does not match Mistrals expectations:
+
+```
+Failed to connect to Mistral API: 400 Bad Request {"object":"error","message":"Tool call id was call_isEgYb8tZWpFNClnLXYFsqVd but must be a-z, A-Z, 0-9, with a length of 9.","type":"invalid_function_call","param":null,"code":"3280"}
+```
+
+This can easily be triggered by prompting for the current time
+
+---
+
+@miguelraz · 2025-12-22T19:38:20Z:
+@kinoute this probably was fixed recently - is calling tools still an issue?
+
+---
+
+@joestump · 2026-01-06T09:26:01Z:
+@Sh4rK seeing similar behavior. Especially the random stopping. My workaround for now is to stop and re-prompt it to review what it's done and pick up where it left off. Doesn't seem to be tied to any specific model. Happens with both Gemini and Claude for me.
+
+---
+
+@nkapila6 · 2026-03-05T13:23:12Z:
+Facing this issue with OpenRouter as well. Have to do send multiple continue requests to get a response.
+
+---
+
+@miguelraz · 2026-03-05T14:25:45Z:
+This is only happening for Mistral providers though @nkapila6 , correct?
+
+Perhaps the above comment can help out @MrSubidubi https://github.com/zed-industries/zed/issues/39031#issuecomment-3589009553
+
+---
+
+@hllshiro · 2026-03-09T08:41:10Z:
+I'm using SGlang to run Qwen2.5-72B-Instruct(max context 128k), which works fine in cline, but I'm having a similar problem in zed. I had to repeatedly type "continue" to get the agent to continue working. 
+
+---
+
+@miguelraz · 2026-03-10T05:19:46Z:
+Bummer @hllshiro , we'll let the team know.
+
+---
+
+@rpjohnst · 2026-03-14T18:26:50Z:
+I am seeing this behavior with Qwen3.5-9B on Zed 0.227.1 and llama.cpp b8280 or b8340. I have this in `settings.json`:
+```json
+  "agent": {
+    "default_profile": "write",
+    "default_model": {
+      "provider": "llama.cpp",
+      "model": "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+    },
+  },
+  "language_models": {
+    "openai_compatible": {
+      "llama.cpp": {
+        "api_url": "http://localhost:8080",
+        "available_models": [
+          {
+            "name": "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+            "max_tokens": 160512,
+          }
+        ]
+      }
+    },
+  },
+```
+I'm running `llama.cpp` with simply `llama-server -hf unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL`. (I've also tried unsloth's non-`UD` variant `Q4_K_XL`, `bartowski`'s `Q4_K_M`, and the smaller `unsloth/Qwen3.5-4B-GGUF:UD-Q8_K_XL`; these all have the same issue.)
+
+If I pass `--verbose` to `llama-server` then I can see a typical failure ends with Zed providing a tool response followed by [the model's generation prompt](https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/chat_template.jinja#L147), e.g. `...</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n`, and the model responding with nothing. The last response looks like this:
+```json
+{
+  "choices": [{ "finish_reason": "stop", "index": 0, "delta": {} }],
+  "created": 1773511031,
+  "id": "chatcmpl-CzDJ9jcWvg0w3K5Ia0CksYEsH7ixANTK",
+  "model": "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+  "system_fingerprint": "b8280-b2e1427c9",
+  "object": "chat.completion.chunk",
+  "timings": {
+    "cache_n": 13495,
+    "prompt_n": 1668,
+    "prompt_ms": 6912.459,
+    "prompt_per_token_ms": 4.144160071942446,
+    "prompt_per_second": 241.30342038918423,
+    "predicted_n": 140,
+    "predicted_ms": 9559.073,
+    "predicted_per_token_ms": 68.27909285714286,
+    "predicted_per_second": 14.645771614046675
+  },
+  "__verbose": { /* ... */ }
+}
+```
+
+Interestingly, if I pass `--chat-template-kwargs '{"enable_thinking":false}'` to `llama-server`, this does not seem to happen.
+
+This does not seem to happen with other agents like Qwen Code or Claude Code, used from Zed or other editors.
+
+---
+
+@gabrielacos · 2026-04-01T12:48:40Z:
+Same issue here with llama_cpp, model start to read files , then stops all of the sudden.
+Local model Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF:Q4_K_M, this set up works with cline.
+
+
+
+
+---
+
+@michalss · 2026-05-05T15:22:09Z:
+Same its happening over and over again.. :(
+
+<img width="644" height="127" alt="Image" src="https://github.com/user-attachments/assets/4fa91749-53c1-4351-8076-27d01d47dca7" />
+
+Unlimited loading context and then nothing... its very bad..
+
+---
+
+@benbrandt · 2026-05-08T09:09:34Z:
+It looks like you are using cladue code, which is different than the zed agent which this issue was originally addressing
+
+---
+
+@anilzeybek · 2026-05-24T15:06:35Z:
+I’m seeing what looks like the same class of issue with the built-in Zed agent.
+
+Zed agent starts responding / generating, the UI still shows it as in progress, but tokens stop arriving and no error is shown.
+
+---
+
+@morgankrey · 2026-06-09T16:00:18Z:
+Thanks everyone. I'm going to close this thread because it now contains multiple unrelated "agent stops" failure modes across providers and integration paths. Keeping these in one issue makes it hard to identify a root cause or verify a fix.
+
+If this still happens on the latest Zed, please open a fresh issue with:
+- Provider and model
+- Native Zed provider vs ACP/CLI integration
+- Zed version and OS
+- Whether the issue reproduces in a new thread
+- Whether it reproduces with tools disabled
+- Logs around the stopped turn
+- A minimal prompt or exported thread
+
+Please file separate issues for provider-specific request-format errors and generic Zed-agent stalls.
+
+---
+
+@M0chaCat · 2026-06-21T03:09:47Z:
+the ORIGINAL issue still happens!!! this should actually be looked into-
+
+=== ROW 85 | f004065 | https://pingcap.com/blog/tide-user-day-india-ninja-van-delivering-scale | 2026-01-05 | domain-subframes ===
+How Ninja Van Powers Millions of Shipments with TiDB
+AI
+TIDB FOR AGENTIC AI
+Database for Agentic AI
+Purpose-built for agent memory, state, and multi-hop reasoning
+Persistent Context for AI Agents
+Persistent, queryable memory for AI agents with per-agent isolation
+Build AI Applications
+SDKs, guides, and templates for shipping AI apps fast
+Vector Search & RAG
+Native vector indexing and retrieval-augmented generation pipelines
+AI Startup Program													PROGRAM
+Scale faster without letting infrastructure become the bottleneck
+Product
+An open-source distributed SQL database trusted by innovators to power transactional, AI, and other modern applications.
+Product Overview
+Deployment Options
+TiDB Cloud
+TiDB Self-Managed
+Pricing
+Ecosystem
+Integrations
+TiKV
+mem9
+TiDB Cloud Filesystems
+OSS Insight
+Solutions
+Customer Stories
+Trusted and verified by innovation leaders around the world.
+By Industry
+AI
+Fintech
+eCommerce
+SaaS
+Logistics & Supply Chain
+Web3
+By Use Case
+Lower Infrastructure Costs
+Enable Operational Intelligence
+Modernize MySQL Workloads
+Build GenAI Applications
+Build Persistent Context for AI Agents
+Resources
+Learn
+Blog
+eBooks & Whitepapers
+Webinars and Videos
+Compare Databases
+Playbooks
+Engage
+Events
+Discord Community
+Developer Hub
+TiDB SCaiLE
+PingCAP University
+Courses
+Hands-on Labs
+Certifications
+Company
+Trust Hub
+Explore how TiDB ensures the confidentiality and availability of your data.
+About
+Press Releases & News
+About Us
+Careers
+Partners
+Contact Us
+Docs
+Sign In
+Start for Free
+AI
+TIDB FOR AGENTIC AI
+Database for Agentic AI
+Persistent Context for AI Agents
+Build AI Applications
+Vector Search & RAG
+AI Startup ProgramPROGRAM
+Product
+An open-source distributed SQL database trusted by innovators to power transactional, AI, and other modern applications.
+Product Overview
+Deployment Options
+TiDB Cloud
+TiDB Self-Managed
+Pricing
+Ecosystem
+Integrations
+TiKV
+mem9
+TiDB Cloud Filesystems
+OSS Insight
+Solutions
+Customer Stories
+Trusted and verified by innovation leaders around the world.
+By Industry
+AI
+Fintech
+eCommerce
+SaaS
+Logistics & Supply Chain
+Web3
+By Use Case
+Lower Infrastructure Costs
+Enable Operational Intelligence
+Modernize MySQL Workloads
+Build GenAI Applications
+Build Persistent Context for AI Agents
+Resources
+Learn
+Blog
+eBooks & Whitepapers
+Webinars and Videos
+Compare Databases
+Playbooks
+Engage
+Events
+Discord Community
+Developer Hub
+TiDB SCaiLE
+PingCAP University
+Courses
+Hands-on Labs
+Certifications
+Company
+Trust Hub
+Explore how TiDB ensures the confidentiality and availability of your data.
+About
+Press Releases & News
+About Us
+Careers
+Partners
+Contact Us
+Docs
+Sign In
+Start for Free
+Delivering at Scale: How Ninja Van Powers Millions of Shipments with TiDB
+2025-09-02
+Customer Story
+M. Nivanya
+Content Manager
+Founded in 2014 in Singapore, Ninja Van is a leading last-mile logistics provider operating across six countries in Southeast Asia: Singapore, Malaysia, Indonesia, the Philippines, Vietnam, and Thailand — with nationwide coverage in each market.
+Ninja Van’s platform handles logistics for top-tier e-commerce players such as Amazon and Lazada. Offering services that span from parcel pickup to delivery, returns, tracking, and customer notifications; all of which depend on a highly distributed, data-intensive technology stack.
+At TiDB User Day India, Mani Kuramboyina, Head of Engineering at Ninja Van, discussed how the logistics powerhouse navigated scaling challenges and unlocked the power of hybrid transactional and analytical processing with TiDB. This blog recaps Kuramboyina’s talk from the event.
+Phase 1: Growing Pains in a Sharded World
+In its early years, Ninja Van ran MySQL with Galera clustering, a popular choice for multi-master replication. It served them well, at least at first.
+However, what started with manual tooling soon became a 130TB hybrid architecture powering over 3.2 million queries per minute, across 10,000+ operational users.
+But as the business scaled:
+Write-intensive operations started overwhelming Galera nodes.
+Flow control issues under high load led to replication bottlenecks.
+Adding new nodes triggered State Snapshot Transfers (SSTs) — heavy, disruptive operations.
+Schema changes required gh-ost or pt-online-schema-change, often throttled manually.
+To cope, Ninja Van introduced ProxySQL to direct traffic intelligently, routing reads and writes with regex-based query rules. But this came at a cost:
+Complex routing logic had to be baked into the app layer.
+Sharding logic became harder to maintain as business needs evolved.
+Operational complexity exploded as teams had to maintain hundreds of MySQL instances with uneven resource utilization.
+The cost of scale wasn’t just hardware, it was human effort.
+Fig. 1: Mani Kuramboyina, Head of Engineering at Ninja Van presenting at TiDB User Day India
+The Breaking Point: Operational Intelligence Gets “Too Smart”
+With millions of deliveries per day, real-time data isn’t a nice-to-have, it’s critical. Ninja Van’s data platform powers everything from shipment tracking and customer notifications to internal analytics, fraud detection, and warehouse optimization.
+By 2020, the data team was no longer just supporting services; they were powering an entire operational intelligence ecosystem.
+Ops teams, business users, and analysts were crafting complicated SQL queries, often hundreds of lines long, to build dashboards, perform ad hoc analytics, or troubleshoot logistics issues in real time.
+These users needed:
+Real-time or near-real-time data
+Support for lookups, aggregates, and wildcard searches
+Access through self-service tools like Redash and Metabase
+But MySQL read replicas weren’t built for that as:
+Queries timed out or failed.
+Replication lag made data stale.
+Scaling required spinning up hundreds of replica nodes, with limited ROI.
+Even auto-scaling groups of 100+ servers couldn’t meet demand.
+The architecture became a four-tier maze of replication and proxies that were resilient but unsustainable.
+Enter TiDB: Testing the Waters with an Operational Data Store (ODS)
+With traditional solutions reaching their limits, Ninja Van began evaluating distributed SQL databases. Their requirements included:
+MySQL compatibility (60,000+ existing queries)
+Horizontal scalability for both reads and writes
+Built-in support for online transactional processing (OLTP) and online analytical processing (OLAP) workloads
+CDC support to feed a growing data lake
+Kubernetes-native operations
+Strong query performance under concurrency
+After testing several options, including Vitess, CockroachDB, and AliCloud ADB, the company chose TiDB.
+Why start with the Operational Data Store (ODS)?
+When Ninja Van began evaluating distributed SQL solutions, they didn’t jump straight into migrating their core systems. Instead, they chose to test the waters with their Operational Data Store (ODS), a key component of their analytics infrastructure that, while important, didn’t have the same latency or uptime requirements as their transactional workloads.
+This made the ODS an ideal testing ground for TiDB.
+Here’s why the team chose to begin here:
+It was critical, but not as latency-sensitive as customer-facing systems.
+It housed complex analytical queries that could benefit from TiDB’s HTAP (Hybrid Transactional and Analytical Processing) architecture.
+It provided an opportunity to offload heavy read and aggregate workloads from their main MySQL clusters using TiDB’s built-in column store.
+Once the decision was made, the Ninja Van team carefully architected their first TiDB deployment with the following components:
+Replication via TiDB Data Migration (DM) to keep the ODS in sync with existing MySQL sources.
+A shared TiDB cluster serving all regions, with resource control in place to prevent noisy neighbor problems.
+Columnar storage nodes to accelerate analytical workloads and reduce pressure on transactional queries.
+Role-based access controls to securely support more than 10,000 Redash users across departments.
+By starting with the ODS, Ninja Van was able to validate TiDB’s performance, scalability, and manageability without disrupting mission-critical services.
+Fig. 2: Operation Data Store for Ninja Van
+The result? Real-time insights at scale. Queries that previously took minutes or failed altogether could now complete in seconds.
+Phase 2: Transactional Workloads- The Real Test
+Having seen strong early results with their Operational Data Store (ODS), the Ninja Van data team decided it was time to take the next leap: moving transactional workloads to TiDB.
+But this was a whole different level of complexity.
+Unlike the ODS, transactional systems were at the core of Ninja Van’s logistics platform. These services powered real-time deliveries, parcel tracking, order management, and e-commerce partner integrations. There was zero margin for error, and certainly no tolerance for downtime.
+To make matters more challenging:
+Over 180 microservices depended on MySQL backends.
+Many of these services had low-latency requirements with strict SLAs.
+A full migration had to be gradual and non-disruptive — no “big bang” rewrites.
+Despite the high stakes, TiDB passed with flying colors.
+Why TiDB Worked for Transactional Systems
+TiDB brought immediate value where traditional tooling had failed:
+Schema changes were now fast and non-blocking — gone were the days of carefully throttled gh-ost jobs.
+Native MySQL compatibility meant services could migrate one-by-one, with no need to rewrite thousands of queries.
+Built-in Change Data Capture (TiCDC) seamlessly fed downstream consumers like the data lake, Kafka pipelines, and real-time dashboards.
+Backups, restore processes, and TTL-based archival became simpler and safer — no more fragile homegrown scripts.
+And most impressively, query throughput hit 44,000 QPS, proving TiDB could handle even the most demanding transactional workloads.
+Where they previously relied on manual operations, ad hoc scripts, and a patchwork of tools, TiDB delivered a unified, production-ready platform with out-of-the-box tooling and enterprise-level resilience.
+“It’s no longer a question of whether TiDB can scale — it’s a question of what else we can do with it.”
+Mani Kuramboyina, Head of Engineering (India), Ninja Van
+Developer & Platform Experience: A Paradigm Shift
+The impact wasn’t just on data performance. TiDB reshaped the engineering workflow behind the scenes.
+Before, infrastructure was a fragmented landscape of shell scripts, Ansible playbooks, and cloud console clickops. With TiDB, the team consolidated everything into a clean, repeatable, Infrastructure-as-Code approach.
+Deployments are now fully automated using Terraform, Terragrunt, and Kubernetes manifests.
+CI/CD pipelines manage versioning, updates, and cluster provisioning across environments.
+All TiDB upgrades are first tested on the ODS, ensuring stability before they’re promoted to production workloads.
+Monitoring and observability saw a dramatic upgrade, with built-in integration to Grafana, Prometheus, and alerting stacks.
+But perhaps the most astonishing part?
+The entire TiDB infrastructure, spanning over 130TB of data, serving millions of queries per minute, is operated by a platform team of just two engineers.
+That level of simplicity and operational leverage is rare at this scale and a testament to the maturity of both TiDB and the team behind it.
+The Road Ahead
+Ninja Van’s journey with TiDB is far from over. The team is actively planning for their next phase and the focus areas include:
+Migrating to ARM-based clusters for better performance-per-cost — early tests show promising savings compared to traditional chipsets.
+Improved migration tooling, enabling faster, safer transition for the remaining MySQL workloads still in production.
+Advanced resource control strategies to fine-tune performance across business units, regions, and internal analytics teams.
+Scaling TiDB to 200TB and beyond, with data volumes growing by 200GB every single day.
+Watch the complete session replay from TiDB User Day India 2025 and hear how Ninja Van scaled operational intelligence and transactional workloads with TiDB. Mani Kuramboyina, Head of Engineering, shares their journey, lessons, and what’s next.
+Ready to simplify scale like Ninja Van?
+Start a free TiDB Cloud trial and see how distributed SQL handles high-throughput transactions, real-time analytics, and zero-downtime operations — without sharding pain or operational sprawl.
+Book a Demo
+Distributed SQLMySQLReal-time analyticsScalabilityTiDBTiKV
+Experience modern data infrastructure firsthand.
+Start for Free
+Share:
+Related Resources
+Solution
+The FinTech Scalability Crisis: How Distributed SQL Unlocks Innovation with Zero Downtime Operations
+Tutorial
+Vercel and TiDB Cloud Starter: The Full-Stack Playbook for AI Apps
+Engineering
+Lakebase, TiDB X, and the Database Architecture AI Demands
+Solution
+The FinTech Scalability Crisis: How Distributed SQL Unlocks Innovation with Zero Downtime Operations
+Tutorial
+Vercel and TiDB Cloud Starter: The Full-Stack Playbook for AI Apps
+Engineering
+Lakebase, TiDB X, and the Database Architecture AI Demands
+View All
+Have questions? Let us know how we can help.
+Contact Us
+TiDB Cloud Dedicated
+A fully-managed cloud DBaaS for predictable workloads
+Sign Up
+Learn More
+TiDB Cloud Starter
+A fully-managed cloud DBaaS for auto-scaling workloads
+Start for Free
+Learn More
+English
+日本語
+Product
+Product Overview
+TiDB Cloud
+TiDB Self-Managed
+Pricing
+English
+日本語
+Ecosystem
+Integrations
+TiKV
+mem9
+TiDB Cloud Filesystems
+OSS Insight
+Resources
+Blog
+Articles
+Events & Webinars
+TiDB SCaiLE
+Docs
+Developer Guide
+FAQs
+Support
+Company
+About Us
+News
+Careers
+Contact Us
+Partners
+Trust Hub
+Security
+Release Support
+Brand Guidelines
+Stay Connected
+Sign up to receive periodic updates and
+feature releases to your email.
+© 2026 PingCAP. All Rights Reserved.
+Privacy Policy
+Legal
+
+=== ROW 86 | f004166 | https://blog.cloudflare.com/serverless-matrix-homeserver-workers | 2026-01-27 | domain-subframes ===
+Building a serverless, post-quantum Matrix homeserver | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+This Post is Available in
+繁體中文
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+Cloudflare WorkersCloudflare Workers KVD1+9Show 9 more tags
+12 TagsShow 12 tags
+Post Tags
+Cloudflare WorkersCloudflare Workers KVD1Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+Cloudflare WorkersCloudflare Workers KVD1Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+January 27, 2026
+Building a serverless, post-quantum Matrix homeserver
+Nick Kuntz
+9 minute readCOPY URL
+This post is also available in 繁體中文 and 简体中文.
+* This post was updated at 11:45 a.m. Pacific time to clarify that the use case described here is a proof of concept and a personal project. Some sections have been updated for clarity.
+Matrix is the gold standard for decentralized, end-to-end encrypted communication. It powers government messaging systems, open-source communities, and privacy-focused organizations worldwide.
+For the individual developer, however, the appeal is often closer to home: bridging fragmented chat networks (like Discord and Slack) into a single inbox, or simply ensuring your conversation history lives on infrastructure you control. Functionally, Matrix operates as a decentralized, eventually consistent state machine. Instead of a central server pushing updates, homeservers exchange signed JSON events over HTTP, using a conflict resolution algorithm to merge these streams into a unified view of the room's history.
+But there is a "tax" to running it. Traditionally, operating a Matrix homeserver has meant accepting a heavy operational burden. You have to provision virtual private servers (VPS), tune PostgreSQL for heavy write loads, manage Redis for caching, configure reverse proxies, and handle rotation for TLS certificates. It’s a stateful, heavy beast that demands to be fed time and money, whether you’re using it a lot or a little.
+We wanted to see if we could eliminate that tax entirely.
+Spoiler: We could. In this post, we’ll explain how we ported a Matrix homeserver to Cloudflare Workers. The resulting proof of concept is a serverless architecture where operations disappear, costs scale to zero when idle, and every connection is protected by post-quantum cryptography by default. You can view the source code and deploy your own instance directly from Github.
+From Synapse to Workers
+Our starting point was Synapse, the Python-based reference Matrix homeserver designed for traditional deployments. PostgreSQL for persistence, Redis for caching, filesystem for media.
+Porting it to Workers meant questioning every storage assumption we’d taken for granted.
+The challenge was storage. Traditional homeservers assume strong consistency via a central SQL database. Cloudflare Durable Objects offers a powerful alternative. This primitive gives us the strong consistency and atomicity required for Matrix state resolution, while still allowing the application to run at the edge.
+We ported the core Matrix protocol logic — event authorization, room state resolution, cryptographic verification — in TypeScript using the Hono framework. D1 replaces PostgreSQL, KV replaces Redis, R2 replaces the filesystem, and Durable Objects handle real-time coordination.
+Here’s how the mapping worked out:
+From monolith to serverless
+Moving to Cloudflare Workers brings several advantages for a developer: simple deployment, lower costs, low latency, and built-in security.
+Easy deployment: A traditional Matrix deployment requires server provisioning, PostgreSQL administration, Redis cluster management, TLS certificate renewal, load balancer configuration, monitoring infrastructure, and on-call rotations.
+With Workers, deployment is simply: wrangler deploy. Workers handles TLS, load balancing, DDoS protection, and global distribution.
+Usage-based costs: Traditional homeservers cost money whether anyone is using them or not. Workers pricing is request-based, so you pay when you’re using it, but costs drop to near zero when everyone’s asleep.
+Lower latency globally: A traditional Matrix homeserver in us-east-1 adds 200ms+ latency for users in Asia or Europe. Workers, meanwhile, run in 300+ locations worldwide. When a user in Tokyo sends a message, the Worker executes in Tokyo.
+Built-in security: Matrix homeservers can be high-value targets: They handle encrypted communications, store message history, and authenticate users. Traditional deployments require careful hardening: firewall configuration, rate limiting, DDoS mitigation, WAF rules, IP reputation filtering.
+Workers provide all of this by default.
+Post-quantum protection
+Cloudflare deployed post-quantum hybrid key agreement across all TLS 1.3 connections in October 2022. Every connection to our Worker automatically negotiates X25519MLKEM768 — a hybrid combining classical X25519 with ML-KEM, the post-quantum algorithm standardized by NIST.
+Classical cryptography relies on mathematical problems that are hard for traditional computers but trivial for quantum computers running Shor’s algorithm. ML-KEM is based on lattice problems that remain hard even for quantum computers. The hybrid approach means both algorithms must fail for the connection to be compromised.
+Following a message through the system
+Understanding where encryption happens matters for security architecture. When someone sends a message through our homeserver, here’s the actual path:
+The sender’s client takes the plaintext message and encrypts it with Megolm — Matrix’s end-to-end encryption. This encrypted payload then gets wrapped in TLS for transport. On Cloudflare, that TLS connection uses X25519MLKEM768, making it quantum-resistant.
+The Worker terminates TLS, but what it receives is still encrypted — the Megolm ciphertext. We store that ciphertext in D1, index it by room and timestamp, and deliver it to recipients. But we never see the plaintext. The message “Hello, world” exists only on the sender’s device and the recipient’s device.
+When the recipient syncs, the process reverses. They receive the encrypted payload over another quantum-resistant TLS connection, then decrypt locally with their Megolm session keys.
+Two layers, independent protection
+This protects via two encryption layers that operate independently:
+The transport layer (TLS) protects data in transit. It’s encrypted at the client and decrypted at the Cloudflare edge. With X25519MLKEM768, this layer is now post-quantum.
+The application layer (Megolm E2EE) protects message content. It’s encrypted on the sender’s device and decrypted only on recipient devices. This uses classical Curve25519 cryptography.
+Who sees what
+Any Matrix homeserver operator — whether running Synapse on a VPS or this implementation on Workers — can see metadata: which rooms exist, who’s in them, when messages were sent. But no one in the infrastructure chain can see the message content, because the E2EE payload is encrypted on sender devices before it ever hits the network. Cloudflare terminates TLS and passes requests to your Worker, but both see only Megolm ciphertext. Media in encrypted rooms is encrypted client-side before upload, and private keys never leave user devices.
+What traditional deployments would need
+Achieving post-quantum TLS on a traditional Matrix deployment would require upgrading OpenSSL or BoringSSL to a version supporting ML-KEM, configuring cipher suite preferences correctly, testing client compatibility across all Matrix apps, monitoring for TLS negotiation failures, staying current as PQC standards evolve, and handling clients that don’t support PQC gracefully.
+With Workers, it’s automatic. Chrome, Firefox, and Edge all support X25519MLKEM768. Mobile apps using platform TLS stacks inherit this support. The security posture improves as Cloudflare’s PQC deployment expands — no action required on our part.
+The storage architecture that made it work
+The key insight from porting Tuwunel was that different data needs different consistency guarantees. We use each Cloudflare primitive for what it does best.
+D1 for the data model
+D1 stores everything that needs to survive restarts and support queries: users, rooms, events, device keys. Over 25 tables covering the full Matrix data model.
+CREATE TABLE events (
+event_id TEXT PRIMARY KEY,
+room_id TEXT NOT NULL,
+sender TEXT NOT NULL,
+event_type TEXT NOT NULL,
+state_key TEXT,
+content TEXT NOT NULL,
+origin_server_ts INTEGER NOT NULL,
+depth INTEGER NOT NULL
+);
+D1’s SQLite foundation meant we could port Tuwunel’s queries with minimal changes. Joins, indexes, and aggregations work as expected.
+We learned one hard lesson: D1’s eventual consistency breaks foreign key constraints. A write to rooms might not be visible when a subsequent write to events checks the foreign key. We removed all foreign keys and enforce referential integrity in application code.
+KV for ephemeral state
+OAuth authorization codes live for 10 minutes, while refresh tokens last for a session.
+// Store OAuth code with 10-minute TTL
+kv.put(&format!("oauth_code:{}", code), &token_data)?
+.expiration_ttl(600)
+.execute()
+.await?;
+KV’s global distribution means OAuth flows work fast regardless of where users are located.
+R2 for media
+Matrix media maps directly to R2, so you can upload an image, get back a content-addressed URL – and egress is free.
+Durable Objects for atomicity
+Some operations can’t tolerate eventual consistency. When a client claims a one-time encryption key, that key must be atomically removed. If two clients claim the same key, encrypted session establishment fails.
+Durable Objects provide single-threaded, strongly consistent storage:
+#[durable_object]
+pub struct UserKeysObject {
+state: State,
+env: Env,
+}
+impl UserKeysObject {
+async fn claim_otk(&self, algorithm: &str) -> Result<Option<Key>> {
+// Atomic within single DO - no race conditions possible
+let mut keys: Vec<Key> = self.state.storage()
+.get("one_time_keys")
+.await
+.ok()
+.flatten()
+.unwrap_or_default();
+if let Some(idx) = keys.iter().position(|k| k.algorithm == algorithm) {
+let key = keys.remove(idx);
+self.state.storage().put("one_time_keys", &keys).await?;
+return Ok(Some(key));
+}
+Ok(None)
+}
+}
+We use UserKeysObject for E2EE key management, RoomObject for real-time room events like typing indicators and read receipts, and UserSyncObject for to-device message queues. The rest flows through D1.
+Complete end-to-end encryption, complete OAuth
+Our implementation supports the full Matrix E2EE stack: device keys, cross-signing keys, one-time keys, fallback keys, key backup, and dehydrated devices.
+Modern Matrix clients use OAuth 2.0/OIDC instead of legacy password flows. We implemented a complete OAuth provider, with dynamic client registration, PKCE authorization, RS256-signed JWT tokens, token refresh with rotation, and standard OIDC discovery endpoints.
+curl https://matrix.example.com/.well-known/openid-configuration
+{
+"issuer": "https://matrix.example.com",
+"authorization_endpoint": "https://matrix.example.com/oauth/authorize",
+"token_endpoint": "https://matrix.example.com/oauth/token",
+"jwks_uri": "https://matrix.example.com/.well-known/jwks.json"
+}
+Point Element or any Matrix client at the domain, and it discovers everything automatically.
+Sliding Sync for mobile
+Traditional Matrix sync transfers megabytes of data on initial connection,  draining mobile battery and data plans.
+Sliding Sync lets clients request exactly what they need. Instead of downloading everything, clients get the 20 most recent rooms with minimal state. As users scroll, they request more ranges. The server tracks position and sends only deltas.
+Combined with edge execution, mobile clients can connect and render their room list in under 500ms, even on slow networks.
+The comparison
+For a homeserver serving a small team:
+Traditional (VPS)
+Workers
+Monthly cost (idle)
+$20-50
+<$1
+Monthly cost (active)
+$20-50
+$3-10
+Global latency
+100-300ms
+20-50ms
+Time to deploy
+Hours
+Seconds
+Maintenance
+Weekly
+None
+DDoS protection
+Additional cost
+Included
+Post-quantum TLS
+Complex setup
+Automatic
+*Based on public rates and metrics published by DigitalOcean, AWS Lightsail, and Linode as of January 15, 2026.
+The economics improve further at scale. Traditional deployments require capacity planning and over-provisioning. Workers scale automatically.
+The future of decentralized protocols
+We started this as an experiment: could Matrix run on Workers? It can—and the approach can work for other stateful protocols, too.
+By mapping traditional stateful components to Cloudflare’s primitives — Postgres to D1, Redis to KV, mutexes to Durable Objects — we can see  that complex applications don't need complex infrastructure. We stripped away the operating system, the database management, and the network configuration, leaving only the application logic and the data itself.
+Workers offers the sovereignty of owning your data, without the burden of owning the infrastructure.
+I have been experimenting with the implementation and am excited for any contributions from others interested in this kind of service.
+Ready to build powerful, real-time applications on Workers? Get started with Cloudflare Workers and explore Durable Objects for your own stateful edge applications. Join our Discord community to connect with other developers building at the edge.
+On this page
+Discuss Online
+Related tags
+Cloudflare WorkersCloudflare Workers KVD1Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+Follow on Social Media
+Cloudflare
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+This Post is Available in
+繁體中文
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 87 | f004169 | https://iroh.computer/blog/iroh-0-96-0-the-quic-multipaths-to-1-0 | 2026-01-27 | domain-subframes ===
+iroh 0.96.0 - The QUIC Multipaths to 1.0 - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.96.0 - The QUIC Multipaths to 1.0January 27, 2026 by ramfox
+Welcome to a new release of iroh, a library for building direct connections between devices, putting more control in the hands of your users.
+This is a major breaking change release. Iroh 0.96 represents one of the last major wire-breaking changes before 1.0. We're excited to get this release into your hands so you can start building with the new APIs and provide feedback as we work toward a stable 1.0.
+This release includes QUIC multipath support and our adoption of QUIC-NAT-Traversal (QNT), an emerging IETF standard that replaces our custom holepunching protocol. These are significant architectural changes that lay the groundwork for future improvements to connection reliability and performance. We're eager to see how these features work in real-world usage and continue iterating based on your feedback.
+Known Issue: There is a regression in this release where holepunching is not re-triggered when your network conditions change in most circumstances. We are actively working on a fix.
+We've also refined the connection lifecycle API, introduced a new hook system for connection interception, and renamed the Discovery trait to AddressLookup to better reflect what it actually does. Each of these changes brings us closer to a stable, production-ready 1.0 API.
+🛤️ Multipath
+Iroh 0.96 includes our implementation of QUIC multipath support. This enables iroh to retain multiple network paths simultaneously within a single QUIC connection. It also represents one of the last major wire-breaking changes before 1.0.
+For a deep-dive into our reasoning for switching to QUIC multipath, check out our dedicated blog post: Iroh on QUIC Multipath
+🧗 QUIC NAT Traversal
+In this release, we've completed the switch from our custom holepunching protocol to QUIC-NAT-Traversal (QNT), an emerging IETF standard.
+The QNT protocol integrates holepunching into the QUIC layer, replacing the previous out-of-band approach in iroh. Holepunching packets now benefit from QUIC's built-in encryption, loss recovery mechanisms, congestion control, and DDoS protection.
+Note: There is a known regression where holepunching is not re-triggered when network conditions change in most circumstances. If you lose a direct connection due to a network change, you will likely see lower latency/throughput as the rest of the connection will occur over the relays. We are working on a fix for this.
+We learned many lessons from our custom holepunching work and have integrated them into our implementation. We are planning to propose these changes to the IETF. Here is a rundown of the largest changes:
+No Address Pairings: Unlike the draft, endpoints are not required to control the source address of their sent packets for NAT traversal purposes.
+Multipath is Required: Because we require multipath support, our implementation differs in several key ways:
+Client sends PATH_CHALLENGE to each received address on a new PathId
+Client sends REACH_OUT frames (our renamed PUNCH_ME_NOW) for each local candidate address
+Server receives REACH_OUT and sends PATH_CHALLENGE using connection IDs from an already open PathId to each address
+Simplified Round Handling: We don't perform multiple "rounds" within a round. The draft considers a maximum number of simultaneous attempts to handle large candidate lists, but since limit how many addresses we handle for the remote, we don't need this complexity. When new addresses become available, we abort previous rounds rather than doing incremental holepunching. This means our transport parameter has a completely different meaning - it specifies how many addresses each endpoint is willing to keep for the other endpoint, rather than controlling simultaneous attempt limits.
+Different Transport Negotiation: Our approach requires different transport parameter numbers, meanings, and error handling compared to the draft specification.
+⚡ 0-RTT and the Connection API changes
+We've simplified how iroh handles connections in different states by introducing a type parameter on the Connection type. Rather than having completely separate OutgoingZeroRttConnection and IncomingZeroRttConnection types that duplicate the entire connection API, we now have a unified Connection<T> type where T describes the connection state:
+Connection<HandshakeCompleted> - the default, fully authenticated connection (this is what you get from a normal connect() or accept() call)
+Connection<OutgoingZeroRtt> - a client-side 0-RTT connection (replaces OutgoingZeroRttConnection)
+Connection<IncomingZeroRtt> - a server-side 0-RTT connection (replaces IncomingZeroRttConnection)
+Before we added separate OutgoingZeroRttConnection and IncomingZeroRttConnection structs, you could use Connections that were 0-RTT in the same code paths as non-0-RTT connections. These recent refactors allow you to add some, of that logic back.
+The exception is around methods remote_id and alpn. For fully established connections (Connection<HandshakeCompleted>), methods like remote_id() and alpn() return values directly since the handshake has completed. For 0-RTT connections, these methods have different signatures that reflect the connection's not-yet-fully-authenticated state.
+So, not only have we added back flexibility, but we've de-duplicated a bunch of code that was the same over the three different variaties of connections.
+🪝 Endpoint Hooks
+We've introduced a new hook system for the iroh endpoint that allows you to intercept connection establishment. Hooks are structs that implement the EndpointHooks trait, giving you another opportunity to control which connections are accepted or rejected, as well as an opportunity to catch all connections that are created, even the ones with very short life-spans.
+You can add multiple hooks to an endpoint, and they'll be invoked in the order they were added. The EndpointHooks trait currently provides two key interception points:
+before_connect is invoked before an outgoing connection is started, letting you inspect or reject connection attempts before any network activity occurs.
+after_handshake is invoked for both incoming and outgoing connections once the TLS handshake has completed, allowing you to make decisions based on the established connection's properties.
+Both methods return an Outcome that can be either Accept or Reject. If any hook returns Reject, the connection or connection attempt will be immediately rejected.
+Alongside the hooks system, we've added ConnectionInfo, a lightweight struct that provides information about a connection without keeping the connection itself alive. You can inspect connection stats and paths, and there's a closed() method that returns a future which completes once the connection closes - all without preventing the connection from being garbage collected when no longer in use.
+We've included two examples to demonstrate what you can do with this new system:
+auth-hook shows how to implement authentication for iroh protocols through middleware and a separate authentication protocol. This approach means individual protocols don't need to handle authentication themselves - it's all managed at the connection layer.
+monitor-connections demonstrates monitoring incoming and outgoing connections, printing detailed connection statistics when each connection closes.
+This hook system opens up new possibilities for implementing concerns like authentication, authorization, rate limiting, and observability at the connection layer, keeping your protocol implementations focused on their core logic. If you have use cases for additional hooks that cannot be solved using the two given hooks, please reach out so we can understand.
+🚚 TransportAddr rather than conn_type and ConnectionType
+Internally, we have been discussing the concept of "Custom Transports" in iroh, and allowing users to add additional ways to connect to other endpoints, rather than just TCP (relay) and UDP (direct) - think bluetooth or webRTC. Since we already know that is a direction we want to go, we need to make sure that iroh 1.0 can handle supporting different kinds of addresses, other than just relay addresses or IP socket addresses. To handle that, we've added the TransportAddr enum, a non-exhaustive enum that allows you to talk about all of the different kinds of addresses that an iroh endpoint can talk on. For now, that enum has two variants TransportAddr::Relay and TransportAddr:Ip.
+If you have worked with the Endpoint::conn_type method and the ConnectionType struct before, the previous two variants may seem familiar. They are very similar to the ConnectionType::Relay and ConnectionType::Direct variants.
+We have removed the conn_type method and ConnectionType struct. Understanding the connection type for a connection on multipath is conceptually different than it was previously in iroh. Before, iroh was the one controlling which path to send on. Now, with QUIC multipath, QUIC is able to handle multiple paths, and chooses itself with path to send on.
+Instead of querying the endpoint for a connection type, you now directly inspect the paths being used by a connection through Connection::paths(). This returns a Watcher of PathInfoList, which updates every time a new path is opened or closed, or when the "selected" path has changed. If the selected PathInfo has PathInfo::remote_addr of type TransportAddr::Relay, than you have a relay connection, or of TransportAddr::Ip, then you have a holepunched direct connection.
+Here is an example of how to understand when your connection type has changed:
+// note: you will need to import the `Watcher` trait to use the `Connection::paths` method
+use iroh::Watcher;
+...
+// assume we've already built an endpoint `ep` and want to talk to remote endpoint `remote_id`
+let conn = ep.connect(remote_id.into(), MY_TEST_ALPN).await?;
+let paths_watcher = conn.paths();
+let paths_task = tokio::task::spawn(async move {
+let stream = paths_watcher.stream();
+let mut stream = paths_watcher.stream();
+// lets keep track of the previously selected path:
+let mut previous = None;
+// we will get a new entry on the stream each time a new path is added, removed, or selected
+while let Some(paths) = stream.next().await {
+// get the currently selected path:
+let path = paths
+.into_iter()
+.find(|p| p.is_selected())
+.expect("expected to always have a selected path");
+// We can get path updates without the selected path changing. We don't want to log again in that case.
+if Some(&path) == previous.as_ref() {
+continue;
+}
+print(SelectedPath {
+addr: path.remote_addr().clone(),
+rtt: path.rtt(),
+});
+previous = Some(path);
+}
+});
+// do fun protocol stuff with the conn
+...
+CopyCopied!
+🔍 Discovery renamed to AddressLookup
+In this release, we've renamed the Discovery trait and related modules to AddressLookup to better reflect what this component actually does. The name "discovery" was causing confusion because it implied that the system was used for discovering new endpoints you could talk to in the "wild" - like finding peers you've never encountered before. However, the actual purpose of this trait is much more specific: it resolves known endpoint IDs into addresses iroh understands how to dial.
+The new name AddressLookup more accurately describes this purpose: given an endpoint ID you already know about, look up the addresses where that endpoint can be reached.
+This is a straightforward rename that affects the following:
+The Discovery trait is now AddressLookup
+The discovery module is now address_lookup
+Related types have been updated accordingly (e.g., DnsDiscovery → DnsAddressLookup, MdnsDiscovery → MdnsAddressLookup)
+Examples have been renamed for clarity (e.g., dht_discovery.rs → dht_address_lookup.rs, locally-discovered-nodes.rs → mdns_address_lookup.rs)
+It's worth noting that one of our address lookup services, MdnsAddressLookup, actually does perform both functions: it discovers new endpoints on the local network and resolves their addresses. However, the discovery part of that system is not part of the AddressLookup trait itself - the trait is purely focused on address resolution for known endpoint IDs.
+If you're implementing custom discovery mechanisms or using the discovery APIs, you'll need to update your imports and type references. The functionality remains the same - only the names have changed to improve clarity and reduce confusion about the system's purpose.
+⚠️ Breaking Changes
+removed
+enum iroh::endpoint::AddEndpointAddrError
+enum iroh::endpoint::GetMappingAddressError
+mod iroh::net_report:
+struct iroh::net_report::Metrics
+enum iroh::net_report::Probe
+struct iroh::net_report::RelayLatencies
+struct iroh::net_report::Options
+struct iroh::net_report::QuicConfig
+enum iroh::endpoint::ConnectionType was removed, the closest equivalent is iroh::TransportAddr, which has variants Relay and Ip,- note: now that we can have multiple paths per connection, these types now describe paths not connections. Look at the iroh::endpoint::Connection::paths method and the iroh::endpoint::PathInfo struct for more details on how you can learn the type of the currently selected path.
+enum iroh::endpoint::ControlMsg
+enum iroh::endpoint::AuthenticationError
+enum iroh::endpoint::AddEndpointAddrError
+enum iroh::endpoint::DirectAddrInfo
+enum iroh::endpoint::GetMappingAddressError
+struct iroh::endpoint::CryptoServerConfig
+struct iroh::endpoint::RetryError
+struct iroh::endpoint::WeakConnectionHandle
+fn iroh::endpoint::AuthenticationError::from(source: iroh_quinn_proto::connection::ConnectionError) -> Self
+fn iroh::endpoint::Endpoint::conn_type(&self, endpoint_id: iroh_base::key::EndpointId) -> Option<n0_watcher::Direct<iroh::endpoint::ConnectionType>>
+fn iroh::endpoint::Endpoint::latency(&self, endpoint_id: iroh_base::key::EndpointId) -> Option<core::time::Duration>
+variant iroh::endpoint::AuthenticationErrro::ConnectionError
+variant iroh::endpoint::ConnectWithOptsError::AddEndpointAddr
+variant iroh::endpoint::Source::Saved
+Changed
+Connection Changes
+struct iroh::endpoint::Connection now has a type parameter:
+iroh::endpoint::Connection is aliased from Connection<HandshakeCompleted>
+iroh::endpoint::IncomingZeroRttConnection is aliased from Connection<IncomingZeroRtt>
+iroh::endpoint::IncomingZeroRttConnection is aliased from Connection<OutgoingZeroRtt>
+fn iroh::endpoint::Incoming::accept_with(self, server_config: Arc<iroh_quinn_proto::config::ServerConfig>) -> Result<iroh::endpoint::Accepting, iroh_quinn_proto::connection::ConnectionError> changed to iroh::endpoint::Incoming::accept_with(self, server_config: Arc<iroh::endpoint::ServerConfig) -> Result<iroh::endpoint::Accepting, iroh::endpoint::ConnectionError>
+fn iroh::endpoint::Incoming::retry(self) -> core::result::Result<(), iroh_quinn::incoming::RetryError> changed to iroh::endpoint::Incoming::retry(self) -> Result<(), iroh::endpoin::RetryError>
+variant iroh::endpoint::ConnectWithOptsError::NoAddress: source iroh::endpoint::GetMappingAddressError changed to iroh::endpoint::ConnectWithOptsError::NoAddress: source iroh::discovery::DiscoveryError
+Net Report
+struct iroh::net_report::Report is now iroh::NetReport
+const iroh::net_report::TIMEOUT is now iroh::NET_REPORT_TIMEOUT
+Server & Transport Config
+struct iroh::endpoint::ServerConfig, use the iroh::endpoint::Endpoint::create_server_config_builder to get a ServerConfigBuilder, which allows you to add custom configuration for when the endpoint acts as a server that accepts connections
+struct iroh::endpoint::TransportConfig is now iroh::endpoint::QuicTransportConfig, use the iroh::endpoint::QuicTransportConfig::builder method to get a QuicTransportConfigBuilder to add custom configuration for the QUIC transport
+fn iroh::endpoint::Builder::transport_config(self, transport_config: iroh_quinn_proto::config::transport::TransportConfig) -> Self changed to fn iroh::endpoint::Builder::transport_config(self, transport_config: iroh::endpoint::QuicTransportConfig) -> Self
+Bind Address
+iroh::endpoint::Builder::bind_addr_v4(self, addr: SocketAddrV4) was replaced by iroh::endpoint::Builder::bind_addr(self, addr: ToSocketAddr)-> Result<Self, InvalidSocketAddr>
+iroh::endpoint::Builder::bind_addr_v6(self, addr: SocketAddrV6) was replaced by iroh::endpoint::Builder::bind_addr(self, addr: ToSocketAddr)-> Result<Self, InvalidSocketAddr>
+Metrics
+iroh::metrics::MagicsockMetrics has entirely new set of fields
+Discovery → AddressLookup
+module iroh::discovery renamed to iroh::address_lookup
+trait iroh::discovery::Discovery renamed to iroh::address_lookup::AddressLookup
+fn iroh::endpoint::Endpoint::discovery renamed to iroh::endpoint::Endpoint::address_lookup
+fn iroh::endpoint::Builder::set_user_data_for_discovery renamed to iroh::endpoint::Builder::set_user_data_for_address_lookup
+fn iroh::endpoint::Builder::discovery renamed to iroh::endpoint::Builder::address_lookup
+struct iroh::discovery::MdnsDiscovery renamed to iroh::address_lookup::MdnsAddressLookup
+struct iroh::discovery::DhtDiscovery renamed to iroh::address_lookup::DhtAddressLookup
+struct iroh::discovery::StaticDiscovery renamed to iroh::address_lookup::MemoryLookup
+trait iroh::discovery::DynIntoDiscovery renamed to iroh::address_lookup::DynIntoAddressLookup
+trait iroh::discovery::IntoDiscovery renamed to iroh::address_lookup::IntoAddressLookup
+struct iroh::discovery::DnsDiscovery renamed to iroh::address_lookup::DnsAddressLookup
+enum iroh::discovery::DiscoveryError renamed to iroh::address_lookup::AddressLookupError
+enum iroh::discovery::IntoDiscoveryError renamed to iroh::address_lookup::IntoAddressLookupError
+struct iroh::discovery::DiscoveryItem renamed to iroh::address_lookup::AddressLookupItem
+struct iroh::discovery::ConcurrentDiscovery renamed to iroh::address_lookup::ConcurrentAddressLookup
+feature discovery-local-network renamed to address-lookup-mdns
+feature discovery-pkarr-dht renamed to address-lookup-pkarr-dht
+🎉 The Road to 1.0
+With iroh 0.96 bringing multipath support, we've completed our last planned wire-breaking change before 1.0. We hope to fix the known holepunching regression in a patch release soon, now that we understand the cause of the issue. Our next minor release will be 0.97, which will include new features, API changes, and bug fixes as we continue working toward a stable 1.0.
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.96.0.
+If you want to know what is coming up, check out the v0.97.0 milestone, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter, Mastodon, and Bluesky.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+

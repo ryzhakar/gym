@@ -1,0 +1,2272 @@
+=== ROW 139 | f005691 | https://notes.brooklynzelenka.com/Blog/Notes-on-Writing-Wasm | 2026-03-08 | hn-lobsters ===
+Notes on Writing Wasm
+20 captures
+03 Jan 2026 - 11 May 2026
+Mar
+APR
+May
+22
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260422234800/https://notes.brooklynzelenka.com/Blog/Notes-on-Writing-Wasm
+🎒 Monad Nomad
+Search
+Search
+Dark modeLight mode
+Reader mode
+Explorer
+Home
+❯
+Blog
+❯
+Notes on Writing Wasm
+Notes on Writing Wasm
+Created 27 Dec 2025Updated 27 Dec 202516 min read
+I’ve been writing an increasing amount of Rust‑based Wasm over the past few years. The internet has many opinions about Wasm, and wasm-bindgen is — let’s say — not universally beloved, but as I get more experience with it and learn how to work around its shortcomings, I’ve found some patterns that have dramatically improved my relationship with it.
+I want to be clear up front about two things:
+I deeply appreciate the work of the wasm-bindgen maintainers.
+It’s entirely possible that there are better ways to work with bindgen than presented here; this is just what’s worked for me in practice!
+I’ve seen excellent programmers really fight with bindgen. I don’t claim to have all the answers, but this post documents a set of patterns that have made Rust+Wasm dramatically less painful for me.
+TL;DR
+Unless you have a good reason not to:
+Pass everything over the Wasm boundary by &reference
+Prefer Rc<RefCell<T>> or Arc<Mutex<T>>1 over &mut
+Do not derive Copy on exported types
+Use wasm_refgen for any type that needs to cross the boundary in a collection (Vec, etc)
+Prefix all Rust-exported types with Wasm* and set the js_name/js_class to the unprefixed name
+Prefix all JS-imported types with Js*
+Implement From<YourError> for JsValue using js_sys::Error for all of Rust-exported error types
+Some of these may seem strange without further explanation. Below give more of the rationale in detail.
+A Quick Refresher
+wasm-bindgen generates glue code that lets Rust structs, methods, and functions be called from JS/TS. Some Rust types have direct JS representations (those implementing IntoWasmAbi); others live entirely on the Wasm side and are accessed through opaque handles.
+Wasm bindings often look something like this:
+#[wasm_bindgen(js_name = Foo)]
+pub struct WasmFoo(RustFoo)
+#[wasm_bindgen(js_name = Bar)]
+pub struct WasmBar(RustBar)
+Conceptually, JS holds tiny objects that look like { __wbg_ptr: 12345 }, which index into a table on the Wasm side that owns the real Rust values.
+The tricky part is that you’re juggling two memory models at once:
+JavaScript: garbage‑collected, re‑entrant, async
+Rust: explicit ownership, borrowing, aliasing rules
+Bindgen tries to help, but it both under‑ and over‑fits: some safe patterns are rejected, and some straight-up footguns are happily accepted. Ultimately, everything that crosses the boundary must have some JS representation, so it pays to be cognisant about what that representation is.
+flowchart TD
+subgraph JavaScript
+subgraph Foo
+jsFoo["{ __wbg_ptr: 42817 }"]
+end
+subgraph Bar
+jsBar["{ __wbg_ptr: 71902 }"]
+end
+end
+subgraph Wasm
+subgraph table[Boundary Table]
+objID1((42817)) --> WasmFoo
+subgraph WasmFoo
+arc1[RustFoo]
+end
+objID2((71902)) --> WasmBar
+subgraph WasmBar
+arc2[RustBar]
+end
+end
+end
+jsFoo -.-> objID1
+jsBar -.-> objID2
+Should You Write Manual Bindings?
+My take on most things is “you do you”, and this one is very much a matter of taste. I see a fair amount of code online that seems to prefer manual conversions with js_sys. This is a reasonable strategy, but I have found it to be time consuming and brittle. If you change your Rust types, the compiler isn’t going to help you when you’re manually calling dyn_into to do runtime checks. Bindgen is going to insert the same runtime checks either way, but if you lean into its glue (including with some of the patterns presented here), you can get much better compile-time feedback.
+Names Matter
+It’s an old joke that the two hardest problems in computer science are naming, caching, and off-by-one-errors. Naming is extremely important for mental framing and keeping track of what’s happening, both of which can be a big source of pain when working with bindgen. As a rule, I use the current naming conventions:
+IntoWasmAbi Types
+QUOTE
+Trait IntoWasmAbi […] A trait for anything that can be converted into a type that can cross the Wasm ABI directly.
+— Source
+These are the primitive types of Wasm, such as u32, String, Vec<u8>, and so on. They get converted to/from native JS and Rust types when they cross the boundary. We do not need to do anything to these types.
+Rust-Exported Structs Get Wasm*
+This is where you’ll usually spend most of your time. Wrapping Rust enums and structs in newtypes to re-expose them to JS is the bread and butter of Wasm. These wrappers get prefixed with Wasm* to help distinguish them from JS-imported interfaces, IntoWasmAbi types, and plain Rust objects. On the JS-side we can strip the Wasm, since it will only get the one representation, and (if done correctly) the JS side generally doesn’t need to distinguish where a type comes from.
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+pub enum StreetLight {
+Red,
+Yellow,
+Gree,
+}
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+#[wasm_bindgen(js_name = StreetLight)]
+pub struct WasmStreetLight(StreetLight)
+#[wasm_bindgen(js_class = StreetLight)]
+impl WasmStreetLight {
+#[wasm_bindgen(constructor)]
+pub fn new() -> Self {
+Self(StreetLight::Red)
+}
+// ...
+}
+On the JS side, there’s only one StreetLight, so the prefix disappears. On the Rust side, the prefix keeps exported types visually distinct from:
+Plain Rust types
+JS‑imported interfaces
+IntoWasmAbi values
+JS-Imported Interfaces Get Js*
+Any interface brought into Rust via extern "C" get a duck typed interface (by default). These pass over the boundary without restriction, which makes them a very helpful escape hatch ___.
+#[wasm_bindgen]
+extern "C" {
+#[wasm_bindgen(js_name = logCurrentTime)]
+pub fn js_log_current_time(timestamp: u32);
+}
+#[wasm_bindgen]
+extern "C" {
+#[wasm_bindgen(js_name = Hero)]
+type JsCharacter;
+#[wasm_bindgen(method, getter, js_name = hp)]
+pub fn js_hp(this: &JsCharacter) -> u32;
+}
+// Elsewhere
+const gonna_win: bool = maelle.js_hp() != 0
+Duck typing is really helpful for cases where you want to expose a Rust trait to JS: as long as your Rust-exported type implements the interface, you can accept your Rust-exported type a JS-imported type, while retaining the ability to replace it with JS-imported types. A concrete example is if you’re exporting a storage interface, you likely have a default Rust implementation, but want extensibility if downstream devs want to give it an IndexedDB or S3 backend.
+NOTE
+We’re going to abuse this “duck typed JS-imports on a Rust-export” later for wasm_refgen.
+The main gotchas with this approach are that 1. it’s brittle if the interface changes, and 2. if you don’t prefix your methods on the Rust-side with js_*, you can run into namespace collisions (hence why I recommend prefixing these everywhere by convention). As an added bonus, this makes you very aware of where you’re making method calls over the Wasm boundary.
+Don’t Derive Copy
+Copy makes it trivially easy to accidentally duplicate a Rust value that is actually a thin handle to a resource, resulting in null pointers. Just make a habit of avoiding it on exported wrappers. This can be a hard muscle memory to break since we usually want Copy wherever possible in normal Rust code.
+Copy is only acceptable when exporting wrapping around pure data that has IntoWasmAbi, never for handles. I chalk this up as an optimisation; default to non-Copy unless you’re really sure it’s okay.
+Avoiding Broken Handles
+Try as it might, wasm-bindgen is unable to prevent handles breaking at runtime. A common culprit is passing an owned value to Rust:
+#[wasm_bindgen(js_class = Foo)]
+impl WasmFoo {
+#[wasm_bindgen(js_name = "doSomething")]
+pub fn do_something(&self, bar: Bar) -> Result<(), Error> {
+// ...
+}
+#[wasm_bindgen(js_name = "doSomethingElse")]
+pub fn do_something_else(&self, bars: Vec<Bar>) -> Result<(), Error> {
+// ...
+}
+}
+If you do the above, it will of course consume your Bar(s), but since this goes over the boundary you get no help from the compiler about how you manage the JS side! The object will get freed on the Rust side, but you still have a JS handle that now points to nothing. You might say something like “so much for memory safety”, and you wouldn’t be wrong.
+Why would you find yourself in this situation? There’s a couple reasons:
+Bindgen forbids &[T] unless T: IntoWasmAbi
+Vec<&T> is not allowed
+You just want the compiler to stop yelling
+Types that have are IntoWasmAbi that are not Copy get cloned over the boundary (no handle) so they behave differently from both non-IntoWasmAbi and Copy types
+Prefer Passing By Refence (by Default)
+If you take one thing from this post, take this:
+INFO
+Never consume exported values across the boundary unless you have a clear reason to do so and are going to manage the handle on the JS side.
+This one if pretty straightforward: pass everything around by reference. Consuming a value is totally “legal” to the compiler since it will happily free the memory on Rust side, but the JS-side handle will not get cleaned up. The next time you go to use that handle, it will throw an error. Unless you’re doing something specific with memory management, just outright avoid this situation: pass by &reference and use interior mutability.
+This is a pretty easy pattern to follow: default to wrapping non-IntoWasmAbi types in Rc<RefCell<T>> or Arc<Mutex<T>>1 depending on if and how you have your code structured for async. The cost of going over the Wasm boundary definitely eclipses an Rc bump, so this is highly unlikely to be a performance bottleneck.
+#[derive(Debug, Clone)]
+#[wasm_bindgen(js_name = Foo)]
+pub struct WasmFoo(pub(crate) Rc<RefCell<Foo>>)
+#[derive(Debug, Clone)]
+#[wasm_bindgen(js_name = Bar)]
+pub struct WasmBar(pub(crate) Rc<RefCell<Bar>>)
+#[wasm_bindgen(js_class = Foo)]
+impl WasmFoo {
+#[wasm_bindgen(js_name = "doSomething")]
+pub fn do_something(&self, bar: WasmBar) -> Result<(), Error> {
+// ...
+}
+}
+Avoid &mut
+This one can be pretty frustrating when it happens: there are cases where taking &mut self can throw runtime errors due to re-entrancy. This pops up more frequently than I would have expected given that the default behaviour of JS is single threaded, but JS’s async doesn’t have to respect Rust’s compile-time exclusivity2 checks.
+INFO
+If you can’t prove exclusivity, don’t pretend you have it. Use the relevant interior‑mutability primitive for your concurrency model.
+Ducking Around Reference Restrictions
+As mentioned earlier, you can use extern "C" JS-imports to model any duck typed interface, including Rust-exports. This means that we are able to work around several restrictions3 in wasm-bindgen.
+Owned Collection Restriction
+Bindgen restricts which types can be passed across the boundary. The one folks often run into first is that &[T] only works when T is IntoWasmAbi (including JS-imported types4) — i.e. usually not your Rust-exported structs. This means that you are often forced to construct a Vec<T>. This makes sense since JS is going to take control over the resulting JS array, and can mutate it as it pleases. It also means that when the type comes back in, you are unable to accept it as &[T] or Vec<T> unless the earlier IntoWasmAbi caveat applies.
+A classic example of this is returning an owned Vec<T> of instead of a slice when T does not implement a JS-managed type. What’s returned to JS are not a bunch of Ts, but rather handles (e.g. { __wbg_ptr: 12345 }) to Ts that live on the Wasm side.4
+On the other hand, we’re able to treat handles as duck typed objects that conform to some interface. Handles are far less restricted than Rust-exported types, and can be passed around more freely.
+The workaround is fairly straightforward:
+Make your exported type cheap to clone
+Expose a namespaced clone method
+Import that method via a JS interface
+Convert with friendly ergonomics (.into)
+// Step 1: make it inexpensive to `clone` (i.e. using `Rc` or `Arc` if not already cheap)
+#[derive(Debug, Clone)]
+#[wasm_bindgen(js_name = Character)]
+pub struct WasmCharacter(Rc<RefCell<Character>>)
+#[wasm_bindgen(js_class = Character)]
+impl WasmCharacter {
+// ...
+// Step 2: expose a *namespaced* (important!) `clone` function on the Wasm export
+#[doc(hidden)]
+pub fn __myapp_character_clone(&self) -> Self {
+self.clone()
+}
+}
+#[wasm_bindgen]
+extern "C" {
+type JsCharacter
+// Step 3: create a JS-imported interface with that namespaced `clone`
+pub fn __myapp_character_clone(this: &JsCharacter) -> WasmCharacter;
+}
+// Step 4: for convenience, wrap the namespaced clone in a `.from`
+impl From<JsChcaracter> for WasmCharacter {
+fn from(js: JsCharacter) -> Self {
+js.__myapp_character_clone()
+}
+}
+//                             Nicely typed Vec
+// Step 5: use it!                 vvvvv
+pub fn do_many_things(js_foos: Vec<JsFoo>) {
+let rust_foos: Vec<WasmFoo> = js_foos.iter().map(Into::into).collect();
+// ...             ^^^^^^^
+//                Converted
+}
+This still requires that you to manually track which parts bindgen thinks are JS-imports and which it thinks are Rust-exports, but with our naming convention it’s pretty clear what’s happening. The conversion isn’t free, but (IMO) it makes your interfaces significantly more flexible and legible.
+Use wasm_refgen
+The above pattern can be a bit brittle — even while writing the boilerplate — since all of the names have to line up just so, and you don’t get compiler help when crossing the boundary like this. To help make this more solid, I’ve wrapped this pattern up as a macro exported from wasm_refgen.
+use std::{rc::Rc, cell::RefCell};
+use wasm_bindgen::prelude::*;
+use wasm_refgen::wasm_refgen;
+#[derive(Clone)]
+#[wasm_bindgen(js_name = "Foo")]
+pub struct WasmFoo {
+map: Rc<RefCell<HashMap<String, u8>>>, // Cheap to clone
+id: u32 // Cheap to clone
+}
+#[wasm_refgen(js_ref = JsFoo)] // <-- THIS
+#[wasm_bindgen(js_class = "Foo")]
+impl WasmFoo {
+// ... your normal methods
+}
+Here’s a diagram from the README about how it works:
+┌───────────────────────────┐
+│                           │
+│      JS Foo instance      │
+│        Class: Foo         │
+│ Object { wbg_ptr: 12345 } │
+│                           │
+└─┬──────────────────────┬──┘
+│                      │
+│                      │
+Implements                  │
+│                      │
+│                      │
+┌───────────▼───────────────┐      │
+│                           │      │
+│     TS Interface: Foo     │  Pointer
+│       only method:        │      │
+│   __wasm_refgen_to_Foo    │      │
+│                           │      │
+└───────────┬───────────────┘      │
+JS/TS                │                      │
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─│─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─
+Wasm                │                      │
+│                      │
+┌───────────┼──────────────────────┼───────────┐
+│           ▼                      ▼           │
+│ ┌────────────────┐        ┌────────────────┐ │
+│ │                │        │                │ │
+│ │     &JsFoo     ◀────────▶    WasmFoo     │ │
+│ │ Opaque Wrapper │        │  Instance #1   │ │
+│ │                │        │                │ │
+│ └────────────────┘        └────────────────┘ │
+└──────────────────────┬───────────────────────┘
+│
+│
+Into::into
+(uses `__wasm_refgen_to_Foo`)
+(which is a wrapper for `clone`)
+│
+│
+▼
+┌────────────────┐
+│                │
+│    WasmFoo     │
+│  Instance #2   │
+│                │
+└────────────────┘
+References passed over the boundary are already passed by ownership by bindgen — but these handles grab the reference off the boundary table. Recall that our Into::into calls clone under the hood, so these are always safe to consume without breaking the JS handle!
+pub fn do_many_things(js_foos: Vec<JsFoo>) {
+let rust_foos: Vec<WasmFoo> = js_foos.iter().map(Into::into).collect();
+// ...
+}
+Automatically Convert To JS Errors
+There are a few ways to handle errors coming from Wasm, but IMO the best balance of detail and convenience is to turn them into js_sys::Errors on their way to JsValue. This lets us return Result<T, MyError> instead of Result<T, JsValue>.
+For example, let’s say we have this type:
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum RwError {
+#[error("cannot read {0}")]
+CannotRead(String),
+#[error("cannot write")]
+CannotWrite
+}
+The fact that this is an enum is actually not a problem (the rest of the technique would work), but if you’re wrapping a different crate you’ll need a newtype wrapper:
+// Important: no #[wasm_bindgen]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error(transparent)]
+pub struct WasmRwError(#[from] RwError) // #[from] gets us `?` notation to lift into the newtype
+We “could” slap a #[wasm_bindgen] on this and call it a day, but then we wouldn’t get nice error info on the JS side. Instead, we convert to JsValue ourselves with this final bit of glue:
+impl From<WasmRwError> for JsValue {
+fn from(wasm: WasmRwError) -> Self {
+let err = js_sys::Error::new(&wasm.to_string()); // Error message
+err.set_name("RwError"); // Nice JS error type
+err.into() // Convert to `JsValue`
+}
+}
+Now you can return Result<T, WasmRwError>, including if you want to call the Wasm-wrapped function elsewhere in your code. It retains the nice error on the Rust side (at minimum types-as-documentation). You also get ? notation without needing to do in-place JsValue conversion everywhere this error occurs; bindgen will helpfully do the conversion for you.
+Typed Rust errors
+? propagation
+Real JS Error objects
+Zero boilerplate at call sites
+This works as a copy-paste template; I’ve considered wrapping it as a macro but it’s less than 10 LOC. I was actually surprised that something like #[wasm_bindgen(error)] wasn’t available (maybe it is and I just can’t find it; heck maybe it’s worth contributing upstream).
+Print Build Info
+This is a quality of life improvement that has saved me many hours of grief: print the exact build version, dirty status, and Git hash to the console on startup. If you’re working on your Wasm project at the same time as developing a pure-JS library that consumes it, getting a JS bundler like Vite to pick up changes can be flaky at best.
+This takes a bit of setup, especially if you’re in a Cargo workspace, but pays off. Here’s my current setup:
+$WORKSPACE/Cargo.toml[workspace]
+resolver = "3"
+members = [
+"build_info",
+# ...
+]
+$WORKSPACE/build_info/Cargo.toml[package]
+name = "build_info"
+publish = false
+# ...
+$WORKSPACE/build_info/build.rsuse std::{
+env, fs,
+path::{Path, PathBuf},
+process::Command,
+time::{SystemTime, UNIX_EPOCH},
+};
+#[allow(clippy::unwrap_used)]
+fn main() {
+let ws = env::var("CARGO_WORKSPACE_DIR").map_or_else(
+|_| PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()),
+PathBuf::from,
+);
+let repo_root = find_repo_root(&ws).unwrap_or(ws.clone());
+let git_dir = repo_root.join(".git");
+watch_git(&git_dir);
+let git_hash = cmd_out(
+"git",
+&[
+"-C",
+#[allow(clippy::unwrap_used)]
+repo_root.to_str().unwrap(),
+"rev-parse",
+"--short",
+"HEAD",
+],
+)
+.unwrap_or_else(|| "unknown".to_string());
+let dirty = cmd_out(
+"git",
+&["-C", repo_root.to_str().unwrap(), "status", "--porcelain"],
+)
+.is_some_and(|s| !s.is_empty());
+let git_hash = if dirty {
+let secs = SystemTime::now()
+.duration_since(UNIX_EPOCH)
+.unwrap()
+.as_secs();
+format!("{git_hash}-dirty-{secs}")
+} else {
+git_hash
+};
+println!("cargo:rustc-env=GIT_HASH={git_hash}");
+}
+fn cmd_out(cmd: &str, args: &[&str]) -> Option<String> {
+Command::new(cmd).args(args).output().ok().and_then(|o| {
+if o.status.success() {
+Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+} else {
+None
+}
+})
+}
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
+let mut cur = Some(start);
+while let Some(dir) = cur {
+if dir.join(".git").exists() {
+return Some(dir.to_path_buf());
+}
+cur = dir.parent();
+}
+None
+}
+fn watch_git(git_dir: &Path) {
+println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
+if let Ok(head) = fs::read_to_string(git_dir.join("HEAD")) {
+if let Some(rest) = head.strip_prefix("ref: ").map(str::trim) {
+println!("cargo:rerun-if-changed={}", git_dir.join(rest).display());
+println!(
+"cargo:rerun-if-changed={}",
+git_dir.join("packed-refs").display()
+);
+}
+}
+println!("cargo:rerun-if-changed={}", git_dir.join("index").display());
+let fetch_head = git_dir.join("FETCH_HEAD");
+if fetch_head.exists() {
+println!("cargo:rerun-if-changed={}", fetch_head.display());
+}
+}
+$WORKSPACE/build_info/src/lib.rs#![no_std]
+pub const GIT_HASH: &str = env!("GIT_HASH");
+…and finally where to get it to print in Wasm:
+use wasm_bindgen::prelude::*;
+// ...
+#[wasm_bindgen(start)]
+pub fn start() {
+set_panic_hook();
+// I actually use `tracing::info!` here,
+// but that's out of scope for this article
+web_sys::console.info1(format!(
+"️your_package_wasm v{} ({})",
+env!("CARGO_PKG_VERSION"),
+build_info::GIT_HASH
+));
+}
+Wrap Up
+Rust+Wasm is powerful—but unforgiving if you pretend the boundary isn’t there. Be explicit, name things clearly, pass by reference, and duck typing around any (unreasonable) limitations bindgen places on you.
+With any luck, that’s helpful to others! I may update this over time as I find myself using more patterns.
+Footnotes
+FWIW I prefer futures::lock::Mutex on std, or async_lock::Mutex under no_std. ↩ ↩2
+I’m actually more annoyed by Rust on this one (see earlier comment about naming being important). &mut isn’t “just” a mutable reference; it’s an exclusive reference, which happens to make direct mutability viable, but the semantics are more about exclusivity. ↩
+I sometimes wonder if it’s my lot in life to import features between langauges. Witchcraft was my first real library of note, and I can’t seem to stop abusing languages this way 😅 ↩
+This simple example is already more nuance than would be ideal to juggle when writing code. ↩ ↩2
+Graph View
+Table of Contents
+TL;DR
+A Quick Refresher
+Should You Write Manual Bindings?
+Names Matter
+IntoWasmAbi Types
+Rust-Exported Structs Get Wasm*
+JS-Imported Interfaces Get Js*
+Don’t Derive Copy
+Avoiding Broken Handles
+Prefer Passing By Refence (by Default)
+Avoid &mut
+Ducking Around Reference Restrictions
+Owned Collection Restriction
+Use wasm_refgen
+Automatically Convert To JS Errors
+Print Build Info
+Wrap Up
+Backlinks
+Subduction
+Welcome to The Monad Nomad
+Created with Quartz v4.5.2 © 2026
+👩🏼‍💻 GitHub
+🦋 Bluesky
+🐘 Mastodon
+🗞️  RSS
+
+=== ROW 140 | f005699 | https://openui.com/blog/rust-wasm-parser | 2026-03-20 | hn-lobsters ===
+Rewriting our Rust WASM Parser in TypeScript | OpenUI - The Open Standard for Generative UI
+OpenUI
+Product
+ResourcesDocumentationBenchmarksNew
+Open source
+OpenUIThe open standard for generative UI.
+Cloud
+GatewayOne endpoint for generative UI across every model.ObservabilityProduct analytics and user insights for AI agents.Early access
+Demos
+CompareOpenUI ChatAI DashboardsOpenUI vs JSON
+Lab projects
+OpenClaw OSAppLessBy community
+Tools
+DebugInspect
+Other
+BenchmarksPricingBlogsIntegrations
+7016stars
+On this page
+The PipelineThe WASM Boundary TaxAttempted Fix: Skip the JSON Round-TripBenchmark: JSON string vs direct JsValue (1000 runs, µs per call)The Real Fix: Eliminate the Boundary EntirelyBenchmark Method: One-Shot ParseResults: One-Shot Parse (median µs, 1000 runs)The Algorithmic Problem: O(N²) StreamingThe Fix: Statement-Level Incremental CachingBenchmark Method: Full-Stream Total Parse CostResults: Full-Stream Total Parse Cost (median µs across all chunks)Why the two TS numbers look differentSummaryWhen WASM Actually HelpsKey Takeaways
+Rewriting our Rust WASM Parser in TypeScript
+We rewrote our Rust WASM Parser in TypeScript - and it got 3x Faster
+Thesys Engineering Team·Fri Mar 13 2026
+We built the openui-lang parser in Rust and compiled it to WASM.
+The logic was sound: Rust is fast, WASM gives you near-native speed in the browser,
+and our parser is a reasonably complex multi-stage pipeline.
+Why wouldn't you want that in Rust?
+Turns out we were optimising the wrong thing.
+The Pipeline
+The openui-lang parser converts a custom DSL emitted by an LLM into a React component tree. It runs on every streaming chunk — so latency matters a lot. The pipeline has six stages:
+autocloser → lexer → splitter → parser → resolver → mapper → ParseResult
+Autocloser: makes partial (mid-stream) text syntactically valid by appending minimal closing brackets/quotes
+Lexer: single-pass character scanner, emits typed tokens
+Splitter: cuts the token stream into id = expression statements
+Parser: recursive-descent expression parser, builds an AST
+Resolver: inline all variable references (hoisting support, circular ref detection)
+Mapper: converts internal AST into the public OutputNode format consumed by the React renderer
+The WASM Boundary Tax
+Every call to the WASM parser pays a mandatory overhead regardless of how fast the Rust code itself runs:
+JS world                              WASM world
+────────────────────────────────────────────────────────
+wasmParse(input)
+│
+├─ copy string: JS heap → WASM linear memory   (allocation + memcpy)
+│
+│                                 Rust parses   ✓ fast
+│                                 serde_json::to_string()  ← serialize result
+│
+├─ copy JSON string: WASM → JS heap             (allocation + memcpy)
+│
+JSON.parse(jsonString)                          ← deserialize result
+│
+return ParseResult
+The Rust parsing itself was never the slow part. The overhead was entirely in the boundary: copy string in, serialize result to JSON string, copy JSON string out, then V8 deserializes it back into a JS object.
+Attempted Fix: Skip the JSON Round-Trip
+The natural question was: what if WASM returned a JS object directly, skipping the JSON serialization step? We integrated serde-wasm-bindgen which does exactly this — it converts the Rust struct into a JsValue and returns it directly.
+It was 30% slower.
+Here's why. JS cannot read a Rust struct's bytes from WASM linear memory as a native JS object — the two runtimes use completely different memory layouts. To construct a JS object from Rust data, serde-wasm-bindgen must recursively materialise Rust data into real JS arrays and objects, which involves many fine-grained conversions across the runtime boundary per parse() invocation.
+Compare that to the JSON approach: serde_json::to_string() runs in pure Rust with zero boundary crossings, produces one string, one memcpy copies it to the JS heap, then V8's native C++ JSON.parse processes it in a single optimised pass. Fewer, larger, and more optimised operations win over many small ones.
+Benchmark: JSON string vs direct JsValue (1000 runs, µs per call)
+FixtureJSON round-tripserde-wasm-bindgenChange
+simple-table20.522.5-9% slower
+contact-form61.479.4-29% slower
+dashboard57.974.0-28% slower
+We reverted this change immediately.
+The Real Fix: Eliminate the Boundary Entirely
+We ported the full parser pipeline to TypeScript. Same six-stage architecture, same ParseResult output shape — no WASM, no boundary, runs entirely in the V8 heap.
+Benchmark Method: One-Shot Parse
+What is measured: A single parse(completeString) call on the finished output string. This isolates per-call parser cost.
+How it was run: 30 warm-up iterations to stabilise JIT, then 1000 timed iterations using performance.now() (µs precision). The median is reported. Fixtures are real LLM-generated component trees serialised in each format's real streaming syntax.
+Fixtures:
+simple-table — root + one Table with 3 columns and 5 rows (~180 chars)
+contact-form — root + form layout with 6 input fields + submit button (~400 chars)
+dashboard — root + sidebar nav + 3 metric cards + chart + data table (~950 chars)
+Results: One-Shot Parse (median µs, 1000 runs)
+FixtureTypeScriptWASMSpeedup
+simple-table9.320.52.2x
+contact-form13.461.44.6x
+dashboard19.457.93.0x
+The Algorithmic Problem: O(N²) Streaming
+Eliminating WASM fixed the per-call cost, but the streaming architecture still had a deeper inefficiency.
+The parser is called on every LLM chunk. The naïve approach accumulates chunks and re-parses the entire string from scratch each time:
+Chunk 1:  parse("root = Root([t")              → 14 chars
+Chunk 2:  parse("root = Root([tbl])\ntbl = T") → 27 chars
+Chunk 3:  parse(full_accumulated_string)        → ...
+For a 1000-char output delivered in 20-char chunks: 50 parse calls processing a cumulative total of ~25,000 characters. O(N²) in the number of chunks.
+The Fix: Statement-Level Incremental Caching
+Statements terminated by a depth-0 newline are immutable — the LLM will never come back and modify them. We added a streaming parser that caches completed statement ASTs:
+State: { buf, completedEnd, completedSyms, firstId }
+On each push(chunk):
+1. Scan buf from completedEnd for depth-0 newlines
+2. For each complete statement found: parse + cache AST → advance completedEnd
+3. Pending (last, incomplete) statement: autoclose + parse fresh
+4. Merge cached + pending → resolve + map → return ParseResult
+Completed statements are never re-parsed. Only the trailing in-progress statement is re-parsed per chunk. O(total_length) instead of O(N²).
+Benchmark Method: Full-Stream Total Parse Cost
+What is measured: The total parse overhead accumulated across every chunk call for one complete document. This is different from the one-shot benchmark — it measures the sum of all parse calls during a real stream, not a single call. This is the number that affects actual user-perceived responsiveness.
+How it was run: Documents are replayed in 20-char chunks. Each chunk triggers a parse() (naïve) or push() (incremental) call. Total time across all calls is recorded. 100 full-stream replays, median taken.
+Results: Full-Stream Total Parse Cost (median µs across all chunks)
+FixtureNaïve TS (re-parse every chunk)Incremental TS (cache completed)Speedup
+simple-table6977none (single statement, no cache benefit)
+contact-form3161222.6x
+dashboard8402553.3x
+The simple-table fixture is a single statement — there's nothing to cache, so both approaches are equivalent. The benefit scales with the number of statements because more of the document gets cached and skipped on each chunk.
+Why the two TS numbers look different
+The one-shot table shows 13.4µs for contact-form; the streaming table shows 316µs (naïve). These are not contradictory — they measure different things:
+13.4µs = cost of one parse() call on the complete 400-char string
+316µs = total cost of ~20 parse() calls during the stream (chunk 1 parses 20 chars, chunk 2 parses 40 chars, ..., chunk 20 parses 400 chars — cumulative sum of all those growing calls)
+Summary
+ApproachPer-call costFull-stream totalNotes
+WASM + JSON round-trip20-61µsbaselineCopy overhead each call
+WASM + serde-wasm-bindgen22-79µs+9-29% slowerHundreds of internal boundary crossings
+TypeScript (naïve re-parse)9-19µs69-840µsNo boundary, but O(N²) streaming
+TypeScript (incremental)9-19µs69-255µsNo boundary + O(N) streaming
+End result: 2.2-4.6x faster per call and 2.6-3.3x lower total streaming cost.
+When WASM Actually Helps
+This experience sharpened our thinking on the right use cases for WASM:
+✅ Compute-bound with minimal interop: image/video processing, cryptography, physics simulations, audio codecs. Large input → scalar output or in-place mutation. The boundary is crossed rarely.
+✅ Portable native libraries: shipping C/C++ libraries (SQLite, OpenCV, libpng) to the browser without a full JS rewrite.
+❌ Parsing structured text into JS objects: you pay the serialization cost either way. The parsing computation is fast enough that V8's JIT eliminates any Rust advantage. The boundary overhead dominates.
+❌ Frequently-called functions on small inputs: if the function is called 50 times per stream and the computation takes 5µs, you cannot amortise the boundary cost.
+Key Takeaways
+Profile where time is actually spent before choosing the implementation language.
+For us, the cost was never in the computation - it was always in data transfer across the WASM-JS boundary.
+"Direct object passing" through serde-wasm-bindgen is not cheaper.
+Constructing a JS object field-by-field from Rust involves more boundary crossings than a single JSON string transfer, not fewer.
+The boundary crossings happen inside the single FFI call, invisibly.
+Algorithmic complexity improvements dominate language-level optimisations.
+Going from O(N²) to O(N) in the streaming case had a larger practical impact than switching from WASM to TypeScript.
+WASM and JS do not share a heap.
+WASM has a flat linear memory (WebAssembly.Memory) that JS can read as raw bytes, but those bytes are Rust's internal layout - pointers, enum discriminants, alignment padding - completely opaque to the JS runtime.
+Conversion is always required and always costs something.
+7016stars
+355 Bryant St, San Francisco, CA 94107
+© 2026 Thesys Inc. All Rights Reserved
+© 2026 Thesys Inc. All Rights Reserved
+355 Bryant St, San Francisco, CA 94107
+
+=== ROW 141 | f005743 | https://lobste.rs/s/67tqpz | 2026-06-02 | hn-lobsters ===
+Memory safety is a matter of life and death
+
+---
+
+@nickmonad · 2026-06-02T11:12:39.000-05:00:
+> This makes switching to memory safe languages a moral imperative. 
+
+Holy shit.
+
+Are we really going to engage in this kind of dialogue? Yeah, code has the power to kill people, either directly or indirectly because of a consequence of bad programming. That will always be 100% true, even if you refuse to do anything in a language other than Rust. How many bad corporate or political decisions have killed people?
+
+Correctness and safety is more than language choice. If we trick ourselves into believing we "just need to use Rust", we risk ignoring other critical and effective techniques for testing and validating our code.
+
+Rust can absolutely eliminate a large class of bugs. I just refuse to come to a point where expressing disinterest or preference against the language is met with an argument from morality. Reminds me of a joke image I saw where the Rust "Ferris" was holding a knife with the caption "Rewrite it in Rust"... I guess comedy becomes reality.
+
+---
+
+@toastal · 2026-06-02T12:14:03.000-05:00:
+Affine types do not offer the same guarantees as linear types + dependent types. We must abolish Rust for something stronger with proofs. This is a moral imperative. /s
+
+We can move goal posts as well to argue performance, small dependencies chains to avoid supply chain issues or 10 GB of dependencies, fast compile times that don’t take 80 GB of memory in the linking phase are also something of ’moral value’.
+
+---
+
+@madhadron · 2026-06-02T12:39:44.000-05:00:
+Or we could insist on something like Frama C or other model checkers integrated in.
+
+---
+
+@wucke13 · 2026-06-05T04:25:37.000-05:00:
+I believe TrustInSoft offers a Frama C port to Rust, so, not mutually exclusive with the use of Rust!
+
+---
+
+@rbr · 2026-06-03T00:51:54.000-05:00:
+Hear hear!
+
+---
+
+@BenjaminRi · 2026-06-02T12:14:48.000-05:00:
+Followed by:
+
+> I don't see why we can't keep having fun with Rust for the rest of our lives.
+
+It seems like the author does not have enough imagination to envision a future language that provides further protections, thus making it a moral imperative to use it over Rust by their own logic.
+
+Ultimately, it's quite a one-dimensional take, since the choice of language involves many tradeoffs. Also see the meme ["People Will Die!"](https://www.youtube.com/watch?v=eXWhbUUE4ko) to reason for any arbitrary proposal.
+
+Don't get me wrong, I love Rust and I want it to succeed, but let's stick to the hard facts to argue for it; there are plenty.
+
+---
+
+@jackdk · 2026-06-02T17:16:20.000-05:00:
+I could make exactly the same argument about using non-bootstrappable languages. If you accept the threat model that the bootstrappable projects attempt to remedy, then all the language-level memory safety cannot help you because your compiler itself could be compromised.
+
+In which case it would become a moral imperative _not_ to use Rust until the bootstrapping issues are resolved (e.g., `mrustc` is never allowed to drift more than N versions behind mainline Rust).
+
+---
+
+@alandekok · 2026-06-02T12:36:53.000-05:00:
+> Correctness and safety is more than language choice.
+
+Correctness and safety is an _economic_ choice.  No one is funding fixes to xz utils.  Yet people are making millions of dollars off of it.
+
+While it's fine to not pay for Open Source software (the license allows it), IMHO it's immoral for any freeloader to make moral claims about the authors.  Or, for freeloaders to demand _anything_ of the authors.
+
+---
+
+@tclancy · 2026-06-02T15:07:35.000-05:00:
+I think this falls into one of the classic tarpits of developer blogging: person working at global company blogs about their experiences and then all of a sudden some dude is taking down his mom's sewing website so he can set up an orchestration for k8 and all of it encoded in Terraform.
+
+Except this managed to handle both parts of the cycle: explains a valid problem that Google, Apple and a relatively small number of other companies have and then extrapolates it to everybody. Like my one-off script to download 5 PDFs because I am lazy has to be rewritten in Rust immediamente!
+
+---
+
+@hmaddocks · 2026-06-02T15:39:44.000-05:00:
+Developer has bad experience with X therefore ALL X is bad for everyone.
+
+---
+
+@dpc_pw · 2026-06-02T20:46:52.000-05:00:
+I'm a happy and vocal Rust enthusiast, but yeah, this type of narratives are so tiring. Everything is artificially justified with some fake superior morality.
+
+BTW. I think this is a broader disease of the western culture, especially anglo-saxon one.
+
+I was raised in Poland, and now I live in the US. One observation I made how much of emphasis in schools is put on being "a good person". When I was a kid, in a Polish school it was just "don't do bad stuff or else...". There was no expectation that kids should strive to be "good". In the US schools it's over and over yapping about how everyone should be a good person. No wonder people get nuts about it.
+
+It reminds me about [Alan Watts - A Plague of Virtuous People ](https://www.youtube.com/watch?v=IBCUziQWYsE).
+
+Some people rewrite in Rust because they think Rust is "good" or "moral". I rewrite stuff in Rust because other programming languages suck. We are not the same. 😂
+
+---
+
+@kristoff · 2026-06-02T13:32:19.000-05:00:
+Every time a blog post over-fits on memory safety, it's a missed opportunity to talk about correctness, which is a strict superset and what actually matters.
+
+---
+
+@krig · 2026-06-02T17:16:14.000-05:00:
+This is rich coming from a Google employee.
+
+edit: To be more concrete: https://www.amnesty.org/en/latest/news/2025/02/global-googles-shameful-decision-to-reverse-its-ban-on-ai-for-weapons-and-surveillance-is-a-blow-for-human-rights/
+
+---
+
+@alandekok · 2026-06-02T12:34:00.000-05:00:
+This is very much hyperbole, and navel gazing.  As I've said elsewhere on lobste.rs, you don't have a right to make these kind of moral judgements about others.  Especially when you're demanding that other people do the work for free.
+
+Life is, alas, imperfect.  The question isn't whether or not memory safety is good or bad.  The question is how to we get to memory safety.  Articles like this don't help.
+
+---
+
+@wrs · 2026-06-02T11:14:33.000-05:00:
+This came across weirdly to me… The big “life and death” buildup was suddenly sidetracked by “many teams’ requirement” to “impose no overhead relative to C or C++”. So I guess we’re assuming *that* is more important than life and death, for this argument. In which case I’m sure many of those teams have *other* requirements more important to them than life and death that Rust doesn’t fulfill either.
+
+Also, this whole “C for performance” argument seems like a little bit of an archaic strawman. In 2026 how many projects legitimately require C for performance? For the whole project, not just a few inner loops? I think inertia of an existing tested codebase would be a more prevalent factor. So by this argument we have a moral imperative to convert people to Fil-C?
+
+---
+
+@gcupc · 2026-06-02T20:58:30.000-05:00:
+> “impose no overhead relative to C or C++”
+
+That's obviously *at least* as important as life or death.
+
+I'm convinced the opposition to garbage collection in some corners of this industry is somehow related to gender insecurity -- garbage collected languages and runtimes are somehow feminine, and present an identity threat to the masculine programmer.
+
+---
+
+@Timwi · 2026-06-02T23:23:53.000-05:00:
+As a cis male with a strong preference for languages with garbage collection, I resemble that remark.
+
+---
+
+@pyj · 2026-06-03T05:56:31.000-05:00:
+Some performance critical applications (games, audio, avionics) can't afford any spurious stutters.  You're concerned about consistency, which is where garbage collection causes issues.
+
+---
+
+@gcupc · 2026-06-03T07:41:21.000-05:00:
+https://bitbashing.io/gc-for-systems-programmers.html
+
+---
+
+@pyj · 2026-06-07T12:23:55.000-05:00:
+I've spent a lot of time optimizing at the millisecond and microsecond level.  GCs *can* help a bit with perf by maintaining their own blocks of memory.  Note that they also toss in extra noise when trying to do performance analyses, especially on larger stages of a program run.  Some programs can't just take a random millisecond or two in their budget, especially when latency is critical.
+
+However, if you're reaching for `std::shared_ptr<>` and dynamically allocating, you're probably already too slow.  Bulk allocations (arenas) have significant speed benefits and can help with lifetime management.
+
+---
+
+@lake · 2026-06-02T13:04:24.000-05:00:
+In addition to the other comments critiquing the weird (I would say manipulative) moralistic tone, this part made me feel uneasy:
+
+> In the coming months and years, we will need to make hard choices. We cannot be all things to all people. We will need to prioritize some use cases over others. We must think of progress and consensus as virtues in and of themselves. We must learn to recognize when having a consensus is more important than having the right consensus, and in these cases, to pick progress over stagnation.
+
+I'm reading this as the author calling for us to sidestep collaborative decision-making. I don't know how we can tell the difference between the "right" consensus (which the subtext here suggests is actually the wrong consensus, because it is too slow) versus some other kind of consensus. In the meantime, I read this as calling on the community to forego attempts to be inclusive in making decisions, where that gets in the way of making "progress",  causing "people to die." I think this is a dangerous position for a community like Rust. 
+
+Progress is subjective, and any decision carries a trade-off. I am often frustrated to see the "this is a nightly-only API" for something I really want to use, especially when I click on the PR, and see that people haven't been able agree on the design or the implementation for years. There is a risk of stabilisation stalling due to perfectionist bikeshedding, and sometimes I wish Rust had a BDFL like Andrew Kelley. But there is also a responsibility in taking things slow. Shipping a new API that has subtle footguns could also cause people to die (as could any design decision).
+
+---
+
+@mtset · 2026-06-02T14:37:20.000-05:00:
+I used to be a card-carrying RESF member but this is over the top. There are many real moral imperatives in our industry; Rust isn't one.
+
+---
+
+@carlomonte · 2026-06-02T12:35:42.000-05:00:
+what about supply chain security in rust? anyone remember jia tan?
+
+what if mm bugs are as easy to find for the blue team as for the red team (with access to mythos or eq.)? aren't mm bugs, once discovered, often simple to fix?
+
+i made this argument as a plea to look at the situation in all its complexity. and yet it's dire.
+
+---
+
+@lojikil · 2026-06-02T16:29:48.000-05:00:
+Besides the points that other folks have made, I think this post misses the threat model of when you might choose certain languages and tools. For example, lately I've been programming in SPARK and Ada, and really enjoying the power it gives me to prove characteristics of my code. However, I've _also_ been interested in [Usagi](https://usagiengine.com/); I'm certainly not morally failing for using Lua for something that I could likely build & prove in Ada. 
+
+Yes, companies might use your FLOSS in a project that you didn't expect, but that is *their* threat model. I think in the light of "user safety for things that include our most personal conversations and banking," I would agree that the threat model there would likely be one that it's easier to solve with Rust, Ada, Agda, Coq, what-have-you. Writ large however, there's _always_ going to be layers of proof and layers of assurance for every system; it's why large security documents usually discuss tying controls to impact levels. 
+
+> My dad and sister are both doctors, and I've always admired how they show up to work every day and face the weight of real, life-and-death consequences. The connection between their work and the lives of real people is immediate. One contrast that I've seen between their industry and our own is how they measure what is important.
+
+This is also interesting; I've done quite a bit of threat modeling in the medical space, and it's a very different threat model (with other styles of controls, like [INCLUDES NO DIRT](https://www.includesnodirt.com/nodirt.pdf). I think this is part of what I mean; I'd never have e.g. a game developer follow the controls for a healthcare organization, even if there are some cross overs. 
+
+One last thought: two of my favorite volunteering opportunities were for refugee organizations operating in the middle east and central Asia. Talking with practitioners, we learnt that one risk of data on devices was that elements of certain groups might face arrest or worse; data minimization has a very different meaning in this sort of situation versus normal business contexts where it might mean fines.
+
+---
+
+@duncan_bayne · 2026-06-02T18:04:50.000-05:00:
+Even if one grants the central premise - the need for memory-safe languages - the requirement for no overhead relative to C or C++ is both undefined (heh) and begs the question.
+
+Term undefined: what does "no overhead" mean, here?  Rust is (in)famously slow to compile.  There's a *huge* overhead there relative to C (and maybe C++? I've not done enough to know). Using a memory-safe language like Common Lisp with an interactive environment leads to vastly superior feedback loop times.  Do they mean runtime performance?  And under what circumstances?  Also Rust deliberately doesn't target some architectures and OSs.  Does "overhead" include migrating architecture and/or OS?
+
+Begging the question: *why* is there a requirement for no overhead?  Surely if there is a compelling moral argument to use memory safe languages to save lives, it wouldn't *matter* if there are certain overheads to Rust?  Or is the argument here that the moral imperative is sufficiently weak that it's only compelling in the absence of overheads?
+
+Perhaps it's because I've just tightened my personal rules around caffeine again and I'm feeling grumpy.  But this article does *not* make the case for Rust at all well.
+
+---
+
+@ambee · 2026-06-03T08:18:08.000-05:00:
+It's hilarious how mad the comments are over someone being overtly moral. I enjoy the comments proudly claiming that they make their decisions without a drop of morality, and they're better for it. LOL
+
+---
+
+@hobbified · 2026-06-05T11:30:11.000-05:00:
+This is an _attempt_ at morality, and while an attempt at morality is commendable, one thing that everyone hates is to be lectured by that guy who has scratched the surface of a topic just enough to think they know better than everyone, and that's what we have going on here.
+
+---
+
+@hobbified · 2026-06-05T09:42:17.000-05:00:
+Memory safety is nice and I look forward to using it in whatever language(s) come after Rust. Rust itself is a language that never should have made it into the mainstream — full of nifty ideas but an ugly, un-ergonomic, chaotic mess, and I wish fewer people would adopt it so that we could collectively move on to "whatever's next" that little bit sooner instead of increasing the amount of Rust in the world that's going to have to be maintained.
+
+But although I think it would be better for everyone if that happened, I'm not enough of a prick to say that it's a "moral imperative" for everyone to do as I would prefer.
+
+---
+
+@ocramz · 2026-06-03T08:29:22.000-05:00:
+Comment removed by author
+
+=== ROW 142 | f005802 | https://mathstodon.xyz/@andreasthom/117240535270608201 | 2026-09-10 | hn-lobsters ===
+Andreas Thom: "@tristanbuckmaster
+1/3 I wan…" - Mathstodon
+Skip to main contentHotkey 1
+Skip to main navigationHotkey 2
+Recent searches
+No recent searches
+Search options
+Only available when logged in.
+mathstodon.xyz is one of the many independent Mastodon servers you can use to participate in the fediverse.
+A Mastodon instance for maths people. We have LaTeX rendering in the web interface!
+Administered by:
+Christian Lawson-Perfect @christianp
+Server stats:5.8K
+active users
+mathstodon.xyz:
+About mathstodon.xyz
+Status
+Profiles directory
+Privacy policy
+Mastodon:
+About Mastodon
+Get the app
+Keyboard shortcuts
+View source code
+v4.7.2
+Back
+tristanbuckmaster @tristanbuckmaster@mastodon.socialSep 8 *
+Today, Levent Alpöge and I have made public three results: finite-time blowup with smooth forcing for incompressible porous media, for Boussinesq, and for 3d incompressible Euler.
+https://cims.nyu.edu/~tristanb/statement.pdf
+https://cims.nyu.edu/~tristanb/euler.pdf
+https://cims.nyu.edu/~tristanb/ipm.pdf
+https://cims.nyu.edu/~tristanb/boussinesq.pdf
+https://github.com/tristanbuckmaster/fluid_lean
+16
+Andreas Thom @andreasthom@mathstodon.xyz
+@tristanbuckmaster
+1/3 I want to record a number of points that I realized after reading up on the controversy. In fact it recalls an exchange I had with OpenAI after its non-sofic-group announcement. It exposes a serious, unanswered question about whether researchers can trust OpenAI with unpublished mathematics.
+I wrote in an email to Mark Sellke and Sebastien Bubeck shortly after the surprising finding of a non-sofic group using the methods of Kun and myself:
+“Another point is that I and a colleague in Dresden were discussing the expander matching problem and various extensions of the work with Gabor Kun actively over the last months with ChatGPT, so that we are of course curious if that was part of the training data or accessible to the reasoning process. There is a certain (frankly unacceptable) lack of transparency here; and I fear it will damage the communal process of math more than the new AI-generated results will benefit the subject.”
+Mark Sellke’s complete answer was: “Regarding your conversations with ChatGPT: that did not happen.”
+I had explicitly asked about two different things: (1) whether our conversations entered training data, and (2) whether they were accessible to the solving process. The categorical answer now looks as though it addressed only direct access under (2). No such qualification, explanation, or evidence was given. I take this as dishonesty to say the least.
+OpenAI now says in the Buckmaster-Alpöge case that no specific user data was accessed, but adds that it “cannot rule out that de-identified data derived from their usage of our products helped improve our models.”
+Sep 09, 2026, 01:09 PM··Web
+Last edited Sep 09, 01:10 PM
+74 boosts·8 quotes·97 favorites
+Zhouhang Mᴀᴏ @ohThef7ySep 9
+@andreasthom @tristanbuckmaster I would like to check whether you opted out Settings → Data Controls → "Improve the model for everyone"? It is enabled by default — a colleague just reminded me of that. If you opted that out, then it might be illegal for them to say “cannot rule out that de-identified data derived from their usage of our products helped improve our models”.
+0
+707Kat @707Kat@mastodon.artSep 12 *
+@andreasthom @tristanbuckmaster they trained on data of tons of people and their work without their consent to make their models to begin with. Of course you can’t trust them.
+0
+Dave Moskovitz ((())) @davemosk@mastodon.nzSep 10
+@andreasthom @tristanbuckmaster One lesson is do not trust Big Tech with anything you consider confidential. There are many other lessons.
+0
+Paul-Olivier Dehaye @podehayeSep 10
+@andreasthom @tristanbuckmaster
+Hi. Based on past experience, I have several ideas on things you could do, and funds to help make this an extremely impactful project.
+As indicated here, I kind of have been mapping out options for when we reached yesterday's events
+https://www.youtube.com/watch?v=zmWPObxeGT4
+https://www.mathgenealogy.org/id.php?id=100643
+YouTubeCuriosity and digital chaos | Paul-Olivier Dehaye | TEDxGenevaBy TEDx Talks
+0
+p6zem0 @P6zem0@mastodon.com.plSep 10
+@andreasthom @tristanbuckmaster #onlyLocalLLM
+0
+chickendeadfrog @chickendeadfrogSep 9
+@andreasthom @tristanbuckmaster
+I think the answer is that OpenAI doesn't know whether it benefitted from the prompts you gave it to the point where it solved the problem because of it.
+Large AI models are a big black box and interpretability (basically the field of understanding how these models think) is difficult and nowhere near the state where it can tell you these things.
+1
+Breakfastisready नाश्तातैयारहै @BreakfastisreadySep 10
+@chickendeadfrog @andreasthom @tristanbuckmaster
+It's very easy to tell whether or not something went into the training data. It has nothing to do with interpretability.
+1
+Martin Modrák @modrak_m@bayes.clubSep 12
+@Breakfastisready unless you semi-intentionally sabotage any attempt at record keeping to provide plausible deniability whenever it suits you...
+0
+Mastodon
+Live feeds
+About
+Mastodon is the best way to keep up with what's happening.
+Follow anyone across the fediverse and see it all in chronological order. No algorithms, ads, or clickbait in sight.Create accountLogin
+Create accountLogin
+Drag & drop to upload
+
+=== ROW 143 | f005836 | https://darkcoding.net/software/rust-systemd-memory-remains | 2024-01-17T00:00:00 | hn-lobsters;individual-blogs;twir-links ===
+The memory remains: Permanent memory with systemd and a Rust allocator · Graham King
+Graham King
+Solvitas perambulum
+The memory remains: Permanent memory with systemd and a Rust allocator
+January 9, 2024
+software
+rust
+systemd
+Summary
+I will create Rust objects that survive program restarts by combining three key elements: Systemd's File Descriptor Store, the memfd_create syscall, and Rust's Allocator trait. By using the File Descriptor Store, I can give Systemd a file descriptor that remains open through a program restart. The memfd_create syscall allows me to create an anonymous file in memory, which I can then map via mmap. Finally, by implementing a custom allocator in Rust, I can manage memory allocation using these memory-mapped files. This results in an efficient object management system where memory persists across program restarts. The design will include an arbitrary `Person` object, and I will demonstrate how to allocate and restore it with Systemd while ensuring the memory layout is stable across binary versions.
+We are going to stitch three things together to make Rust objects that survive program restart. The memory backing the object will continue existing while the program restarts.
+Systemd’s File Descriptor Store (systemd 254+) allows us to give any file descriptor to systemd, and later ask for it back. The file stays open when we systemctl restart <prog>. Yes this is similar to socket activation.
+The memfd_create syscall (Linux 3.17+) creates an anonymous file that only exists in memory, and only as long as a reference to it exists. It effectively gives us a file descriptor pointing to a chunk of allocated memory. It behaves like a regular file so we can map it into regular memory with mmap.
+Rust’s Allocator trait which allows us to control the memory an object lives in (Rust nightly since at least 2 years ago). We will select our allocator with Box::new_in.
+We will make a Rust allocator which creates a memfd, shares it with systemd, mmap’s it, and uses that memory as the allocation our allocator returns. When the program restarts we ask systemd for our memfds, mmap it, and convert that into our object. Finally we wrap the allocator and the ‘restorer’ in a function which figures out whether we are allocating a new object or recovering an existing one.
+Here’s an arbitrary object we will use throught the post:
+// An arbitrary object we'll be using throughout this post
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+#[repr(C)]
+struct Person {
+name: [u8; 8],
+credits: u32,
+age: u8,
+is_admin: bool,
+count: u32,
+}
+Note the rather awkward name array. We don’t want any pointers in our object, so no String or Vec because those would also need to go in our permanent memory store.
+The repr(C) ensures that the in-memory layout (representation) of this object doesn’t change between versions of our binary. Rust makes no promises on memory layout unless you request a specific representation. (Thank you Harry Stern on Hacker News for catching this).
+A Rust Allocator
+If we allocate an object on the heap with Box, by default it will use the sytem allocator, which on Linux uses malloc. Looking at the assembly we see it call __rust_alloc (via GLOBAL_OFFSET_TABLE) which calls __rdl_alloc which calls glibc’s malloc.
+malloc will get memory from the operating system (details) by either moving the program break (sbrk syscall) or by memory mapping an anonymous region (via mmap syscall).
+Rust (nightly) allows us to implement our own allocator. Here is an allocator that delegates to the system allocator - the allocator you’re using if you don’t know which one you’re using.
+#![feature(allocator_api)]
+use std::{
+alloc::{AllocError, Allocator, GlobalAlloc, Layout, System},
+ptr::NonNull,
+};
+struct DelegateAlloc {}
+unsafe impl Allocator for DelegateAlloc {
+fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+unsafe {
+let ptr = System.alloc(layout);
+let slice = std::slice::from_raw_parts_mut(ptr, layout.size());
+Ok(NonNull::new_unchecked(slice))
+}
+}
+unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+System.dealloc(ptr.as_ptr(), layout)
+}
+}
+We use it like this:
+let d = DelegateAlloc {};
+let p = Box::new_in(Person::default(), d);
+An allocator backed by persistent memory
+Now that we know how to write an allocator, let’s make the memory it uses be in a file systemd owns. We need to call memfd_create, then mmap that file descriptor, and finally give it to systemd.
+There are two cases:
+Create: When we are creating a new allocation we need to call memfd_create, and then give that file descriptor to systemd by calling sd_pid_notify_with_fds.
+Restore: When we are starting up we ask systemd for the fd by calling sd_listen_fds_with_names. Then we only need to mmap.
+In either case after mmap we end up with a bag of bytes, which we need to convince Rust is a Person. That’s what buf_addr as *mut u8 as *mut T is doing (here T is Person).
+We use the allocator like this:
+fn main() -> anyhow::Result<()> {
+let salloc = SystemdAlloc::new("person1".to_string())?;
+let mut p1: Box<Person, SystemdAlloc> = salloc.into_box(Person::default())?;
+p1.count += 1;
+println!("{}", p1.count);
+std:🧵:sleep(std::time::Duration::from_secs(3600));
+}
+Person is an arbitrary object, there’s one at the start of this post.
+Each object must have a name which we associate with the FD in systemd. On restore that allows us to map the correct FD back to the object.
+The memory only exists while the program is active (meaning running or restarting). If the program is stopped systemd will evict it’s file descriptor from the store. Hence the long sleep at the end of main.
+systemd file descriptor store
+Typically now we’d create a systemd .service file making sure to enable the File Descriptor store - it doesn’t default. Here we’ll use systemd-run:
+systemd-run --user --service-type=exec --unit=remains -p FileDescriptorStoreMax=16 ./target/debug/remains
+Note that here ‘remains’ is the unit name (–unit=) not the binary. Then we treat it like any other systemd service except it’s in the user scope.
+It’s output is in journalctl --user -u remains:
+gktest[277943]: Received 0 fds from systemd
+gktest[277943]: Creating new store
+gktest[277943]: 1
+Restart it:
+systemctl --user restart remains
+Now p1.count increases, it survives restart:
+systemd[4357]: Stopping remains.service
+systemd[4357]: Stopped remains.service
+systemd[4357]: Starting remains.service
+systemd[4357]: Started remains.service
+gktest[278030]: Received 1 fds from systemd
+gktest[278030]: systemd sent us: person1
+gktest[278030]: Restoring
+gktest[278030]: 2
+Stop it like this: systemctl --user stop remains.
+After that stop the fd is no longer stored. If we start now the count will reset.
+systemd 254+ (Fedora 39+) allows us to set FileDescriptorStorePreserve=yes to keep the store alive even when our program is stopped.
+Improvements
+When I have done online upgrades in the past the amount of state that I couldn’t recreate was quite small. I either stored that state in Redis or wrote it to a temporary file, as a single serialized object. Hence the systemd allocator above can only allocate once, hopefully that’s all we’d need.
+To make it work with multiple objects ideally we could estimate up-front how much space we might need, and size the file and mmap space on first call. This is helpful if all we want is a couple of String or a Vec in we persistent object. The objects could go sequentially in the file, we’d maintain an index of their positions. An mmap can grow (mremap syscall) but there’s no guarantee that there is space to grow into.
+If estimating size up-front is not possible we’d need to add a new file whenever the current one can no longer grow. systemd’s FileDescriptorStoreMax will need to be set large enough, and each file will need a unique string passed to sd_pid_notify_with_fds’s FDNAME. A global index points to the file, and each file has an index of offsets to the ojects. And now we’re writing a real memory allocator.
+Instead of packing the objects we could make an allocator factory (the design pattern) and have each allocator deal with a single object in a single file. Simpler, but only suitable if we have a limited number of objects.
+A fun exercise is to change the allocator to be backed by a disk file. The bytes on disk will be exactly how the object is laid out in memory.
+Clone and Pin notes
+Let’s go back to this allocation:
+let mut p1: Box<Person, SystemdAlloc> = salloc.into_box(Person::default())?;
+If we call this let p2 = p1.clone() (after adding #[derive(Clone)] to Person) the Box isn’t cloned but dereferenced. clone is called directly on Person. We end up with a new Person object on the stack. No problems there.
+If instead we do let p2 = Box::clone(p1) the box itself is cloned. A Box internally is a tuple of a pointer and an allocator. We would need to #[derive(Clone)] on SystemdAlloc for it to compile, but that’s just where our problems will start. Rust will clone the allocator and call allocate on it. Our allocator is only designed for single use. See the previous section for notes on that.
+Pin and async contexts in general are not something an allocator needs to worry about. The object in the allocation might change (e.g. with std::mem::swap) but we are only concerned with the allocation itself, not with what’s inside it. As cliched programmers, we care about the Box, not the Person :-)
+Happy allocating!
+Discuss on Hacker News
+Discuss on Reddit /r/programming
+The title is indeed a reference to the Metallica / Marianne Faithfull song. This is not an endorsement of Metallica after “… And Justice for All”.
+Underrust: What does vec![0u8; 1024] really do?
+March 29, 2024
+software
+rust
+memory
+linux
+underrust
+How does Rust allocate a zeroed Vec and what does it cost?
+How memory is allocated
+July 10, 2015
+software
+unix
+Diving deep: How to allocate memory without malloc in Linux assembly.
+Rust is also C
+January 17, 2022
+software
+rust
+c
+Safety is boring, let's do pointer arithmetic.
+←
+Underrust: What does vec![0u8; 1024] really do?
+March 29, 2024
+Linux: What can you epoll?
+October 20, 2022
+→
+©
+2026
+Graham King
+
+=== ROW 144 | f005872 | https://ntietz.com/blog/rust-needs-a-web-framework-for-lazy-developers | 2024-10-02T00:00:00 | hn-lobsters;individual-blogs;twir-links ===
+Rust needs a web framework for lazy developers | nicole@web
+technically a blog
+home |
+blog
+|
+newsletter |
+patreon |
+consulting
+Rust needs a web framework for lazy developers
+Monday, September 30, 2024
+I like to make silly things, and I also like to put in minimal effort for those silly things.
+I also like to make things in Rust, mostly for the web, and this is where we run into a problem.
+See, if I want to make something for the web, I could use Django but I don't want that.
+I mean, Django is for building serious businesses, not for building silly non-commercial things!
+But using Rust, we have to do a lot more work than if we build it with Django or friends.
+See, so far, there's no equivalent, and the Rust community leans heavily into the "wire it up yourself" approach.
+As Are We Web Yet? says, "[...] you generally have to wire everything up yourself. Expect to put in a little bit of extra set up work to get started."
+This undersells it, though.
+It's more than a little bit of extra work to get started!
+I know because I made a list of things to do to get started.
+Rust needs something that does bundle this up for you, so that we can serve all web developers.
+Having it would make it a lot easier to make the case to use Rust.
+The benefits are there: you get wonderful type system, wonderful performance, and build times that give you back those coffee breaks you used to get while your code compiled.
+What do we need?
+There is a big pile of stuff that nearly every web app needs, no matter if it's big or small.
+Here's a rough list of what seems pretty necessary to me:
+Routing/handlers: this is pretty obvious, but we have to be able to get an incoming request to some handler for it. Additionally, this routing needs to handle path parameters, ideally with type information, and we'll give bonus points for query parameters, forms, etc.
+Templates: we'll need to generate, you know, HTML (and sometimes other content, like JSON or, if you're in the bad times still, XML). Usually I want these to have basic logic, like conditionals, match/switch, and loops.
+Static file serving: we'll need to serve some assets, like CSS files. This can be done separately, but having it as part of the same web server is extremely handy for both local development and for small-time deployments that won't handle much traffic.
+Logins: You almost always need some way to log in, since apps are usually multi-user or deployed on a public network. This is just annoying to wire up every time! It should be customizable and something you can opt out of, but it should be trivial to have logins from the start.
+Permissions: You also need this for systems that have multiple users, since people will have different data they're allowed to access or different roles in the system. Permissions can be complicated but you can make something relatively simple that follows the check(user, object, action) pattern and get really far with it.
+Database interface: You're probably going to have to store data for your app, so you want a way to do that. Something that's ORM-like is often nice, but something light is fine. Whatever you do here isn't the only way to interact with the database, but it'll be used for things like logins, permissions, and admin tools, so it's going to be a fundamental piece.
+Admin tooling: This is arguably a quality-of-life issue, not a necessity, except that every time you setup your application in a local environment or in production you're going to have to bootstrap it with at least one user or some data. And you'll have to do admin actions sometimes! So I think having this built-in for at least some of the common actions is a necessity for a seamless experience.
+WebSockets: I use WebSockets in a lot of my projects. They just let you do really fun things with pushing data out to connected users in a more real-time fashion!
+Hot reloading: This is a huge one for developer experience, because you want to have the ability to see changes really quickly. When code or a template change, you need to see that reflected as soon as humanly possible (or as soon as the Rust compiler allows).
+Then we have a pile of things that are quality-of-life improvements, and I think are necessary for long-term projects but might not be as necessary upfront, so users are less annoyed at implementing it themselves because the cost is spread out.
+Background tasks: There needs to be a story for these! You're going to have features that have to happen on a schedule, and having a consistent way to do that is a big benefit and makes development easier.
+Monitoring/observability: Only the smallest, least-critical systems should skip this. It's really important to have and it will make your life so much easier when you have it in that moment that you desperately need it.
+Caching: There are a lot of ways to do this, and all of them make things more complicated and maybe faster? So this is nice to have a story for, but users can also handle it themselves.
+Emails and other notifications: It's neat to be able to have password resets and things built-in, and this is probably a necessity if you're going to have logins, so you can have password resets. But other than that feature, it feels like it won't get used that much and isn't a big deal to add in when you need it.
+Deployment tooling: Some consistent way to deploy somewhere is really nice, even if it's just an autogenerated Dockerfile that you can use with a host of choice.
+CSS/JS bundling: In the time it is, we use JS and CSS everywhere, so you probably want a web tool to be aware of them so they can be included seamlessly. But does it really have to be integrated in? Probably not...
+So those are the things I'd target in a framework if I were building one!
+I might be doing that...
+The existing ecosystem
+There's quite a bit out there already for building web things in Rust.
+None of them quite hit what I want, which is intentional on their part: none of them aspire to be what I'm looking for here.
+I love what exists, and I think we're sorely missing what I want here (I don't think I'm alone).
+Web frameworks
+There are really two main groups of web frameworks/libraries right now: the minimalist ones, and the single-page app ones.
+The minimalist ones are reminiscent of Flask, Sinatra, and other small web frameworks.
+These include the excellent actix-web and axum, as well as myriad others.
+There are so many of these, and they all bring a nice flavor to web development by leveraging Rust's type system!
+But they don't give you much besides handlers; none of the extra functionality we want in a full for-lazy-developers framework.
+Then there are the single-page app frameworks.
+These fill a niche where you can build things with Rust on the backend and frontend, using WebAssembly for the frontend rendering.
+These tend to be less mature, but good examples include Dioxus, Leptos, and Yew.
+I used Yew to build a digital vigil last year, and it was enjoyable but I'm not sure I'd want to do it in a "real" production setting.
+Each of these is excellent for what it is—but what it is requires a lot of wiring up still.
+Most of my projects would work well with the minimalist frameworks, but those require so much wiring up!
+So it ends up being a chore to set that up each time that I want to do something.
+Piles of libraries!
+The rest of the ecosystem is piles of libraries.
+There are lots of template libraries!
+There are some libraries for logins, and for permissions.
+There are WebSocket libraries!
+Often you'll find some projects and examples which integrate a couple of the things you're using, but you won't find something that integrates all the pieces you're using.
+I've run into some of the examples being out of date, which is to be expected in a fast-moving ecosystem.
+The pile of libraries leaves a lot of friction, though.
+It makes getting started, the "just wiring it up" part, very difficult and often an exercise in researching how things work, to understand them in depth enough to do the integration.
+What I've done before
+The way I've handled this before is basically to pick a base framework (typically actix-web or axum) and then search out all the pieces I want on top of it.
+Then I'd wire them up, either all at the beginning or as I need them.
+There are starter templates that could help me avoid some of this pain.
+They can definitely help you skip some of the initial pain, but you still get all the maintenance burden.
+You have to make sure your libraries stay up to date, even when there are breaking changes.
+And you will drift from the template, so it's not really feasible to merge changes to it into your project.
+For the projects I'm working on, this means that instead of keeping one framework up to date, I have to keep n bespoke frameworks up to date across all my projects!
+Eep!
+I'd much rather have a single web framework that handles it all, with clean upgrade instructions between versions.
+There will be breaking changes sometimes, but this way they can be documented instead of coming about due to changes in the interactions between two components which don't even know they're going to be integrated together.
+Imagining the future I want
+In an ideal world, there would be a framework for Rust that gives me all the features I listed above.
+And it would also come with excellent documentation, changelogs, thoughtful versioning and handling of breaking changes, and maybe even a great community.
+All the things I love about Django, could we have those for a Rust web framework so that we can reap the benefits of Rust without having to go needlessly slowly?
+This doesn't exist right now, and I'm not sure if anyone else is working on it.
+All paths seem to lead me toward "whoops I guess I'm building a web framework."
+I hope someone else builds one, too, so we can have multiple options.
+To be honest, "web framework" sounds way too grandiose for what I'm doing, which is simply wiring things together in an opinionated way, using (mostly) existing building blocks[1].
+Instead of calling it a framework, I'm thinking of it as a web toolkit: a bundle of tools tastefully chosen and arranged to make the artisan highly effective.
+My toolkit is called nicole's web toolkit, or newt.
+It's available in a public repository, but it's really not usable (the latest changes aren't even pushed yet).
+It's not even usable for me yet—this isn't a launch post, more shipping my design doc (and hoping someone will do my work for me so I don't have to finish newt :D).
+The goal for newt is to be able to create a new small web app and start on the actual project in minutes instead of days, bypassing the entire process of wiring things up.
+I think the list of must-haves and quality-of-life features above will be a start, but by no means everything we need.
+I'm not ready to accept contributions, but I hope to be there at some point.
+I think that Rust really needs this, and the whole ecosystem will benefit from it.
+A healthy ecosystem will have multiple such toolkits, and I hope to see others develop as well.
+* * *
+If you want to follow along with mine, though, feel free to subscribe to my RSS feed or newsletter, or follow me on Mastodon.
+I'll try to let people know in all those places when the toolkit is ready for people to try out.
+Or I'll do a post-mortem on it, if it ends up that I don't get far with it!
+Either way, this will be fun.
+I do plan to build a few pieces from scratch for this, as the need arises.
+Some things will be easier that way, or fit more cohesively.
+Can't I have a little greenfield, as a treat? ↩
+If you're looking for help on a software project, please consider working with me!
+Please share this post, and subscribe to the newsletter or RSS feed.
+You can email my personal email with any comments or questions.
+Want to become a better programmer?
+Join the Recurse Center!
+Want to hire great programmers?
+Hire via Recurse Center!
+© 2015-2026 Nicole Tietz-Sokolskaya
+
+=== ROW 145 | f005948 | https://modal.com/blog/serverless-http | 2024-03-20T00:00:00 | hn-lobsters;twir-links ===
+Lambda on hard mode: Inside Modal's web infrastructure
+Product
+Solutions
+Resources CustomersPricingDocs
+Log In  Sign Up
+All posts
+Back
+Engineering
+March 14, 2024 •20 minute read
+Lambda on hard mode: Inside Modal's web infrastructure
+Eric Zhang
+Founding Engineer @ekzhang1
+At Modal, we built an HTTP and WebSocket stack on our platform. In other words,
+your serverless functions can take web requests.
+This was tricky! HTTP has quite a few edge cases, so we used Rust for its speed
+and to help manage the complexity. But even so, it took a while to get right. We
+recently wrapped up this feature by introducing full WebSocket support (real-time bidirectional
+messaging).
+We call this service modal-http, and it sits between the Web and our core
+runtime.
+You can deploy a simple Web Function to a *.modal.run URL by running some Python code:
+import modal
+app = modal.App(name="small-app")
+@app.function()
+@modal.fastapi_endpoint(method="GET")
+def my_handler():
+return {
+"status": "success",
+"data": "Hello, world!",
+}
+(This takes 0.747 seconds to deploy today.)
+But you can also run a much larger compute workload. For example, to set up a
+data-intensive video processing endpoint:
+import modal
+from .my_video_library import Video, do_expensive_processing
+app = modal.App(name="big-app")
+# 30 minutes, 8 CPUs, 32 GB of memory
+@app.function(timeout=1800, cpu=8, memory=32 * 1024)
+@modal.fastapi_endpoint(method="POST")
+def my_handler(video_data: Video):
+# Process the video
+edited_video = do_expensive_processing(video_data)
+# Return it as a response
+return edited_video
+This post is about the behind-the-scenes of serving a Web Function on Modal. How
+does your web request get translated into an autoscaling serverless invocation?
+What makes our HTTP/WebSocket implementation particularly interesting is its
+lack of limits. Serverless computing is traditionally understood to prioritize small, lightweight tasks, but Modal can’t compromise on speed or
+compute capacity.
+When resource limits are removed, handling web requests gets proportionally more
+difficult. Users may ask to upload a gigabyte of video to their machine learning
+model or data pipeline, and we want to help them do that! We can’t just say,
+“sorry, either make your video 200x smaller or split it up yourself.” So we had
+a bit of a challenge on our hands.
+“Lambda on hard mode”
+Serverless function platforms have constraints. A lot of them, too!
+Functions on AWS Lambda are limited to 15-minute runs and 50 MB images. As of 2024, they can only use
+3 CPUs (6 threads) and 10 GB of memory. Response bandwidth is 16 Mbps.
+Google Cloud Run is a bit better, with
+4 CPUs and 32 GB of memory, plus 75 Mbps bandwidth.
+Cloudflare Workers are the most restricted. Their images can only be 10 MB in size and have 6
+HTTP connections. Execution is limited to 30 seconds of CPU time, 128 MB of
+memory.
+But modern compute workloads can be much more demanding: training
+neural networks, rendering graphics, simulating physics, running data pipelines,
+and so on.
+Modal containers can each use up to 64 CPUs, 336 GB of memory, and 8
+Nvidia H100 GPUs. And they may need to download up to hundreds of
+gigabytes of model weights and image data on container startup. As a result,
+we care about having them spin up and shut down quickly, since having any idle
+time is expensive. We scale to zero and bill by the second.
+As a user, this is freeing. I often get questions like, “does Modal have enough
+compute to run my fancy bread-baking simulation”
+— and I tell them, are you kidding? You can spin up dozens of 64-CPU containers
+at a snap of your fingers. Simulate your whole bakery!
+In summary: Modal containers are potentially long-running and compute-heavy,
+with big inputs and outputs. This is the opposite of what “serverless” is
+usually good at. How can we ensure quick and reliable delivery of HTTP requests
+under these conditions?
+A distributed operating system
+Let’s take a step back and review the concept of serverless computing. Run code
+in containers. Increase the number of containers when there’s work to be done,
+and then decrease it when there’s less work. You can imagine a factory that
+makes cars: when there are many orders, the factory operates more machines, and
+when there are fewer orders, the factory shifts its focus. (Except in computers,
+everything happens faster than in a car factory, since they’re processing
+thousands of requests per second.)
+This isn’t unique to serverless computing; it’s how most applications scale
+today. If you deploy a web server, chances are you’d use a PaaS to manage
+replicas and scaling, or an orchestrator like Kubernetes. Each of these
+offerings can be conceptualized by a two-part schematic:
+Autoscaling: Write code in a stateless way, replicate it, then track how
+much work needs to be done via latency, CPU, and memory metrics.
+Load balancing: Distribute work across many machines and route traffic to
+them.
+Together autoscaling and load balancing constitute a kind of analogue to an operating system in the distributed services world: something that manages
+compute resources and provides a common execution environment, allowing software
+to be run.
+Although a unified goal, there are many approaches. (A lot of ink has been spilled on load balancing in particular.) Here’s a brief summary to illustrate how this
+schematic maps onto a few popular deployment systems. We’re in good company!
+System (release date)AutoscalingLoad balancing
+Heroku (2009)By p95 latencyHTTP reverse proxy
+Kubernetes (2014)Resource metrics (custom)Custom reverse proxy and/or load balancer
+AWS Lambda (2014)TrafficHTTP reverse proxy
+Azure Functions (2016)TrafficHTTP reverse proxy
+AWS Fargate (2017)Resource metrics (custom)HTTP/TCP/UDP load balancer
+Render (2019)CPU/memory targetHTTP reverse proxy
+Google Cloud Run (2019)Traffic and CPU targetHTTP reverse proxy
+Fly.io (2020)Traffic (custom)HTTP/TCP/TLS proxy, by distance and load
+Modal (2023)Traffic (custom)Translate HTTP to function calls
+So… I spot a difference there. Hang on a second. I want to talk about Modal’s
+HTTP ingress.
+Translating HTTP to function calls
+You might notice that setting up an HTTP reverse proxy in front of serverless
+functions is a popular option. This means that you scale up your container, and
+some service in front handles TLS termination and directly forwards traffic to a
+backend server. For most of these platforms, HTTP is the main way you can talk
+to these serverless functions, as a network service.
+But for Modal, we’re focused on building a platform based on the idea that
+serverless functions are just ordinary functions that you can call. If you
+want to define a function on Modal, that should be easy! You don’t need to set
+up a REST API. Just call it directly with .remote().
+from modal import App
+from PIL import Image
+app = App()
+@app.function()
+def compute_embeddings(image: Image) -> list[int]:
+return my_ml_model.run(image)
+@app.function()
+def run_batch_job(image_names: list[str]) -> None:
+for name in image_names:
+image = fetch_image(name)
+vec = compute_embeddings.remote(image)  # invoke remote function
+print(vec)
+Since run_batch_job() can be invoked in any region, and compute_embeddings() can be called remotely from it, we needed to build generic high-performance
+infrastructure for serverless function calls. Like, actually “calling a
+function.” Not wrapping it in some REST API.
+Calling a function is a bit different from handling an HTTP request. There’s a
+mismatch if you try to conflate them! By supporting both of these workloads, we
+can:
+Use a faster, optimized path (for calls between functions) that can be
+location and data cache-aware, rather than relying on the same HTTP protocol.
+Fully support real-time streaming in network requests, rather than limiting it
+to fit the use case of a typical function call.
+Offer first-class support for complex heterogeneous workloads on CPU and GPU.
+Modal’s bread and butter is systems engineering for heavy-duty function calls.
+We’re already focused on making that fast and reliable. As a result, we decided
+to handle web requests by translating them into function calls, which gives us a
+foundation of shared infrastructure to build upon.
+Understanding the HTTP protocol
+To understand how HTTP gets turned into a function calls, first we need to
+understand HTTP. HTTP follows a request-response model. Here’s what a typical
+flow looks like. On the top, you can see a standard GET request with no body,
+and on the bottom is a POST request with body.
+Note: HTTP GET requests can technically have bodies too, though they should
+be ignored. Also, a less-known fact is that request and response bodies can be
+interleaved, sometimes even in HTTP/1.1!
+The client sends some headers to the server, followed by an optional body. Once
+the server receives the request, it does some processing, then responds in turn
+with a set of a headers and its own response body.
+Both the client and server directions are sent over a specific wire protocol,
+which varies between HTTP versions. For example, HTTP/1.0 uses a TCP stream for
+each request, HTTP/1.1 added keepalive support, HTTP/2 has concurrent stream
+multiplexing over a single TCP stream, and HTTP/3 uses QUIC (UDP) instead of
+TCP. They’re all unified by this request-response model.
+Here’s what an HTTP/1.1 GET looks like, as displayed by curl in verbose mode.
+The > lines are request headers, the < lines are response headers, and the
+response body is at the end:
+$ curl -v http://example.com
+*   Trying 93.184.216.34:80...
+* TCP_NODELAY set
+* Connected to example.com (93.184.216.34) port 80 (#0)
+> GET / HTTP/1.1
+> Host: example.com
+> User-Agent: curl/7.68.0
+> Accept: */*
+>
+* Mark bundle as not supporting multiuse
+< HTTP/1.1 200 OK
+< Accept-Ranges: bytes
+< Age: 521695
+< Cache-Control: max-age=604800
+< Content-Type: text/html; charset=UTF-8
+< Date: Fri, 23 Feb 2024 17:22:54 GMT
+< Etag: "3147526947+gzip"
+< Expires: Fri, 01 Mar 2024 17:22:54 GMT
+< Last-Modified: Thu, 17 Oct 2019 07:18:26 GMT
+< Server: ECS (cha/8169)
+< Vary: Accept-Encoding
+< X-Cache: HIT
+< Content-Length: 1256
+<
+<!doctype html>
+<html>
+<head>
+<title>Example Domain</title>
+<!-- note: head contents omitted for brevity -->
+</head>
+<body>
+<div>
+<h1>Example Domain</h1>
+<p>This domain is for use in illustrative examples in documents. You may use this
+domain in literature without prior coordination or asking for permission.</p>
+<p><a href="https://www.iana.org/domains/example">More information...</a></p>
+</div>
+</body>
+</html>
+* Connection #0 to host example.com left intact
+To iron out the differences between HTTP protocol versions, we needed a backend
+data representation for the request. In a reverse proxy, the backend protocol
+would just be HTTP/1.1, but in our case that would add additional complexity for
+reliably reconnecting TCP streams and parsing the wire format. We instead
+decided to base our protocol on a stream of events.
+Luckily, there was already a well-specified protocol for representing HTTP as
+event data: ASGI, typically used as a
+standard interface for web frameworks in Python.
+Note: ASGI was made for a different purpose! Usually the web server and
+ASGI application run on the same machine. Here we’re using it as the internal
+communication language for a distributed runtime. So we adjusted the protocol to
+our use case by serializing events as binary Protocol Buffers.
+ASGI doesn’t support every internal detail of HTTP (e.g., gRPC servers need
+access to HTTP/2 stream IDs), but it’s a common denominator that’s enough for
+web apps built with all the popular Python web frameworks: Flask, Django,
+FastAPI, and more. That’s a lot of web applications, and the benefit of this
+maturity is that it lets us greatly simplify our model of HTTP serving.
+Here’s what a POST request looks like in ASGI. The blue arrows represent client
+events, while the green arrows are events sent from the server.
+At the start of a request, when headers are received, we begin by parsing the
+headers to generate a function input via the http request scope. This
+triggers a new function call, which is scheduled on a running task according
+to availability and locality.
+Then, the request body is streamed in, and we begin reading it in chunks to
+produce real-time http.request events that are sent to the serverless
+function call. If the server falls behind, backpressure is propagated to the
+client via TCP (for HTTP/1.1) or HTTP/2 flow control.
+The function starts executing immediately after getting the request headers,
+then begins reading the request body. It sends back its own headers and
+status code, followed by the response body in chunks.
+The request-response cycle finishes, optionally with HTTP trailers.
+In this way, we’re able to send an entire HTTP request and response over a
+generic serverless function call. And it’s efficient too, with proper batching
+and backpressure. We don’t need to establish a single TCP stream or anything; we
+can use reliable, low-latency message queues to send the events.
+Unlike AWS Lambda’s 6 MB limit for request and response bodies, this
+architecture lets us support request bodies of up to 4 GiB (682x bigger), and
+streaming response bodies of unlimited size.
+Of course, although conceptually simple, it’s still a pretty tricky thing to
+implement correctly since there are a lot of concurrent moving parts. Our
+implementation is in Rust, based on the hyper HTTP server
+library and Tokio async runtime. Here’s a snippet of the
+code that buffers the request body in chunks of up to 1 MiB in size, or waits
+for 2 milliseconds of duration.
+/// Stream an HTTP request body into the `data_in` channel for a web
+/// endpoint. This function also sends `http.disconnect` when the request
+/// finishes, or the HTTP client disconnects.
+async fn stream_http_request_body(
+&self,
+function_call_id: &str,
+mut body: hyper::Body,
+disconnect_rx: oneshot::Receiver<()>,
+) -> Result<()> {
+let asgi_body = |body, more_body| Asgi {
+r#type: Some(asgi::Type::HttpRequest(asgi::HttpRequest {
+body,
+more_body,
+})),
+};
+let asgi_disconnect = Asgi {
+r#type: Some(asgi::Type::HttpDisconnect(asgi::HttpDisconnect {})),
+};
+let (tx, mut rx) = mpsc::channel(16); // Send at most 16 chunks at a time.
+tokio::spawn(async move {
+let body_buffer_time = Duration::from_millis(2);
+let body_buffer_size = 1 << 20; // 1 MiB
+let mut last_put = Instant::now();
+let mut current_segments = Vec::new();
+let mut current_size = 0;
+while let Some(result) = body.next().await {
+let Ok(buf) = result else {
+// If the request fails, send a disconnection immediately.
+tx.send(asgi_disconnect).await?;
+return Ok(());
+};
+if buf.is_empty() {
+continue;
+}
+current_size += buf.len();
+current_segments.push(buf);
+if current_size > body_buffer_size || last_put.elapsed() > body_buffer_time {
+let message = asgi_body(Bytes::from(current_segments.concat()), true);
+current_segments.clear();
+current_size = 0;
+tx.send(message).await?;
+last_put = Instant::now();
+}
+}
+// Final message, possibly empty.
+let message = asgi_body(Bytes::from(current_segments.concat()), false);
+tx.send(message).await?;
+// Wait for a client disconnect signal (or for the response to finish sending),
+// then forward that to the data channel.
+match disconnect_rx.await {
+Ok(()) => {}
+_ => tx.send(asgi_disconnect).await?, // => RecvError
+};
+anyhow::Ok(())
+});
+let mut index = 1;
+let mut messages = Vec::new();
+while rx.recv_many(&mut messages, 16).await != 0 {
+self.put_data_in(function_call_id, &mut index, &messages)
+.await?;
+messages.clear();
+}
+anyhow::Ok(())
+}
+You might have noticed the disconnect_rx channel used in the snippet above.
+This hints at one of the realities of making reliable distributed systems that
+we glossed over: needing to thoroughly handle failure cases everywhere, all the
+time.
+Edge cases and errors
+First, if a client sends an HTTP request but exits in the middle of sending the
+body, then we propagate that disconnection to the serverless function.
+We reify this using an ASGI http.disconnect event, which allows the user’s
+code to stop executing gracefully. Otherwise, we might have a function call
+that’s still running even after the user has canceled their request.
+Another issue is if the server has a failure. It might throw an exception, crash
+due to running out of memory, hit a user-defined timeout, be preempted if on a
+spot instance, and so on. If a malicious user is on the system, they also might
+send malformed response events, or events in the wrong order!
+We keep track of any violations and display an error message to the user. Rust’s
+pattern matching and ownership help with managing the casework.
+Dealing with HTTP idle timeouts
+Okay, so if we had been a standard runtime, we would be done with HTTP now. But
+we’re still not done! There’s one more thing to consider: long-running requests.
+If you make an HTTP request and the server doesn’t respond for 300 seconds, then
+Chrome cancels the request and gives you an error. This is not configurable.
+Other browsers and pieces of web infrastructure have varying timeouts. Our users
+often end up running expensive models that take longer than 5 minutes, so we
+need a way to support long-running requests.
+Luckily, there’s a solution. After 150 seconds (2.5 minutes), we send a
+temporary “303 See Other” redirect to the browser, pointing them to an
+alternative URL with an ID for this specific request. The browser or HTTP client
+will follow this redirect, ending their current stream and starting a new one.
+Browsers will follow up to 20 redirects for a link, so this effectively increases the idle timeout to 50 minutes.
+An example of this in action is shown below, with a single redirect.
+Is this behavior a little strange? Yes. But it just works “out-of-the-box” for a
+lot of people who have Web Functions that might execute for a long time. And if
+your function finishes processing and begins its response in less than 2.5
+minutes, you’ll never notice a difference anyway.
+For people who need to have very long-running web requests, Modal just works.
+WebSocket connections
+That’s it for HTTP. What if a user makes a WebSocket connection? Well, the
+WebSocket protocol works by starting an HTTP/1.1 connection, then establishing a handshake via HTTP’s connection upgrade mechanism. The handshake looks
+something like this:
+> GET /ws HTTP/1.1
+> Host: my-endpoint.modal.run
+> Upgrade: websocket
+> Connection: Upgrade
+> Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+> Sec-WebSocket-Version: 13
+>
+< HTTP/1.1 101 Switching Protocols
+< Upgrade: websocket
+< Connection: Upgrade
+< Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+Note: There is also another version of the WebSocket protocol that
+bootstraps from HTTP/2, but it’s not supported by many web servers yet. For now,
+you need a dedicated TCP connection.
+The Sec-WebSocket-Key header is random, while Sec-WebSocket-Accept is
+derived from an arbitrary hash function on the key. (This is just some protocol
+junk that we had to implement, see RFC 6455.) ASGI has a separate WebSocket interface that encodes this handshake into a pair of websocket.connect and websocket.accept events, so we translated our incoming request into those
+events.
+After the handshake, all of the infrastructure is already in place, and we
+transmit messages between modal-http and the serverless function via data
+channels in the same way as we did for HTTP.
+Our server-side Rust implementation is based on hyper as before, but it upgrades
+the connection to an asynchronous tokio-tungstenite stream once
+the handshake is accepted.
+Building on open-source infrastructure
+We’ve built a lot of infrastructure to support HTTP and WebSocket connections,
+but we didn’t start from scratch. The Rust ecosystem was invaluable to making
+this custom network service, which needed to be high-performance and correct.
+But while we’ve talked a lot about the serverless backend and design choices
+made to support heavy workloads, we haven’t talked yet about how requests
+actually get to modal-http. For this part, we relied on boring, mature
+open-source cloud infrastructure pieces.
+Let’s still take a look though. Modal Web Functions run on the wildcard domain *.modal.run, as well as on custom domains as assigned by users
+via a CNAME record to cname.modal.domains. The most basic way you’d deploy a
+Rust service like modal-http is by pointing a DNS record at a running
+server, which has the compiled binary listen on a port.
+Rust is pretty fast, so this is a reasonable design for most real-world
+services. A single node nevertheless doesn’t scale well to the traffic of a
+cloud platform. We wanted:
+Multiple replicas. Replication of the service provides fault tolerance and
+eases the process of rolling deployments. When we rollout a new version, old
+replicas need a gradual timeout.
+Encryption. Support for TLS is missing here. We could handle it in the
+server directly, but rather than reinventing the wheel, it’s easier and safer
+to rely on well-vetted software for TLS termination. (We also need to allocate on-demand certificates for custom domains.)
+So, rather than the simplified flow above, our actual ingress architecture to modal-http looks like this. We placed a TCP network load balancer in front of
+a Kubernetes cluster, which runs a Caddy deployment, as well as a separate
+deployment for modal-http itself.
+Note that none of our serverless functions run in this Kubernetes cluster.
+Kubernetes isn’t well-suited for the workloads we described, so we wrote our own
+high-performance serverless runtime based on gVisor, our
+own file system, and our own job scheduler — which we’ll talk about another
+time!
+But Kubernetes is still a rock-solid tool for the more traditional parts of our
+cloud infrastructure, and we’re happy to use it here.
+Caveat: Multi-region request handling
+It’s a fact of life that light takes time to travel through fiber-optic cables
+and routers. Ideally, modal-http should run on the edge in geographically
+distributed data center regions, and requests should be routed to the nearest
+replica. This is important to minimize baseline latency for web serving.
+We’re not there yet though. It’s early days! While our serverless functions are
+already running in many different clouds and data centers based on compute
+availability, since GPUs are scarce, our actual servers only run in Ashburn,
+Virginia for now.
+This is a bit of a tradeoff for us, but it’s not a fundamental one. It gives us
+more flexibility at the moment, although modal-http will be deployed to more
+regions in the future for latency reasons. Right now heavyweight workloads on
+Modal probably aren’t affected, but for very latency-sensitive workloads (under
+100 ms), you’ll likely want to specify your container to run in Ashburn.
+Lessons learned
+So, there you have it. Serverless functions are traditionally limited to a
+request-response model, but Modal just released full support for WebSockets,
+with GPUs and fully managed autoscaling. And we did this by translating web
+requests into function calls.
+Our service, modal-http, is written in Rust and based on several components
+that let us handle HTTP and WebSocket requests at scale. We’ve placed it behind
+infrastructure to handle the ingress of requests, and we’re planning to expand
+to more regions in the future.
+Some may wonder: If Modal translates HTTP to this message format, wouldn’t that
+stop people from being able to use the traditional container model of EXPOSE-ing TCP ports?
+This is a good question, but it’s not a fundamental limitation. The events can
+be losslessly translated back to HTTP on the other end! We
+wrote examples of this for systems like ComfyUI, and we’re building it into the runtime with just a bit of added code.
+We’ve already been running Rust to power our serverless runtime for the past two
+years, but modal-http gives us more confidence to run standard Rust services
+in production. Just for comparison, when we first introduced this system to
+replace our previous Python-based ingress, the number of 502 Bad Gateway errors in production decreased by 99.7%, due to clearer error handling and
+tracking of request lifetimes. And it laid the groundwork for WebSocket support
+without fundamental changes.
+Today, Web Functions and remote function calls on Modal use a common system.
+Having uniformity allows us to focus on impactful work that makes our cloud
+runtime faster and lower-priced, while improving security and reliability over
+time.
+Acknowledgements
+Thanks to the Modal team for their feedback on this post. Special thanks to
+Jonathon Belotti, Erik Bernhardsson, Akshat Bubna, Richard Gong, and Daniel
+Norberg for their work and design discussions related to modal-http.
+If you’re interested in fast, reliable, and heavy-duty systems for the cloud, Modal is hiring.
+Ship your first app in minutes.
+Get Started
+$30 / month free compute
+AI infrastructure that
+developers love
+© Modal 2026
+Products InferenceSandboxesTrainingNotebooksBatchCore Platform
+Resources DocumentationChangelogPricingSlack CommunityArticlesGPU GlossaryLLM Engine AdvisorModel Library
+Company AboutBlogCareersEventsPrivacy PolicySecurity & PrivacyTerms
+Popular Examples Serve your own LLM APICreate custom art of your petDeploy OpenCode agents in a cloud Sandbox
+
+=== ROW 146 | f005964 | https://memorysafety.org/blog/rustls-server-perf | 2025-05-14T00:00:00 | hn-lobsters;twir-links ===
+Rustls Server-Side Performance - Prossimo
+Support this Work
+Initiatives
+TLS (Rustls)
+DNS (Hickory)
+sudo and su
+NTP (ntpd-rs)
+AV1 (rav1d)
+zlib
+Linux Kernel
+Reverse Proxy (River)
+Apache httpd (mod_tls)
+curl
+Tools
+Blog
+About
+Prossimo
+What is Memory Safety?
+Internet Security Research Group
+Contact
+Support this Work
+Rustls Server-Side Performance
+Dirkjan Ochtman
+May 13, 2025
+In past years, the Rustls project has been happy to receive substantial investments from the ISRG. One of our goals has been to improve performance without compromising on safety. We last posted about our performance improvements in October of 2024, and we're back to talk about another round of improvements.
+What is Rustls?
+Rustls is a memory safe TLS implementation with a focus on performance. It is production ready and used in a wide range of applications. You can read more about its history on Wikipedia.
+It comes with a C API and FIPS support so that we can bring both memory safety and performance to a broad range of existing programs. This is important because OpenSSL and its derivatives, widely used across the Internet, have a long history of memory safety vulnerabilities with more being found this year. It's time for the Internet to move away from C-based TLS.
+On the server
+In our previous post we looked at handshake latency and traffic throughput for connections on the client and the server. While clients will usually have a small number of connections active at any time, TLS servers generally want to optimize for high utilization, supporting as many connections as possible at the same time. TLS server connections usually share a reference to a backing store, which can be used to resume sessions across connections for a substantial latency improvement in connection setup. Our goal is then to minimize the slowdown that sharing the resumption store imposes on individual connections.
+We first validated the assumption that turning off resumption would allow linear scaling:
+As our testing showed, Rustls manages to avoid any impact from scaling in this case, up to the 80 cores offered by the Ampere ARM hardware used in this test. This is similar to BoringSSL, which shows no impact -- although it spends more time per handshake. OpenSSL handshake latency deteriorates as it scales, although comparing OpenSSL versions shows that its development team have made strides to improve this, as well.
+Resumption mechanisms
+TLS supports two different resumption strategies:
+Stateful resumption stores resumption state on the server in some kind of map (or database). The key into this map is sent across the wire. Because the key is relatively compact, this uses less bandwidth and therefore slightly reduces latency. On the other hand, it is harder to scale efficiently when multiple servers are serving the same potentially resuming clients.
+Stateless resumption sends encrypted resumption state to the client. This is easy to horizontally scale because there is no server-side state, but the resumption state is a good deal larger, with an associated increase in bandwidth used (and the associated latency impact).
+The resumption state that is sent to a client is commonly called a "ticket". Ticket encryption keys must be regularly rolled over because a key compromise destroys the security of all past and future tickets. In order to enable key rollover while supporting multiple concurrent sessions, Rustls 0.23.16 and earlier wrapped the encryption key in a mutex, which resulted in substantial contention as the number of concurrent server connection handshakes increased. In Rustls 0.23.17, we started using an RwLock instead, which limits contention to the short period when a key rollover happens (by default, every 6 hours).
+Finally, we made another change in Rustls 0.23.17 to reduce the number of tickets sent by default when stateless resumption is enabled from 4 to 2, to align with the OpenSSL/BoringSSL default. This leads to doing less work both in terms of CPU time (encryption) and bandwidth used.
+Handshake latency distribution
+Apart from specific resumption concerns, we also compared Rustls to other TLS implementations in terms of the latency distribution experienced on the server: not just looking at the average latency, but also at worst-case (in this case, P90 and P99) latency. Rustls does quite well here:
+While this chart shows full TLS 1.3 handshakes in particular, similar results were observed for other scenarios.
+Conclusion
+Current versions of Rustls show competitive performance when processing many connections at the same time on a server. Rustls servers scale almost linearly with the number of cores available, and server latency for the core TLS handshake handling is roughly 2x lower than OpenSSL in our benchmarks.
+548 Market St, PMB 77519
+San Francisco, California 94104-5401
+Send all mail or inquiries to:
+PO Box 18666,
+Minneapolis,
+MN
+55418-0666,
+USA
+Resources
+Privacy Policy
+Trademark Policy
+Terms of Service
+Social
+LinkedIn
+Read all about our nonprofit work this year in our 2025 Annual Report.
+Subscribe for email updates about Prossimo and other ISRG projects
+© 2026 Internet Security Research Group
+Back to top
+
+=== ROW 147 | f007042 | https://loige.co/coauthoring-a-book-about-rust-and-lambda | 2024-12-16T09:30:00 | individual-blogs ===
+I am co-authoring a book about Rust and Lambda
+Luciano Mammino Open main menu
+Blog
+Books
+Speaking
+About
+Switch theme to light mode Switch theme to dark mode
+I am co-authoring a book about Rust and Lambda
+Announcing Crafting Lambda Functions in Rust, a guide to building efficient AWS Lambda functions with Rust by Luciano Mammino and James Eastham
+User Icon Author Luciano Mammino
+Calendar Icon Published
+2024-12-16 09:30
+Tag Icon Topics
+#rust
+#serverless
+#lambda
+I’m beyond excited to share some big news with you: I’m co-authoring a new book called Crafting Lambda Functions in Rust together with the amazing James Eastham! If you’re as passionate about serverless and Rust as I am, you’ll want to check this out. We even have an official website for it, check out the book Crafting Lambda Functions in Rust.
+This book is your hands-on guide to building efficient, scalable, and cost-effective serverless applications with AWS Lambda functions and using the power of the Rust programming language.
+How it all started
+The idea for this book didn’t happen overnight. It all began when I kept crossing paths with James at conferences over the years. Every time we met, we’d end up deep in conversation about two of our favorite topics: serverless computing and Rust.
+This year, at Rust Nation in London, the stars seemed to align. We realized that we had both been toying with the idea of writing a book to share what we’d learned about building AWS Lambda functions in Rust. We talked about how Rust is not only incredibly powerful for Lambda but also surprisingly easy (perhaps unexpectedly) to get started with. Rust has a reputation of being hard to grasp, so it might come as a surprise to many to discover that building Lambda functions with this language it’s a very accessible endeavor. While we were debating different approaches we had played with and discussing the current tooling ecosystem, it became clear that a little evangelism could go a long way in bringing this tech combo to a broader audience.
+At that point, joining forces felt like the most natural thing to do. We agreed to tackle this project together, and what started as an idea is now becoming a reality. And while we’re still knee-deep in writing, we hope that someday we’ll look back and say, “And the rest is history!” For now, though, there’s a huge pile of work ahead, and we’re ready to take it on.
+By the way, before you move on to find out more details about our motivations and the book itself, I’d like to make it very clear that the book is already available for purchase in early access. This means that you can start reading it right now and help us shape the final version with your feedback. If you’re interested, head over to Crafting Lambda Functions in Rust’s website to grab your copy. And yes, at the time of writing it’s heavily discounted, so I’d like to think you get yourself a bit of a good deal…
+Oh yeah, let me show you the book cover as well, so you can tell that this is real!
+Yes, our mascot is a crab (a cRustacean, get it?) with a Lambda hat… If you have been wandering around this blog long enough you’d probably get the video game reference as well!
+Why Rust and Lambda?
+I have actually written an entire blog post on this last year: Why you should consider Rust for your Lambdas. But don’t worry, if you are in a rush, I’ll give you a quick summary here anyway.
+The combination of Rust and AWS Lambda is a game changer. Over the past few years, I’ve been using Rust to build serverless applications, and I’ve seen firsthand how well they complement each other. Here’s why I think Rust is an awesome choice for writing Lambda functions.
+Cost Savings and Sustainability: As a compiled language, Rust produces highly efficient binaries that are compact and lightning-fast. This means your Lambda functions run quicker, consume less memory, and ultimately cost less to execute. Remember that with Lambda functions the execution cost is given by the formula memoryCost * executionTime where memoryCost is a price unit that depends on how much memory you allocated for the Lambda and executionTime is how long that function has been executing in milliseconds. With Rust, in most circumstances, you can lower both dimensions, compared to interpreted languages such as JavaScript and Python. But it’s not just about saving money: Rust’s efficiency reduces resource usage, which translates to a lower carbon footprint. Your apps can be both cost-effective and environmentally friendly.
+Reliability and Correctness: Rust’s strict compiler and type system are like having an extra pair of eyes on your code. I am a big fan of the idea of not having a null type in the language and that you have to express the potential absence of data using a dedicated wrapper type: the Option type. The same goes for the Result type which lets you deal with errors in a very explicit way. These features make it easier to spot edge-cases as early as possible and you have to explicitly decide how to handle them. Once you get used to these abstractions and appreciated their benefits, you’ll find yourself being much more confident that your code is correct and reliable. When you’re working in a serverless environment where reliability is often non-negotiable, this is a huge win.
+Fast Starts, Smooth Runs: With Rust, you get tiny package sizes and no garbage collection. This often translates to faster cold starts. How fast you might ask… What I have seen is something on the range of 10-60 ms (depending on the amount of libraries and the amount of init work to be performed). This is in the order of 10-20x of what I have generally observed with JavaScript and Python. Now think about using Lambdas as your HTTP backend or for any other task that has a user waiting for a response. This means that, even in the occasional presence of a cold start, your users will barely notice any additional delay which translates to a more seamless experience, even during peak loads.
+A Streamlined Developer Experience: Last but definitely not least, we should talk about DX. When I first talk to people about using Rust for Lambda functions, most of them are initially skeptical. And I get it: although fast-growing, Rust is still a relatively niche language, and it’s certainly not common to see it being used with Lambda. Plus Rust has gotten a reputation of being somewhat difficult to learn, so all of this creates an expectation that, although there might be strong benefits, it must be real hard to write a Lambda in Rust and bring it all the way to production. Now, we can argue about Rust being difficult or not. I acknowledge there might be some initial challenges when you come from languages that manage memory for you, but it’s also fair to say that it isn’t that hard to start writing Rust and get productive with it. You don’t need to become an all around expert of the language to write decent code that be shipped to production. But this isn’t the only point, because the real super power for the combo Rust-Lambda is a tool called Cargo Lambda. This tool makes it super easy to scaffold a Lambda, test it locally, compile it and ship it to production. It even integrates with most of IaC tools out there such as SAM, Terraform and even CDK. This let’s you focus on writing great code while letting the tooling handle the heavy lifting. I seriously wish a tool like this existed also for Node.js and Python!
+Early Access: Read and Shape the Book!
+If you got this far, hopefully, you are now convinced that using Rust for your Lambda functions is not that crazy of an idea, so the next question is how do you get started?
+Well, that’s why we are writing this book, so you are in the right place!
+I have a bad and a good news though!
+The bad news is that the book isn’t finished (unless you are reading this a bit ahead in the future). But, the good news is that everything we have produced so far is already available and there’s a significant amount of work already!
+You can get your copy of the book right now in early access. This means you can get started today! By purchasing early access, you’ll:
+Receive chapters as they’re written: You’ll get new content and updates regularly.
+Contribute to the book: Share your feedback, help shape the final version, and, if you like, get your name on the book!
+Enjoy a discounted price: Early access comes at a (significantly) reduced cost from what we are expecting the final cover price to be!
+This approach lets us work collaboratively with readers to ensure the book is as practical and comprehensive as possible.
+Is it worth to get the book right now? I don’t know, you tell us! 😅
+I’d like to think it is a good deal if you are looking to get started ASAP.
+Worth mentioning that what we have published so far includes 6 chapters that will guide you from building a serious serverless application (a URL shortener service) from scratch and ship it to production. This accounts for more than 100 pages and tons of code examples and exercises.
+What’s in (and what will be in) the Book?
+Here’s a list of the chapters of the book, giving you a clear roadmap of what’s available and what’s coming:
+Chapter 1: Rust & Lambda (available): We’ll explore why using Rust and AWS Lambda together is a great idea. We’ll discuss the benefits of this combination compared to other alternatives.
+Chapter 2: A ‘Hello, Serverless’ API (available): You’ll learn how to write your first Rust-powered Lambda function. You’ll create a simple “Hello, Serverless” API that demonstrates the basics of AWS Lambda and Rust.
+Chapter 3: Infrastructure as Code with SAM (available): We’ll show you how to deploy and manage your Rust Lambda functions using the Serverless Application Model (SAM). You’ll learn how to create, update, and delete your functions.
+Chapter 4: Integrating with External Systems (available): We’ll teach you how to make arbitrary HTTP requests or interact with other AWS services from your Lambda functions. We’ll cover various techniques for integrating with external systems.
+Chapter 5: Code Organization (available): This chapter will focus on best practices for organizing the code for projects with multiple Lambda functions. You’ll learn how to structure your code for maintainability and readability.
+Chapter 6: Making the Code Testable (available): We’ll show you how to structure your code in a way that allows you to write good tests for your Lambda functions. You’ll learn about testing fundamentals and how they apply to Rust Lambda functions.
+Chapter 7: Handling Different Kinds of Events (in progress): In this chapter, we’ll discuss how to handle AWS-specific events, custom events, and arbitrary JSON in a strongly-typed way. You’ll learn about event handling best practices for your Rust Lambda functions.
+Chapter 8: Different Ways of Writing Lambda Handlers (in progress): We’ll explore different ways to write your Lambda function handlers. We’ll cover simple async functions, custom structs, and implementing the Tokio Tower service trait.
+Chapter 9: Configuration Management and Handling Secrets (planned): This chapter will focus on best practices for injecting configuration and secrets into your Rust Lambda functions. You’ll learn how to securely manage sensitive data in your serverless applications.
+Chapter 10: Observing All the Things (planned): We’ll show you how to make your Rust Lambda functions observable using CloudWatch or OpenTelemetry. You’ll learn about monitoring best practices and how they apply to your serverless functions.
+Chapter 11: Middlewares (planned): In this chapter, we’ll introduce the middleware pattern and show you how to handle cross-cutting concerns in an elegant and reusable way. You’ll learn about middleware best practices for your Rust Lambda functions.
+Chapter 12: Hosting Existing HTTP Services (planned): We’ll teach you how to wrap existing HTTP services in a Lambda function to make them easily available as serverless functions. You’ll learn about the benefits and trade-offs of using this approach.
+Chapter 13: Lambda Extensions (planned): We’ll dive into writing Lambda extensions using Rust.
+Chapter 14: Integrating with GitHub Actions (planned): Learn how to configure the integration between AWS and GitHub Actions to test, build, and deploy your Lambda functions in an automated fashion.
+Appendix A: IaC Alternatives (planned): Discover how to use CDK or Terraform as an alternative to SAM for managing your serverless infrastructure.
+This list isn’t set in stone! If you think there’s a big topic missing or something you’d love to see covered, please let us know. We want to write the book you’d like to read about using Rust with AWS Lambda!
+Ready to Start?
+As we wrap up, it’s worth mentioning that this journey isn’t just about writing AWS Lambda functions in Rust, but it’s about diving deep into the serverless ecosystem. Along the way, we’ll explore DynamoDB, S3, EventBridge, and other building blocks of serverless architecture, all while building a real, production-ready application.
+And of course, this journey isn’t one you have to take alone. There’s a thriving community waiting to support you, including our Discord server, where you can connect with like-minded developers, ask questions, and share your experiences. Whether you’re here for the Rust, the serverless insights, or the hands-on learning, I’m glad to have you along for the ride.
+So, what are you waiting for? Dive in, experiment, and share your feedback. Together, let’s redefine what’s possible with serverless and Rust. Head over to rust-lambda.com and start your journey today.
+Let’s build something amazing together!
+Sharing is caring!
+If you got value from this article, please consider sharing it with your friends and colleagues.
+Copy Icon Copy link LinkedIn Icon Share on LinkedIn Facebook Icon Share on Facebook X, formerly Twitter Icon Share on X, formerly Twitter
+Found a typo or something that can be improved?
+In the spirit of Open Source, you can contribute to this article by submitting a PR on GitHub.
+Bluesky Love
+awesome folk(s) liked this article on Bluesky
+Like or comment on Bluesky
+You might also like
+Writing middlewares for Rust Lambda functions
+How to write reusable middleware for Rust Lambda functions using tower, the generic middleware engine that already underpins the AWS Lambda Rust runtime. Includes a complete DynamoDB-backed IP rate limiter with SAM deployment.
+Calendar Icon 2026-05-03
+404: Newsletter Found
+Discover the journey behind FullStack Bulletin, a weekly newsletter for full-stack developers with 404 curated issues over 8 years. Learn about its origins, technical implementation, and future plans.
+Calendar Icon 2024-12-21
+Debugging custom ApiGateway authorizers
+When building a custom API Gateway authorizer, mysterious 500 errors can happen. This post shows how to enable CloudWatch logging for API Gateway to inspect the logs and debug problems.
+Calendar Icon 2023-11-05
+Why you should consider Rust for your Lambdas
+Rust is an ideal language for writing AWS Lambda functions. Its performance can reduce execution time and memory usage, lowering costs. Its safety features like no nulls and error handling can reduce bugs.
+Calendar Icon 2023-08-16
+Debugging AWS API Gateway HTTP with OIDC-JWT authorizers
+Learn how to debug silent failures in AWS API Gateway HTTP when your OIDC provider doesn't implement the .well-known/openid-configuration endpoint. Enable FailOnWarnings to catch these issues before they break your production deployment.
+Calendar Icon 2025-12-17
+JavaScript, low-level or AI?
+The software industry sees an interesting tension between generative AI capturing the software lifecycle and low-level languages aiming for better performance. As developers we must understand these trends and find a strategy. Learn one or both?
+Calendar Icon 2023-11-10
+loige.co
+The personal website of Luciano Mammino
+© 2014-2026 Luciano Mammino.
+Built with Astro, TailwindCSS, Coffee and a lot of ❤︎love.
+Hosted on GitHub Pages, accelerated by Cloudflare.
+Explore
+Home
+Blog
+Speaking
+About
+Comment Policy
+My Projects
+Node.js Design Patterns
+Crafting Lambda Functions in Rust
+AWS Bites
+FullStack Bulletin
+Middy
+Let's connect
+BlueSky
+X (Twitter)
+Mastodon
+Twitch
+YouTube
+LinkedIn
+GitHub
+
+=== ROW 148 | f007125 | https://darkcoding.net/software/rust-hashmap-notes | 2025-03-30T10:50:00 | individual-blogs ===
+Rust HashMap notes · Graham King
+Graham King
+Solvitas perambulum
+Rust HashMap notes
+March 30, 2025
+software
+optimization
+hashmap
+datastructures
+Rust’s HashMap has a very efficient SIMD-friendly design based on Google’s SwissTable. There is a fantastic CppCon talk about it’s design: Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step. That video is necessary to make sense of what follows.
+I spent some time learning how the Rust implementation works, with the intention to write a deep-dive post about it. I’m ready to admit that’s not going to happen, so here are my raw research notes.
+Edited down to the core pieces Rust’s HashMap looks like this:
+std::collections::HashMap<K, V> {
+base: hashbrown::HashMap<K, V> {
+// Factory for hasher. Default to RandomState who's build_hasher(k1, k2)
+// returns a SipHasher (SipHash 1-3) initialized with two random values.
+hash_builder: impl BuildHasher
+// Key/Value become a tuple, that's what we store in the map's backing memory
+// T = (K, V)
+table: RawTable<T> {
+// non generic part
+table: RawTableInner {
+bucket_mask: usize, // num buckets - 1 (??)
+ctrl: *const T, // the memory - the exciting part!
+growth_left: usize, // inserts left until we have to grow
+items: usize, // len()
+}
+}
+}
+}
+The implementation is also available as a separate crate: hashbrown.
+A traditional compsci-101 hashtable is an array of linked lists. The key is hashed to an index in the array. That’s it’s bucket. Each bucket contains a linked-list. The element is appended to the end. That tends to result in elements spread out in memory which performs poorly on modern processors. That is a chaining table.
+hashbrown is instead a probing table. The elements are contiguous in memory. The values are stored as an array, ending with ctrl bytes. Most of the probing happens in ctrl bytes, so in L1 cache. The probing uses SSE instructions (128 bit SIMD) to compare 16 bytes at once.
+The number of buckets is always a power of 2. HashMap is made up of contiguous groups: 16 control bytes and 16 values is a Group.
+Metadata at start of allocation (ctrl):
+a byte per entry, first bit says if it’s deleted,
+then (if 0) 7 bits of hash code, bottom 7 bits of hash
+if top bit 1 is non-value: empty, deleted or sentinel (for table scan)
+Hash is u64:
+top 57 bits are h1, position in array to start looking at. We start looking in ctrl bytes, often that’s enough.
+bottom 7 bits are h2
+Find (probing):
+hash the value, treat as h1 (top 57 bits) and h2 (bottom 7 bits)
+h1 % size gives us an $index into ctrl bytes. For mod we use & lower bits because num buckets is always a power of 2, so for 4 buckets we keep only the 2 bits, for 8 bucket the lower 3 bits, etc.
+jump to that index compare bottom 7 bits - h2 - of next 16 bytes at once, noting all the matches (usually 1 maybe 2)
+initial index plus offset of byte that matches gives us the slot position (index into regular data part of group)
+compare the full key in that slot with our key (because hash collisions are possible). This is almost always true so we can tell branch predictor to predict branch taken. If we found it that was only 2 memory accesses.
+Growth:
+allocates on first insert (not on ‘new’)
+grows by allocating a new table and inserting all elements from previous table into it (hash+memcopy)
+always one spare bucket at end - a bucket is just entry in array [V] where V is value type
+always a power of 2 (but holds that -1)
+initial allocation is space for 4 entries (3 elements plus the spare)
+next allocation is space for 8 entries
+then next power of 2 above or equal to cap*8 / 7. close enough to “grows by doubling”. 9-14 -> 16, 15->28 -> 32, etc
+Memory layout:
+contiguous block
+data bytes ((size_of + size_of) * NumBuckets), then 16 ctrl bytes, then NumBuckets ctrl bytes? (why the duplication)
+data and ctrl bytes are mirrors of each other. we use positive offset for ctrl bytes, negative offset for data
+[optional padding (so that we align 16?)] d3, d2, d1, d0, c0, c1, c2, c3
+^
+|- RawTableInner.ctrl
+I hope that was useful to you.
+←
+Underrust: How does u128 work on a 64-bit processor?
+April 5, 2025
+CPU Performance Optimization notes
+March 29, 2025
+→
+©
+2026
+Graham King
+
+=== ROW 149 | f007207 | https://thecodedmessage.com/posts/rust-features-2 | 2025-07-21T00:00:00 | individual-blogs ===
+What Features Should Rust Have? Part II :: The Coded Message
+The Coded Message
+menu
+Home
+All Posts
+Programming Posts
+Non-Technical Posts
+Subscribe
+About
+Home
+All Posts
+Programming Posts
+Non-Technical Posts
+Subscribe
+About
+What Features Should Rust Have? Part II
+2025-07-21
+:: Jimmy Hartzell
+#programming
+#computers
+#Rust Features
+In my previous post, I talked about programming
+language design, and try to discern some heuristics for what features
+should be added to a programming language, on my way to explaining
+why Rust should not include inheritance as a feature.
+I’d like to expand more on that blog post now (so I guess it’s become a
+series?). Do I think Rust is perfect how it is?
+(No.) Are there features that I want in Rust that Rust currently does not
+have? (Absolutely yes.) In this post, I’d like to talk about some proposed
+additions to Rust, some recent, some very stale, and discuss my perspective
+on them.
+My primary goal in this is educational. I’d like people to think seriously
+about what features exist in the programming languages they use. I believe
+that this makes people better, more thoughtful programmers who write
+better-factored, more maintainable code. In general, I tend to be of an
+overly philosophical “overthinking” temperament, oscillating between a
+healthy dose of “unexamined life is not worth living” and a sometimes
+unrealistic or even unhealthy “every problem in life, programming, and even
+politics can be solved by just thinking harder and maybe a little
+smarter.”
+My secondary goal in this is advocacy. I suspect many critics of Rust have
+entrenched but under-developed opinions of what makes a programming language
+feature good or worthwhile. This sometimes comes from the understandable
+position of having thought about this primarily from the programmer’s
+perspective, where they’re just trying to get work done and patterns they’re
+used to using are unavailable for mysterious reasons. This also sometimes
+comes from good old-fashioned differences in priorities or even programming
+ideologies. In either case, if I can show another way to think about
+programming languages and programming language features, perhaps it will at
+least lead to better understanding of where Rust is coming from.
+Fields in Traits: Maybe.#
+First, I’d like to talk about an actual proposal to add inheritance-like
+features to Rust. We know I wouldn’t want to add “inheritance” to Rust in a
+Java, C++ or Smalltalk style, preferring the much more limited features of
+composition, traits, and sum types. But could other inheritance-like
+features be added without harm to Rust’s overall design?
+The nominal target audience for my previous post was critics of Rust who were coming from
+an OOP perspective, and thought that it was bad that Rust doesn’t include
+inheritance. I’d seen a lot of them in response to my original
+post about inheritance, and wanted to pick
+apart some of the assumptions and talking points I’d seen in that
+criticism.
+I say this was my “nominal” target audience. This was fundamentally a
+partisan advocacy post, if the parties are OOP ideologues vs people who
+think we need to move beyond it. If Rust were a religion (which it’s not) we
+would call it “apologetics,” and some do – a lot of my blog could fairly be
+described as Rust apologetics. And like most partisan advocacy posts, even
+though the nominal audience was critics of Rust, my audience also includes
+people who face such critics, giving them rhetorical tools and conceptual
+frameworks for defending Rust against critics in their own conversations.
+For example, let’s say you’re advocating for Rust at your workplace. If
+someone complains that it “forbids” inheritance, what do you say? Or if they
+ask why Rust doesn’t just “give you the choice” of inheritance, how do you
+respond to that argument? How do you avoid becoming convinced yourself?
+As an advocacy post engaging with (outside) critics of Rust, my post was
+limited in scope. I wasn’t engaging with controversies or discussions within
+the Rust community. Rust is unlikely to get inheritance as a feature anytime
+soon, even though there have been
+discussions of it. If Rust
+does get new features that resemble inheritance, it’s unlikely to be a
+version of the feature recognizable to OOP theorists. It’s more likely (not
+particularly likely, but more likely) to be something more like this
+proposal to add fields to
+traits,
+a much more limited (and therefore less problematic) feature than OOP
+“inheritance” in all its glory and warts.
+So, I want to be clear. My previous post was intended to engage with outside
+critics of Rust who are uncomfortable that Rust doesn’t have the full
+feature of inheritance, with all its problems. I was not addressing any
+internal efforts to get some of the upsides of inheritance, except perhaps
+in a throw-away line where I say that additional use cases of inheritance
+might merit adding additional narrowly-defined features to capture those use
+cases.
+And perhaps we do need features that cover more use cases of inheritance.
+Fields in traits would be one such feature. Adding fields to traits doesn’t
+have anywhere near as many of the problems that I talk about in my
+previous posts on inheritance.
+If this feature were to be added, it wouldn’t be called inheritance,
+wouldn’t cover all the possible patterns of inheritance, and Rust critics
+would still complain that Rust doesn’t have inheritance.
+So, I think fields in traits should be considered separately from
+inheritance writ large, just like traits themselves. So, how do I feel about
+fields in traits?
+Before I continue, I’d like to clarify that this proposal looks dead for
+now, and not under active development since 2017. I’ve been following
+programming languages long enough to know that proposals can languish a long
+time and then make an abrupt come-back, but there’s no particular reason to
+believe that that will happen to this proposal, especially in the near term.
+I greatly respect Niko Mitsakis (GitHub,
+blog). I’m sure he doesn’t know
+who I am: he’s a major figure in the programming language, and I’m just a
+Rust programmer and educator with a hobby advocacy/education blog that
+doubles as my personal blog.
+The fact that he wrote this proposal makes me like it more. If he thinks
+it’d be useful, that’s a strong reason in my mind to consider it seriously,
+even if it’s old and languishing. Argument from authority, in my mind, is
+less of a fallacy and more of a powerful and generally useful (albeit
+fallible) heuristic.
+It probably doesn’t, and likely shouldn’t, matter to Niko Mitsakis how I
+feel about fields in traits. I am engaging with this proposal only partially
+because I want to share my opinions about it, but mostly as an example of
+how I think through proposals like this. Part of this is advocacy: I think
+more people will like and appreciate Rust if they develop more discernment
+in how they think about programming language features. Part of it is
+education: I’d like to make people more thoughtful and therefore more
+effective in how they program, and part of that is understanding how
+programming language features interact.
+The Proposal#
+So, what about the actual proposal?
+I recommend you actually go read
+it
+if you want to engage with it properly. A lot of it is technical, trying to
+explain how to prevent this feature from breaking other features in the
+programming language, such as the borrow checker.
+But it also goes over the basics.
+But also, here’s a simple example use of this feature as a “tldr”:
+trait Foo {
+weight: f64,
+}
+struct Bar {
+other: u32,
+weight: f64,
+}
+impl Foo for Bar {
+weight: self.weight,
+}
+let foo: Box<dyn Foo> = Box::new(Bar {
+other: 0,
+weight: 0.3,
+});
+let foo_weight = foo.weight; // Polymorphic field access
+We define a field, weight, that all implementers of the Foo trait
+must have. In struct Bar, we then define this field among others.
+There is no requirement as to where we put the weight field, or
+even that we name it weight.
+Then, when we implement Foo for Bar, we tell the compiler which
+field to use as this generic weight field. This must be an actual
+concrete field, either directly in the struct, or in a path
+that contains no dereferences. Put another way, there must be
+a fixed offset within Bar where weight can be found, without
+having to follow any indirection.
+This offset could then be looked up in the vtable of a dyn Foo trait
+object, for when we want to write foo.weight, which would only do a little
+more work than a normal field look-up. We’d have all the capabilities with
+foo.weight as we would for any other field, including being able to borrow
+it, copy it (if it is Copy), move from it, exclusively borrow (&mut) it,
+etc. Much of the discussion in the rest of the proposal is how to make this
+possible with the borrow checker.
+Limitations of the Proposal#
+First, let’s talk about what this proposal rejects. The more limited
+a feature proposal is, the less likely it is to add confusion and
+cognitive load to the programming language as a whole.
+First, the proposal rejects the type of syntactic sugar known as
+“properties.” Properties, a feature available in Python, C#, Swift, and
+other programming languages, allows you to overload field access syntax.
+When the user of a type Foo with a value foo writes foo.x, it would compile to something
+more like foo.x(), and when they write foo.x = 3, it would
+compile to something like foo.set_x(3).
+This is great in my mind. I’m skeptical of properties in any programming
+language, but especially in a systems programming language like Rust.  When
+you write foo.x, it should be clear that it’s doing a field access (cheap
+and with few potential unseen consequences) rather than a method call (which
+could do anything including crash, or block your thread on a network
+request). The difference between these two things is important, and I don’t
+like a potentially more expensive more risky method call masquerading as a
+field access. (Edited to add: And while it is true that Rust’s Deref
+trait can insert a
+hidden method call in there, I see that more as a reason to dislike the
+Deref trait and implicit dereferences in general, and less as a reason to
+make it worse by adding properties.)
+The field accesses that this proposal does allow are a little heavier than
+typical field accesses in the case of a dyn trait object. But
+there is a limit to how heavy they are: They just have to look up
+an offset in the vtable, and use that offset in computing the
+address of a field. This is in line with how many things are heavier
+with a dyn trait object.
+Additionally, this proposal considers “embedding notation,” something
+more like OOP inheritance, where all the fields of one struct
+be included at the top of another, and where a trait could require
+this in implementing types. This would come very close to OOP-style inheritance,
+with just a little bit of additional complexity to provide semantic
+clarity.
+But, while not rejecting embedding notation, it at least consigns it to “future directions.”
+Specifically, it says:
+In any case, adding ..Foo notation does not add any expressiveness. It can
+always be modeled by using explicit fields, at the cost of some
+ergonomics.
+This is a good reason, in my book, to hesitate to add a potentially
+confusing and overpowered feature.
+Merits of the Proposal#
+So, here’s how I evaluate the proposal on its merits. In this section, I’m
+going to pretend I’ve never heard of OOP, I’m not aware of the overlap with
+“inheritance” as a feature, and consider this proposal as it interacts with
+traits.
+Traits get new capabilities all the time. This proposal is in line with
+that. Associated types, methods returning associated types, associated
+constants …  why not have what amounts to an associated item version of
+C++’s pointer to data
+members?
+This proposal adds a new feature Rust currently doesn’t have. You could
+simulate it by writing accessor methods, like weight(), set_weight(),
+weight_mut(), etc. to your trait definition, which is how similar patterns
+are currently implemented. But these have downsides in terms of flexibility
+and clarity that make this proposal a distinct feature, downsides
+the proposal clearly and convincingly addresses.
+I am in favor of having distinct features for distinct use cases.
+The Rust compiler should know what we’re doing, as it is our friend
+for verifying that we are doing it in sensible ways. The ability
+to distinguish, in a way legible to the compiler, between methods
+that do work and methods that provide access to data is appealing
+to me, especially since we already have the ability to provide
+access to data through trait methods.
+Like any new feature, it does increase the complexity of the programming
+language. Therefore, like any new feature, it needs to have use cases
+compelling enough to justify this increase in complexity.
+Here is where my experience is limited: I don’t understand the use cases
+well enough to comment. A lot of the discussion about inheritance-like
+features in Rust seems to do with Servo and/or GUI programming, but I’m not
+a participant in the Servo project, nor do I do GUI programming in Rust. My
+favorite GUI programming framework is very much
+so not object-oriented, so I’m a particularly weird edge case when it comes
+to these questions.
+So, my conclusion comes out to a shrug. This feature doesn’t seem bad in any
+way. It’s limited enough and distinct enough from existing features that I
+don’t think it would make the design of Rust worse.  If I were designing
+traits from scratch, I’d consider it. If it were added, I would not be
+particularly surprised or upset or concerned.
+But I personally don’t engage with a use case for it. So, besides noting
+that I don’t see a strong reason not to, I don’t have much to say. Perhaps
+now that I’ve read and thought so much about the proposal, I’ll start seeing
+use cases in future projects, and maybe that will change my opinion.
+OOP Overtones#
+In the previous section, I ignored the associations with OOP design
+patterns. The fact that this starts to look like inheritance, however, does
+make me suspicious, especially given that something even more like
+inheritance is put in the “future work” section.
+Sometimes, I find myself thinking thoughts similar to Linus Torvalds in his
+famous anti-C++ rant, where
+he says this about C++:
+Quite frankly, even if the choice of C were to do nothing but keep the
+C++ programmers out, that in itself would be a huge reason to use C.
+I have a different personality from Linus Torvalds, and my corresponding
+thought is a lot less personal, but of a similar vein. Sometimes, I feel
+that it’s best to exclude OOP features from Rust, not just because those
+features are ill-thought-out (see my
+previous posts),
+but because I see it as welcoming an OOP philosophy and OOP design patterns.
+Rather than framing it as wanting to exclude those programmers, as Linus
+does, I’d frame it as wanting to make sure people who come to Rust from OOP
+languages are encouraged to learn how to program like a Rustacean. I don’t
+want new Rustaceans to be tempted to program in OOP in their head and then
+translate that into the most literally equivalent Rust features. And so, I’m
+concerned about any feature that might enable people to program in an OOP
+style without learning Rusty idiom.
+In the end, however, I don’t think this is a very strong argument. Just
+because we don’t agree with a philosophy, doesn’t mean we have to reject any
+ideas that smell like that philosophy. As much as I try to be less abrasive
+than Linus Torvalds about it, that way lies tribalism. While there are
+reasons humans are tribal, even in little subcommunities like programming
+and programming language design, it’s important to not let it take over our
+thinking entirely.
+To the extent that this argument is valid, it can be expressed in other
+terms – in terms of feature overlap. If it’s true that this will encourage
+dialects of Rust, one more OOP-inspired with features that match OOP
+programmers’ comfort zone, one more FP-inspired with features that match
+functional style, then that may be a sign that Rust just has too many
+overlapping features, rather than anything else.
+To a certain extent, this sort of fracturing and dialectalization is
+inevitable in a programming language as ambitious and performance-centric as
+Rust. To achieve performance, Rust gives programmers control, because
+different situations call for different performance needs and different
+trade-offs – and therefore, different abstractions and different
+programming language features.
+I don’t really have a way to parlay these thoughts into specific feedback on
+the proposal of fields in traits. Perhaps, at the very most, I’d be extra
+cautious that this feature is truly needed – but then again, I feel like
+caution is required in any new feature.
+In actuality, it looks like this feature won’t be implemented anytime soon,
+and so any long-term concern about it is kind of moot for now. Who knows
+what dialects and parties there will be within the Rust programming language
+if and when this feature regains momentum?
+Self-Referential Structs: Absolutely.#
+By self-referential structs, I mean types like this:
+struct Foo {
+a: Vec<u32>,
+b: &'??? [u32], // Some subslice of `a`
+}
+Here, we have a struct with two fields. One of them has a heap
+allocation, and the other one borrows from that heap allocation.
+There is no way to actually write this in safe Rust. There is
+nothing we can put instead of ??? for the lifetime parameter
+of b. There is no way to constrain one field of a struct
+because it is borrowed by another field. In order to create
+a struct like this, we have to use unsafe.
+I have been tempted to write a blog post about self-referential structs
+for a while, but figured I had no need, because the excellent post
+“Self-referential types for fun and
+profit”
+already exists!
+Go read it, it’s great!
+Here is my take-away from this post: Self-referential types are not
+allowed in fully safe Rust. Sometimes if something isn’t allowed in fully
+safe Rust, it’s a code smell, a pattern of design that Rust is rightly
+protecting you from. But actually, self-referential types are super useful
+all the time, and so you might actually just want to learn how to construct
+them with unsafe or use a crate like
+ouroboros to handle the unsafe for
+you, wrapped in a (hopefully!) safe abstraction.
+“Self-referential types for fun and
+profit”
+already provides a great example of why you might want to create a struct
+like this. I’d add that the mere existence of
+Pin (and its prominent
+role in async Rust) is evidence that there are some programming patterns
+that absolutely need a struct where one field borrows from another.
+So here’s my excuse for talking about it now: I’m now writing a blog series
+about adding features to Rust, and there’s an informal feature
+proposal
+for adding support for this pattern. Yet again, this is Niko Matsakis’s
+idea, and I’m a lot more excited about it than I am about fields in traits,
+if only because I have use cases for this sort of thing regularly.
+So why am I excited about this feature?
+For one, pinning is super hard to reason about, and it’s not always
+necessary. Self-referential types can be made safe by pinning, but a subset
+of them can also be made safe and also still freely moveable by:
+Ensuring that we only borrow from a heap allocation owned by the other
+field (so that moving the Box or Vec doesn’t actually invalidate the
+reference, as the heap allocation doesn’t also move)
+Not mutating the borrowed-from field (because it’s borrowed from!)
+These are rules that you can enforce yourself on a struct with private
+fields, and then you can use unsafe to construct the borrow (with a
+technically inaccurate 'static lifetime). But they are also rules that a
+more sophisticated borrow checker could conceivably enforce for us, bringing
+this pattern into completely safe Rust.
+Of course, that’s exactly what this proposal would do.
+On a more abstract level, this proposal seems in line with the existing
+capabilities and philosophy of Rust. This is a point made by Niko already
+in his
+post,
+but I have a slightly different way of framing how I think about it.
+To me, struct types and stack frames are similar things.  Whatever lives
+on a stack frame together should be able to be bundled into a struct, and
+passed around. In Rust, that’s not the case – there are patterns of borrows
+that can exist between variables in a stack frame, that cannot exist within
+a struct.
+Given that there are transformations we want to do between stack frames and
+struct types (such as is done for us by the compiler when writing async
+functions), this is a problem.  This problem is already addressed by Pin,
+but that is overkill when immoveability is not actually a requirement.
+So for me, this feature feels less like complicating the borrow checker, and
+more like plugging a gap, a leak, in the abstraction that is the struct
+keyword. If we ever get this feature, once we have it, I think it’ll be the
+type of feature where we’ll wonder how we ever lived without it.
+And that’s all I really have to add to the conversation. For more, go read
+the blog posts I linked to, they’re really great.
+Subscribe
+Find out via e-mail when I make new posts!
+You can also use RSS (RSS for technical posts only) to subscribe!
+Comments
+If you want to send me something privately and anonymously, you can use
+my admonymous to admonish (or praise) me
+anonymously.
+comments powered by Disqus
+© 2026 Powered by Hugo
+:: Theme made by panr
+Mastodon
+

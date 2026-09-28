@@ -1,0 +1,2511 @@
+=== ROW 9 | f000576 | https://forums.swift.org/t/pitch-multi-statement-if-switch-do-expressions/68443 | 2023-11-14 | domain-subframes ===
+Pitch: Multi-statement if/switch/do expressions
+
+@ben-cohen · 2023-11-14T01:07:11.155Z:
+A follow-on to SE-0380. Keen to hear everyone's thoughts on the alternatives outlined at the end. Available as a PR here.
+Multi-statement expressions using then
+Authors: Ben Cohen, Hamish Knight
+Review Manager: TBD
+Status: Awaiting Implementation
+Implementation: available on main via -enable-experimental-feature ThenStatements and -enable-experimental-feature DoExpressions
+Introduction
+This proposal introduces a then keyword, for the purpose of determining the value of an if or switch expression that contains multiple statements in a single branch. It also introduces do expressions.
+Motivation
+SE-0380 introduced the ability to use if and switch statements as expressions. As that proposal lays out, this allows for much improved syntax for example when initializing variables:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default: 4
+}
+where otherwise techniques such as an immediately-executed closure, or explicitly-typed definitive initialization would be needed.
+However, the proposal left as a future direction the ability to have a branch of the switch contain multiple statements:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+4  // error: Non-expression branch of 'switch' expression may only end with a 'throw'
+}
+When such branches are necessary, currently users must fall back to the old techniques.
+This proposal introduces a new contextual keyword, then, which allows a switch to remain an expression:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+then 4
+}
+then can similarly be used to allow multi-statement branches in if expressions.
+The introduction of this keyword also makes stand-alone do expressions more viable. These have two use cases:
+To produce a value from both the success and failure paths of a do/catch block:
+let foo: String = do {
+try bar()
+} catch {
+"Error \(error)"
+}
+The ability to initialize a variable when this cannot easily be done with a single expression:
+let icon: IconImage = do {
+let image = NSImage(
+systemSymbolName: "something",
+accessibilityDescription: nil)!
+let preferredColor = NSColor(named: "AccentColor")!
+then IconImage(
+image,
+isSymbol: true,
+isBackgroundSupressed: true,
+preferredColor: preferredColor.cgColor)
+}
+While the above can be composed as a single expression, declaring separate variables and then using them is much clearer.
+In other cases, this cannot be done because an API is structured to require you first create a value, then mutate part of it:
+let motionManager: CMMotionManager = {
+let manager = CMMotionManager()
+manager.deviceMotionUpdateInterval = 0.05
+return manager
+}()
+This immediately-executed closure pattern is commonly seen in Swift code. So much so that in some cases, users assume that even single expressions must be surrounded in a closure. do expressions would provide a clearer idiom for grouping these.
+Detailed Design
+A new contextual keyword then will be introduced. if and switch expressions will no longer be limited to a single expression per branch. Instead, they can execute multiple statements, and then end with a then expression, which becomes the value of that branch of the expression.
+Additionally do statements will become expressions, with rules matching those of if and switch expressions from SE-0380:
+They can be used to return vales from functions, to assign values to variables, and to declare variables.
+They will not be usable more generally as sub-expressions, arguments to functions etc
+Both the do branch, and each catch branch if present, must either be a single expression, or yield a value using then.
+Further if, switch, and do expressions may be nested inside the do or catch branches, and do expressions can be nested inside if and switch expressions.
+The do and any catch branches must all produce the same type, when type checked independently (see SE-0380 for justification of this).
+If a block either explicitly throws, or terminates the program (e.g. with fatalError), it does not need to produce a value and can have multiple statements before terminating.
+Nested use of then
+If needed, a then must be the last expression in a branch. Allowing it in other positions, and all paths to be checked as producing a value using Swift's definite initialization feature, would lead to similar complexities to those that caused control flow like break,continue, and return, to be ruled out during SE-380.
+A then keyword only applies to the innermost if, switch, or do - it cannot apply to an outer expression even if e.g. the inner if is not an expression. For example, the following code will not compile:
+let x = if .random() {
+print("hello")
+if .random() {
+then 1 // this `then` is intended to apply to the outer `if`
+} else {
+then 2
+}
+} else {
+3
+}
+and should be rewritten as:
+let x = if .random() {
+print("hello")
+then if .random() {
+1
+} else {
+2
+}
+} else {
+3
+}
+If the inner branches above also needed a then, this could still be used:
+let x = if .random() {
+print("hello")
+then if .random() {
+print("world")
+then 1 // this then applies to the inner if exression
+} else {
+2  // then not needed here, though it would be allowed
+}
+} else {
+3
+}
+A then cannot be nested inside the else of a guard even though this might be considered the "last statement":
+let x = if .random() {
+guard .random() else {
+then 0
+}
+then 1
+} else {
+0
+}
+as this implies that guard is also an expression (a future direction of SE-380 that could still be explored further) and that you could replace the above guard with an if, which would not be valid.
+Parsing Ambiguities with then
+then will be introduced as a contextual keyword, with some heuristics to preserve source compatibility in all but rare cases. Similar rules were applied to await when it became a new contextual keyword.
+To ensure existing use of then as a variable name continues to work, a heuristic will be added to avoid parsing it as a keyword when followed by an infix or suffix operator:
+// without heuristic, this would produce
+// error: 'then' may only appear as the last statement in an 'if' or 'switch' expression
+then = DispatchTime.now()
+Prefix operators would be permitted, allowing then -1 to parse correctly. then - 1 would parse as an expression with then as a variable. This follows similar existing rules around whitespace and disambiguation of operators.
+Similarly:
+then( is a function call, then ( is a then statement.
+then[ is a subscript, then [ is a then statement
+then{ & then { are always trailing closures. If you want a then statement you have to do then ({...})
+This does mean that then /^ x/ would parse /^ to be an infix operator. This is not a problem with the similar case of return /^ x/ because return is not a contextual keyword (you can't do e.g func return or let return). then #/^ x/# would parse as a regular expression.
+then.foo is a member access, then .foo is a then statement, as is:
+then
+.member
+If member access was still desired, back ticks could be used:
+`then`
+.member
+This is a potential (albeit unlikely) source break, but the back tick fix can be applied to the 5.9 compiler today to ensure existing code can compile with both the old and new compiler.
+With these rules in place, the full source compatibility suite passes with this feature enabled.
+Alternatives Considered
+Many of the alternatives considered and future directions in SE-0380 remain applicable to this proposal.
+The choice of the keyword then invites bikeshedding. Java uses yield – however this is already used for a different purpose in Swift.
+Many languages (such Ruby) use a convention that the last expression in a block is the value of the outer expression, without any keyword. For example:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+4  // would now be allowed, with no `then` keyword.
+}
+This has the benefit of not requiring the a whole new contextual keyword. It can be argued that the last expression without any indicator to mark the expression value explicitly in multi-statement expressions is subtle and can make code harder to read, as a user must examine branches closely to understand the exact location type of the expression value. On the other hand, this is lessened by the requirement that the if expression be used to either assign or return a value, and not found in arbitrary positions.
+Note that if bare last expression became the rule for if and do, it raises the question of whether this also be applied to closure returns also, and perhaps even function returns, which would be a major and pervasive change to Swift (though opinions would likely be split on whether this was an improvement or a regression).
+A variant of the bare last expression rule can be found in Rust, where semicolons are required, except for the last expression in an if or similar expression. This rule could also be applied to Swift:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this"); // load-bearing semicolon
+4  // allowed as the preceding statement ends with a semicolon
+}
+This option likely works better in Rust, where semicolons are otherwise required. In Swift, they are only optional for uses such as placing multiple statements on one line, making this solution less appealing.
+Source compatibility
+As discussed in detailed design, there are rare edge cases where this new rule may break source, but none have been found in the compatibility test suite. Where they do occur, backticks can be applied, and this fix will back deploy to earlier compiler versions.
+Effect on ABI stability
+This proposal has no impact on ABI stability.
+
+---
+
+@taylorswift · 2023-11-14T01:28:10.708Z:
+ben-cohen:
+then[ is a subscript, then [ is a then statement
+is a newline allowed between then and the opening [?
+if  x
+{
+...
+then
+[
+aaa,
+bbb,
+ccc,
+]
+}
+i’ve always found the extra indentation needed after return to be really obnoxious.
+
+---
+
+@ben-cohen · 2023-11-14T01:32:33.771Z:
+yes
+
+---
+
+@ellie20 · 2023-11-14T01:41:45.692Z:
+I'm excited for this feature. It's a better alternative to the { closure hacks }() that we have to do now.
+I will say it feels unnatural that a then statement only applies to the innermost if, switch, or do, because it's dissimilar to return and break in typical patterns of Swift code, like returning in one branch of an if but not another, or making an early return within a guard statement.
+How about making a then statement apply to the innermost if, switch, or do that isn't in statement position? Or in other words, the innermost if, switch, or do that's assigned to a variable or used within another expression. That should rule out the common control flow patterns, since it's currently impossible to use control flow within an expression; while still preventing "unused result" bugs involving statement-level if, switch, and do blocks. So for example:
+let x = if .random() {
+print("hello")
+if .random() {
+then 1 // this `then` applies to the outer `if` because
+// the inner `if` isn't assigned to anything or
+// used within another expression
+} else {
+then 2
+}
+} else {
+3
+}
+
+---
+
+@kiel · 2023-11-14T02:08:23.849Z:
+In many of these code examples, I would intuitively think (or encourage team members) to implement these as a function or method because you can name and better document the logic (improving a developer's ability to reason about the code) and you can make them more accessible to unit testing.
+I get that single statement expressions are convenient for trivial cases and I could imagine using the single statement do expression. But I think readability too quickly degrades as the number of statements and branches increases (I had to read the "nested use" examples a number of times).
+To combat this readability problem, perhaps this pitch could include a tool to refactor these expressions into one or more functions to discourage people from lazily adding more branches/sprinking in more thens?
+
+---
+
+@tera · 2023-11-14T03:06:59.295Z:
+I like the alternative of using a bare last expression. It extends the "single statement" rule naturally – in fact if it is chosen then there is no need for a "single statement" rule, just the "last statement" rule. IMHO it could be consistent and apply to closures as well.
+
+---
+
+@Paul_Cantrell · 2023-11-14T03:09:36.514Z:
+I’m happy to see this proposal, and I’m a +1 on the idea.
+The then keyword does indeed invite bikeshedding…but honestly it’s far better than anything I’m able to come up with, both for readability / fluency and for its impact on the language. I’m a definite -1 on trying to shoehorn yield into this role, don’t like my own result proposal from the original SE-0380 discussion, and haven’t heard any alternatives that come remotely close to working any better. (I spent a minute considering yielding, and my conclusion was “yuck.”)
+While the “last expression” rule works fine in Ruby and Rust, and while I still hear Joe Groff’s voice in my head (I think it was Joe) saying that maybe type checking reduces the unexpected accidental return values it causes in Ruby, ultimately my gut says that it’s just not very Swift-y.
+This proposal’s use of then does fly in the face of the meaning of then in existing languages with if…then…else syntax — then more typically marks the end of the condition and the beginning of the first branch, not the end of a branch — but somehow it kind of works. I’m good with it.
+I like the do portion of the proposal very well. The closure tricks we use now are fine, usually, mostly, but have always sat awkwardly with me. The proposal is a clear improvement.
+Looking over my original concerns with SE-0380, this proposal squarely addresses everything I wrote about my first concern in that post.
+At some point, I’d love to see that second concern addressed as well. I still think my suggestion of additionally allowing condition subexpressions anywhere they’re directly enclosed by parens was a good suggestion, so that e.g. this works:
+print(
+if thingy.isWacky {
+"Wacky thingy \(thingy.name)!"
+} else {
+"nothing to see here"
+}
+)
+…but that’s for another proposal.
+
+---
+
+@sspringer · 2023-11-14T03:41:11.784Z:
+ellie20:
+How about making a then statement apply to the innermost if, switch, or do that isn't in statement position?
+You'd like to replace an 1 by if condition { 2 } else { 1 }, but your suggestion would then demand moving the then. I think as a general rule, do not destroy composability without a strong reason.
+
+---
+
+@ellie20 · 2023-11-14T03:46:00.110Z:
+sspringer:
+You'd like to replace an 1 by if condition { 2 } else { 1 }, but your suggestion would then demand moving the then. I think as a general rule, do not destroy composability without a strong reason.
+I don't see what you mean. This would still work:
+let x = if .random() {
+print("hello")
+if .random() {
+then if condition { 2 } else { 1 }
+} else {
+then 2
+}
+} else {
+3
+}
+or even this, if necessary:
+let x = if .random() {
+print("hello")
+if .random() {
+then if condition {
+then 2
+} else {
+then 1
+}
+} else {
+then 2
+}
+} else {
+3
+}
+It's just that putting the then statement within an if statement would also work, allowing the same control flow patterns as return and break.
+
+---
+
+@sspringer · 2023-11-14T03:50:11.476Z:
+ellie20:
+I don't see why it wouldn't. It's just that putting the then statement within an if statement would also work, allowing the same control flow patterns as return and break.
+Ah OK, you are not demanding the shifting of then, it is just another possibility. But I still do not understand why you would need this.
+
+---
+
+@ellie20 · 2023-11-14T03:57:13.814Z:
+To allow for certain control flow patterns that are equivalent to those with return and break. For example, the following code mentioned in the pitch would be allowed:
+let x = if .random() {
+guard .random() else {
+then 0 // applies to the `if`, because the enclosing `guard`
+// is an expression, not a statement
+}
+then 1
+} else {
+0
+}
+Returning early from a guard, if, or switch statement is a common pattern in Swift code. If they weren't allowed, people might get frustrated when they start to write more complex code within an if/switch/do expression, which would seemingly use a different "flavor" of control flow compared to functions, closures, and loops.
+
+---
+
+@RussBaz · 2023-11-14T04:29:24.927Z:
+I personally prefer implicit return statements like @tera mentioned, but I am afraid that I am being biased due to my previous exposure to languages with this feature (such as F# in my case). On the other hand, I kind of agree with @Paul_Cantrell that it does not feel very swift-y at the moment (but what if the definition of what is swift-y changes when version 6.0 comes out?). While the feature is definitely needed, I am personally conflicted on which way I will like more right now.
+
+---
+
+@stackotter · 2023-11-14T07:04:45.329Z:
+tera:
+I like the alternative of using a bare last expression.
+I agree, then somehow feels way too 'scripting language' to me, and adds to the ever-growing pile of Swift keywords... Assuming another keyword is chosen I'd still likely prefer bare last expressions (but I'm biased cause Rust development is what makes me money )
+Having said that, I can see why bare last expressions wouldn't gel with some people. Perhaps we need some more complicated code examples using then vs no keyword to be able to come up with concrete reasons why no keyword would/wouldn't work. Happy to adapt some existing code examples from some of my codebases closer to the end of the week once I've got a bit more time.
+I'm also yet to come up with any alternative keywords, yielding and yield are the only ones that come to mind, which would be incredibly confusing given their existing usage of course.
+
+---
+
+@Nathan_Gray · 2023-11-14T07:23:46.031Z:
+I’m happy to see this being addressed! To me this is a no-brainer: bare last expression is the way to go. Try reading this proposal and imagining which parts you could delete if then wasn’t required. All the complexity simply melts away.
+The main argument against it—that it would be hard to understand—is undercut by the fact that it’s table stakes in so many other programming languages. At my last job we used Scala and tended to hire Java programmers and then train them in Scala. “The last expression is the result” was just never a problem in learning the language or reading the code.
+
+---
+
+@GreatApe · 2023-11-14T07:24:47.950Z:
+This new keyword seems to carry very little weight. If this kind of expression is important; wouldn’t the natural choice be to use return?
+
+---
+
+@sliemeobn · 2023-11-14T09:55:43.635Z:
+I'd love to see this, but I am firmly in camp "bare last expression" here.
+then seems to be the best keyword choice, but even it feels out of place and does not read well in context (at least to my brain). when looking at the parsing complexities/usage rules it would bring with it I am even more skeptical.
+to the point of "bare last expressions" not being swifty:
+I would have agreed a few years ago, but with return-less single-expression getters and functions being widely used, and the introduction of if/guard/switch expressions, I would say swift is already halfway there. (Even result builders work in this direction - explicit returns have been fading away).
+To me it feels only natural to be able to turn this:
+var computed: Something { x + y }
+into
+var computed: Something {
+print("hi mom")
+x + y
+}
+without a lot of extra song and dance. So I am all for bare expressions all the way ; )
+Bonus thought: At least to me it feels that "modern" software development employs more and more functional patterns in everyday code. Swift is quite good at that, but the discrepancy between single-expression blocks and handful-of-lines blocks has always been a bit cumbersome. Bare last expressions would unify this experience.
+
+---
+
+@tevelee · 2023-11-14T10:58:22.749Z:
+ben-cohen:
+Java uses yield – however this is already used for a different purpose in Swift.
+This statement is surprising to me. I haven't encountered any formal introduction of yield keyword in Swift. I believe it shouldn't be disregarded as a potential keyword, especially when it aligns well with the context.
+As far as I remember, it was expected to be introduced through the modify accessor pitch, but it didn't proceed through the Swift evolution process. After researching other Swift evolution proposals, I found no mentions of yield. Additionally, it's not documented in The Swift Programming Language (TSPL) book.
+
+---
+
+@arennow · 2023-11-14T12:06:45.437Z:
+I suspect that the general sentiment weighs against me in this, but I oppose the proposal as a whole.
+I think allowing multi-statement branches within a compound expression is an invitation to write very hard to read code. Specifically, the kind of code that makes sense as you're actively working on it, but later becomes a tarpit for your eyes and brain.
+The most compelling use-case to me was this one:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+then 4
+}
+We've all been there – it's a bit frustrating when you need to add a logging statement to a branch. But in this case, the option of turning the just default branch into an immediately executed closure sufficiently ameliorates the problem. (And also places the more complex syntax only in the more complex branch.) If you just need the log for debugging while working on the code (that is, if you're not planning on committing the logging), then that's fine. But if I were reviewing a PR that had a random function call with side-effects in the middle of an expression to assign a value to a variable, I'd ask the author to refactor. It's unexpected that the right-hand side of a statement that begins with let width = would have side-effects unrelated to determining the value.
+The thing that this proposal brings most immediately to mind is C's comma operator, which is used for similar shenanigans. For those not familiar, in C, the comma operator allows the user to provide two expressions. It evaluates the first and discards its result, then evaluates the second, and that result becomes the value (and type) of the overall expression. For example, in int x = (puts("foo"), 5);, x has the value 5. Or sillier, more terrible things:
+int x = 5;
+int y = (x*=2, x+=1, x-3);
+printf("x: %i\n", x); // x: 11
+printf("y: %i\n", y); // y: 8
+For those saying "any feature can be used to write hard-to-read code", that's certainly correct, but language design is at least partly about steering users into making better decisions, such as writing clearer code. That's why the try and await keywords exist – purely for human readers (and sometimes for overload disambiguation).
+This forum is probably mostly frequented by very experienced Swift developers, which can blind us to the silly things less experienced devs would do with a new feature. If the benefits are high (such as async/await or the forthcoming typed throws), that's an good tradeoff, but in this case, I think the benefit is so minimal that the cost isn't worth it.
+On the matter of then versus bare last expression, I think requiring the keyword makes it clearer that that particular if/switch/do statement is "weird" in the sense of also being an expression. When users inevitably write 300-line-long switch expressions, I think we'll all be thankful for the thens, even though they're ugly.
+
+---
+
+@DevAndArtist · 2023-11-14T12:39:42.219Z:
+Just a quick alternative option. One could turn then into use.
+if ... {
+use ...
+} else {
+use ...
+}
+It seems also to word better with the switch.
+
+---
+
+@jeremyabannister · 2023-11-14T13:50:36.649Z:
+stackotter:
+Perhaps we need some more complicated code examples using then vs no keyword to be able to come up with concrete reasons why no keyword would/wouldn't work.
+In previous discussions on this topic I provided what is for me the most compelling argument against the "last expression" rule:
+[Pitch] if and switch expressions Pitches
+One thing that I think makes me uneasy about the final-expression thing is that this code is has been valid and common Swift for a few years:
+VStack {
+if someCondition {
+producesSomeView()
+producesAnotherView()
+} else {
+aDifferentView()
+}
+}
+and it is to be read in a fundamentally different way than this very similar looking newly-proposed code:
+var backgroundColor: Color {
+if someCondition {
+vaguelyNamedFunctionThatMightReturnAValue()
+o…
+Basically it boils down to that result builders already gave dangling expressions a different meaning (namely, that all of them get used, not just the last one), and since there is no visual indicator that a result builder is in effect in a given context, giving dangling expressions a fundamentally different meaning in non-result-builder contexts feels to me like it could be disastrous for readability.
+
+---
+
+@jeremyabannister · 2023-11-14T14:08:24.764Z:
+What about simply allowing other expressions as long as they evaluate to ()?
+let backgroundColor: Color =
+switch colorScheme {
+case .light: .white
+case .dark: .charcoal
+@unknown default:
+// Upon writing this I realized that it
+// would parse as `Void.white`, and that
+// therefore we should have some keyword or sigil...
+log("Unrecognized `colorScheme`: \(colorScheme)")
+.white
+}
+I'll throw -> into the ring for consideration, even though leaving aside the stylistic question it might be completely untenable just in terms of parsing complexity:
+let backgroundColor: Color =
+switch colorScheme {
+case .light: .white
+case .dark: .charcoal
+@unknown default:
+log("Unrecognized `colorScheme`: \(colorScheme)")
+-> .white
+}
+
+---
+
+@xwu · 2023-11-14T14:28:42.140Z:
+jeremyabannister:
+I'll throw -> into the ring for consideration, even though leaving aside the stylistic question it might be completely untenable just in terms of parsing complexity:
+I'm wary of overloading the meaning of ->, both from a parsing perspective but also from a learning perspective: we need something that explicitly doesn't mean return, and using the sigil for the return type of a function seems to defeat that purpose.
+That said, an operator may allow us to avoid the various issues with parsing then described in the pitch. One option may be to flip the direction of the arrow—i.e., <-.
+DevAndArtist:
+Just a quick alternative option. One could turn then into use.
+That's not bad, I think: another option along these lines would be evaluate, which emphasizes the expression-ness aspect.
+
+---
+
+@jawbroken · 2023-11-14T14:28:57.676Z:
+I would like to see a more serious exploration of the alternative with no keyword in the proposal. Currently the only downside mentioned seems to be:
+ben-cohen:
+It can be argued that the last expression without any indicator to mark the expression value explicitly in multi-statement expressions is subtle and can make code harder to read, as a user must examine branches closely to understand the exact location type of the expression value.
+This seems weak at best, given the existing rules for single statement expressions, etc. Are there more serious objections to this, because it seems like the obvious choice (improves language consistency, doesn't require a new keyword with bizarre parsing rules for backwards compatibility, etc). If then is the proposed alternative then I would personally prefer to just stick to the status quo, because the immediately-executed closures are both easier to understand and less ugly.
+
+---
+
+@jeremyabannister · 2023-11-14T14:31:15.156Z:
+jawbroken:
+Are there more serious objections to this
+jeremyabannister:
+In previous discussions on this topic I provided what is for me the most compelling argument against the "last expression" rule:
+
+---
+
+@jawbroken · 2023-11-14T14:35:31.387Z:
+Sure, I saw that. Result builders already behave differently from normal Swift code in so many respects that you fundamentally have to understand where they're being used, even though they're not marked in any way. This issue was well known at the time they were implemented and introduced, and it was discussed extensively at the time. I don't much care if this is yet another subtle aspect of result builders that you just have to know.
+
+---
+
+@tera · 2023-11-14T15:23:25.742Z:
+ellie20:
+if .random() {
+then if condition { 2 } else { 1 }
+} else {
+then 2
+}
+If to use a keyword at all – it's better not be "then": would be very confusing to see "then" in the "else" block.
+I was thinking about using "then" as a way of having brace-less if expression:
+if condition then 1 else 2
+
+---
+
+@mklbtz · 2023-11-14T16:10:36.736Z:
+I'm fan of this! Overall this pitch seems really thought out, so +1 from me, no notes.
+I always thought do statements should be expressions just like if & switch now are. It's a very common pattern in ruby to use the similar begin blocks to compress multiple lines into an expression. I like that do would now supplant the weird immediate closure nonsense.
+I think the use of some keyword is a good call and feels very in keeping with Swift's overall style. I think it's a readability enhancement compared to Ruby, as mentioned.
+On the bike-shedding question
+I just wanted to note that Ruby also has an interesting (if underused) feature where break can also "take" a value just like return statements. So, you can do either of these:
+value = if true
+break 42
+else
+0
+end
+Taking that inspiration for Swift: we could consider reusing break statements for the same purpose as pitched for then. The up side is it's an existing keyword so most of the contextual keyword parsing difficulties become a non-issue. Currently break usage is only permitted in if or do when one of the statements is labelled, so I think the parsing would be easy enough.
+here: if .random() {
+// labeled statements weren't even mentioned in the pitch
+// so I figure this is a non-issue
+break here
+}
+return if .random() {
+let here = 42
+break here // clear enough to me!
+} else {
+break 0
+}
+I don't have a strong opinion on this. I think then is a fine choice. But I'm curious what others think about using break as an alternative spelling.
+
+---
+
+@haikuty · 2023-11-14T17:14:13.156Z:
+return seems better than then to me and also allows the sub if usage that was brought up in a way that is clearer.
+“Return the following value as the value of this expression.”
+However, does that suggest that this feature of the language is trying to be an excuse to not write the function that ought to be written for clarity and maintainability?
+¯_(ツ)_/¯
+
+---
+
+@David_Catmull · 2023-11-14T17:19:03.096Z:
+I feel like return is not an option because it would be ambiguous whether it means "use this as the value of the expression" or "return this as the value of the outer function".
+
+---
+
+@Jon_Shier · 2023-11-14T17:27:20.544Z:
+Nested expressions seem largely unreadable, so personally I don't think the language should be encouraging them. If this has been decided, I would suggest something other than then, as a plain verb would be more clear. Adding then also encourages confusion in whether it can be used with if as part of if then else rather than using braces. We can avoid that by using different word.
+
+---
+
+@wadetregaskis · 2023-11-14T17:35:18.562Z:
+(meaning:  ok, I can see the utility of this, but I don't feel strongly about its need / merit)
+I do like the base ability to write declarative decision trees using expressions (as opposed to having to write them imperatively).  It reminds me fondly of some of the better parts of VHDL.  And I can see why it's of interest to allow easier mixing of declarative and imperative code, as this proposal adds, in the same vein that you can mix functional styles with imperative styles e.g. data.filter(\.enabled).map { /* imperative code here */ }.reduce(…).
+ellie20:
+I will say it feels unnatural that a then statement only applies to the innermost if, switch, or do, because it's dissimilar to return and break in typical patterns of Swift code…
+Exactly; it's supposed to be different, because it's a declarative style, not an imperative one.  I think that distinction is not just conceptually clean but practically important in making it clearer to readers which mode the code is in.
+Is it necessary?
+kiel:
+In many of these code examples, I would intuitively think (or encourage team members) to implement these as a function or method because you can name and better document the logic (improving a developer's ability to reason about the code) and you can make them more accessible to unit testing.
+I concur.
+I'm not certain that should entirely preclude the ability to do this - for better or worse printf-debugging is important in Swift and having to do refactors just to add a print statement is annoying - but at the very least it means the proposal should meet a high bar in terms of not introducing complexity, ambiguity, or other negative consequences.
+arennow:
+We've all been there – it's a bit frustrating when you need to add a logging statement to a branch. But in this case, the option of turning the just default branch into an immediately executed closure sufficiently ameliorates the problem.
+I'm inclined to concur with this too.  I'm not really sure why immediately-executed closures get quite so much hate from so many people.
+arennow:
+It's unexpected that the right-hand side of a statement that begins with let width = would have side-effects unrelated to determining the value.
+I want to agree as some kind of matter of principle, but I think this just isn't true for any non-trivial expression.
+let width = parentView.frame.width
+That might be literally just a memory load, or either or both of frame and width might actually be computed properties which log something, or have (technically) any side-effect.
+Heck, even the following has unexpected side-effects (in the lay-person sense of the term):
+let width = proposedWidth + 5
+Can you see what it is?  Hint: the above code is not safe and can crash!
+Answer
+The implementation is slightly more subtle, but essentially the + operator is defined not as a pure expression but as essentially the actual addition plus a precondition(!overflowed && !underflowed).
+Granted this is a subtle and relatively innocuous side-effect, but it's still a side-effect.  And a broadly undesirable one, for most people (in the sense that most people expect such code to be guaranteed to work, because in their happy-path mindset there's surely no way a trivial addition could fail, right?!).
+Bare last expression returns
+I've found the random, unmarked appearance of "ResultBuilder" syntax to be frustrating.
+It's fine if you're e.g. writing SwiftUI view methods where it's a well-known convention that you're in that special language mode, but when result builders are used in almost any other place, they are surprising and cause a lot of annoyance because of their different behaviours and rules versus normal Swift.
+I suspect a lot of this could have been avoided if some sort of sigil were required to indicate actual 'return' values, whether that be a keyword (return / yield / whatever) or an operator (<- / whatever) or somesuch.  Or if there were at least some keyword at the top of the block to clearly indicate the special, unusual language mode, e.g.:
+libraryFunction(normalArg) { @builder
+…
+}
+I view this a big design flaw in result builders, in retrospect.  It was discussed heavily at the time of their proposal & implementation, and the concerns were dismissed, but time & experience has proven that the concerns were well-founded.
+And so…
+Note that if bare last expression became the rule for if and do, it raises the question of whether this also be applied to closure returns also, and perhaps even function returns, which would be a major and pervasive change to Swift.
+Absolutely.  It would be a nightmare of inconsistency and confusion to [further] implement bare last expression returns only in some contexts but not others.
+Thus, I don't think a "bare" return is a good idea.  It's yet more context-sensitive complexity and ambiguity, that we've already seen to be a problem in its current [ab]use by result builders.
+Nathan_Gray:
+The main argument against it—that it would be hard to understand—is undercut by the fact that it’s table stakes in so many other programming languages.
+I find that uncompelling.  I for one have never used [in a significant way] any language which does this, that I recall, in over thirty years of programming.
+Well, I say that… I have written a bunch of Spark code which is technically Scala.  Nonetheless, I don't recall ever encountering this grammar rule in real-world code.  I don't think it's sound to assume most people coming to Swift have ever encountered it.  Which doesn't mean it cannot be considered, but does mean it can't side-step the normal bars for intuitiveness and simplicity.
+arennow:
+The thing that this proposal brings most immediately to mind is C's comma operator, which is used for similar shenanigans. For those not familiar, in C, the comma operator allows the user to provide two expressions. It evaluates the first and discards its result, then evaluates the second, and that result becomes the value (and type) of the overall expression.
+This would be inconsistent with what comma means in Swift, which is essentially as a synonym for || in if expressions.
+Also, as someone who really loved utilising the comma operator in C/C++ in clever ways, I can assure you my colleagues were unimpressed.  Even in such long-lived languages as C & C++ it's apparently still a very esoteric and misunderstood language feature.
+Alternatively…
+If we did lean into the 'bare' returns idea, by making everything surrounded by curly braces follow that rule, so that it's consistent at least, then I can see a potential sensible avenue.  It'd require further changes to allow curly braces to be omitted in more places, so that you can write:
+let foo = if x then y else z
+…as a purely declarative form, or you can access the embedded imperative mode with:
+let foo = if x then y else { print("z"); z }
+The appeal here is that there's now mostly consistent syntax rules across the language, including to things like foo.map { print("x"); x } in a way that's very close to the existing syntax (just sans return statements).
+Result builders would still remain weird, unfortunately, with their multiple returns.
+Inner then expressions
+I'm inclined to agree with the pitch on this aspect, because the alternative is inconsistent and overly complicated - allowing then in inner expressions means the outer expressions implicitly follow a "bare" last return pattern.  I like both the simplicity of requiring properly-placed "then" and how it better maintains the simple model of a declarative condition tree.
+However, @ellie20 raises a good point:
+ellie20:
+let x = if .random() {
+guard .random() else {
+then 0 // applies to the `if`, because the enclosing `guard`
+// is an expression, not a statement
+}
+then 1
+} else {
+0
+}
+I agree that it's logical and important that key syntax like guard statements be supported well.  guard doesn't really make sense as an expression, and writing then guard … is just weird since the "else else" of the guard is implicitly the rest of the block, which would technically mean you write:
+let x = if .random() {
+then guard .random() else {
+0
+}
+1 // No 'then' because it's covered by the `then` on guard.
+} else {
+0
+}
+I'm not sure what the solution is here.  It might be that Swift has unwittingly backed us into a corner, through the existing patterns (re. return et al) and unusual (but useful) syntax like guard statements.
+Load-bearing semicolons.
+Nope.  Nope nope nope nope nope.
+Naming
+I think that use of any control-flow keywords - return, yield, break, etc - is a bad idea.  For all the reasons that have been discussed in depth before, such as the obvious and significant room for confusion over, well, control flow.
+But, result: might be an interesting option:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+result: 4
+}
+let icon: IconImage = do {
+let image = NSImage(
+systemSymbolName: "something",
+accessibilityDescription: nil)!
+let preferredColor = NSColor(named: "AccentColor")!
+result: IconImage(
+image,
+isSymbol: true,
+isBackgroundSupressed: true,
+preferredColor: preferredColor.cgColor)
+}
+It's technically distinct from return - it's not an existing keyword nor intuitively a control flow statement - so arguably it avoids confusion over the scope being exited, but it's linguistically close enough to return to maintain a useful conceptual parallel.
+
+---
+
+@ellie20 · 2023-11-14T17:42:13.081Z:
+wadetregaskis:
+Exactly; it's supposed to be different, because it's a declarative style, not an imperative one. I think that distinction is not just conceptually clean but practically important in making it clearer to readers which mode the code is in.
+I'm inclined to disagree because the whole point of this feature is to let people use imperative features within an expression for ergonomics, like mutating intermediate values or setting variables. The do/switch/if expressions would function almost exactly like existing imperative blocks in Swift except for control flow. A similar but truly declarative feature would be result builders, which aren't powerful enough to subsume the use cases of do/switch/if expressions.
+
+---
+
+@Joe_Groff · 2023-11-14T17:47:01.085Z:
+One of the places I think that sequencing multiple statements within a single expression would be most useful would be within a conditional, in order to perform an update and test a condition in one step. This is particularly useful in while loops, like in C where you can do:
+while (counter -= step, counter >= 0) {
+update()
+}
+Recently, the topic of introducing non-unwrapping bindings within a compound conditional also came up. Although one can use case conditionals with a discard pattern to do this, like if let x = optional(), case let _ = update(x), condition(), that's nonobvious and awkward.
+The proposal dismisses using explicit semicolons as an alternative, but to me that's much more appealing than a new keyword, and serves many of the justifications for the keyword just as well. As proposed, where a do block and then keyword are necessary to form a multi-statement expression, the loop conditional case becomes pretty bulky and awkward, both from the extra keyword noise and the extra brace block:
+while do { counter -= step; then counter >= 0 } {
+update()
+}
+if let x = optional, do { update(x); then condition() } {
+}
+compared to:
+while (counter -= step; counter >= 0) {
+}
+if let x = optional(), (update(x); condition()) {
+}
+(Maybe we don't even need the parens, though removing their need might require deeper changes to the grammar. if let x = foo(), let y = bar(); baz { } would be difficult to read without them since one let is an optional unwrapping condition and the other is a regular statement appearing as part of a compound expression.)
+Since explicit semicolons are rare in idiomatic Swift today, and aren't yet otherwise valid inside of expression contexts, their presence also seems like it would serve the "something is going on here" role used to justify for the new keyword, and they also would serve the disambiguating separator so that things like foo(); .bar parse properly.
+
+---
+
+@wadetregaskis · 2023-11-14T17:57:58.923Z:
+ellie20:
+The do/switch/if expressions would function almost exactly like existing imperative blocks in Swift except for control flow.
+Right, that's the crux of my concern.  I don't want any confusion over control flow.
+Reviewing history briefly:  the choice was made that imperative code (statements) uses control flow statements - return et al - while declarative code (expressions) does not.  Remembering that e.g.:
+func test(arg: Bool) -> Int {
+let x = if arg { print("Disabled."); return 0 } else { 1 }
+print("x: \(x)")
+return x
+}
+error: cannot 'return' in 'if' when used as expression
+This was a carefully-considered choice to prevent ambiguity as to what that return actually means; would it skip the second print statement or not?
+Having distinct syntax between these modes is important for aiding understanding and readability.
+What you're proposing (re. how then should behave and be located) is essentially a straight synonym for return.  It would help avoid the control flow confusion, by using any word other than an existing control flow keyword, but it still blurs the lines a little bit conceptually.
+To be clear, I don't think it's particularly problematic - either approach works, technically.  I just like the additional distance that the proposal's grammar provides.
+I think I'd be more inclined to drop then entirely rather than make it merely a synonym for return.
+
+---
+
+@wadetregaskis · 2023-11-14T18:14:14.926Z:
+Joe_Groff:
+while do { counter -= step; then counter >= 0 } {
+update()
+}
+if let x = optional, do { update(x); then condition() } {
+}
+compared to:
+while (counter -= step; counter >= 0) {
+}
+if let x = optional(), (update(x); condition()) {
+}
+Makes some sense, but it still feels more like C than Swift.
+repeat counter -= step while counter >= 0 {
+update()
+}
+Better (IMO) but still a bit weird since there's two blocks that are repeated, with a somewhat subtle semantic distinction between them (the first is executed before the first conditional check, the other only after it; the first is always executed at least once, the second might never be executed).
+Today you could write e.g.:
+for counter in stride(from: topValue, to: 0, by: -step) {
+update()
+}
+if let x = optional {
+update(x)
+if condition() {
+…
+}
+}
+I don't really see anything wrong with the existing syntax.  On the if case, if you need an overall 'else' behaviour there's various existing options (e.g. var allGood: Bool, refactoring into a standalone function, etc).
+Incidentally if Swift had better arithmetic behaviour you could potentially do:
+while try? counter -= step {
+…
+}
+(where counter is an unsigned integer)
+
+---
+
+@RussBaz · 2023-11-14T18:30:35.590Z:
+I just wanted to mention that this pitch is inherently about a functional feature. Therefore, it gives more credibility to a “bare” return as it is also a functional feature. Just something to think about.
+
+---
+
+@MPLewis · 2023-11-14T19:00:56.316Z:
+Even if yield is already in use, would overloading it for this feature result in breakage of the existing uses? If not, it seems like it’s a common keyword in other languages, limits fancy heuristics to maintain source compatibility, and prevents having to introduce a new keyword that will be hard to search for - all things that may work in favor of yield over then.
+
+---
+
+@Max_Desiatov · 2023-11-14T19:20:20.973Z:
+Use of yield would conflict with its current use in _modify accessors and also preclude its possible future use for generators if those are ever considered to be added to the language. For mainstream languages with generators (Perl, Python, JavaScript, PHP, C#, F#) yield has an unambiguous meaning of yielding a value from the generator function it's used in.
+
+---
+
+@taylorswift · 2023-11-14T19:35:49.655Z:
+MPLewis:
+Even if yield is already in use, would overloading it for this feature result in breakage of the existing uses?
+i don’t think anything would break, but it would be confusing to me because yield means that control will be transferred to some implicit coroutine determined by the enclosing scope (_read, _modify), and will only return if the coroutine doesn’t throw an error. this yield borrows the value, the other yield would consume it instead, like a return.
+
+---
+
+@jaleel · 2023-11-14T19:42:54.488Z:
+I'm +1 about proposal, but also as others concerned about adding then keyword.
+Just wanted also to point that today in Swift a default behaviour where you can define function or variable like:
+func some() -> Int { 1 }
+var another: Int { 1 }
+and it will know you're returning an Int. But as soon as you adding something—compiler will ask you to provide a return in a function:
+func some() -> Int {
+print("hello")
+return 1
+}
+And feels like behaviour should be the same across language, so you just need to write return when it's needed.
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+return 4  // would now be allowed
+}
+
+---
+
+@maartene · 2023-11-14T19:43:53.537Z:
+I like the proposal. Would definitely use this!
+
+---
+
+@Max_Desiatov · 2023-11-14T20:12:46.226Z:
+jaleel:
+And feels like behaviour should be the same across language, so you just need to write return when it's needed.
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+return 4  // would now be allowed
+}
+How would you disambiguate whether return in your example means a return from the switch expression or return from the function? If it's always the innermost expression, then just by prepending let width =  to the switch you've changed its control flow quite significantly.
+If return returns from the function when used in statements, but only from innermost expressions when used in those expressions, that does not make the behavior the same across the language.
+Either way, returning from functions and "returning" from expressions are different behaviors that need different keywords[1], they can't be unambiguously unified.
+or syntax rules, as proponents of "return last expression in a block" would argue ↩︎
+
+---
+
+@jeremyabannister · 2023-11-14T20:15:50.664Z:
+Joe_Groff:
+The proposal dismisses using explicit semicolons as an alternative, but to me that's much more appealing than a new keyword
+I could get on board with semicolons, but I don't much like the code in your examples:
+Joe_Groff:
+if let x = optional(), (update(x); condition()) {
+}
+If I understand correctly, you're talking about introducing a generalized "multi-statement expression" concept, which is written by separating the statements with semicolons, and because of its generality it would need to be allowed in all places where expressions are expected, for example in if statements, but even also as arguments to functions?
+doSomething(using: print("evaluating argument"); getUsersLastName())
+What if we just allow these semicolon-separated "multi-statement expressions" in two places:
+The body of a function/computed property/subscript which contains nothing besides the multi-statement expression.
+A branch of an if/switch/do expression that contains nothing besides the multi-statement expression.
+Meaning these are allowed:
+let backgroundColor: Color =
+switch colorScheme {
+case .light: .white
+case .dark: .charcoal
+@unknown default:
+log("Unrecognized `colorScheme`: \(colorScheme)");
+.white
+}
+func getOrderCount () -> Int {
+print("Entered the function");
+7
+}
+But these are not allowed:
+func getUsersFavoriteNumber () -> Int {
+let x = foo()
+print("this isn't valid");
+7
+}
+func getUsersFavoriteNumber () -> Int {
+return (
+print("this isn't valid");
+7
+)
+}
+let backgroundColor: Color =
+switch colorScheme {
+case .light: .white
+case .dark: .charcoal
+@unknown default:
+let thisIsntValid = true
+log("Unrecognized `colorScheme`: \(colorScheme)");
+.white
+}
+if let someOptional, (sideEffect(); aBoolean) {
+}
+doSomething(using: print("Evaluating argument (invalid)"); getUserLastName())
+
+---
+
+@jaleel · 2023-11-14T20:30:11.293Z:
+Max_Desiatov:
+How would you disambiguate whether return in your example means a return from the switch expression or return from the function? If it's always the innermost expression, then just by prepending let width =  to the switch you've changed its control flow quite significantly.
+Hm, but let width = switch scalar.value {} is kinda new function where it's supposed to return something, like let width = { switch scalar.value {} }(). Ah, maybe I need to think about it more.
+upd. yeah, there are also different expressions and really should be combined with function return.
+upd2. BUT you can't actually use return in an expression anyway and this could be an edge case, though it will be weird that for some cases it will work and for other it won't
+
+---
+
+@ben-cohen · 2023-11-14T20:59:42.592Z:
+Joe_Groff:
+The proposal dismisses using explicit semicolons as an alternative
+I think this might be bad wording on my part in the proposal. Your examples I think fit into the less discouraged alternative of a last expression rule. You just happen to be putting them on one line, so you need semicolons.
+If we ended up picking the last expression rule instead of an explicit then statement, I would expect that this:
+let x = .random() {
+print("true")
+1
+} else {
+print("false")
+2
+}
+could be rewritten with semicolons instead of newlines as:
+let x = .random() { print("true"); 1 } else { print("false"); 2 }
+But I think of that as just falling out of how semicolon can be used today.
+At that point, you're now down to just the extra do { } vs your suggestion of  using parens? Perhaps do itself is redundant and any braced set of expressions could stand alone as an expression? At which point, it's just a question of braces vs parens.
+
+---
+
+@dmt · 2023-11-14T21:03:20.258Z:
+Max_Desiatov:
+returning from functions and "returning" from expressions are different behaviors that need different keywords[1], they can't be unambiguously unified.
+Obviously return can't be used in sense "result of innermost expression", but I don't see why then can't be used instead of return in a scope of function. To me it seems ok to treat then as "result of any innermost scope used as expression (including functions)". In other words these functions can be equivalent:
+func f() -> Int {
+42
+}
+func g() -> Int {
+return 42
+}
+func h() -> Int {
+then 42
+}
+
+---
+
+@Joe_Groff · 2023-11-14T21:05:02.372Z:
+ben-cohen:
+At that point, you're now down to just the extra do { } vs your suggestion of using parens? Perhaps do itself is redundant and any braced set of expressions could stand alone as an expression? At which point, it's just a question of braces vs parens.
+A plain braced set of expressions is already a closure literal, so there needs to be some distinction.
+
+---
+
+@Mordil · 2023-11-14T21:12:56.970Z:
+I don't think this properly fits with Swift as it is today, while I understand the problems faced as laid out in the motivation.
+If we're introducing a new keyword to the language, I feel it should have a very high bar to clear with "future directions" of usage of the keyword at least given a cursory thought.
+All of this feels like it's approaching syntax sugar territory, and if we have this "hard edge", then it's probably providing a valuable "code smell" that someone needs to refactor or rethink what they're trying to express. As mentioned, moving to a function to properly encapsulate what you're trying to do in the assignment expression.
+Which can be done easily with the ability to nest functions within themselves if you truly want to make it private to the callsite.
+At best, I'd be in favor of the last expression rule others have put forward, because that's effectively the same mental model as how closures work today, so there's an easier "leap" in the mental model to make to understand the language rules.
+
+---
+
+@jaleel · 2023-11-14T21:22:10.396Z:
+Mordil:
+If we're introducing a new keyword to the language, I feel it should have a very high bar to clear with "future directions" of usage of the keyword at least given a cursory thought.
+This is where I also agree after thinking a bit more about pitch now. Haven't faced an issue actually by this date simply by using closure when needed (though it was a bit annoying).
+And yeah, last expression rule will work at least for now for sure.
+
+---
+
+@tera · 2023-11-14T21:27:33.105Z:
+jaleel:
+But as soon as you adding something—compiler will ask you to provide a return in a function:
+func some() -> Int {
+print("hello")
+return 1
+}
+That's what I particularly dislike with the current syntax. Having
+func some() -> Int {
+foo() + bar() / baz() * quz()
+}
+initially, to add a log statement before bar() I now need to change two lines rather than just one.
++/-   log("some log statement")
++/-   return foo() + bar() / baz() * quz()
+That would pollute change history, and if the expression on the last line was complex lead to more effort during code reviews ("is anything really changed here") or a potential for abuse ("I'm adding an extra line before -> hence have to add "return" keyword -> hence nobody'd notice if I mess with the expression that was on the last line"). Then you remove the log statement and have the "return bar()", that someone would obviously want to change back to "bar()" down the road – yet more git traffic. Changing "only statement rule" to "last statement rule" solves all that.
+
+---
+
+@dmt · 2023-11-14T21:37:13.023Z:
+ellie20:
+How about making a then statement apply to the innermost if, switch, or do that isn't in statement position? Or in other words, the innermost if, switch, or do that's assigned to a variable or used within another expression.
+I was sceptical about this suggestion at first, but now I feel like it might give some additional value. What convinces me is this code:
+func f(x: Int?, y: Int?) {
+let z = if let x {
+if let y {
+then x * y
+} else {
+then x
+}
+} else {
+then 0
+}
+}
+Note how far then 0 is from if let x. Usually they should be close to each other. And "happy path" becomes nested.
+Making then a control flow operator with meaning "result of any innermost scope used as expression" would allow to write this instead:
+func f(x: Int?, y: Int?) {
+let z = do {
+guard let x else {
+then 0
+}
+guard let y else {
+then x
+}
+then x * y
+}
+}
+IMO, this reads easier top to bottom.
+
+---
+
+@sliemeobn · 2023-11-14T22:06:52.211Z:
+dmt:
+func f(x: Int?, y: Int?) {
+let z = do {
+guard let x else {
+then 0
+}
+guard let y else {
+then x
+}
+then x * y
+}
+}
+FTFY ; )
+func f(x: Int?, y: Int?) {
+let z = do {
+guard let x else { 0 }
+guard let y else { x }
+x * y
+}
+}
+
+---
+
+@ensan-hcl · 2023-11-15T00:50:51.473Z:
+Multiple statement in if/switch/do expression will be great, but I cannot agree with the use of the keyword then. First and foremost, distinguishing between then and return might not be straightforward. Forcing the use of then even in cases where there is no ambiguity with return seems excessive. For instance, I believe the following function should simply work:
+func bar(_ x: Double) -> Double {
+if x < 1 {
+print("x < 1")
+// this should just work
+return 1/x
+} else { x }
+}
+I'd like to suggest using then only if there is outer scope that can accept return. So that the case above will just work. Additionally, since return cannot currently be used within an expression, interpret a simple return in expression as a then and issue a warning to switch to then will be possible and great for learners.
+Furthermore, I think a variant of return, not then is more appropriate. I'd like to propose inner return. Such a keyword does not seem to cause source breaks and can be easily understood. If necessary, we can also consider outer return for early returns. I believe it can be a possible alternative.
+
+---
+
+@esummers · 2023-11-15T02:32:58.711Z:
++1 I really like “then” as the keyword. It looks like a great way to weave in sub-expressions, logging/tracing, and error handling. Use of “then” feels really good with sub-expressions since it implies dependency. I think "then" would sit better with people that prefer imperative programming.
+I'm writing the following with the idea that these ideas might be extended to functions and closures for consistency since they have a similar implicit return style.
+I don’t like the semicolon idea since I see too many places it isn't ideal.
+EDIT: Based on @Paul_Cantrell's concerns, I think extending "then" to functions and closures especially makes sense.
+Paul_Cantrell:
+The inconsistency of that vexes me.
+// “then” should return from closures and functions for consistency.
+let numbers = [1, 2, 3, 4]
+let plusTwo = numbers.map {
+print("Value = \($0)")
+then $0 + 2 // blends in better with rest of expression
+}
+// "then" makes sense for functional-style
+// "return" makes sense for imperative-style
+func scaledPosition(_ x: Double, _ y: Double) -> (Double, Double) {
+guard x != 0 && y != 0 else { return (0, 0) } // Guards are fine.
+print("Working on input: \(x), \(y)")
+if x == 1 { print("one") } // assume mixing imperative style is allowed.
+let horizontal = x * 2
+let vertical = if x > 0 {
+let b = x + y
+then y / b
+} else { y / 3 }
+then (horizontal, vertical) // Obvious to reader this is an expression and returns a value.
+}
+Using a bare last statement was a leading idea back in the if/switch expressions proposal limited to a handful of statement types. I don’t see it in alternatives considered, but maybe this was already dismissed.
+// everything needs to be "guard", "let", or "do" before bare last statement.
+let vertical = if x > 0 {
+do print("Working on input: \(x), \(y)")
+let b = x + y
+y / b
+} else { y / 3 }
+// looks nicer with semicolons
+let vertical = if x > 0 { do print("Working on input: \(x), \(y)") ; y / 4 } else { y / 3 }
+Sorry for lots of edits. Should have drafted this awhile.
+
+---
+
+@esummers · 2023-11-15T03:03:06.895Z:
+To expand on this with a more controversial idea: inlined(or macro-ized)-closures in expressions. It has always bugged me that it is hard to see the context of "return" inside higher-order functions included in expressions. This would be a separate proposal, but food for thought since it relates to expressions.
+EDIT: Completely rethought this.
+let numbers = [1, 2, 3, 4]
+// This does not work for @escapable closures.
+let plusTwo = numbers.map #{ // `#{ }` indicates this is inlined (or macro-ized) and "return" returns from the calling function or closure.
+guard $0 != 3 else {
+return "is 3" // returns from the calling function (or closure) instead
+}
+print("Value = \($0)")
+then $0 + 2
+}
+return "not 3"
+
+---
+
+@Paul_Cantrell · 2023-11-15T04:51:17.289Z:
+Reading the other replies, just a note to say I’m a strong -1 on return and yield. They’re both too closely associated with other meanings (function return and generators), and overloading them in this way would just be horrendously confusing.
+It’s then, bare last statement, or something nobody’s proposed.
+Re the bare last statement: I’m amenable, but it would seem deeply bizarre to me unless we go “full Rust/Ruby" and use bare last statements as return values for functions too. Consider:
+func describe(_ x: Int) -> String {
+if x == 42 {
+"meaning of life"
+} else {
+"just another number"
+}
+}
+Applying the “bare last statement” rule to conditional expressions (and only to conditional expressions), what happens if we add a print statement?
+func describe(_ x: Int) -> String {
+if x == 42 {
+print("describing \(x)")  // Making this a multi-statement block...
+"meaning of life"         // ...requires no modification
+} else {
+"just another number"
+}
+}
+func describe(_ x: Int) -> String {
+print("describing \(x)")  // But making this a multi-statement block...
+return if x == 42 {       // ...suddenly requires a new keyword?!
+"meaning of life"
+} else {
+"just another number"
+}
+}
+The inconsistency of that vexes me. Either we're in or we're out. My sense is that adding the keyword when the block becomes multi-statement is the Swiftier way (cf the discussion around SE-0255), but if we're going to bless the last statement in a block, I don't think we should do it by halves.
+
+---
+
+@esummers · 2023-11-15T05:09:07.679Z:
+Paul_Cantrell:
+The inconsistency of that vexes me.
+I think this is easy to resolve.
+This was created for result builders and should only be used in that context. I think it makes sense to recommend functions return with “then” if the function is to be considered an expression. “return” should be used for early escape and for imperative-style functions.
+
+---
+
+@arennow · 2023-11-15T11:13:38.549Z:
+I'd like to clarify that when I compared the pitch to C's comma operator, I meant that as a negative  As in "the comma operator is generally understood to be a bad thing; we shouldn't copy it in Swift".
+(I have also used the comma operator a fair amount in my day – usually to add some printf logging somewhere awkward. I don't consider my actions to be a good defense of the practice.)
+
+---
+
+@hisekaldma · 2023-11-15T12:15:47.988Z:
+Perhaps I'm in the minority here, but to me, this really doesn’t seem like a problem worth solving. Swift already has more keywords than almost any other language out there, and we know that it will need even more to tackle hard problems like non-copyability. But this isn’t a hard problem – it's a paper cut with a simple workaround. I just can’t see how that justifies adding yet another keyword that users have to learn and remember.
+
+---
+
+@sveinhal · 2023-11-15T13:02:16.217Z:
+During reviews we're asked to answer these questions:
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+For me to answer "yes" to those questions, I think the proposal needs to change significantly before going into a full-blown review. The problem might be significantly enough to warrant some solution, but it is certainly not significant enough to me, to warrant the proposed solution.
+Specifically, the addition of new keywords, is a pretty high bar to pass, IMHO. This significantly changes how code is evaluated, read and understood, for what I understand to be a pretty minuscule gain.
+I do like that if and switch statements can act as expressions, but I hope it is possible to accomplish in a much less intrusive way. I don't have many suggestions for alternative directions, but as it stands, I hope this will go back to the drawing board before entering review.
+
+---
+
+@jeremyabannister · 2023-11-15T13:09:15.032Z:
+What about the parsing issues of bare last statement? Unlike in SwiftUI @ViewBuilder contexts, in the contexts we’re discussing here the return type will very often be concrete, meaning that leading-dot syntax will be used often, but with no separating (non-whitespace) character or keyword between multiple expressions this will become ambiguous.
+Imagine we start with this code:
+var color: Color {
+if isSelected {
+.purple
+} else {
+.gray
+}
+}
+We want to add a print statement to the else branch, and the options under consideration so far are:
+A keyword (e.g., then)
+An operator (e.g., <-)
+No separator
+Semicolons
+A keyword
+var color: Color {
+if isSelected {
+.purple
+} else {
+print("Not selected")
+// Leading-dot syntax still works, but we had
+// to modify the return value using the keyword,
+// and also there are concerns about parsing a new keyword.
+then .gray
+}
+}
+An operator
+var color: Color {
+if isSelected {
+.purple
+} else {
+print("Not selected")
+// Leading-dot syntax still works, but we had
+// to modify the return value using the operator.
+// At least we avoid issues related to parsing a new keyword.
+<- .gray
+}
+}
+No separator
+var color: Color {
+if isSelected {
+.purple
+} else {
+print("Not selected")
+// Leading-dot syntax becomes ambiguous, so
+// we still end up having to modify
+// the line of the return value.
+Color.gray
+}
+}
+Semicolons
+var color: Color {
+if isSelected {
+.purple
+} else {
+print("Not selected");
+// The only option that allows me to call `print(_:)`
+// without having to also modify the preexisting line.
+.gray
+}
+}
+
+---
+
+@tera · 2023-11-15T13:40:17.061Z:
+jeremyabannister:
+} else {
+print("Not selected");
+// The only option that allows me to call `print(_:)`
+// without having to also modify the preexisting line.
+.gray
+}
+It's not unprecedented, we have a similar gotcha in the language:
+func foo() {
+return
+// do later
+print("won't be printed, right?") // wrong, it will be printed
+}
+func foo() {
+return; // fix
+// do later
+print("won't be printed!")
+}
+To be absolutely precise, you could avoid changing the preexisting line in all your cases
+A keyword
+print("Not selected")
+then
+// the next line is unchanged
+.gray
+An operator
+print("Not selected")
+<-
+// the next line is unchanged
+.gray
+No separator
+print("Not selected")
+Color
+// the next line is unchanged
+.gray
+(not that anyone would want to do it, though).
+
+---
+
+@esummers · 2023-11-15T13:55:23.592Z:
+One more idea to consider would be to allow “do” to break out of expression. I think “do” combined with “catch” as an expression still works.
+The syntax is just heavy enough that it would probably help discourage stuffing too much in to an expression.
+var color: Color {
+if isSelected {
+do { print("Selected") }
+.purple
+} else {
+do { print("Not selected") }
+.gray
+}
+}
+“let” and “guard” would also be allowed ideally, but “let” could still be problematic without “then”.
+// problematic
+var color: Color {
+if isSelected {
+let shade = shadeOfPurplePreference()
+.purple(shade) // doesn’t work
+} else {
+do { print("Not selected") }
+.gray
+}
+}
+// possible fix
+var color: Color {
+if isSelected {
+do { print("Selected") }
+guard !failure1 else { throw MyError }
+if failure2 { throw MyError }
+// Expressions must be the last line. "where" can include if-expressions.
+where // sort of like if/guard with no condition.
+let user = currentUser(),
+let shade = shadeOfPurplePreference(user: user)
+in .purple(shade)
+} else {
+do { print("Not selected") }
+.gray
+}
+}
+
+---
+
+@stevapple · 2023-11-15T14:16:39.310Z:
+Jon_Shier:
+Nested expressions seem largely unreadable, so personally I don't think the language should be encouraging them.
++1 on the comment. I don't think readability is improved so much with the proposed syntax, compared to using an anonymous closure like we're doing today. The current if/switch expressions eliminate the boilerplate when the logic is simple enough, and if the logic is already verbose, why not use a slightly "heavier" closure?
+
+---
+
+@hassila · 2023-11-15T14:29:04.824Z:
+Another +1 for bare last expression for reasons already outlined, the bar for a new keyword should reasonably be higher than for this use case which is largely syntactic sugar. then as a keyword just leads my mind to Pascals if-then-else
+
+---
+
+@esummers · 2023-11-15T16:27:38.119Z:
+I also like the idea of sugar similar to the Swift type system to break up expressions and allow a limited number of statements to appear before the result.
+// possible fix
+var color: Color {
+if isSelected {
+guard !failure1 else { throw MyError }
+do { print("Selected") }
+.purple(shade) where
+let user = currentUser(),
+let shade = shadeOfPurplePreference(user: user)
+} else {
+do { print("Not selected") }
+.gray
+}
+}
+
+---
+
+@asdf_bro · 2023-11-15T17:28:51.950Z:
+I oppose this entire proposal.  Every code example in this thread is less readable than the existing language.
+
+---
+
+@roydaw · 2023-11-15T18:51:37.585Z:
+I oppose this proposal. I think it goes against some core design principles in Swift and in designing a language in general.
+Using then in this way is unfamiliar to any other language and doesn't read as grammatical English:
+To contrast, the word return makes a lot of sense in English when followed by a value that a function returns. It's a verb that takes a value (noun) as a direct object. It also aligns with how we talk about functions and methods as abstract concepts. That's probably why it's so ubiquitously used across languages. then is not a verb, but typically it's used as a conjunction. In other languages that use the word then they use it as a conjunction between the condition and body of the if-statement. It doesn't make sense to use the word then just because other languages use it in the context of if-statements when the grammatical context is actually quite different.
+Swift is supposed to be easy to learn the basics, with progressive disclosure of advanced features:
+Adding a keyword at the expression level for basic procedural code will give beginners and outsiders trying to comprehend Swift code an unnecessary thing they have to learn as they're trying to read other peoples code. Even though this is partially true for almost any proposal that adds a feature to Swift, I feel that it much more likely for people to make use of multiline if expressions with an unfamiliar keyword, then in even the most basic Swift code.
+Alternative considerations outside of using then don't really resolve my concerns:
+If yields is off the table, maybe resolve would make sense. Functions return, expressions resolve  I am strongly opposed to using the bare last expression. I have experience trying to edit Scala code that took my over fifteen minutes just to determine all of the possible return locations for a method because Scala enforces this concept.
+I am in favor of a much smaller step. Allowing single line do-catch expressions seems reasonable. Keeping it to a single line limits it, but I think that keeps to code readable, and it would still be a useful feature and make the language feel more ergonomic after the introduction of if-expressions.
+When multiple lines are needed inside an if-expression, I think we already have good options to write the code. You can either refactor one of the blocks as a method, or revert back to if-statements. I much prefer this syntax and find it easier to read top down:
+let width: Int
+switch scalar.value {
+case 0..<0x80:
+width = 1
+case 0x80..<0x0800:
+width = 2
+case 0x0800..<0x1_0000:
+width = 3
+default:
+log("this is unexpected, investigate this")
+width = 4
+}
+
+---
+
+@cal · 2023-11-15T21:10:25.852Z:
+I think this fills in an important usability hole in if/switch expressions. Without functionality like this, if/switch expressions feel incomplete imo.
+If you have an if/switch expression and need to add more code to one of the branches, this would usually require refactoring the entire if/switch expression, including all of the other branches, to use a different pattern. If the if/switch expression has a lot of cases, this may be a pretty onerous change. Allowing individual branches to evolve into being multi-line without affecting the rest of the expression is important for flexibility and expressivity.
+I'm not entirely sure I see the need to introduce a new keyword for this, though, as opposed to using return. We already can't return from an outer scope from inside an if/switch expression (right? you get error:  cannot 'return' in 'if' when used as expression), so it doesn't seem like there is any formal ambiguity issue with allowing this:
+func foo() -> String {
+let foo =
+if foo {
+return "if branch" // `return` could be omitted
+} else {
+print("Executed the else branch")
+return "else"
+}
+return foo
+}
+To me this doesn't seem any more or less confusing than the following code, which is already allowed:
+func foo() -> String {
+let foo = {
+if foo {
+return "if branch"
+} else {
+print("Executed the else branch")
+return "else"
+}()
+return foo
+}
+A model like this, where an if/switch expression behaves identically to the equivalent code simplify wrapped in a { ... }() closure, seems simple to reason about.
+That being said I definitely support introducing a keyword like then for this if we're confident that using return would make the control flow too confusing.
+I loosely prefer then over yield -- I think "if foo then 1 else then 2" (etc) reads pretty fluently, compared to "if foo yield 1 else yield 2".
+
+---
+
+@bradleymackey · 2023-11-15T23:11:46.432Z:
+I'm very strongly -1
+This is a complication too far that will further increase the mental burden when quickly reading code. My brain now has to understand return, implicit return, resultBuilders and then and that expression return behaviour changes depending on the context. Single expression values are fine IMO as they're easy to visually read and were a nicety for very simple cases that would otherwise require a closure or other property.
+A final implicit return would also be non-trivial to identify when reading code. In Rust, you have the semicolons as a visual indicator.
+My opinion is that if you want to write such a multi-statement expression, you should probably refactor this anyway into a separate property or similar to encapsulate the logic.
+I'm generally not a fan of increasing the number of keywords for increasingly esoteric scenarios unless what's being proposed wasn't already possible in a reasonable way using some other language feature. This doesn't meet that requirement.
+
+---
+
+@ibex · 2023-11-16T00:06:04.845Z:
+I find the use of the keyword then pretty confusing. How about using the keyword emit or some other syntax that does not use a keyword?
+
+---
+
+@esummers · 2023-11-16T00:15:40.143Z:
+bradleymackey:
+My brain now has to understand return, implicit return, resultBuilders and then and that expression return behaviour changes depending on the context.
+It is actually closer to break/continue statements as proposed since it only affects control statements. It does not address why implicit returns are still allowed in functions/closures, so there would likely be something beyond what is proposed...
+cal:
+We already can't return from an outer scope from inside an if/switch expression (right? you get error:  cannot 'return' in 'if' when used as expression), so it doesn't seem like there is any formal ambiguity issue with allowing this:
+I'm pretty sure this was done deliberately to delay the decision until multi-statement if is proposed. Not as a deliberate language design. I'm pretty sure this would never be accepted since it would change the way return works significantly and it may still be allowed as a normal return statement in certain parts of a multi-statement block.
+
+---
+
+@esummers · 2023-11-16T00:17:38.139Z:
+I can certainly see how it is compelling to do implicit returns since no matter what we are implicitly returning in single-line contexts.
+Would it be strange to put the semicolon at the beginning of the line for normal style guidelines when not otherwise using semicolons?
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+; 4
+}
+Even if then is supported, it might make sense to also support implicit return after a semicolon for cases where you append several short statements on the same line.
+
+---
+
+@taylorswift · 2023-11-16T03:29:22.170Z:
+cal:
+I'm not entirely sure I see the need to introduce a new keyword for this, though, as opposed to using return. We already can't return from an outer scope from inside an if/switch expression (right? you get error:  cannot 'return' in 'if' when used as expression), so it doesn't seem like there is any formal ambiguity issue with allowing this:
+func foo() -> String {
+let foo =
+if foo {
+return "if branch" // `return` could be omitted
+} else {
+print("Executed the else branch")
+return "else"
+}
+return foo
+}
+could we introduce labeled return?
+func foo() -> String {
+let foo =
+if foo {
++     return foo: "if branch"
+} else {
+print("Executed the else branch")
++     return foo: "else"
+}
+return foo
+}
+still, you have to wonder if you’re better off just using deferred initialization…
+
+---
+
+@tera · 2023-11-16T03:52:39.976Z:
+taylorswift:
+if foo {
++     return foo: "if branch"
+} else {
+Sorry for a side question, how did you just do the coloured text?
+
+---
+
+@taylorswift · 2023-11-16T03:54:38.558Z:
+use the diff highlighting mode:
+```diff
++
+_
+
+---
+
+@sspringer · 2023-11-16T07:22:33.395Z:
+Chosing a good keyword:
+return: The difference between a closure and a “non-closure” (control flow) is an important difference and using return here does not help the understanding, it somehow blurs this distinction, even if formally a distinction could be made for different applications. return should always mean leaving the closure.
+break: Same here, break is for control transfer, i.e. the control flow expressed by the control flow statements is left, I cannot see this here, we are within the borders of control so to speak.
+use which was already mentioned or choose could be good alternatives, as then is so widely used in a different sense in other languages. (I personally like then nevertheless, but this is certainly a bit nerdy, see my argument below.)
+Keyword or “last line” rule:
+Please: No return of the semicolon! Not needing semicolons (except where you want to put several statements in one line, which is fine) is a very nice feature of Swift, and having to use semicolons in certain cases feels like a confession that this was a bad idea…
+I think the use case of choosing an enum value shows that a keyword would make sense.
+As a stronger argument, the “last line” rule looks too implicit to me and does not help the understanding, to speak frankly it seems too “nerdy”: Swift is a language where a non-expert should be able to understand and change and add code on a higher application level (this was one of the main reasons I chose Swift for a large cross-platform project and out-ruled Rust and Scala).
+Concerning the diff views for according changes: I see this as a weakness of the usual line-centric diff views, of course one could do better (see how SmartGit does it, and maybe Xcode could make a better job here too – and yes, I know the line-centric thing is what Git gives you).
+Comparison to result builders:
+The result builder syntax is for defining content within braces and not defining a sequence of statements. It is a different use case, using the same syntax (curly braces). (In practice this syntax overloading is not a problem, as the result builder syntax is headed by something where you know you want to define some content for. On some mental level, you always define content with curly braces, but in one case this content is statements.) So I would not follow the comparisons made here.
+Is the feature “needed”?
+In my opinion, the let value = { …calculate the value… }() formulation introduces a closure because of an obvious weakness of the language, the introduction of a closure should have more profound reasons than that, as with a closure you make a step outside the current control flow. (Another such “weakness” — for-in-loops not allowing optional chains — leads me to the use of “forEach” instead of for-in-loops, introducing a lot of closures where I actually would not like to have them.)
+I like the while do { counter -= step; then counter >= 0 } { … } use case — this is maybe also a bit nerdy , but not in an implicit way.
+
+---
+
+@tera · 2023-11-16T10:39:46.602Z:
+sspringer:
+I think the use case of choosing an enum value shows that a keyword would make sense.
+I believe you are talking about this example. Au contraire, it just illustrates the point that in some cases you'll need to do something extra (e.g. be more creative on the previous line or use a full Color.gray notation on the line that exposes the issue). It is very easy to do for the users and does not justify a full new keyword (IMHO).
+
+---
+
+@jeremyabannister · 2023-11-16T11:11:51.117Z:
+tera:
+(e.g. be more creative on the previous line or use a full Color.gray notation on the line that exposes the issue)
+I realized that this particular gripe of mine about the last-expression rule doesn't actually make sense:
+If my last expression does not use leading-dot syntax I have no problem.
+If it does, I can choose to put a semicolon at the end of the previous line to fix the parsing ambiguity without needing the semicolon to be obligatory in all cases.
+
+---
+
+@jeremyabannister · 2023-11-16T11:35:30.287Z:
+Here's another line of argumentation + solution that I think I would personally be happy with:
+We're trying to solve for the situation where one branch of an if/switch expression needs to be composed of multiple statements. Perhaps it is useful to separately consider the situations where the extra statements will influence the resulting value and the situations where they will not.
+When the extra statements influence the resulting value...
+... then to me an immediately executed closure seems like the perfect tool. A closure is a series of statements that evaluate to a single result, which is exactly what we need here.
+When the extra statements do not influence the resulting value...
+... then maybe we could introduce something like what @esummers was suggesting, where a do {  } block is given the special behavior of not disrupting the surrounding declarative code.
+So if all I want to do is insert myself into a specific spot in my declarative code and print a message, I can create a little imperative bubble using do (which I think is perfectly named for this job) which will not revert the surrounding code to "imperative mode" (i.e., neither in a function nor in an if/switch expression will I need to add return or any other keyword to the result-generating expression).
+However, if what I need is actually to compute this particular value in an imperative way, then in a function things are already great the way they are (I mark the final result with return), and in an if/switch expression I can embed my imperative subsection into the surrounding declarative context using an immediately executed closure, which, again, feels to me like a perfect use of closures because they are specifically the language construct that allows us to bundle up messy imperative details and focus on the resulting value.
+Example
+let backgroundColor =
+switch colorScheme {
+case .light: .white
+case .dark:
+{
+var (r, g, b) = (0.0, 0.0, 0.0)
+for value in myCollection {
+// ... update rgb values
+}
+return Color(r: r, g: g, b: b)
+}()
+@unknown default:
+do { print("Unknown `colorScheme`: \(colorScheme)") }
+.white
+}
+Caveat: I guess this could pose a problem for allowing do-catch-expressions in the future...
+Counter-argument to caveat: do-catch could be evaluated as an expression while just do serves as a non-disrupting imperative interjection.
+
+---
+
+@finestructure · 2023-11-16T14:04:35.952Z:
+Immediately-executed closures are a bit weird but a whole new then keyword feels a little "heavy" to deal with them.
+It's been mentioned upthread but its feasibility hasn't been addressed so wanted to raise it again: would break + return value instead of then work here?
+We already use break to get out of inner scopes and they can also be labelled (not sure if that's useful in this context, just pointing it out, because @taylorswift mentioned something similar). It seems break is close enough to what's needed if it could return a value.
+
+---
+
+@tera · 2023-11-16T15:10:32.793Z:
+finestructure:
+would break + return value instead of then work here?
+Only if you allow "more than one exit" from a single if/switch expression branch:
+let x = if condition {
+print("condition is true")
+if secondaryCondition {
+break 42 // this is the value, not the label
+}
+print("something else")
+break 24 // this is the value, not the label
+}
+which is questionable.
+ben-cohen:
+It can be argued that the last expression without any indicator to mark the expression value explicitly in multi-statement expressions is subtle and can make code harder to read
+I don't think this is a strong objection as so could be said about many things that we have in the language:
+// valid app with many readability issues
+func main(){var 𝖍𝖆𝖑𝖑𝖔𝖜𝖊𝖊𝖓=1;var ʇxǝʇ=3;var vаr=1;let lеt=2; var ䷯=1;var ䷮=2;var 👪🌙👻👦🤖👧🧛🔦🏚🕸👴👵🍫🍬🍭=𝖍𝖆𝖑𝖑𝖔𝖜𝖊𝖊𝖓;func 👪(){print("x");print("y");};👪();if(({{(_,_)in{_ in(true)}}}()(vаr,lеt)(䷯))){👪();👪();}else{👪();}}
+
+---
+
+@maartene · 2023-11-16T17:56:47.788Z:
+I like the “immediately executed closure” approach as its simple and in line with what is currently already available.
+The second approach (a ‘do’ block for side effects and a single expression to return a value proper) to me feels off. Intuitively it would seem that what is in the do block has nothing to do with the eventual expression where they are obviously coupled in some way: why else would they be in the same case?
+Wouldn’t the immediate evaluated closure approach be the simplest solution for the problem and therefore preferable?
+
+---
+
+@esummers · 2023-11-16T18:09:43.937Z:
+maartene:
+I like the “immediately executed closure” approach as its simple and in line with what is currently already available.
+It would be the obvious solution if there were no fragility cases. The worry is how ambiguous that is. One could work around ambiguities with parentheses or using semicolons, but a language change could easily break a lot of programs in the wild. That is why under alternatives it was suggested to always use semicolons. This is how Rust gets away with it.
+I'm not opposed to allowing this with a semicolon. If nothing else, I think it is close enough to what is already supported and could kick the can down the road on adding a keyword. I'm actually leaning toward a personal preference of both a then keyword and allowing a semicolon before the last expression as another option.
+
+---
+
+@esummers · 2023-11-16T18:29:10.994Z:
+I really like this syntax idea. It feels like a tree. You have distinct leaves as single expressions and branches as if/switch/do statements.
+let color = if isSelected {
+print("Selected")
+do { .purple } // must end in a trailing if, switch, or do
+} else {
+// a semicolon as a fourth compact option for inline use or small blocks
+print("Not Selected"); // easy temporary logging/tracing
+.gray
+}
+// functions and `return` allowed in trailing position too
+let success = if attestationPassed {
+if needsFurtherValidation {
+print("Checking again.")
+doubleCheck(expectedState: true) // standard functions allowed
+} else {
+print("We are done.")
+return // return from function is allowed
+}
+} else {
+print("An error has occurred.")
+fatalError("Invalid device.") // Never-type functions allowed
+}
+EDIT: Refined this a bit.
+
+---
+
+@wadetregaskis · 2023-11-16T18:45:36.312Z:
+jeremyabannister:
+When the extra statements do not influence the resulting value...
+... then maybe we could introduce something like what @esummers was suggesting, where a do {  } block is given the special behavior of not disrupting the surrounding declarative code.
+I find this approach (and the reasoning behind it) quite persuasive.  I particularly like how it leverages subtle but pervasive patterns that all Swift users are already familiar with, whether they realise it or not - like using closures to represent imperative code inside non-imperative flows (e.g. filter.map.reduce etc).
+finestructure:
+It's been mentioned upthread but its feasibility hasn't been addressed so wanted to raise it again: would break + return value instead of then work here?
+It's bound to be confusing, on multiple levels.
+break (the existing statement) can be used anywhere in a series of statements, whereas in an expression context it would be nonsensical anywhere but as the last statement.  So you'd have this context-specific difference in grammar.  Not ideal.
+(or, alternatively, you do allow it anywhere in the series of statements, in which case you've created the ability to have unreachable code inside an expression, which I think needlessly complicates the language)
+break already takes an argument, which is the label of the block to break from.  It'll be ambiguous whether break foo means break from the block labelled foo or that the expression should evaluate to foo (some variable, constant, type, etc).  Also not a major problem, but not ideal.  ("she'll be right" applied to this sort of thing is exactly how you end up with languages like C++)
+Aside on the existing break <name>:  Some folks might dismiss the existing use of break as esoteric and unimportant.  Although it is true that it's not often utilised, I think that's more because it's unfamiliar to people from other programming languages, not because it's of little use.  I find it incredibly useful and elegant when it is applicable, and you can pry it from my cold dead fingers.
+Also, admittedly, as a matter more or principle than practicality, break is a non-linear control-flow statement, whereas in this case of expressions we're explicitly trying to avoid non-linear control flow.  break is a thinly-veiled abstraction on goto, remember.  (which is not bad; goto is not inherently bad, just abused and misunderstood)
+
+---
+
+@jeremyabannister · 2023-11-16T19:09:52.373Z:
+maartene:
+Wouldn’t the immediate evaluated closure approach be the simplest solution for the problem and therefore preferable?
+In my mind it is the preferable solution for genuinely multi-statement branches (like the color computation in my example), but for situations where the other statements are just for temporary debugging purposes I would find it annoying to have to put the expression in a closure and then pull it out again when I'm done with the print statement. In that case I think it would be nice to be able to insert an imperative sub-scope that doesn't break the declarative features that are otherwise working on my behalf in the surrounding context.
+
+---
+
+@Paul_Cantrell · 2023-11-16T22:50:04.794Z:
+finestructure:
+It's been mentioned upthread but its feasibility hasn't been addressed so wanted to raise it again: would break + return value instead of then work here?
+I’m trying warm up to this idea, but finding it difficult: break carries such a strong implication — both via tradition and via its English meaning — of stopping control flow that would otherwise proceed. The keyword’s history in C switch statements does open the door for this proposed use, yes, but…I just have trouble making it sit well when I try it in context:
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+break "odd"   // “Why do I have to put a break here? Break from what?
+}               //  It's the end of the conditional anyway!”
+I agree with @sspringer’s lines of thought. I'm not sure I love use. I'd previously proposed result, which I also don't love. And I don't love then either, but none of the alternatives sit any better for me, and at least it has a natural association with conditionals.
+I think it's helpful to see these alternatives in context:
+Keyword options in context
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+use "odd"
+}
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+result "odd"
+}
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+then "odd"
+}
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+return "odd"   // **Really** don't like this: makes it seem like we will return "even"
+}                // instead of returning "6 is an even number"
+return "\(x) is an \(description) number"
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+{
+print("Huh, that's odd")
+return "odd"
+}()    // The only reason this has a _chance_ of looking good is familiarity bias
+}
+return "\(x) is an \(description) number"
+(Still a very, very strong -1 on return. It's the most confusing of any of these alternatives.)
+
+---
+
+@QuinceyMorris · 2023-11-17T01:29:42.332Z:
+Of all the explicit keywords mentioned so far, I have to admit I'd choose then. The various nouns and verbs (result, use, etc) just seem to be trying too hard to fit in. I'm a bit … embarrassed … on their behalf.
+Twisting history just a bit, the only thing that really "sold" the original if/switch expression pitch was the lack of a keyword — which is where the single-line restriction came from. TBH, I think the only viable multi-line solution is the hard-to-implement no-keyword version that @ben-cohen reluctantly spelled out.
+As an off-the-wall suggestion, we could try something other than a keyword. For example, based on @Paul_Cantrell's example immediately above, something like:
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+{ "odd" } // <- this
+}
+See? Both the "even" and "odd" result values are expressions in single-statement scopes!
+
+---
+
+@wadetregaskis · 2023-11-17T03:39:29.727Z:
+QuinceyMorris:
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+{ "odd" } // <- this
+}
+See? Both the "even" and "odd" result values are expressions in single-statement scopes!
+Won't that cause a lot of ambiguity, to humans if not also the compiler, as to whether { is the opening bracket of a trailing closure argument?
+
+---
+
+@andrews05 · 2023-11-17T03:44:40.475Z:
+I don't have strong opinions on the pitch, but I am strongly opposed to any "bare expression"/"last expression" concepts, on the grounds of readability. I'll link back to my comment on SE-0380 to show why:
+SE-0380: `if` and `switch` expressions Proposal Reviews
+Just wanted to chip in here as someone who has been working with Rust a lot lately. I am really not a fan of the "last expression" rule - I find it seriously hurts readability. This applies equally to function returns as to if expressions, particularly when the if block is quite long and the last expression is far from the line where it is being assigned to a variable.
+I think Swift has made a great choice with functions where the return is implicit for single lines only and I feel we would be …
+
+---
+
+@RussBaz · 2023-11-17T04:58:52.119Z:
+I am sorry if I will sound very angry (I just feel very weird about the majority of messages in this thread), and please do not take it personally, but I am totally in the opposite camp.
+Making the branches way too long and nested is likely a code smell, regardless of whether they are used in expressions or not.
+The more I read the suggestions, the more I realise that the bare return is the most reasonable solution (least complicated to reason and teach, imho). Most others are not very logical or consistent with what the if and switch as expressions mean to the flow of data in the code.
+What I am personally struggling to understand is this approach: 'we do not like using one new keyword. So, let's use 2 separate symbols - { ... }, or even better - 3: do { ... }'
+Using so many brackets where the compiler knows exactly what one needs seems like a language design failure to me.
+OK, while I sound very grumpy, I do not oppose solutions that do not complicate the code to write without a good reason. So, what if we use the original proposal but maybe use an even shorter keyword, such as out ?
+(That is, assuming that we must treat expression blocks differently from other code blocks. Will it be a third type then? If the result builders are considered the second?)
+That may work as a compromise that no one likes but accepts as a middle ground.
+
+---
+
+@localhost · 2023-11-17T05:14:39.175Z:
+I oppose this proposal for making code less predictable.
+if and switch expressions are (to my mind) a fancier C ternary. They're at home in Swift, which "embraces its C heritage".
+These expressions serve their role well: inlining assignment of two / several possible values. They needn't (and for code comprehensibility shouldn't) do anything else.
+
+---
+
+@RussBaz · 2023-11-17T06:25:04.559Z:
+I had a use case for this feature just yesterday. I had 5 permutations of input data that would result in different Vapor responses. For most cases, it was just a different response code, but just one also required a single header to be added to the response object.
+
+---
+
+@100mango · 2023-11-17T08:24:35.610Z:
+Hear Hear.  Not more syntax sugar. More effort to improve async
+/generic system/ performance / SPM / debug toolchain... Please.
+
+---
+
+@jeremyabannister · 2023-11-17T11:14:54.587Z:
+RussBaz:
+I had a use case for this feature just yesterday. I had 5 permutations of input data that would result in different Vapor responses. For most cases, it was just a different response code, but just one also required a single header to be added to the response object.
+FWIW I will almost never need to embed imperative code in a declarative if/switch expression. In the case you describe I would write it like this:
+let response =
+if conditionOne {
+standardResponse(status: 200)
+} else if conditionThatRequiresHeader {
+standardResponse(status: 200)
+.addingHeader(key: "abc", value: "foo")
+} else {
+standardResponse(status: 201)
+}
+My point is that I think that there are very few situations where an imperative block of code is actually preferable to a single, functional-style expression. Therefore, I find it strange that we would optimize for multi-statement calculations embedded in if/switch expressions, when I see that as an uncommon edge case. I think we should discourage its frequent use, and I think the "bulkiness" of wrapping the statements in an immediately-executed closure does that nicely. Adding an entire new keyword just to support this seems quite unjustified to me.
+That being said, the specific use case of inserting print statements in a branch does seem to me to be entirely common and valid, so I would love the do { } solution or anything else that allows me to insert that print statement without touching the surrounding code (as I generally am able to do when inserting print statements anywhere else in my code). Being able to not add return in a single-expression function body when inserting a print statement would be a lovely additional improvement, so I hope that we come up with a solution that solves for that as well.
+In response to the possible complaint: "I don't want to have to make helper methods like `addingHeader` for each of the mutations I may want to make to my value types just for the sake of maintaining single-expression-ness..."
+I have a protocol ExpressionErgonomic that provides various methods that are helpful for building up values in a functional way. It would allow the example code to be written like this:
+let response =
+if conditionOne {
+standardResponse(status: 200)
+} else if conditionThatRequiresHeader {
+standardResponse(status: 200)
+.mutated {
+$0.headers["abc"] = "foo"
+}
+} else {
+standardResponse(status: 201)
+}
+
+---
+
+@jaleel · 2023-11-17T11:42:20.787Z:
+Adding do {} feels weird, almost like adding monadic do notation to the language
+
+---
+
+@ExFalsoQuodlibet · 2023-11-17T12:22:32.752Z:
+Very much +1 on this, fantastic proposal. Also love the do application, it something that I would likely use on a daily basis.
+A couple of very short notes on my side:
+last expression as value of the outer expression: please no, I think it's very, very bad idea, and I think that languages that use this shouldn't;
+don't add this, and just declare a function: no thanks, adding unnecessary indirections, like extra functions with "clear names" and other "clean code" practices are, to me and many others, bad ideas, and sources of accidental complexity, that make the code much harder to understand for no gain.
+
+---
+
+@jawbroken · 2023-11-17T13:47:11.892Z:
+ExFalsoQuodlibet:
+last expression as value of the outer expression: please no, I think it's very, very bad idea, and I think that languages that use this shouldn't;
+Many versions of this objection in the thread, but the horse has long bolted with SE-0380. The question is merely whether existing rules should be extended to multiple statements.
+If the then keyword had been required in SE-0380 then this proposal would be the obvious choice to me, but it wasn't, so it isn't.
+
+---
+
+@esummers · 2023-11-17T15:51:45.957Z:
+QuinceyMorris:
+As an off-the-wall suggestion, we could try something other than a keyword. For example, based on @Paul_Cantrell's example immediately above, something like:
+The original now adopted proposal by Dave Abrahams for if-expression syntax used "{ ... }" as a way to enclose a single-expression, so I like the idea of consistently keeping with that too. I thought it might be interesting to do a variation of this with do-expressions, since the syntax you show is unfortunately too ambiguous.
+I suggested something similar where only expression-style statements can return in the trailing position.
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+do { "odd" } // push the result in to a single-expression context
+}
+If we never have do-expressions, it might be interesting to use it to lift code out of an expression context. It appears that several people liked this approach reading back in this thread. Reminiscent of fake monadic notation as someone mentioned.
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+// use do to escape out of the single-expression syntax
+do { print("Huh, that's odd") }
+"odd"
+}
+// maybe this could be an alternative without "do"
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+// allow a leading closure
+{ print("Huh, that's odd") }()
+"odd"
+}
+I'm currently struggling with the following in the proposed then-syntax: "then if", "then switch", and "then do" feels weird to me. It shifts the keyword further to the right where it is more difficult to read. Maybe I could get used to it, but if we go with "then", maybe allow it to be dropped for trailing if/switch/do-expressions.
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+then if x == 0 { // <- This feels odd to me.
+"zero"
+} else {
+"non-zero"
+}
+}
+// instead maybe?
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+if x == 0 { // <- "then" not needed here
+print("Is zero")
+then "zero" // <- "then" is needed here
+} else {
+"non-zero"
+}
+}
+
+---
+
+@wadetregaskis · 2023-11-17T16:19:19.095Z:
+esummers:
+I suggested something similar where only expression-style statements can return in the trailing position.
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+do { "odd" } // push the result in to a single-expression context
+}
+The problem is that you're not doing anything in the do block, you're just defining a value.  do (to me) is an imperative structure.  It's literally saying "do this stuff".  You don't "do" literals and expressions, so much as you evaluate them or return them.
+The inverse, of wrapping the print in do instead, makes much more sense to me as a result.  Though it is a little bit magical that you can insert that imperative block into an expression in a way that's purely for side-effects rather than being intrinsically part of the expression.  But pragmatically I can see the utility of it.
+esummers:
+I'm currently struggling with the following in the proposed then-syntax: "then if", "then switch", and "then do" feels weird to me. It shifts the keyword further to the right where it is more difficult to read. Maybe I could get used to it, but if we go with "then", maybe allow it to be dropped for trailing if/switch/do-expressions.
+let description =
+if x % 2 == 0 {
+"even"
+} else {
+print("Huh, that's odd")
+then if x == 0 { // <- This feels odd to me.
+"zero"
+} else {
+"non-zero"
+}
+}
+If it helps, I find it useful to read this as "…else do these tangential things and then resolve to this value".
+
+---
+
+@esummers · 2023-11-17T16:23:09.227Z:
+wadetregaskis:
+The problem is that you're not doing anything in the do block, you're just defining a value. do (to me) is an imperative structure. It's literally saying "do this stuff". You don't "do" literals and expressions, so much as you evaluate them or return them.
+I think considering "do" an imperative structure is a valid way to look at it- that is why I suggested the second idea, but this proposal is about changing "do" to an expression. In that case it would no longer be imperative.
+You are trivially just returning a value in the example, but in a more complex situation you might actually be doing work inside the expression. No different then a function like this:
+func foo() -> Bool { true }
+wadetregaskis:
+If it helps, I find it useful to read this as "…else do these tangential things and then resolve to this value".
+I'm having less trouble reading it, but it breaks the flow of the expression for me. "else if" works for me because there is a "}" before the "else". This shifts another keyword to the right. I know there are other cases in Swift that breaks this flow (such as guard statements with long conditionals that shift "else" to the next line)... I'm just not a fan of it... I would be tempted to shift "if" in this example to the next line.
+
+---
+
+@wadetregaskis · 2023-11-17T16:33:07.621Z:
+esummers:
+You are trivially just returning a value in the example, but in a more complex situation you might actually be doing work inside the expression.
+I suppose.  But that just makes it worse, IMO, because fundamentally the goal is to evaluate to a concrete value, irrespective of any side-effects.  So do is still the wrong verb; it's focusing on the side-effects rather than the primary purpose.
+Also, to actually show the more elaborate (and horrible) example case:
+let description =
+if x % 2 == 0 {
+print("x is even")
+do { "even" }
+} else {
+print("Huh, that's odd")
+do {
+if x == 0 {
+print("x is zero")
+do { "zero" }
+} else {
+print("x is non-zero")
+do { "non-zero" }
+}
+}
+}
+To me that's quite a mess.  It's bad enough with all the prints splattered around, but putting the actual expression elements inside do statements is extra confusing.
+In contrast, flipping it to put the imperative side-effects inside do:
+let description =
+if x % 2 == 0 {
+do { print("x is even") }
+"even"
+} else {
+do { print("Huh, that's odd") }
+if x == 0 {
+do { print("x is zero") }
+"zero"
+} else {
+do { print("x is non-zero") }
+"non-zero"
+}
+}
+…doesn't solve the overall issue of noise, but does:
+Require fewer levels of indentation.
+Make diffs much cleaner because the expression lines aren't touched when adding and removing the debug prints.
+Mean that if you can mentally filter out the do blocks while you're reading this, you can read the unadulterated expression.
+
+---
+
+@esummers · 2023-11-17T16:34:59.745Z:
+I should have linked back to my earlier example. I intended that any expression statement could go in the trailing position. So the "do" with an "if" in it would be unnecessary. I think most of the time we wouldn't have so many breaks out of the expression, but that would be good to check against real code.
+This might also be complementary with the proposed "then" keyword or use of semicolons, so that could be another way to reduce the noise.
+let description =
+if x % 2 == 0 {
+print("x is even")
+do { "even" }
+} else {
+print("Huh, that's odd")
+if x == 0 {
+print("x is zero")
+do { "zero" }
+} else {
+print("x is non-zero")
+do { "non-zero" }
+}
+}
+I do like that it is easy to filter out "do" blocks in your example if they were left in the imperative world. It just feels like people really want do-expressions for returning from areas where exceptions are handled.
+
+---
+
+@wadetregaskis · 2023-11-17T16:40:52.507Z:
+esummers:
+I'm having less trouble reading it, but it breaks the flow of the expression for me. "else if" works for me because there is a "}" before the "else". This shifts another keyword to the right. I know there are other cases in Swift that breaks this flow (such as guard statements with long conditionals that shift "else" to the next line)... I'm just not a fan of it... I would be tempted to shift "if" in this example to the next line.
+Fair enough.  I think what you're saying is you don't like the adverb; you'd be more comfortable with a verb in the sense of return.  Which I can understand, even if I'm not (pragmatically) as bothered by then.
+Through this I can see the appeal of implicit last line returns, as a way of shortcutting the naming problem by eliminating the keyword entirely.  And if I were coming into this academically I'd probably be all for it.  But as mentioned [way] earlier in this topic thread, real-world experience with result builders has really burned me, and I really can't stand magical implicit returns / yields / whatever anymore.
+Though I am perfectly comfortable with implicit returns for single-statement blocks, and use it zealously because I love the cleanliness of not having return keywords everywhere.  I think the key difference is that with them there's no possible ambiguity.  There's literally one 'statement' (often just a variable name or a literal, or an expression) which is used in its entirety to define the result.  Whereas last-line-implicit-returns (or result builder's "any random line might implicitly yield, good luck") is frustratingly ambiguous and potentially misleading.  And I'm not alone - the Swift compiler clearly agrees with me given that, despite herculean effort by the compiler team, it still can't remotely-reliably diagnose type or syntax errors inside result builder expressions.
+
+---
+
+@wadetregaskis · 2023-11-17T16:42:21.649Z:
+esummers:
+I intended that any expression statement could go in the trailing position. So the "do" with an "if" in it would be unnecessary.
+The problem there is that you've just introduced implicit-last-line-return.
+
+---
+
+@jeremyabannister · 2023-11-17T16:49:41.697Z:
+esummers:
+I think considering "do" an imperative structure is a valid way to look at it- that is why I suggested the second idea, but this proposal is about changing "do" to an expression. In that case it would no longer be imperative.
+If I've understood correctly, the purpose of making do { } evaluate as an expression is just to replace the immediately-executed closure syntax? The two are entirely identical in all respects, but the advantage of do { } is simply the following?:
+ben-cohen:
+This immediately-executed closure pattern is commonly seen in Swift code. So much so that in some cases, users assume that even single expressions must be surrounded in a closure. do expressions would provide a clearer idiom for grouping these.
+Why would these same users not be similarly confused into thinking that single expressions must be encased in do { }?
+
+---
+
+@esummers · 2023-11-17T16:49:48.979Z:
+wadetregaskis:
+The problem there is that you've just introduced implicit-last-line-return.
+Only for statements. It isn't really fully implicit. Just having multiple keywords that can return.
+
+---
+
+@GreatApe · 2023-11-17T16:52:17.227Z:
+It also provides very little benefit, since it's replacing {    }()
+
+---
+
+@GreatApe · 2023-11-17T16:53:19.006Z:
+But this is actually one more character than the current way to do it
+
+---
+
+@esummers · 2023-11-17T16:57:07.846Z:
+jeremyabannister:
+If I've understood correctly, the purpose of making do { } evaluate as an expression is just to replace the immediately-executed closure syntax?
+The immediately executed closure syntax doesn't work inside an expression.
+
+---
+
+@jeremyabannister · 2023-11-17T16:57:33.629Z:
+Oh, why not?
+
+---
+
+@esummers · 2023-11-17T16:58:16.255Z:
+jeremyabannister:
+Oh, why not?
+Write an example. I can't write one without falling back to imperative style code.
+
+---
+
+@jeremyabannister · 2023-11-17T17:00:50.918Z:
+esummers:
+Write an example.
+The following code seems to compile just fine:
+var foo: Int {
+if bar {
+{
+var i = 0
+return i
+}()
+} else {
+7
+}
+}
+var bar: Bool { true }
+
+---
+
+@esummers · 2023-11-17T17:05:41.535Z:
+Ok, but that seems like too much syntax that can't be collapsed. It isn't exactly the same as my example since it is now a single-expression. It also doesn't allow a guard that returns from the function which is one of the issues this pitch aims to solve. It feels like it is abusing the immediately executed closure syntax which is primarily for initialization.
+
+---
+
+@jeremyabannister · 2023-11-17T17:16:26.601Z:
+esummers:
+Ok, but that seems like too much syntax that can't be collapsed.
+I’ve been arguing that if we introduce the behavior that do { } does not disrupt the declarative syntax then the frequency of genuinely multi-statement value calculation will be rather low, and therefore this syntax will be appropriately heavy.
+esummers:
+It also doesn't allow a guard that returns from the function which is one of the issues this pitch aims to solve.
+guard can of course be used inside of the closure - it’s true that in the middle of calculating a value that is declaratively described using an if/switch expression one would not be able to return from the enclosing function, but are we sure that that’s something that’s important to enable? The only use of guard in the original post is not that, and would still be possible inside of an immediately-executed closure:
+let x = if .random() {
+guard .random() else {
+then 0
+}
+then 1
+} else {
+0
+}
+
+---
+
+@xwu · 2023-11-17T17:26:26.192Z:
+esummers:
+It also doesn't allow a guard that returns from the function which is one of the issues this pitch aims to solve.
+I’m confused where this interpretation originates: nothing in the pitched feature would allow for guard to be used as an expression, and indeed it states that this is not something we’re attempting to do.
+
+---
+
+@esummers · 2023-11-17T17:28:24.625Z:
+xwu:
+I’m confused where this interpretation originates: nothing in the pitched feature would allow for guard to be used as an expression, and indeed it states that this is not something we’re attempting to do.
+Ok. Good clarification. The pitch as written doesn't prevent guard, so it would be allowed before "then". It was brought up in the prior if/switch-expressions proposal. "guard" and logging were specifically brought up by core team members as areas they were deferring to future pitches. I don't remember if it was in future directions or just in the discussion.
+However, I will defer to those pitching this. Maybe that isn't a concern to allow that one day anymore. Ultimately these features affect coding style and if it isn't seen as needed in real-world code, then it wouldn't be a priority. I guess if guard doesn't work in an expression with a proposed syntax, maybe it is still a valid idea to be surfaced.
+I think this pitch and the prior if/switch proposal is following a very Rust-like view. Supporting guard makes sense in that context.
+
+---
+
+@mklbtz · 2023-11-17T18:05:37.686Z:
+Paul_Cantrell:
+It’s then, bare last statement, or something nobody’s proposed.
+esummers:
+It is actually closer to break/continue statements as proposed since it only affects control statements
+I think spelling this keyword “break” instead of “then” would make this pitch more agreeable because it will slot into people’s existing understanding of control flow. Hopefully it’ll feel less foreign.
+Bare style should be reserved for singular statements, as it is with functions. If we want to expand bare style implicit returns, that should be a separate proposal so it can be handled uniformly.
+
+---
+
+@esummers · 2023-11-17T19:04:30.958Z:
+mklbtz:
+I think spelling this keyword “break” instead of “then” would make this pitch more agreeable because it will slot into people’s existing understanding of control flow. Hopefully it’ll feel less foreign.
+Bare style should be reserved for singular statements, as it is with functions. If we want to expand bare style implicit returns, that should be a separate proposal so it can be handled uniformly.
+I don't think "break" can be used unless the syntax changes since it would be ambiguous with breaking to a label. Maybe break { "A result value" }
+I agree that some limited form of bare-style implicit results could be complementary to "then" or "break" and possibly go in to some future proposal. Adopting "then" or "break" doesn't completely shut the door on implicit results. Just like you can have both implicit and explicit returns that are favored in different contexts. It is obvious that unrestricted bare-style implicit results would never work for everything due to the ambiguity, so a keyword to specify the result makes sense even if it ends up being loosened to allow implicit return on non-ambiguous statements later.
+I think for any fans of implicit results, adopting this pitch as written doesn't mean it is end-of-the-road for implicit results and the perceived discontinuity in the language. It just means implicit and explicit results might each have their own place.
+I also think that the semicolon option (discussed in the pitch as an alternative) should be taken seriously. There isn't much in this thread discussing that. I think if we expect most of these cases that break away from the flow of the expression are very short (no more then a few statements) then I think semicolons might be a good way to indicate they are still part of the expression. If the goal is to be like Rust and do lots of imperative work mixed together in the expression then semicolons would be a bad idea because we are then just adding semicolons everywhere. Rust often treats these expressions as mini-functions where they just want to store the result in a variable at the end. Notably, long do-expressions probably wouldn't look good with semicolons since they would generally be doing a lot of imperative work.
+I don't really have an answer for this. I think I would be fine with either approach.
+
+---
+
+@esummers · 2023-11-17T20:09:40.749Z:
+On the topic of do-expressions. They might replace immediately executed closures, so maybe that should be considered. Would immediately executed closures still offer anything useful if this pitch is adopted?
+let val = {
+var i = 0
+return i
+}()
+Is the same as:
+let val = do {
+var i = 0
+then i
+}
+Except the later can also handle exceptions.
+let val = do {
+try randomlyThrowException()
+} catch {
+fatalError("You are unlucky.")
+}
+I suppose closures would still be needed for lazy, but that feature could be altered in a major language mode to simplify the language.
+EDIT: "defer" and "guard" might be used in immediately executed closures that wouldn't translate to do-expressions, but I think do-expressions would probably end up more popular which might not be a bad thing since they are less ambiguous and easier to parse.
+I think if I could change one thing about Swift retroactively, it would be new syntax for applying closures returned from a variable or function. Maybe myClosure.("an argument") with a dot to apply a closure stored in a variable. There is just so much ambiguity in that for a language without required semicolons.
+
+---
+
+@wadetregaskis · 2023-11-17T21:30:01.603Z:
+esummers:
+…if immediately executed closures are removed from the language because they are redundant…
+I don't think they need to be removed.  It'd feel like an oddly arbitrary restriction, for something that naturally falls out of the basic language syntax & grammar.  Though there could be a FixIt as a suggestion to convert them to the more canonical form.
+But otherwise I like the direction.  Mainly because it'd be really handy to have some sort of concise shorthand for try…catch, which your proposal is one baby step closer to.
+
+---
+
+@esummers · 2023-11-17T21:31:51.356Z:
+wadetregaskis:
+I don't think they need to be removed.
+It is possible there are other compromises, but I think any of them would cause parsing issues or just plain slow parsing, IDE autocomplete issues, etc. because the parser will need to look ahead (or behind) so far.
+The problem is you don't want anything that results in this "(...)(...)" except for two statements next to each other.
+EDIT: I think another option would be to require that immediately executed closures can't have parameters. Nobody uses parameters with them anyway.
+In other words, don't allow this:
+print({
+return "Hello \($0)."
+}("World"))
+There might still be some issues with void types, so it wouldn't be ideal but probably workable.
+All this said, immediately executed closures is a parsing minefield so it might be nice to replace them with do-expressions during a phased process with fixits. They are too similar to keep both features long term or it will be confusing. They are not 1:1 comparable, but nobody uses the closure specific features. I don't know if there are ABI issues, but the compiler can always translate to a closure under the hood and would expect that to be rare too (maybe with global variables).
+
+---
+
+@wadetregaskis · 2023-11-17T22:59:12.498Z:
+esummers:
+I think another option would be to require that immediately executed closures can't have parameters. Nobody uses parameters with them anyway.
+Mmm… I agree it seems odd and suboptimal, but I wouldn't want to jump to conclusions.  Especially once one gets into a debug mindset or of "ugh, why is everything not working, sigh <shift more random code around in frustration>", I wouldn't be surprised if one can come up with situations where that makes a kind of sense.  At least as something useful to do temporarily.
+If there are indeed significant parsing challenges (or slow-downs) as a result of the syntax, then that's one thing, but removing natural syntax for purely stylistic reasons seems overly zealous.
+If one form truly is naturally superior to the other, then it'll inevitably become dominant in use and the zeitgeist and there'll be no need to forcibly ban the other - convention will achieve the same result.  Alternatively, if neither gains a natural dominance then that suggests there's merit to both, and they should both remain.
+
+---
+
+@esummers · 2023-11-17T23:15:53.000Z:
+Yeah. There is some change in behavior with “return” and I can think of a few things that would not be clean fixits. Namely “guard” and "defer" and what to do about that would be a whole discussion in itself. Probably not a path to go down anytime soon since they could be kept around.
+I could see at least making immediately executed closures more awkward and less ambiguous to use inside functions (like wrapping in parentheses) since do-expressions would be more ideal. It could just be a recommendation that becomes required in Swift 6. No change to immediately executed closures outside of functions. That would provide a better migration path that could be maintained indefinitely and fixits would be easy to write.
+EDIT: I deleted the post this is referring to because it looked nice on the surface, but had issues that are hard to write up. I don't think there is a way to make implicit return work well without semicolons.
+Still relates to my post about do-expressions above. Exploring this more, I think I am still a fan of this pitch. I think it is necessary, but there might be room for implicit return with semicolons and statements containing clear keywords that could be explored in another pitch. It is too much to bunch in to this one. I just don't see anyway to avoid an option for explicit return without major changes to syntax or leaving expressions feeling half-finished. This is a feature that could be avoided if you have a personal distaste for it since it only shows up in implementations. Much like trailing closures which are fine to use or not and still feel Swifty.
+
+---
+
+@esummers · 2023-11-18T03:51:30.918Z:
+Does anyone know what Full Expressions are under SE-0380 in future directions? It links to a pull request (hamishknight:express-yourself) that doesn't exist anymore. I wanted to see how this proposal relates to future directions in SE-0380.
+EDIT:
+Nevermind. I see they are nesting if/switch/do inside another expression. I think this pitch gets part of the way toward that if you break up the expression a bit. There is at least a limited form of nesting in this pitch and mixing in let bindings is a big step toward more complex expressions. I'm not sure if we even need more than this since the Full Expressions proposal has a lot of overlap with higher-order functions.
+Full Expressions may still be interesting even though they have a lot of overlap with existing features. They almost feel like building a list comprehension in complicated cases mixed with a loop. They also don't appear to require "then" in common use, so that might be enough for anyone that worries about mixing "then" all over their expressions.
+In relation to Full Expressions, Multi-Statement Expressions feel like mixing a little bit of imperative code in to an expression instead of a "Full Expression" which feels like a functional language. I think an explicit return using "then" works nicely for that. I didn't really get the connection until I looked more in to the Full Expressions future direction which are more in line with what most people think of as an expression.
+
+---
+
+@taylorswift · 2023-11-18T03:54:04.552Z:
+esummers:
+EDIT: I think another option would be to require that immediately executed closures can't have parameters. Nobody uses parameters with them anyway.
+how else would you create an inout, consuming, or isolated binding?
+
+---
+
+@esummers · 2023-11-18T03:56:52.300Z:
+taylorswift:
+how else would you create an inout, consuming, or isolated binding?
+Are these ever used in this way (or will be with new ownership model)? I would think it odd to do this in an anonymous immediately executed closure, but I haven't worked enough with the new features. I've never seen arguments passed in any code in the wild.
+Regardless, this related to an idea for implicit return that I since deleted above. I thought we could get close with minor syntax changes in Swift 6 but there were still some thorny areas.
+
+---
+
+@DanL · 2023-11-18T13:26:16.666Z:
+I would like to add enter to the list of possible keywords.
+x = if a > b { enter 5; doChore() } else { 0 }
+(return and enter are synonymous on a computer keyboard)
+P.S. I came up with the word use, as you can see here:
+Ways to unwrap-mutate-wrap optionals Discussion
+Using if let someOptional { } is convenient, but it also
+means that the local unwrapped variable (or constant) makes
+the original optional, having the same name, inaccessible
+(a.k.a. variable shadowing).
+Here are some possible solutions to unwrap-mutate-wrap
+optionals with if let/var without needing to come up with
+a new name for the unwrapped local variable.
+Since the $ sign can be used in variable names, the following
+approach is currently possible. You still have to write the
+variabl…
+I am not, however, the one who originally suggested that return
+should be replaced with another keyword.
+
+---
+
+@cmonsour · 2023-11-18T14:03:13.576Z:
+I wasn’t going to comment because I like the idea and had little to add, but since there’s been a lot of pushback against then I think it’s worth saying that I think it works well and makes a lot of sense.
+In English, ‘then’ has a number of meanings. One is to express a consequence: if A, then B. Another is to express temporal succession: A happened; then B happened.
+Both are relevant here. Consider an example:
+let numberOfCatsPresent = if vacuumOn {
+print(“🙀!”)
+then 0
+} else {
+print(“😸”)
+then Int.random(in: 0..<4)
+}
+Notice that then flows semantically on two levels, with two related meanings:
+For the expression  as a whole: If vacuum is on, then zero cats. (consequential meaning)
+Within the curly bracket sub-expressions: Print the kitty, then resolve this branch of the expression to the given value. (temporal succession meaning)
+This is not just to overanalyze the grammar. The point is, then reads naturally both if you start at the if condition and then skim over the intervening statements to see what the expression actually evaluates to (if…then) — and also if you’re just looking at a single branch expression within curly brackets (statement, statement, then result).
+
+---
+
+@DanL · 2023-11-18T15:30:58.612Z:
+if condition { then ... }
+could be perceived like this:
+if condition, then, then ...
+It becomes a tautology, in a way.
+Somewhere in history, the keyword then disappeared and
+became integrated with the opening curly brace.
+I'm not implying that this rules out then, it's just one
+of many aspects.
+
+---
+
+@wadetregaskis · 2023-11-18T16:32:14.077Z:
+DanL:
+if condition { then ... }
+could be perceived like this:
+if condition, then, then ...
+It's true, it is technically redundant from that angle.  But I think @cmonsour's observation is astute.  I hadn't even noticed that 'then then' redundancy, through all this discussion of the proposal - I suspect others likewise had not, since nobody pointed this out 'til now.  So it seems like in practice using the then keyword like this reads naturally.
+An alternative way to rationalise it is that the angle brackets are not synonyms for 'then' and 'done', but rather just border markers for a basic block.  I think this makes sense in particular because otherwise those closing brackets are hard to explain:
+let numberOfCatsPresent = if vacuumOn then
+print(“🙀!”)
+then 0
+done else then
+print(“😸”)
+then Int.random(in: 0..<4)
+done
+I mean, it sort of works as English, but it's clumsy.
+I think there's a reason no modern languages use words for these things, rather than punctuation.  About the only living language I can think of that still does is Bash, if you can call that living.
+
+---
+
+@Dmitriy_Ignatyev · 2023-11-18T17:42:15.958Z:
+ben-cohen:
+let icon: IconImage = do {
+let image = NSImage(
+systemSymbolName: "something",
+accessibilityDescription: nil)!
+let preferredColor = NSColor(named: "AccentColor")!
+then IconImage(
+image,
+isSymbol: true,
+isBackgroundSupressed: true,
+preferredColor: preferredColor.cgColor)
+}
+I wonder why return isn't used here instead of then?
+And in this code return can also be used:
+let width = switch scalar.value {
+case 0..<0x80: 1
+case 0x80..<0x0800: 2
+case 0x0800..<0x1_0000: 3
+default:
+log("this is unexpected, investigate this")
+then 4 // why not use `return` instead of `then` here?
+}
+
+---
+
+@Jumhyn · 2023-11-18T18:21:06.208Z:
+Dmitriy_Ignatyev:
+I wonder why return isn't used here instead of then?
+Part of the original motivation for SE-0380 is to avoid the overloading of return as currently happens with the immediately-applied-closure pattern. It requires a reader of a return statement to remember the context they’re in in order to understand whether we’re returning from the entire function or just a sub-computation.
+I for one much prefer the use of a keyword here and am not compelled by the arguments that we should try to reuse an existing keyword. I don’t think we have any sufficiently-similar keyword available today that we could reuse without running into the same problem we’re trying to avoid in the first place with return. IMO then reads fine.
+I am mildly concerned that introducing this feature will cause users to introduce arbitrary side-effects in value-computing code, but I think the benefit of being able to break a branch down into multiple steps rather than a single monster expression outweighs that concern.
+
+---
+
+@jeremyabannister · 2023-11-18T18:48:24.495Z:
+Jumhyn:
+I think the benefit of being able to break a branch down into multiple steps rather than a single monster expression outweighs that concern.
+If we have an if/switch expression and or one or many of its branches contain multiple statements, would you not consider the whole thing to be a “monster expression” of the same caliber or higher than what you’re imagining any one of its branches might be?
+
+---
+
+@Paul_Cantrell · 2023-11-18T18:54:13.754Z:
+cmonsour:
+In English, ‘then’ has a number of meanings. One is to express a consequence: if A, then B. Another is to express temporal succession: A happened; then B happened.
+Both are relevant here.
+This is compelling.
+
+---
+
+@Jumhyn · 2023-11-18T19:06:23.104Z:
+I certainly don’t think it would be impossible to write if expression which would be better off having some of its branches (or indeed, the whole thing) pulled out into separate functions.
+However, the current regime pegs the answer to “when should I factor things out into a separate function?” at “whenever it is not possible to express a branch as a single expression,” and after working with if expressions in the language today for a while I don’t find that satisfying. I have found myself compelled to shoehorn things into single expressions when I would really prefer to have bindings broken out into intermediate steps. And if there’s a value that needs to be used in two places, the current regime actually encourages writing more fragile code (duplicating the subexpression) rather than pulling it into an intermediate binding for reuse. (IMO if expressions themselves are structured enough that I don’t consider them ‘monster’ the same way I feel about, say, long operator or function-call chains. Or at least, the threshold is higher.)
+I’ve found myself coming to the view that these if branches/expressions should be factored out in a more judgement-based way, that is, precisely when the alternative becomes more readable than leaving things as-is. I don’t believe the current restrictions approximate that boundary closely enough to leave them in place. And further, I think that pushing people towards the alternative of, say, an immediately-applied closure is worse than allowing the insertion of additional statements in a branch.
+
+---
+
+@tera · 2023-11-18T20:26:22.680Z:
+I'm not big fun of adding keywords (Swift got too many already), but if to use a keyword at all instead of a bare last expression – consider using out, in addition to in and inout we already have in the language.
+
+---
+
+@jeremyabannister · 2023-11-18T21:27:40.905Z:
+Fair enough - I’m becoming increasingly convinced of the pitch overall, including the specific choice of the keyword then.
+However, there is one other alternative that I'd like to bring up before this ship sails.
+Jumhyn:
+And if there’s a value that needs to be used in two places, the current regime actually encourages writing more fragile code (duplicating the subexpression) rather than pulling it into an intermediate binding for reuse.
+This problem is of course solvable in normal functions, but I don't find it to be the best experience. Specifically, I find that having to declare all of my subcomponents before the final expression severely inhibits readability, because it is sort of the opposite of progressive disclosure: instead of getting to glance at the final result and look further down only if I'm unclear on the definition of one of the terms I see, I have to process the names and definitions of all the intermediate values first and then finally at the bottom I get to see the highest level expression.
+Rather than making each branch of if/switch expressions basically like slightly differently flavored function bodies, it might be nice to provide a better solution to the problem of intermediate definitions that can be used in both contexts, but that doesn't require, for example, the introduction of a new return-adjacent keyword.
+Inspired (again) by a post earlier in this thread by @esummers , here's a first draft of the idea:
+let accessibleRepos: [Repo] =
+switch signedInEntity {
+case .companyMember (let employee, let company):
+employee
+.personalRepos
+.appending(company.publicRepos)
+.appending(
+isAdmin ? company.adminRepos : []
+) where {
+var isAdmin: Bool {
+company
+.admins
+.contains(employee.id)
+}
+}
+case .individual (let user):
+user.personalRepos
+}
+The idea is more or less that expressions can be followed by where and then curly braces within which functions and computed properties can be added. The order of the declarations doesn't matter, and cyclical dependencies can be diagnosed the same as the unordered declarations that appear within types/extensions or at the global scope.
+
+---
+
+@sliemeobn · 2023-11-18T21:32:46.897Z:
+tera:
+consider using out, in addition to in and inout we already have in the language.
+I was about to suggest out as well here a few days ago as I felt it would read better than then.
+However, I didn't like how in is the keyword for defining closures, and out - as a false counterpart - would be a keyword for expressions.
+Also, I have to say, after initially feeling quite positive about this pitch (with a rather firm opinion that a keyword would be a bad idea and bare expression is the way to go) I find myself more and more disenchanted.
+I still think even the best keyword feels foreign and weird for this function, but I absolutely sympathize with the reservation against "bare expression returns". In order to stay consistent swift would have to go "all in" on bare expression returns - and I am not sure myself if I would want this (just as the proposal predicts ; )
+I find myself more and more in the "it's not worth the fuss" camp.
+
+---
+
+@wadetregaskis · 2023-11-18T23:42:31.099Z:
+jeremyabannister:
+If we have an if/switch expression and or one or many of its branches contain multiple statements, would you not consider the whole thing to be a “monster expression” of the same caliber or higher than what you’re imagining any one of its branches might be?
+Potentially, but not all character [counts] are equal.
+Consider the basic switch statement.  It's a pretty wordy thing if there's lots of cases.  But it's conceptually pretty simple.  Size != complexity.
+For an imperative switch, the cognitive burden is pretty low even if there's many cases and they contain long blocks of code themselves, because all you have to understand to navigate that is some basic control flow and it's essentially top to bottom - "monotonic" in the sense that you never jump backwards, only ever forwards.
+For a switch expression, there's more inherent burden because it's not 'monotonic'; you're not just walking forwards through the code, you ultimately also have to backtrack to the beginning once you've determined what the result of the expression is.  And expressions can be arbitrarily nested (in principle) so the control flow is a lot more complicated, with potentially lots of back and forth.
+It's kind of like the difference in complexity between walking an array versus a tree.
+And I think that's why it's wise to put limits on permitted complexity in expressions (in general) that aren't necessary for imperative code.
+Jumhyn:
+And if there’s a value that needs to be used in two places, the current regime actually encourages writing more fragile code (duplicating the subexpression) rather than pulling it into an intermediate binding for reuse.
+Swift actually aids in doing this - moreso than most languages - thanks to the lazy keyword.  That helps a lot with deconstructing complex expressions without losing the benefits of short-circuited evaluation.
+Though, it's just a bit unfortunate that lazy can only be applied to variables, not constants.  Those two aspects are orthogonal.
+tera:
+I'm not big fun of adding keywords (Swift got too many already), but if to use a keyword at all instead of a bare last expression – consider using out, in addition to in and inout we already have in the language.
+Wouldn't that be confusing, though?  The problem is that out does sound very similar to in and inout yet has no actual commonality with either of them.  in is used in completely unrelated fashions (e.g. for syntactic clarity in e.g. for x in array), and inout applies only to function parameters.  In the midst of an expression there are no 'parameters' per se (I guess one could argue referenced variables, constants, etc are parameters, but I don't think that's how most people mentally model things…?).
+I think I could probably retrain my brain to permit that interpretation, but I suspect it'd always remain a bit awkward because "out" is inherently imperative, and expressions are (side-effects notwithstanding) not.
+jeremyabannister:
+Specifically, I find that having to declare all of my subcomponents before the final expression severely inhibits readability…
+That's a very interesting point, insofar as it is pretty contentious topic within programming in general.
+It drives me nuts working with people that dogmatically create a constant / variable for every intermediary.  e.g. instead of return (x * y) + c they'd write:
+let product = x * y
+let result = product + c
+return result
+It seems bananas, to me, to deconstruct an already simple expression like this, but a lot of programmers do it.
+Apparently the reason those folks do that is because they believe it's conceptually simpler to build the result up piece-meal, "bottom-up" as it were, rather than going "top-down" and having to try to comprehend the entire thing at once.
+You can also see someone's preference revealed here by whether they write their code with helper functions above or below their use sites.  Objective-C convention was to put subroutines later in the file, but Swift convention seems to predominately be the opposite.
+But then I think we can all relate to the challenge of trying to learn a non-trivial bit of code and how a depth-first walk, while seemingly a logical method, can end up with you completely lost.  Sometimes you really do need to compartmentalise and master one small subsection before you can even consider what it's for in the bigger picture.
+Maybe it's not so much bottom-up or top-down as it is middle-out.
+Anyway, the point of this cool story is that I don't think we'll ever reach consensus on this aspect of design.  Even your example is likely to be counter-intuitive to many folks, whom would find it much more logical to put the 'where' clause up front because otherwise they first encounter isAdmin without any known definition and can be thrown off on a wild goose chase trying to figure out where that comes from.
+
+---
+
+@tera · 2023-11-19T00:55:18.562Z:
+wadetregaskis:
+Wouldn't that be confusing, though? The problem is that out does sound very similar to in and inout yet has no actual commonality with either of them. in is used in completely unrelated fashions (e.g. for syntactic clarity in e.g. for x in array), and inout applies only to function parameters. In the midst of an expression there are no 'parameters' per se (I guess one could argue referenced variables, constants, etc are parameters, but I don't think that's how most people mentally model things…?).
+The two uses are quite similar:
+{ param in
+foo(param)
+}
+let x = if condition {
+let result = foo()
+out result
+}
+BTW, what is the stance on having several exits from a single branch?
+I can write:
+let x = if condition {
+if otherCondition {
+1 // "first" exit
+} else {
+2 // "second" exit
+}
+} else {
+3
+}
+but not this?
+let x = if condition {
+if otherCondition {
+<WHATEVER MARKER IS HERE> 1 // "first" exit
+}
+<WHATEVER MARKER IS HERE> 2 // "second" exit
+} else {
+3
+}
+or do we allow it?
+
+---
+
+@wadetregaskis · 2023-11-19T04:18:49.517Z:
+tera:
+The two uses are quite similar:
+{ param in
+foo(param)
+}
+let x = if condition {
+let result = foo()
+out result
+}
+It's true, there is a symmetry in that case.  And I like the symmetry - symmetry in general is elegant.
+But, I've never liked the use of in there.  It just reads weird, to me.  Pragmatically I'm used to it - it's not too confusing once you've seen and written it a lot - but I don't think it's a good reference.
+tera:
+BTW, what is the stance on having several exits from a single branch?
+It is indeed a bit odd if only the first form - i.e. the "verbose" version with } else { and } explicitly spelt out - is accepted.  From a "but these are just two purely-stylistic ways of writing the exact same thing" perspective.
+I can imagine that bothering a fair few people, and confusing beginners.
+But I can also see that one is declarative and one is imperative, so from a "expressions are declarative [not imperative]" perspective it makes sense to not allow the imperative form.
+I was initially mildly in favour of this pitch, but I think I'm converging on mildly against it.  I think primarily for the key point that a few people have already made: while there may not be an obvious, hard line between acceptable and unacceptable expression complexity, encouraging more complex expressions is probably a bad idea.
+
+---
+
+@Yakov · 2023-11-19T17:26:48.060Z:
+The proposal to allow multiple statements inside if / switch / do expressions looks like a really good addition! However…
+Problem
+I don’t quite understand the need for a new keyword which adds confusion and harms consistency of the language.
+Background / Motivation
+To me, the expressions supported in Swift 5.9 look semantically and syntactically similar to closures of the type (OldValue) -> NewValue which are often used for matching:
+let inputMatcher = { input in
+if input > 0 {
+return true
+} else if input == 0 {
+return false
+} else {
+print("Unexpected value")
+return false
+}
+}
+let isEnabled = inputMatcher(input)
+As seen above, constructions like this require the return keyword but support multiple statements out of the box.
+Another Approach to Matching
+Another way to match values I’ve seen and used goes like this:
+let isEnabled: Bool
+if input > 0 {
+isEnabled = true
+} else if input == 0 {
+isEnabled = false
+} else {
+print("Unexpected value")
+isEnabled = false
+}
+This code, despite its bulkiness, guarantees isEnabled is assigned (exactly once) by the time it’s used, and also supports multiple statements.
+Here’s an if expression which does the same thing:
+let isEnabled = if input > 0 {
+true
+} else if input == 0 {
+false
+} else {
+// Cannot print anything here
+false
+}
+This expression doesn’t allow explicit returns anywhere and doesn’t support multiple statements.
+In result, one has to keep in mind the constraints of each construction, which is confusing and error-prone.
+Alternative Proposal
+I imagine the least confusing way of supporting multiple statements inside if, switch, and do expressions would be to use the return keyword, not introduce something totally new. These expressions act very much like the closure above—they receive an OldValue and return a NewValue—so bringing the two constructions closer to each other will reduce the cognitive load.
+let isEnabled = if input > 0 {
+return true
+} else if input == 0 {
+return false
+} else {
+print("Unexpected value")
+return false
+}
+Of course, if all statements are one-line, no returns are needed.
+Further Improvement
+In the future, the need for explicit returns can be resolved on a case-by-case basis (though that’s up for debate):
+let isEnabled = if input > 0 {
+true
+} else if input == 0 {
+false
+} else {
+print("Unexpected value")
+return false
+}
+This results in very clear and easy-to-remember rules:
+IF the branch has only one statement, it MUST be the value (a return is optional)
+ELSE you do whatever you want BUT point to the value explicitly (with a return)
+
+---
+
+@cal · 2023-11-19T18:28:45.148Z:
+Another reason I like the idea of using return instead of then:
+If we introduce a then keyword for defining the result of an if/switch expression, both of these examples would be valid and equivalent:
+// using return
+func isEnabled(input: Int) -> Bool {
+if input > 0 {
+return true
+} else if input == 0 {
+return false
+} else {
+print("Unexpected value")
+return false
+}
+}
+// using then
+func isEnabled(input: Int) -> Bool {
+if input > 0 {
+then true
+} else if input == 0 {
+then false
+} else {
+
+[... truncated at 150,000 chars ...]
+
+

@@ -1,0 +1,4582 @@
+=== ROW 170 | f011069 | https://youtube.com/watch?v=LO7tvIed-YQ | 2023-11-15 | talks ===
+[00:06]
+Thank you. As Stefan mentioned, I am
+presenting remotely, but hopefully this
+does not detract from the quality of
+this presentation.
+Today, we're going to be talking about
+reinforcement learning as a testing
+methodology.
+So, this isn't the first time me
+presenting at a conference, but this is
+the first time presenting at a coding
+conference.
+So, I guess some introductions are in
+order.
+Alexander Petrosyan,
+I'm a physicist. I graduated circa 2020.
+I was the architect and the technical
+lead for Hyperledger Iroha
+up until very recently.
+Um since August, I'm working for Eclipse
+Builders. We're building
+blockchain rollups. If you don't know
+what that is, it's basically a way of
+making Ethereum go faster.
+And
+there are different ways of doing this.
+We just said, "Yes, let's do all of
+them."
+And this is an extremely exciting thing
+because it has to do with modularity in
+software design in general.
+I'd be delighted to talk about that, but
+probably next time.
+[01:06]
+What I'm doing at Eclipse is mostly R&amp;D,
+engineering, DevOps, testing, smart
+contracts,
+all of the above
+in the order of importance.
+I'm relatively new to Rust. I've only
+been programming for 2 years,
+and I learned it in about 2 weeks. Some
+poetry there.
+Um I don't recommend doing this,
+and I didn't use any of the um teaching
+tools, especially Rustlings, which were
+mentioned today.
+Primarily because I had previous
+exposure to C++ standard ML and Haskell,
+which meant that I wasn't really
+learning Rust. I was learning the Rust
+syntax.
+Oh, and I should probably mention Lisp
+because procedure macros are essentially
+Lisp macros, but
+let's not dwell on that too much.
+Um up in the right-hand corner, you will
+see my GitHub and GitLab.
+Most of the code relevant to this talk
+is in my GitLab. Um Electromouse, the
+library which is related to this talk
+will be published on GitHub.
+So, if you could follow me there,
+shameless plug.
+[02:07]
+Um, of course, um, in addition to being
+a physicist, um, and things
+Rust-related, I'm interested in boomer
+shooters,
+Bayesian cosmology, relativistic
+thermodynamics, which is where my first
+ever paper was published,
+programming languages, especially
+designing them, and automatic provers
+like Coq and Isabelle.
+Um, anyone who knows Larry Paulson is,
+um,
+given a round of thunder, I suppose,
+here.
+So, what are we going to talk about
+today? Well, we're going to talk about
+Quake 1,
+um, a very particular bug.
+I'll refer to it as straight jumping,
+but it's actually a far more interesting
+concept.
+We're going to talk about the outline of
+the problem and how not to port a game
+and how to port it.
+Um, we're going to talk about benchmarks
+of testing methodologies, why Dark
+Places
+is a good source port, and what that
+reveals about how we test programs in
+general.
+Um, and in addition to that, we'll have
+a Eureka moment.
+How
+[03:07]
+reinforcement learning is really another
+testing methodology.
+After that,
+um,
+given that, um, the recording was
+actually far longer than half an hour,
+I'll be skipping over a few details. So,
+if you have any questions and if you
+found something on the slides which is
+of particular interest to you,
+especially as pertains to the
+Electromouse library,
+please ask me after the talk. I'll be
+available.
+Firstly, what is Quake 3 Defrag
+Initiated? This was supposed to be a
+live demo, but, um,
+I found it to be more predictable to try
+Play a game.
+It has something called demos. I'm going
+It allows us to record player inputs
+and provided the engine is deterministic
+and it is,
+we'll be able to
+very much guarantee the output.
+[04:34]
+Okay.
+So, what was that?
+Well, it's um
+game that was released in 1991, which
+has a very
+passionate community
+dedicated to speed running. And what I
+was just showing you here was
+QuakedonQuake, one of the earliest speed
+runs.
+And one of the first which was
+extensively relying on um
+things broken in the physics engine to
+actually make it quick.
+So,
+um
+of course, this is played in the in my
+port of the Dark Places engine. It is in
+Rust, which is of relevance to your
+Rust.
+Um and of course, it has some custom
+assets, so you can put this on YouTube
+without any fear of copyright striking.
+Namely, the music.
+Now, those of you in the audience who
+are very keen on the speed running
+community will have spotted a few
+problems.
+Maybe the fact that it's a little bit
+[05:36]
+dark, um as I can see from here.
+Um but also that
+things were not right.
+And we'll talk about that.
+But yet, despite the fact that Dark
+Places was out for around 10 years by
+the time I was actually porting it,
+nobody complained about it. Uh the
+asterisk there is because people
+complained about Dark Places, but they
+didn't complain it because of a broken
+physics.
+Not specifically.
+So, why is that?
+Well,
+the demo I just showed you showcases two
+techniques which are based on the
+brokenness of a Tech 1 engine, which is
+the Quake 1 engine.
+Um it's an extremely difficult to spot
+bug
+having to do with exactly how the player
+movement was set up.
+The diagram on the right actually shows
+you what's wrong. Um if you're trying to
+add vectors, and the vectors are
+relative to where your mouse is
+pointing,
+you can manipulate the vector addition
+such that you can go above the
+theoretical maximum velocity. Well, of
+[06:36]
+course, this is a dynamic system, so you
+have acceleration, actually, instead of
+velocities, and something called a wish
+direction, which is where you want to be
+going. Um
+the acceleration is fixed, but
+everything else is not, and
+um through some interesting mathematical
+manipulations, you can find that
+actually systems like this are prone to
+strafe jumping exploits.
+And the jumping here comes in uh because
+there's friction with the ground, and
+that gives you a theoretical upper
+limit.
+Of course, there's also an element of
+finite time step simulations. The
+problem is that this is frame rate
+dependent.
+And this is going to play a crucial role
+in why the port was difficult to do.
+There's no telling when exactly
+this bug was discovered. Even the stock
+demo, the one which plays at the
+beginning of the game, which was
+recorded by id Software themselves,
+actually has instances of strafe
+strafe arithmetic going wrong.
+But, nobody really cared about it. It
+[07:36]
+didn't seem to be a huge problem. And
+when it was discovered that you could
+actually accelerate yourself to twice
+the original speed limit, it was still
+left in.
+And even if you didn't have the velocity
+counter, it was extremely difficult to
+spot. So,
+um why is that? Well, because it
+requires a lot of skill to actually
+produce.
+You have to aim at a precise point, and
+this um wasted velocity angle is where
+you need to point your mouse.
+It's not easy to do, not at all.
+And
+sometimes if you get it wrong, you might
+actually be decelerating yourself as
+well.
+So, this was a skill mechanic,
+it kind of was left in because it
+allowed for people to
+have something to do in the multiplayer,
+which was interesting.
+It was fun, and people keep forgetting
+that games are meant to be fun. But if
+you're doing this in a trading scenario,
+um
+fun
+as quantified by losing billions of
+[08:36]
+dollars is not very fun. So,
+Why nobody complained about the physics
+being off in Dark Places engine is of
+particular interest. Um the original
+game had a frame rate cap.
+It wasn't official, let's just say. It
+wasn't limiting the frame rate, but it
+was more of a question of
+um the code couldn't produce frames
+fast enough for this to matter.
+And it didn't have model interpolation,
+it didn't have motion interpolation. It
+wasn't really all that easy to see the
+differences.
+Um the physics was only slightly off in
+Dark Places compared to Quake 1, and it
+was mostly due to the fact that Dark
+Places actually improved a few things.
+And this is this is a theme. Improving
+things actually sometimes breaks
+behavior.
+And while the physics was off, it was
+consistently off. This is important
+because a human in a consistent
+environment can learn around problems.
+And
+in most cases, the question of do you
+[09:37]
+want to have slightly different physics
+which you can still straight jump in
+and trade that for dynamic shadows for
+all of the graphical effects which you
+saw just a few moments ago
+which weren't present in the original
+Quake by the way. Um
+it's it's a worthwhile trade and people
+will generally prefer these sorts of
+source ports.
+This is one of the main reasons why I
+chose to do um a port of DarkPlaces as
+opposed to the Quake 1 engine source
+port which would be a cleaner thing and
+it would have had a lot less code.
+Um
+or um QuakeSpasm which is considered one
+of the highest fidelity ports.
+Basically because I really wanted to see
+how far I could push an engine which was
+trying to do something different but
+still feel similar enough.
+And this raised the question.
+We want to fix bugs, right? But how do
+you differentiate what is a bug and what
+is just behavior?
+And one of the main reasons why I chose
+[10:37]
+Rust for the port was well, one because
+I wanted to learn Rust and this was the
+thing I did for the two weeks which
+taught me a whole lot about asynchronous
+and other kinds of programming paradigms
+and how
+it was a really really bad idea. I
+should have gone with Rustlings.
+Um but also because I wanted to get rid
+of memory leaks and undefined behavior.
+Getting rid of memory leaks turned out
+to be a lot harder
+um because of the um
+the way in which the code was organized
+didn't really allow me to refactor it
+into a safe version.
+And undefined behavior again
+for the same reason.
+Um
+but there was also the question of I
+want to update this to newer hardware
+and technologies. I want this to be
+buildable with cargo. I want it to be
+transpilable easily
+and I want to use modern packaging
+methods.
+Which is why I started with DarkPlaces
+and not VKQuake.
+Because VKQuake would have been a little
+bit interesting but it also had a lot
+more complications in it, and it would
+have been extremely difficult to port
+completely.
+[11:39]
+Um Rusty Nail, by the way, is not a
+complete port by any stretch of the
+meaning. It doesn't really even work in
+most situations. Um there are bigger
+bugs than the ones I just showed you.
+But, at the same time, this is a source
+port. It's meant to,
+um
+it's meant to, shall we say,
+um
+preserve gameplay mechanics. And this,
+by every definition, was a gameplay
+mechanic. The fact that the physics was
+broken in such a specific way, which
+allowed you, a skilled user, to do that,
+was an interesting point to have.
+So, how is that a problem?
+How is any of this a problem to source
+porting?
+Well, if we go to the blasphemous place
+of the Church of SBCL, we see the
+following tenets. There are no types,
+there's only data. There are no bugs,
+there's only behavior. And not running
+on newer hardware is behavior.
+So, if you want a fully, um
+behavior-preserving port of Quake 1,
+you have to reproduce all of it,
+including, um the fact that the frame
+[12:40]
+rate is capped at 30, the fact that the
+physics is frame rate dependent, and the
+fact that strafe jumping behaves the
+same way it did in 1991, but the game
+also feels and looks the way it used to
+look in 1991.
+There's no clear way of differentiating
+between bugs and features.
+And this is kind of a, kind of an
+At least, I thought it was completely
+insurmountable at the beginning, because
+none of the ways in which I would try to
+fix this, while also unlocking the frame
+rate, could have possibly worked. There
+was no way of telling if it worked,
+except for spending a day trying to play
+test this, playing through the entire
+game, and making sure that there was
+nothing I broke.
+There are a few things which you could
+sequence break if you wanted to.
+If unlocking the frame rates happened in
+Um
+[13:40]
+So, we can't really preserve strafe
+jumping.
+Not in the not in the way in which it
+matters. So, one option was to just say,
+"Well, okay, I'm porting Quake and I'm
+It would have been fun. It would have
+been interesting, but it wasn't exactly
+what I wanted to do. I wanted to
+preserve it. I wanted to preserve it in
+this broken state, and I wanted to make
+sure that the new port actually preserve
+this behavior, but it updated it.
+In a way in which it was consistent
+enough, it was good enough.
+So,
+how do I do a port? I use test-driven
+development.
+And in a way it worked.
+In a way.
+The problem was how
+how on earth do you test for something
+being close enough by feel without
+actually having an an army of play
+testers?
+I was a one-man operation who wasn't
+even working on this full-time. I had
+plenty of other things to worry about.
+So,
+[14:41]
+I had to come up with a solution which
+would have worked offline, which I could
+have offloaded to something which I kept
+asynchronous,
+and then could have come back and could
+have tinkered around with.
+So, unit testing?
+The simple solution is usually right,
+The eagle eye view is
+pay attention to when the problem
+started happening. They didn't start
+initially. They didn't start even in the
+middle of the game. They were closer to
+the end of the run, to things which you
+wouldn't even think about to be
+problems.
+What's the kickback from
+um being shot, for example?
+Or what animation should play if you're
+sliding or not sliding?
+Those kinds of things are extremely
+difficult to catch and even if I had a
+comprehensive list of unit tests,
+wouldn't really catch everything I
+wanted, but there would be another
+problem. I couldn't set a tolerance of
+unit tests. I couldn't say that if
+you're strafe jumping, you had to do
+things
+in a particular way and you should have
+[15:47]
+It just
+would be too tight in some areas. It
+would be too loose in others.
+And remember, I have to come up with a
+physics system. I can't solve this by
+individually thinking about what would
+happen in this chapter and what would
+happen in that chapter. No.
+E1M1 has to be unbroken the same way as
+E4M4.
+So,
+that meant that many potentially good
+solutions would not work.
+None of my attempts at unlocking the
+frame rate actually reproduced the unit
+test behavior. There was always a
+difference.
+And
+the only way, the only real solution in
+this situation would have been to keep
+the frame rate as if it was happening at
+the original frame rate
+and unlock everything else.
+And it could have worked, but
+it's a game. You have to remember that a
+game has feel and
+a big contributor to the game feel is
+how the game operates, how it feels, how
+[16:49]
+it feels to move, not only how it feels
+to
+you know, observe the world. And you
+have to remember that the component of
+this is aiming, mouse look.
+Um one of the main reasons why people
+want to have an unlocked frame rate is
+because they want their mouse to move
+smoothly.
+I can't unlock that.
+So, then again, I said, "Well, it's an
+integration behavior, right? It It is an
+interact
+of many systems.
+I should write an integration test for
+it."
+Wrong again.
+Again, pay attention to when the problem
+happened. It wasn't a small thing which
+happened initially. It's something
+slight differences in behavior which
+accumulated.
+And the exact inputs can't work. Same
+reason as it does with unit tests. So,
+you have to have some fuzziness embedded
+in this. But, the problem is
+the longer you test, the more fuzziness
+you will accumulate. And you have to
+make sure that the fuzziness is within
+tolerance
+for a extremely long play session. So,
+[17:49]
+this doesn't quite really work either.
+Besides, it's unpredictable. Sometimes
+you can accelerate, sometimes you might
+decelerate. You can't really extrapolate
+the behavior of a single integration
+test. But, you want something that looks
+like an integration test. It It combines
+all the systems and it gives you the
+output which you expect.
+That's where the first insight came.
+While I can't write a single integration
+test, I can have benchmarks for specific
+behaviors.
+The second insight came in when
+um as is the situation with most of us,
+I came across hypothesis,
+a property-based testing framework for
+Python. And then, to my astonishment, I
+discovered that Rust also had PropTest.
+And I didn't use it.
+My initial approach was to use Python to
+translate
+the physics engine calls and it it was a
+long story. But, just to give you an
+idea,
+how does it work? Well,
+you check all possible values, you find
+[18:49]
+regressions which you define in some
+way.
+You define properties which you're
+testing and this catches
+counterexamples,
+things which don't behave the same way
+they should.
+Um
+and believe it or not, it didn't
+it didn't quite work out because all
+possibilities is a lot of possibilities.
+Um remember when you're expanding your
+space, it grows exponentially with a
+number of possible inputs. You do have
+keyboard, which is on off. That kind of
+eases the problem, but you can hold it
+for an
+a different number of frames, and that
+is a factor in and of itself. But also,
+you have
+um, the mouse, which is um, an extremely
+complex things thing to take care of.
+And moreover, you're testing things
+which are completely nonsensical. Things
+which a human would not even be capable
+of producing at the same time as you're
+testing everything else.
+This was a sign that you need to use a
+[19:52]
+And this also came with another problem.
+Think about it. Can you alternate
+with frame-perfect precision
+the straight buttons
+30 times a second? Well, I suppose you
+can if you're a concert pianist, but
+what are you doing Quake then?
+Well, aren't you playing
+Liszt or
+Bach? And why aren't you
+gathering
+gathering all of that experience? Well,
+obviously, we're dealing with humans.
+So, checking all possible values and
+finding regressions is the right path,
+but the fuzziness, the way in which it
+was introduced in property-based testing
+is inherently random.
+You want it to be tame inherently
+random, which is basically shorthand for
+we want to have a Markov process, which
+should hint to you that we're talking
+about reinforcement learning at some
+point.
+Um, we need a heuristic
+[20:53]
+to reduce the inputs to those feasible
+by a human and discoverable by a human
+starting from a reference
+implementation.
+This actually would guide you down the
+genetic algorithm, and that is something
+which I should have considered, but I
+haven't.
+Um, and of course, we're going to set a
+tolerance on training time because if it
+if it is in principle discoverable by a
+human, but it can be discovered by a
+sheer random chance with an expectation
+time of 300 years, it's not really
+strafing jumping. It's not really
+preserving the mechanic. It's making it
+completely unreachable
+in such a way that it is problematic to
+And if it's possible to learn something
+similar to strafe jumping,
+not that it is specifically like strafe
+jumping, but within these constraints,
+it is
+allowing you to move beyond the speed
+limit, let's call it a win.
+Because let's face it, I wasn't
+[21:54]
+modifying the um physics system in crazy
+ways. Um sure, I could be introducing
+other movement mechanics, but I could
+patch those out. Um
+And if it did happen, there's a good
+chance it was just strafe jumping. Good
+chance, not exactly the same thing.
+So,
+all of this kind of suggested to someone
+who has a background in physics and data
+science that reinforcement learning is
+something I should at least look into.
+So, what is reinforcement learning to
+the uninitiated?
+Well, you basically
+it's like training a dog. You give it a
+reward every time it does what you want,
+and you take away a reward every time it
+does something which is not what you
+want.
+And there are different ways of
+approaching this. Um there are different
+Markov decisions, there are different
+statistical methods to find the optimal
+strategy that doesn't actually explore
+the entire space of all possible inputs,
+but at least some of them.
+[22:55]
+Um as I said, genetic algorithms are
+another way of approaching this. It's
+not the same as reinforcement learning,
+but it's kind of similar.
+Um
+But the basic idea is you
+gather reward function and you find
+something a policy which optimizes
+for that reward function. Gives you
+optimal and near optimal performance in
+this situation.
+You define what the inputs are, you
+define what the outputs are
+um in terms of the um
+basically saying that the reward
+function is something which takes the
+inputs, does the simulation, gives you a
+number
+and you optimize that number to be as
+high as possible.
+The rest is just mathematics.
+And that mathematics actually involves
+extracting the physics code, running a
+small simulation of a straight line
+straight jump, and making sure that you
+can hit certain milestones. So, as you
+can probably understand, a lot of the
+logic of how this is supposed to happen
+happens in defining what the inputs are
+[23:55]
+and what the function does inside.
+You also
+for all um numerical algorithms have to
+provide an initial guess and
+well
+there are ways of having an initial
+guess, especially if what we're trying
+to do is find regressions between what
+Dark
+Places did and what my Source engine
+Well
+basically you would find the optimal
+strategy for Dark Places and you would
+plug it in as an initial guess for the
+other one and you'll see how long it
+takes to figure out. And that also gives
+you an idea of how easy it is to train
+So
+finally, if you have this, you could
+prepare
+different kinds of I call them quasi
+integration tests because they didn't
+really
+do much of integration. They just take
+the physics engine and they run it and
+they reduce it to a single reward
+function.
+Um but there are certain pivotal points
+where
+[24:56]
+physics being significantly different
+would significantly alter how you would
+be able to perform certain jumps.
+And extract those out, model them,
+give um criteria like precision,
+distance, speed over the speed limit,
+and reward for those.
+So, what can we do?
+Well,
+just a case in point, one of the
+integration tests was just a straight
+line straight jump.
+Um so, the reward, of course, is how
+fast can you go?
+It doesn't matter which direction you're
+going in, just how fast can you go?
+Um you can
+code up um the jump button, the strafe
+directions.
+Um mouse rotation actions. Um you can
+make them be precise or less precise.
+Add an element of stochasticity.
+Um in principle, this would have to be
+averaged out over several runs, so that
+[25:57]
+it is fair.
+In which case, you can use some
+statistical methods not to run the
+entire simulation all the time. You can
+just look at the outputs, and you can
+heuristically update them.
+I made use of that.
+And there's also the question of
+I'm giving you more and less precise
+movements.
+Humans are capable of frame perfect
+inputs, but they're not capable of frame
+perfect inputs all the time.
+So, let's make sure that
+a reward function doesn't actually
+reward you for using extremely precise
+movements
+the same way it does for extremely loose
+ones.
+Um
+I mentioned relativistic thermodynamics.
+Physicists in the audience will
+recognize what it means to say a
+Boltzmann factor.
+And if not, well, machine learning
+specialists know what a temperature is.
+And if that isn't the case, well,
+basically, I'm taking an exponent. I'm
+taking the negative of
+whatever quantity I want. I divide it by
+something else which I called the
+temperature. I tweak the temperature and
+[26:57]
+make sure that the probability
+or rather the reward, if you're using a
+more precise thing, which is quantified
+by that number in the top of the
+exponent,
+is less than for something which is less
+Now, for the reinforcement learning, I
+used Rurel.
+And I established a maximum speed
+achieved on a fixed-length track, which
+turned out to be corroborated by a few
+other sources.
+Um
+the result was I could design six
+integration tests.
+All of them were very specific to the
+domain in which they were running. So,
+they were not really test tests. They
+were more of a
+examples or rather full-blown
+executables which could run and give you
+an answer to a specific question for a
+specific function.
+Um
+If it took more than the equivalent of
+40 hours to learn how to do something, I
+panicked. I closed the test.
+[27:58]
+I gave an example reward.
+Um
+and
+that reproduced known
+techniques for speed running.
+Zigzagging, which is just moving left
+and right rapidly.
+Um
+Stripe jumping, something called super
+bunny hopping where you're um in
+addition to um moving in one direction,
+you're also alternating between
+directions and you're moving the mouse
+as well.
+Um
+And
+but baseline maximum speed was used as a
+cutoff point. So, if you went over that,
+then I've broken physics too much and I
+should start start over.
+Because
+as I said, there's the possibility of
+sequence breaking in some situations,
+which I don't want to be intentional. I
+want to prevent those things from
+happening. And if I have to cap the
+frame rate
+at, say, 240,
+um
+sure, it doesn't technically fit my
+definition of frame rate independent,
+but at the very least, it means that
+people
+who are humans would not be able to
+[28:58]
+perceive a difference, and I could just
+lock the frame rate internally and um
+have frames be presented faster if they
+want to. It's just placebo, to be
+honest, but
+whatever.
+So,
+um at that point, I felt that I was the
+smartest person in the world,
+and then I discovered that actually I
+wasn't the only person who did this. I
+wasn't even the first person to apply it
+Um
+So, these are just some examples of what
+Quake's 100 meter map was created in the
+early 2000s by a Chilean speedrunner.
+It's the perfect testing ground for raw
+speedrunning skills. Over the years, the
+world record on this map has been
+Yeah.
+This
+would have been dismaying for most, but
+the fact that other people have come up
+to the same solution
+means one of two things to me.
+Um one, it could be an extremely
+[29:59]
+Another option is that we're really onto
+something, and this is a worthwhile way
+of exploring
+the
+impossibility of solving the halting
+Enter Electromouse.
+The idea
+from this exploration is to provide
+framework or a library
+that applies the contents of this
+presentation to other things.
+Um of course, um Electromouse is in very
+early stages. It's not public yet. Most
+of the code is GPL because it was
+actually included in the Darkplaces
+port,
+and it depends on the Quake code, so
+technically it's in the
+it's in a gray area. So, if I wanted
+for this to be usable in MIT licensed
+libraries upstream, it would be very
+difficult to do.
+And what's more interesting is that it's
+not usable yet because um
+although it gave me enough information
+[30:59]
+to figure out what was going on, it it
+wasn't exactly precise and it wasn't
+exactly reliable. Nothing in machine
+learning is, but um it gave me enough
+guidance in order to be able to
+understand whether or not I broken the
+physics too much and it allowed me to
+progress with the port. It's not
+finished yet again.
+Um
+but what it will look like is probably a
+single decorated macro for a module.
+Call it reinforcement learning test
+or something else.
+It has attribute-like macros that allow
+you to define integration tests. So,
+these sort of
+um
+benchmark moments where you can see,
+well, okay, I want for someone to be
+able to jump from this bridge to this
+tall column or something like that and I
+have it to be and I want it to be
+precise. So, I want I don't want for
+this thing to find the fastest way. I
+want to see if while making it fast,
+I've not sacrificed precision, for
+example.
+The generalizability of what I've just
+[31:59]
+described to you is very
+small, let's just say for lack of a
+better word. It's not very
+uh
+it's extremely specific to how Quake was
+built and that is kind of a problem.
+There's also the need for
+short-circuiting. Remember I said that
+if it takes more than 40 hours to find,
+then I don't care.
+Well, um I've done this in an ad hoc
+fashion. I don't think that having ad
+hoc panics in your code is a good idea.
+Um okay, maybe experts of about Rust
+will tell me otherwise, but I don't like
+panics in my code which are ad hoc. I
+want them to be very specific and very
+much
+um
+And of course,
+fuzzy actions. Remember I said I defined
+precise and less precise ways of
+pressing keys?
+Those things were stochastic.
+Um in order to make sure that they were
+statistically sound, I had to average
+out over several iterations of the same
+function.
+[32:59]
+At the same time,
+because I was doing that, I had to use
+heuristics in order to make sure that
+this was something which ran over um a
+few days rather than something which ran
+over a few years.
+Remember, the whole point was I don't
+Um
+the way of defining this was again very
+domain specific. It relied on the fact
+that the physics was effectively a pure
+function. The reward function as a
+result was also pure function, and I
+could rely on the fact that the
+given the same inputs, it would give you
+the same outputs. Moreover, it was a
+continuous function, which is not always
+true even in simulations. Just look at
+Havok physics and how things can just
+fly off into the distance.
+Um
+stability is an important factor here as
+well.
+And
+while I was describing all of this to
+you,
+if you were doing machine learning
+beforehand, all of this would sound
+natural. It would sound like jargon or
+shorthand.
+[34:01]
+But most people are not machine learning
+specialists, no matter what Sam Altman
+would have you believe.
+And so, these people need to be told how
+to write a reward function, how to write
+a good reference reward function, and
+how to optimize it for the
+particular case.
+In my situation, it was very difficult
+to do, and it required a lot of
+understanding of how the game engine was
+supposed to work, and defining what the
+engine was supposed to do.
+Of course, if you're Jane Street and
+you're trying to bet your own money on
+something,
+um
+it's kind of different, but it's kind of
+the same and you can afford the time to
+Um
+So, why would you want to use it?
+Is the obvious question then.
+Um finance and trading is a very similar
+situation to this because it's from the
+point of view of mathematics again,
+again with inputs and outputs.
+And if you are doing algorithmic
+trading, you actually want this.
+[35:01]
+Um there's also the question of well, I
+was actually trying to replicate a human
+interface.
+How why not just port this over to cute
+or iced or slint or any one of those
+frameworks? Machine learning testing can
+automate a lot of things. Why not do
+that?
+Um there's also the question of applying
+this directly to where I applied it
+originally, game design. Um you might be
+coming up with a mechanic which you
+think is going to be used by a lot of
+people and then turns out nobody uses it
+because it's too complicated to learn.
+You can test for it now.
+And of course this is a new approach to
+testing. It's not specific to Rust, but
+it was discovered in the context of
+using Rust while trying to solve a
+problem.
+So,
+there's that.
+Um
+when
+is a very tough question. Um when I was
+writing this presentation,
+I had every intention of coming to
+Brussels. Um
+[36:01]
+Unfortunately, life has turned out very
+differently.
+Um
+So, well, I'd like to say that um it
+it's going to be done
+in a year or two.
+I can't really guarantee that.
+So, let's just say it will be done when
+it will be done.
+Um but that has very specific um
+criteria.
+It's something which you can't already
+do and what I just described gives you
+all the power to use a rule L and do
+whatever I just described.
+And you can do it. You can do it. You
+just You don't even need my library to
+do it. It It actually will be probably a
+lot simpler in that case.
+But there's also the question of how
+much junk needs to be extracted from
+what I've done for on L.
+So,
+I guess that's it.
+Thank you for your time.
+
+=== ROW 171 | f011092 | https://youtube.com/watch?v=YcujtU0LA9Y | 2024-02-13 | talks ===
+[00:06]
+yes thanks Luka for that fantastic
+introduction um that was great so I want
+to talk to you today about building the
+next generation of compute primitive in
+Rust um and I'm going to be talking
+through a bunch of stuff but let me let
+me start by introducing myself um I'm
+Luca I'm software engineer at the dino
+company um where we build Dino and I'll
+explain to you a little bit about what
+Dino is in just a minute um I previously
+LED our Cloud compute team you know
+deploy team um I now mostly work on
+Special Projects like our database um
+and I do a lot of Standards work in the
+JavaScript space um so I work on um with
+people at whatwg and w3c on things like
+the HTML specification or like fetching
+data in browsers kind of things that you
+interact with a lot I'm also on t39
+which is the standards body that
+actually makes the JavaScript language
+um yeah that's that's terrible but
+anyway um I and I chare winter CG which
+is a community group at the w3c um to
+make servers side JavaScript run times
+more interoperable with each other so
+[01:07]
+what is Dino Dino is a Next Generation
+JavaScript run time created by the guy
+that originally wrote node because
+unlike the r ecosystem JavaScript the
+JavaScript ecosystem is pretty terrible
+I don't know how many of you have used
+like JavaScript like raise your hand if
+you've had to use JavaScript before okay
+so you know what I'm talking about right
+like there's no lters there's no
+formatters it's just like you wild west
+right you type things into an HTML file
+and hope something usable comes out the
+other side
+um but really like there's no standard
+single standard Library like there is in
+Rust um there's no standard form matters
+linters testing Frameworks package
+managers everybody uses their own uses
+some wild concoction of of different
+ones together um and this is terrible uh
+my boss is Ryan D the person that
+originally wrote node who's responsible
+for all of this uh and then he decided
+like uh F four or five years ago that
+like he was fed up with being
+responsible for this so he's going to go
+fix it so we're building Dino now which
+is a sort of an All-In-One Toolbox for
+developing web apps um I'll give you a
+[02:08]
+quick demo of what it is so oh no my Ed
+just turned dark
+uh this is the problem when you have it
+set up to like Auto dim based
+on uh things okay so um this is just
+regular JavaScript actually this is not
+JavaScript this is typescript um I can
+write typescript files Ino because uh
+play JavaScript is pretty terrible right
+you have no types you have no idea
+what's going on um and I don't have to
+tell you all this you're all rest
+developers um developing without types
+is like I don't know you just don't want
+to do it so uh yeah we have types built
+in um I can log things out I can run
+this
+Doo run M.S and you can see log
+something out great uh but also we uh
+expose a bunch of IO things so um in a
+browser if you want to fetch some data
+you use like the fetch API right which
+allows you to make HTP requests and boo
+implements that same API so I can go
+fetch
+htps example.com
+[03:08]
+and I get the body out of that so
+response. text and you can see this is
+all async iio because we want to have
+like high congruency um or
+sorry yeah anyway yeah so you see that
+actually nothing happened it asked me
+hey do I want to actually allow read
+access to example.com and this is sort
+of the first little trick that Dino has
+up its sleeve which is we don't just
+give you access to the system as is you
+know is a secure sandbox just like the
+browser where you can execute untrusted
+code and unless you explicitly Grant
+read access or network access or write
+access we won't really do anything so
+it's asked me here hey do I want to
+allow access to um example.com I'm going
+to say yes it goes and fetches the file
+and prints it out right internet was
+working okay fantastic
+um but uh there's also some apis that
+are not standard that we Implement so we
+for example have a way to read um things
+from dis so let's say I want to read
+some text from dis um I I have this Doo
+Global where I can read text file you
+[04:08]
+can see there's like Auto completion
+right this is type JavaScript this is
+not terrible
+JavaScript um I'm going to read out my
+EDC password
+file those are safe nowadays right
+there's no passwords in
+them print that out and you're going to
+see again going to ask me um I can
+bypass this I can say like allow
+read uh Ed
+password oh oh I misspelled EC ha okay
+so if you can type it works correctly um
+and you can see prdc password file uh
+hopefully nothing incriminating in there
+that's Doo um there's a bunch of tooling
+built in like uh for example we have a
+format do fmt formats your code we have
+a linter built in so if I do something
+fun like comparing to Nan values which
+is um returns false in JavaScript
+actually returns false in R too so don't
+blame JavaScript for this um but when
+you run the lyer tells you this is bad
+don't do this so yeah have a bunch of
+that kind of stuff built in if I if I
+[05:10]
+run out Dino help here you can go
+through the subcommands real quick um
+obviously you can run code have a Ben
+built-in benchmarker a type Checker you
+can comb comb um compile single
+executable binaries we have tooling to
+do coverage reporting documentation
+generation uh formatting um linting we
+have a Jupiter notebook integration that
+lets you sort of write little notebooks
+for things um we directly built into
+editor through an LSP we have a test
+Runner a task Runner we can self upgrade
+We Can Vendor your dependencies whatever
+right we can do everything um so that's
+Dino uh we love rust Doo is completely
+written in Rust um we maintain over
+500,000 lines of rust across our
+organization on GitHub about 70 to 80%
+of that is open source it actually took
+me while to figure out how much code we
+had in Rust because apparently it's not
+very easy to get a line count just out
+of GitHub if you have like 180
+repositories but heyy I managed we
+published many crates to crates iio
+[06:10]
+ourselves for example we maintain the
+bindings from rust to V8 we have safe
+bindings to V8 um which is C+ plus I'll
+talk more about that in a second eurl
+pattern to do urall routing super fast
+websocket imp implementation a text
+pring Library called Munch Acme to
+client you can see this is like sort of
+all over the place Russ TLS Tokyo stream
+um and we help maintain various other
+things like rust URL is something that I
+help work on and probably all of you
+depend on Rust URL right um and wgpu
+which people who do web G or GPU related
+things in Rust may know um a colleague
+of mine helps out on that um but yeah
+we're not entirely written in Rust
+actually we use a little bit of C++
+actually we use over a million lines of
+C++ um in the form of Google's V8 which
+is a JavaScript virtual machine that is
+the thing that Powers JavaScript in
+Chrome um is actually the same thing
+that powers JavaScript in node also um
+but we provide like safe idiomatic R
+bindings to V8 and you may ask now like
+[07:10]
+why don't we write our own JavaScript
+engine and that's a great question but I
+think it's answered by the same aners
+why does rust use llvm as a compiler
+backend right because writing your own
+compiler backend for dynamic language or
+static language is just a lot of work
+and you're not going to get that much
+benefit out of it V8 is the sandbox that
+runs probably the most most unsecure
+code um in the world every day by number
+of lines of code um and it's very highly
+audited there's still obvious obviously
+security RAB abilities but they're dealt
+with very well by very professional team
+at Google um so
+yeah uh yeah and then for rest things we
+rely on like the very excellent Tokyo
+thank you very much for Tokyo it's
+fantastic um and Hyper to do HTP various
+other libraries obviously also um so
+yeah why do we use rust well uh many
+other sort of things in this space that
+are JavaScript um sort of related but
+can't be written in JavaScript for
+obvious reasons are written in C++ um
+[08:10]
+and C++
+is okay I'm not going to say anything
+C++ is a language right
+um and you probably don't want to use it
+for new things but uh yeah so we we
+initially tried using go this went about
+as well as you might have expected right
+goes a great language for writing async
+HTP servers but it does not have the
+same reliability or strictness or
+customizability or performance that
+languages like rust or even C++ for that
+matter do um and we needed something
+that was like really strict that let us
+write code that was going to be reliable
+when executing untrusted code when
+executing code for many different
+tenants um something that was super
+lightweight for us to do like very
+lightweight virtualization with
+something that was very performant
+because hey um if you're already using a
+language that is not known for its like
+dramatically fantastic speed you don't
+want to make it even slower by like
+making your host side of that uh slow
+too um and we needed something that was
+customizable enough for us to plug in
+[09:11]
+like V8 or or other sort of complicated
+dependencies like that that don't
+necessarily integrate seamlessly with
+the rust
+ecosystem um Rus provid provided us this
+so there's a lot of really awesome
+things in Rusk that that make it very
+well suited for use cases like this for
+example like rust um rust options and
+results and ADT types enforces a way of
+exhaustive error handling that is like
+close to none in any other languages
+right like you have to really deal with
+your errors correctly um and you can use
+like anyhow to sort of just Bubble Up
+Your errors all the way to the top um
+but if you don't do this if you take a
+little bit of care you can have you can
+write really really reliable code and
+rust um that is sort of checked by the
+compiler to make sure that it's really
+there's no edge cases that you've
+missed um yeah the EXP memory management
+obviously makes performance very um
+great due to the way that you can sort
+of see whether code will be performant
+or not just based on the way it is
+written if you have a clone in there
+this is going to cause an allocation if
+[10:11]
+you don't have a clone no allocation
+right this is transparent performance
+and the Border cheacker then enforces
+that it's correct um which is great you
+can pretty easily integrate with C++
+which for us was a prerequisite um
+because we needed to integrate with V8
+and you don't have like hidden runtime
+overhead of using garbage collectors or
+implicit atomics like you would with for
+example go and actually like fun story
+if you try to like have two garbage
+collectors in the same process we used
+to have like the go garbage collector
+and the V8 garbage collector in the same
+process things very very fun things
+happen like garbage collectors don't
+know that like I'm going to go garbage
+collect now because the process is Idle
+um and then it decides it's going to
+garbage collect and the other garbage
+collector thinks oh the process is now
+not idle anymore I can't do my garbage
+collection and then they like should
+ping pong between each other um yeah
+rust also has like absolutely incredible
+built-in tooling and I think for people
+that use rust a lot this is sort of
+boring at this point because we just
+know like I don't know cargo has clippy
+and cargo has a formatter built in but
+[11:11]
+if you're coming from ecosystems that
+don't have this it's absolutely
+astonishing right like everybody uses
+the same lint rules the same formatter
+the same testing framework and the same
+documentation generator like what it's
+insane um like go look for another
+programming language language that is
+like this right this barely exists go is
+something that is sort of close but I I
+don't think it's at the same level Swift
+can't even agree like whether they
+should do formatting at all like let
+alone what format to
+use um so back to do know what are we
+actually building um we're not just
+building a runtime and sort of the
+surrounding tooling for that but we're
+really a cloud company um we want you to
+be able to write code that like looks
+very simple is very simple and then
+seamlessly deploy it to the cloud and
+have it just work there have it scale
+have it be
+performant um and to to do this we use a
+compute primitive called isolates and
+I'll talk a little bit about what
+isolates are in a second um but the way
+we think about this is that it's sort of
+the next Frontier of cloud computing
+[12:11]
+after containers they allow very easy
+global distribution very quick
+deployment very little configuration
+very easily
+virtualization so I'm going to give you
+a quick demo of that too so I uh have
+our sort of management dashboard pulled
+up here I'm already signed in and click
+on this new playground button and I
+haven't prepared anything so you're
+going to see is live let's hope the
+internet's going to cooperate okay so
+it's popped me into an editor here
+playground this is exactly the same code
+I could write locally just writing it in
+the browser now um I have an A HTP
+server here that takes in a request
+returns a response object returns hello
+world right you can all go to this URL
+right now this is live it just created
+this it's running in like 35 regions
+across the world right now and uh if
+somebody from the US would visit this
+there would be like a little message
+down here that says started code in the
+US
+uh let's modify this to see that I'm not
+cheating
+[13:12]
+um right so I can change code and this
+works um but sort of the nice thing
+about Doo is that there's a bunch of
+batteries built in so if I want to like
+do something with a database now guess
+what Dino has a built-in database doo.
+open KV it's going to open a
+database and let me modify this code a
+little bit what I'm going to do is I'm
+going to add a view counter to see how
+many people visit my site uh so I'm
+going to do
+KV Atomic to create an atomic
+transaction and I'm going to sum the
+counter Key by one so I'm incrementing
+it by one commit
+that and then let me get a result here
+oh okay there we go get the counter key
+and let's return this return
+[14:12]
+fun there we go okay so I've written
+three lines um is there anything I've
+where yes uh yeah one n n is a big end
+in JavaScript so like bigger than
+you
+sorry yeah refresh again it was I missed
+in a wait um yeah so we have a counter
+and as we refresh this and I see you are
+all already actively visiting this it
+works fantastic well done everyone so
+three lines of code and I've added a
+database to my app right this is the
+kind of thing we're going
+for um what makes this possible uh a new
+primitive in cloud computing called
+isolates uh so let's go a little bit
+through the history of cloud computing
+um we started out with bare metal um
+most of you are familiar with bare metal
+machines because you develop on them
+every day um where you have to install
+[15:13]
+your own OS you have to deal with
+security updates for your OS to then
+install some sort of runtime or or
+runtime libraries like maybe you need
+open SSL installed um and then you can
+execute your code or you're executable
+the lead time here is very long right um
+you're talking about a matter of weeks
+to get a server uh created shipped to
+your data center and installed if you
+already have one stays to set one up you
+have this upfront investment of Hardware
+um on Prem VMS make this slightly better
+you still have to wait around for your
+machines quite long but once they're
+there it's great you can install um
+things on them much quicker there's a
+little bit of isolation so um
+applications can't really interfere with
+each
+other um then came along ec2 and we had
+Cloud VMS where you could deploy the
+same sort of VMS um where you had like
+much more cap capabilities to sort of
+package things exactly like you wanted
+but without the sort of upfront Hardware
+investment you could like instantly
+deploy things um and you were now build
+not based on the number of data or uh
+servers you bought from Dell but based
+[16:13]
+on the amount of time that you're using
+one vcpu with eight gigs of RAM from AWS
+right and it's important to note here
+that your build based on the or the um
+sort of Hardware that is allocated to
+you not the hardware that you're using
+right so if you
+rent one vcpu from AWS and you're only
+using that at 50% utilization you're
+still paying for one
+vcpu um next thing that came along was
+containers where now the operating
+system was sort of managed by someone
+else you didn't have to deal with that
+anymore you only had to ship the runtime
+with all the dependencies you needed um
+and the code
+itself still based build on real time
+and then the next thing that comes up is
+isolates isolates is a way for you to
+really give us just the code and then we
+provide the runtime and all the
+dependencies um so this is things like
+web assembly um or or JavaScript
+isolates right running in sort of
+sandbox environments where we spawn the
+runtime for you and there's a couple of
+[17:13]
+benefits to this for example it allows
+us to have much higher utilization and
+uh support something called scale to
+zero which let me talk about that next
+so what are cold starts uh cold starts
+are a byproduct of a feature that many
+people use nowadays called scale to zero
+which means that if you are Serv if you
+are hosting a server and you're not
+receiving any traffic to that server you
+scale the app down right you shut down
+the app because what's the point of
+running it if there's nobody that's
+using it but this does mean the first
+request to that app then has to start
+the start the service back up this time
+is the cold start um this results from
+the work that you have to perform to
+sort of um set up all of the your like
+dependencies your runtime your code your
+database connections that is specific to
+you as the tenant that like um needs to
+be cold started
+and this means the more work that you
+have to do the longer your cold start um
+and one way of like reducing the cold
+start is by reducing the amount of
+different work that you have to do per
+tenant because if for example everybody
+[18:13]
+uses um the same version of op SSL you
+can just pre-ad op SSL for all tenants
+before you know which tenant is going to
+use op
+SSL this means lower cold strats less
+work to do specific to a
+tenant and if you sort of compare this
+across different um primitive
+you can see like the more stuff you have
+to do obviously the longer it takes
+right if you have to start up a server
+that has like 30 hard drives attached to
+it they all need to run their smart
+checks it takes a long time um you then
+boot up an
+OS um that is faster but you still need
+to run like a dhtp handshake and do
+various other things boot up a run time
+load a bunch of code into memory maybe
+set up some some like readon Heap or
+something um and then if you're talking
+about an isolate you're really just
+executing code because everything else
+was already done
+beforehand and you can sort of see this
+on this graph too um for VMS you're
+booting up a machine and that's the only
+thing you can do up front because after
+that everything is different for every
+tenant right you have a different
+version of Ubuntu maybe somebody's using
+[19:13]
+Windows you can't make that assumption
+so you have to wait until you know what
+tenant you're booting for to be able to
+actually start the colonel initialize
+the network stack and so on with
+containers it's slightly better you do
+know exactly what version of Linux
+they're using because you're providing
+that version of Linux but you still need
+to go boot up and configure their run
+Time download their version of op SSL
+that they need and so forth and so on
+right and isolates again um make this
+better because there's less work that
+you have to do that specific to a
+tenant um so the next part of this is
+utilization which is how well can you
+make use of the underlying Hardware
+resources if you have a server that has
+one CPU you want to make sure that that
+is utilize as much as possible um across
+the day right if if uh you have a server
+that's booted up that's consuming power
+that is not being utilized this is just
+wasting money so you don't want this and
+the way that big cloud vendors usually
+doal with this is that they just bill
+you by what they allocate to you rather
+than what you use so if you want to have
+[20:14]
+one vcpu available you pay for one vcpu
+availability and if you use only half
+vcpu doesn't matter you're still paying
+for one vcpu there's another way you can
+pay which is based by CPU time so based
+by the amount of time that you're
+actually having the CPU do work where um
+the amount of time that the CPU is like
+spinning and doing something right and
+this means that um for work that is very
+intensive like image processing you're
+going to pay more than work that is very
+simple um like adding two numbers right
+so you're only paying for the resources
+that that are used but this does mean
+that for the person that is providing
+you these resources they now need to
+deal with having a really high
+utilization because if they have a
+really bad utilization they're not going
+to be able to cover their costs um if
+there's like three people on on a
+machine um and in total they use like 1%
+utilization and I'm still having to pay
+someone else for my whole one vcpu I'm
+not making money so um achieving high or
+achieving the sort of good billing the
+billing that's good for the user means
+that there's more work that has to be
+[21:16]
+put in by sort of the host and achieving
+this High utilization means that you
+need to achieve something called High
+packing density which is the amount of
+tenants that you can pack into to um
+your underlying physical resources and
+high density require is that um sort of
+tenants are very lightweight um if you
+want to be able to pack 10,000 tenants
+into a machine that has 8 gigs of RAM
+like they can't each use one gig of RAM
+it's just math right doesn't work um
+which means that the best way of
+achieving this is that you let you these
+tenants share resources with each other
+so if they're all loading op SSL I keep
+going back to this example but it's it's
+easy right they all load open SSL and
+they all all load the same version of op
+SSL actually that only has to be stored
+in memory once because it's like read
+only the chronal can sort of deal with
+everybody seeing their own version of
+open SSL even even though it's all
+backed by the same bit of
+memory um yeah so the lower your your
+Baseline sort of memory and CPU
+consumption is the higher you can have a
+packing density which means the better
+[22:17]
+billing you can give to your users and
+comparing these baselines across
+different sort of uh architectures here
+is if you have a VM you need to boot up
+an operating system this uses a bunch of
+memory setting up like all the all
+tables you need to track processes open
+files that kind of stuff um with
+containers there's a bunch less you have
+to do because everybody uses the same
+operating system and with an isolate
+again there's even less because you can
+now share things like open SSL or even
+the runtime between
+tenants
+um so this is another way to visualize
+this if you have four containers that
+all use different versions of V8 they're
+all going to need different code
+sections that like have the sort of like
+these are all EF binaries right so they
+have text sections and code sections um
+they're all going to need different code
+sections because they're all built from
+different versions of V8 um they may
+have different sort of static content in
+them but there's one bit of difference
+between all of them which is the actual
+code that they're executing so the user
+[23:17]
+Heap and if you're using isolates you
+can combine all of this sort of static
+data into one and the only thing that's
+different between processes then or or
+isolates is uh is this user Heap helps
+you reduce um
+usage so yeah we're not just building a
+runtime we're also building a
+multitenant runtime hypervisor that runs
+these isolates in the cloud we're
+building load balancers that lets you
+like globally distribute things in nice
+ways or building a control plane API
+server um that lets you manage all of
+this so like I went to the dashboard
+page earlier there's an API that powers
+that and that API is written in Rust um
+and we're building databases like a
+distributed database that powers this
+Dov feature for
+example and these all have very
+different requirements to maybe the pure
+run time right like hypervisors require
+that the hypervisor itself has very low
+overhead because you're going to be
+running this on hundreds or thousands of
+machines and like if you can squeeze
+five more tenants into every one of
+those machines that's great um you you
+you want to sort of minimize the amount
+[24:18]
+of Baseline overhead that the hypervisor
+uses up on each machine you need to also
+have really high failure tolerance like
+if again if you're running a machine
+with 10,000 tenants on it and one of
+them crashes and that somehow causes all
+of the other 9,999 to crash you have a
+really really bad time like you do not
+want this trust me um so yeah you need
+to be able to deal with errors
+incredibly well um HP load balancers are
+pure cost you just want them to be fast
+um have as few of them as possible to
+serve the workload that you need but you
+also want to have very predictable
+performance um you want to make sure
+that if you're in a scenario where you
+can't scale up fast enough to handle
+demand um you're serving traffic for
+users that are already connected to to
+your system before you serve new traffic
+right so you need to be able to
+prioritize work well and then control
+plan servers uh you need to be able to
+robustly deal with inputs from users
+like say that say that's paring HTP
+paring Json paring Proto Buffs you need
+to be able to do that in a way without
+that then causing your system to panic
+um and result in like denal service
+[25:19]
+attacks and you need to be able to
+nicely return errors to your users so
+you can help them debug things if
+they've made a mistake calling your API
+for example and then finally um if
+you're building a SAS nowadays you need
+to do billing and you need to do email
+sending and all these kinds of third
+party Integrations um so you need to
+have ways to communicate with all these
+other other services
+too and Russ lets us solve all of these
+pretty well um like low overhead we
+don't have a GC to fight about with
+memory um as I said earlier the
+performance is very explicit right if
+you write no clone there is no
+allocation um you very high fail failure
+tolerance because of this like
+exhaustive error checking that you get
+through ad enums like uh resultant
+option your very high performance I
+already said that two times uh let me
+not repeat that again um you can you can
+have very predictable prioritization of
+work um especially in async Rust you can
+do things like manually scheduling when
+Futures run like essentially delegating
+um less to the to the sort of scheduler
+[26:21]
+in the um like the Asing schedule that
+that you use and instead saying for
+example I want to pull all of my already
+opened connections before I accept new
+connections um and we have a really
+really strong ecosystem of robust uh
+crates that deal with user input like
+hyper right hyper does not panic when
+you send it an invalid bit of HD of HTP
+and ser Jason does not panic if you send
+it like a quote too
+many um there's one thing that kind of
+sucks right now in R though which is the
+story around third partyy Integrations
+and like third part
+sdks um like if you want to talk to AWS
+there's an SDK which is good and like
+AWS has put a lot of effort into this
+and I'm very happy they have but like it
+does not retry S3 uploads correctly for
+example um and these are things that you
+run into very quickly when you're
+developing at r scale in
+production um gcp just does not have a
+Russ SDK they hired somebody a year ago
+and I think I don't know what happened
+to them like the repository just fell
+[27:23]
+dormant in February and uh kind I was
+kind of sad to see that azra has an in
+development SDK but it's not ready yet
+stripe doesn't have a first-party SDK
+third party only and it like
+unfortunately takes a very long time to
+compile um twio like there there's their
+solution to using rust is here is an
+open API Dock and here's an open API
+code generator plug them together right
+which is yeah not fun and this problem
+gets even worse because uh the rust
+ecosystem is not even very homogeneous
+in in for these sorts of applications
+right you can have synchronous HTTP
+servers you can have servers that use
+Tokyo and open SSL or Tokyo and rust TLS
+or async St and all of these um if if
+you're using for example Tokyo and rust
+TLS you need to make sure you use a
+library that doesn't use Tokyo Plus open
+SSL because otherwise you're bundling
+two different TLS libraries into your
+service um so finding a library that
+with that implements the API that you
+need doesn't even mean that you can use
+it so this this is like quite a
+challenge still in the
+ecosystem and our experience with this
+[28:24]
+is that you end up building a lot of
+little mini sdks so internally we have
+sdks I call them sdks they're really
+just like a bunch of types and like
+request calls with like retry handling
+um for cloud storage for I am for
+Secrets manager for instance metadata
+for uh like postmark to send emails npm
+to fetch things from the JavaScript
+registry uh talking to Let's encrypt
+like let's encrypt was yeah I we we were
+so happy with our uh sort of mini SDK we
+had to like Implement all of it so that
+one's open source um and then yeah
+GitHub there's a there's a good one um
+called I think Octor crab but it
+unfortunately doesn't Implement half of
+the things we need um so had to roller
+on there too I'm probably missing a
+bunch but yeah uh and this sort of
+points to a different problem which is
+that hurdles in our experience appear at
+the extremes um like we have internal
+repositories that build different 14
+different binaries from a single cargo
+workspace that have 25 different test
+[29:24]
+binaries and this has challenges right
+like I have a very powerful Linux
+machine at home and
+um running building this in parallel
+requires upwards of 40 gigabytes of RAM
+um for like a on line change 40 gigs of
+RAM and
+that's like a really high bar for
+somebody to like contribute to this
+project now right you can't do this on
+an M1 Mac like if you have 32 gigs of
+RAM you're just out of luck um cargo
+test doesn't have sharing support out of
+the box right like you can't build uh
+your cargo test binaries on one machine
+then move them to another machine and
+execute them there all with cargo test
+you can do if you have sort of your own
+little test Runner which I'll talk about
+more in a second but yeah these are
+things you have to build yourself um
+there's no machine readable junit output
+for a cargo test which is at a at a team
+or scale it's like flaky tests are a
+thing and you need to be able to wear
+you need to be able to know that they're
+a thing and you need to have a graph
+that shows you this is our flaky test
+today and if you can't get machine read
+readable output out of your test Runner
+[30:24]
+like do you just have somebody that goes
+through your C logs and like writes them
+down in a spreadsheet like no you don't
+um yeah so effective CI caching also
+very difficult right now especially for
+large workspaces if you have a single
+workspace it's pretty good actually um
+but like all of the sort of popular
+caching systems for uh GitHub actions
+for example don't cash
+um binaries in a in a workspace they
+essentially exclude those from a
+workspace which means that if you have a
+workspace that has 14 binaries you
+change one of them you have to rebuild
+all 14 not great and then then Target
+directories I I'm sure some of you have
+very large Target directories on your
+systems um we have this channel in slack
+where everybody just posts their records
+on who has the biggest target directory
+um and they get very large so yeah
+there's there's hurdles that appear at
+the extremes but it's fine um if you
+have a team that's that's large enough
+you can deal with this um you just have
+to be aware of it like for example we
+have a custom sort of wrapper around
+[31:24]
+cargo test that lets us build test
+binaries on one machine then package
+them up into a zip file
+um put them onto a couple other machines
+and execute the tests and shards there
+and then later combine all the results
+and we can use the unstable message
+format Json actually I don't know if
+it's still unstable maybe it's stable at
+this point to convert the there's a Json
+output for cargo test and we have a
+system in place that lets us convert
+that to junit so there there's ways
+around it you just like have to be aware
+and uh have to build the
+infrastructure so what's the conclusion
+here um rust is really really fantastic
+for building um cloud services like I
+absolutely love it I would would not use
+any other language any other language
+like never um it's it's great the
+reliability is absolutely excellent like
+the amount of times that we debug
+production things where it's related to
+like some Edge case we didn't deal with
+or related to panics it's like I don't
+know once a month maybe it's very rare
+um fantastic built-in tooling I I
+alluded to that
+earlier but we really need to get
+[32:24]
+vendors to ship better sdks like
+it's obviously the ecosystem isn't as
+large as Javas so vendors aren't going
+to spend as much time as building
+JavaScript or building rust sdks as they
+are doing JavaScript sdks but we need to
+sort of put in better systems and better
+like ways for vendors to say or what
+vendors that do want to build sdks they
+don't even have like one target to
+develop against right they have all of
+these different targets to develop
+against it's not easy for them to do we
+could do a much better job there
+um and yeah if you are building rust
+with a larger team you have to be aware
+that a lot of the tooling and cargo is
+really great but it runs up against some
+limits at scale um which is totally
+normal this happens with every
+programming language but you just have
+to be be prepared for it right and you
+have to be aware that you're going to be
+at the Forefront of sort of innovating
+on
+tooling so yeah uh that's that's that I
+also want to mention we're hiring so if
+any of this seemed interesting to you um
+we're 100% rust chop fully remote we
+have like 300,000 monthy active users do
+[33:24]
+a bunch of Open Source um please talk to
+me in person um I would love to talk to
+you yeah uh thanks this is the website
+[Applause]
+out
+questions
+yep I'm curious so you seem to put like
+most of your backend servic with rust
+but are you also using Deno for some
+services to dock food it yeah yeah no we
+definitely like our website is built in
+Dino but it's like it's powered by Dino
+but the dino is written on on Rust right
+um but yeah like except we don't build
+any of our sort of um foundational
+infrastructure in in JavaScript because
+like you you just can't like JavaScript
+can't host itself right um you can't
+build a cloud service that runs
+JavaScript in javascri well I guess you
+could
+but it's like throws all optimization
+out the
+[34:25]
+window thank
+you
+very interesting to thank you going back
+to one of your last slides when you were
+mentioning limitations in the um test
+Runner tooling which are definitely
+there I have two questions U there's
+another test runner in R right which is
+Cargo next test which does solve some of
+the um hardles that you mentioned so
+number one question is why are you using
+that and the second one is have you
+tried contributing your J unit output to
+upstream and what has been the response
+yeah uh so let me answer the first one
+first we did actually try next test um
+but the problem with next test was that
+it changed too many other related things
+right like the way it runs its tests um
+change like there was too many other
+unrelated changes to the way it runs
+tests that would cause our test weed to
+fail and we just didn't have the time
+the the the sort of um availability at
+the time to is this due to the fact that
+it doesn't share creat separate binaries
+for every test okay yeah like one
+specific example I can mention is like
+[35:26]
+we spawn a lot of subprocesses which um
+need to allocate ports and if you start
+two tests at once and they try to start
+in the same port one of them is going to
+fail so you have to have some sort of
+system in place that can sort of mutex
+lock a port assign it to one process and
+in some cases this is really easy you
+can just tell the colonel give me a port
+because you like open you listen on Port
+zero but some Services don't allow you
+to do this they don't don't plummet
+through all the way um so in some case
+you just have to manually assign a port
+and um the way we do this now is that we
+sort of have a global mutex in our tests
+where all the tests can go grab a port
+from and that's fine right and if next
+test then goes and runs all the tests in
+parallel in different processes this
+doesn't work anymore so there's things
+like that which yeah they're solvable um
+but just requires a bunch of work and
+this was the the easier approach and
+then on the junit thing so actually our
+junit uh sort of thing is not written in
+Rust it's written uh it takes the Json
+output pipes it through a dinos script
+and then the Doos script gives you XML
+[36:27]
+back uh and yeah I'm sure we could
+Upstream it um but again time pressure
+and we didn't really have the time to do
+sure hi great talk thanks first of all
+uh a question about an implementation
+detail just understand you call your
+isolates isolates because they are the
+V8 isolet
+underneath uh roughly yes yeah okay and
+when when you were speaking about high
+density uh how do you actually uh
+measure resource usage or anticipate
+resource usage to to allocate uh let's
+say workload on nodes inside isolet
+because what what I do usually in
+kubernetes is I I test and then then I
+know what what amount of M CPUs a
+workload uses and then I request that
+amount so that the work the kubernetes
+[37:27]
+Scher can actually allocate that but
+since you you run code provided by
+customers how do you do that yeah it's a
+great question um there's a like a lot
+of this um stems from the fact that we
+have the ability to even though we share
+resources isolate isolate tenants in
+such a way that if there's a single
+tenant that comes and wants to use a
+bunch of resources we're going to
+throttle that single tenant before we
+throttle everyone else on the platform
+and this allows us to sort of have a
+global utilization Target that we Target
+and um we like scale up our underlying
+infrastructure to meet that Target and
+if there's a single tenant that decides
+that they need a lot of resources and we
+just don't have those resources
+available right now we throttle that
+individual tenant rather than everyone
+else um so this yeah we sort of do a
+similar thing where we measure but we
+don't measure on a single tenant or a
+single service but we measure sort of
+the entire system and we know like what
+utilization percentage results in um in
+good scaling behavior for us which
+correct me if I'm wrong could mean that
+[38:28]
+that has a Compu intensive task that
+would need a full CPU to run at a high
+throughput could run at a lower
+throughput because it is sharing
+Resources with other tenants
+um sometimes so this is yeah so we have
+like multiple different compute products
+like one of them for example is cu's
+where you in que tasks and then we pop
+them off the queue as we have
+availability to process them and then
+you have things where you like
+synchronously process requests and the
+synchronous request processing for
+example has a
+CPU time limit where for every request
+you cannot use more than a certain
+amount of CPU time so if you want to do
+some async background work to put it
+into a q first and have the Q processor
+pick it up because that has like more
+control over when it has sort of
+resources available and then the other
+thing is we're we're we are deployed in
+in many many regions right um and even
+if we don't have space to run the code
+in the specific region that's closest to
+you we can always fall back to a region
+that's slightly further away that still
+does have space so like it it it needs
+[39:29]
+like a very very large Spike for us to
+for the system to be like completely
+unable to process your request perfect
+welcome I feel like I've already gotten
+a question from you but sorry I feel
+like I've already gotten a question from
+yeah this the second one I'm curious how
+um Native dependencies work in dinner so
+could I use maybe skia or my own rust
+code from a denos script yeah uh you can
+um so in sort of uh so in in the
+isolates it cannot be native code it has
+to be compiled to WM but skia for
+example can be compiled to WM and rust
+code can also be compiled to WM uh for
+your for in the doo CLI we also have an
+ffi system that lets you expose or or
+call into native code through an ffi
+awesome
+[40:37]
+hi um I don't know if you uh already
+covered this but you mentioned uh for
+example having open SSL shared between
+multiple uh tenants
+um it's not really the topic that you've
+been covering but like is there have you
+had put any significant thought into the
+security implications of something like
+that if for example 110 puts open SSL
+into an undefined or security vulnerable
+state then another tenant May themselves
+become vulnerable right yeah so the the
+this the things that we share are code
+pages that are entirely read only that
+can never be modified um so we would not
+forever share like runtime uh sort of
+internal state of op SSL for example and
+actually we don't use op SSL so there a
+bad example in the first place um but
+the way you can I know RLS is great uh
+except no well okay I'm not going to get
+into the except
+but many experiences from RLS in
+production um yeah no uh like things for
+[41:39]
+example V8 has a readon heap which is
+sort of like it strings for example that
+are just part of the JavaScript language
+um that are shared across all run times
+like I don't know the string window is
+something that's very intrinsic to
+JavaScript um or the string uh to string
+right is is another thing string that's
+very intrinsic to JavaScript and those
+kinds of things can be put into memory
+pages that can be shared across all run
+times because they really just read only
+and there is actually another concern
+related to the page sharing which is
+aslr um address based layout
+randomization and I could get into that
+too now but that gets like slightly too
+complicated but yeah there there's
+there's definitely considerations you
+thanks
+um have you put uh some specific
+measures to mitigate timing attacks like
+Spectre like or are you lying on
+[42:43]
+V8 and it's uh yeah measures so the we
+we practice like a security system
+that's very onionlike um we we don't
+rely on a single layer of security for
+any of our security measures um I think
+everybody should do this right um so no
+we don't rely on just V8 to to do
+isolation we also have other sandbox
+layers in place and we for example take
+very specific care to avoid timing side
+Channel attacks by not exposing any high
+resolution timers um so there's there's
+we don't um in HTTP handlers for example
+you cannot do any multi-threading
+JavaScript is inherently a single
+threaded language so there's no way for
+you to share memory between two threads
+which means you can't construct your
+timer in user land and if there's no
+high-risk timers present and you have
+sufficient protections on your IO um
+there's no way you can get enough timing
+information to build timing Chanel
+attacks so there's there's sort of
+measures in place that we have for that
+specifically and then yeah other sort of
+security layers um like isolation
+thanks any more
+[Music]
+[43:43]
+questions
+hands
+that
+uh I'm was wondering about the you
+showed the
+hypervisor and on Dino is it on which
+level is the hypervisor sitting and like
+can sorry can can you repeat the
+question I yes on the hypervisor uh
+portion of things can you explain a bit
+more how it looks like and um how it
+operates on which layer of the like um
+onions of hardware near yeah yeah so the
+uh okay so let me see white later should
+I dive into this so we have the the
+actual like isolates that execute code
+around these are various other sandboxes
+and around those sandboxes is the
+hypervisor that manages when the
+[44:43]
+sandboxes are created and destroyed um
+but all of this including the hypervisor
+sits inside of another sand box that for
+example prevents accessing our internal
+networks or accessing uh sensitive
+Secrets or accessing our database or
+like various other things right so
+there's there's layers that are inside
+the hypervisor that isolate one tenant
+from each other and then there's layers
+outside of the hypervisor that that
+isolate the hypervisor from everything
+else and this means for example that our
+hypervisor itself is completely
+untrusted we do not trust our hypervisor
+which sounds kind of weird but like the
+hypervisor does not get any permissions
+to do anything by default like if the
+hypervisor wants to request a file from
+our file storage service you can have
+static files on youo deploy for example
+then when with with an incoming request
+we Grant you a permission that you can
+pass that permission token later to a
+different service and get that access
+but the hypervisor itself cannot like
+Grant access or anything which also
+means that if you have um a tenant like
+[45:43]
+yeah we effectively do we do a lot of
+things to sort of minimize the
+possibilities of of vulnerability or of
+uh of um exploits at various different
+layers um yeah including at the
+hypervisor under the hypervisor above
+yeah
+yep um so you shown that demo can
+basically run JavaScript code AS
+isolates but you also mentioned web
+assembly a few times um can you use
+those interchangeably like can you just
+write an isolate completely in won and
+compile to in form of web assembly uh
+yeah no we support both interchange we
+support the web assembly API that's
+available in the browser so actually I
+can show you this
+um we have new web assembly do instance
+or I think it's instance you can
+instantiate a new web assembly instance
+and use it the same way that you would
+web assembly from the browser has a
+really nice benefit that like all your
+[46:45]
+tooling like em script and W and bind
+gen all that kind of stuff just works
+because it already outputs this browser
+like
+U like yeah it already outputs WM that's
+assumes that a browser is their text
+okay
+thanks nice talk um do you rely on
+unstable features uh in Rust would you
+uh could you rely on unstable feature
+that would have you uh we have we do not
+rely on unstable features and we have
+not relied on unstable features and we
+are not planning to rely on unstable
+features
+um with the exception of I I don't
+remember if this mess format message
+format thing is unstable if it is
+unstable then we use unstable
+specifically for that and for nothing
+else but other than that like all of our
+crates are published uh sort of the
+foundational crates that build up Dino
+the the CLI are all published to crates
+IO which means we also don't have any
+dependencies that are not published to
+[47:45]
+creates IO and you can just run cargo
+install Dino um and this builds in in
+stable
+rest
+try all right thanks for the talk um
+what's the number one thing uh new thing
+for you that you learned while
+developing contributing to Dino and
+trying to integrate you know uh with
+isolate processes from V8
+um additional tooling maybe around web
+assembly Etc or all these um Security
+checks uh for the hypervisor ETC yeah
+I don't know I I I there's a lot of
+things I learned like when I started at
+Dino I had very little understanding of
+how sort of
+um how the Linux chronal deals with the
+Securities with security um especially I
+like was not aware of how set comp
+worked and like other things like this
+[48:46]
+um I I think I gained like an
+appreciation for very robust error
+handling uh in the beginning I was very
+happy to use like um anyhow for many
+things and we still do use anyhow for
+things but but uh yeah as time went on I
+realized like having really structured
+errors is something that's super super
+valuable um what else I also appre
+learned to appreciate the build times
+that go has um they sort of I came
+before this from a dynamic language then
+I switched to go they were both very
+fast in in sort of compile times and
+then I came to rest um yeah thank you
+also like not 250 gig Target folders is
+kind of a great feature
+okay we can have one last question if
+it so you showed us the feature with the
+key value store is this only in the
+cloud service or also you run locally no
+this also exists when you run locally
+[49:46]
+actually why don't I copy the code paste
+it here
+Doo run going to allow all access I
+wrote this code I dressed
+it uh
+oh
+it's kind of cheating um and it works
+see the reason it's incrementing twice
+is because Chrome's also sending a
+favicon request for every thing here so
+yeah it's it's back so one of the
+interesting things is actually that um
+some of our sort of built-in apis are
+backed by different Primitives in the
+cloud versus locally so locally Doo KV
+is backed by there's multiple back ends
+but one of them is SQ light this is the
+like default back end um and then you
+can run this SQ light server on your own
+VPS and connect to it but if you're
+running on D deploy you're actually
+using a completely different globally
+distributed system that's under the hood
+makes use of foundation DB and like our
+own sort of transaction processing
+system and replication system which yeah
+kind of cool we can abstract all these
+[50:54]
+everyone
+
+=== ROW 174 | f011186 | https://youtube.com/watch?v=bjgGboWCTDw | 2024-11-20 | talks ===
+[00:00]
+[Music]
+[Applause]
+[Music]
+hi hi everyone hope you all been having
+a really good year rust I know I have uh
+a dog licked my ear half an hour ago so
+that was a great already a great moment
+regardless of any technical content uh
+my name is Adam I really love building
+apis but also I really hate maintaining
+apis there's no worse feeling than
+finally shipping this beautiful perfect
+handren API into production and it works
+great and then someone requests a
+feature and then we going to go and
+update it and then what do you do about
+all the old clients that don't know
+about the new feature it's uh it's
+painful and I'm going to I'm a recent
+convert to the art of code generation
+and like any recent convert I'm a real
+[01:00]
+evangelist about it so I'm going to walk
+you through how to remove toil and
+repetitive labor from your life uh like
+I said I'm Adam I used to work at Cloud
+flare where I did a lot of apis in Rust
+uh then I saw a tweet from the CEO of a
+startup looking to hire someone to build
+apis in Rust and I thought okay look
+maybe there's something there I blog at
+Adam charms.com and uh that's me on the
+right there we're going to talk about
+apis today we're going to specifically
+talk about keeping apis correct so we're
+going to talk about apis servers and
+clients and schemas beautiful little
+three-way handshake uh then we're going
+to talk about some problems with these
+systems and then we're going to talk
+about the solutions uh the solutions are
+out there that you can use but also
+Solutions you can make for yourself
+because the world of software is always
+changing there's always cool new
+languages coming out and so the tools
+you have today will not be the tools you
+want to have tomorrow and you can wait
+for someone else to do them or you can
+make your own and if there's one thing I
+want you to leave this talk with I want
+you to feel empowered to make your own
+[02:00]
+tools and write your own code to do
+whatever you want to be able to do so I
+hope you feel empowered after this uh
+why do I care about apis at the moment
+why does my employer give me the time to
+work on these apis uh I work at a place
+called Zoo we're making CAD software
+computerated design software uh here's a
+screenshot of an app we make it's uh got
+a really exciting name it's the modeling
+app we're working on a new name if you
+have any suggestions please let me know
+uh this is a kind of code for CAD app
+you can see right code on the left and
+you get these visuals the right kind of
+like markdown but for 3D geometry uh the
+big thing is
+that all of the visuals there are not
+rendered on your device they're rendered
+in the cloud so you can use latest and
+greatest giant big uh gpus from Nvidia
+or whoever without having to buy one or
+try to run it in your laptop and have it
+eat through your laptop battery in 20
+seconds or so so all the video rendering
+happens off device everything we do at
+zoo is API driven you don't have to
+deploy it on your own local devices you
+can use it through an API and this way
+[03:01]
+if you don't like the UI we've built
+here if you think my programming
+language is then find me afterwards
+and tell me and we'll fight about it but
+if you actually don't want to use this
+app you don't have to because we make an
+API and so you can build whatever CAD
+software you want on top of our API at
+ruscon a few months ago I met a guy who
+worked at a sheet metal foundry and he
+had all these back and forth calls with
+customers because their Foundry can only
+manufacture so many different kinds of
+metal a different curvatures and
+everything and so he'd have to get the
+cad file from his customer and he'd look
+at it he'd open it up and he'd say ah we
+come fact to this I've got to call the
+customer back and tell them what to do
+and they go through this whole cycle
+back and forth of tweaking the files so
+instead he said right we're just going
+to make our own cat app and it's a cat
+app that perfectly captured the
+constraints of what his Foundry could
+produce so you get real-time feedback as
+you're designing right we all love Russ
+we all love getting feedback at compile
+time designing in CAD is kind of like
+compile time for Real World objects so
+you want to get the uh the notice that
+you can't actually manufacture it as
+early as possible to save you time so
+[04:02]
+making your own cat app is a lot of work
+and he was saying God I wish there was
+something like zoo at the time because I
+wouldn't have had to uh build the entire
+geometry engine and 3D renderer for
+myself so we have an API that lets you
+focus on your business logic your
+manufacturing constraints your customers
+and you can hand off the geometry parts
+and the 3D rendering to us so having uh
+an API driven business means we really
+care about making this API easy to use
+if our API sucks no one's going to use
+it we don't make any money if our API is
+inaccurate no one knows how to use it we
+don't make any money so we really care
+about API correctness and probably a lot
+of you do as
+well so here's roughly a map of how apis
+tend to work you've got some kind of
+server that has some operations
+available on it you have clients that
+can send requests to the server they can
+say hey server go do this the server go
+does that tells it how do the client and
+server know what each other are doing
+how do they know what operations are
+available how do they know what data to
+send and what data to receive there's a
+[05:02]
+a schema is like a voluntary contract
+the client and the server shake hands
+and agree that this is going to be how
+we communicate with each other so this
+is all great you have a client client
+talks to server server talks back they
+both conform to a schema great problem
+solved what is a schema actually it's
+very vague uh schemas need to be human
+readable right a schema can just be a
+text file that you send to your UI team
+that describes all the endpoints you
+have available and what to end and that
+works totally fine I've shied schemas
+like that if you know your only building
+for one kind of person you can just say
+hey here's the schema we support get at
+this URL and we return back bites that's
+fine but for a lot of you case that's
+not going to be enough so you may want
+your scheme to be machine readable as
+well right if it's machine readable then
+your client and server can check am I
+keeping up to date with the schema and
+they'll warn you if you're trying to do
+something that's impossible for the
+schema so ideally you'd like to have the
+schema be both human readable and
+machine readable right there's a lot of
+Standards out there for this we're going
+to mostly talk about open API which is a
+a standard that used to be called a
+whole heap of different things it's
+[06:02]
+evolved a whole heap but it's quite a
+popular standard now and it's an open
+ecosystem we're going to come back to
+this point there's a lot of other
+Alternatives out there you may be want
+to use grpc or Captain Proto or so many
+other standards seriously there's so
+many other standards out there so we're
+going to go through an example of what
+an open a API schema looks like uh we're
+going to have just a pet shop is the
+canonical example we're going to look at
+one end point that lets you get a pet
+byes ID and I apologize I'm going to do
+something really awful right now uh
+something that I don't think anyone else
+has been brave enough to do here and
+expect the audience to like them I'm
+going to show you a big old Json file
+and I'm really sorry in advance no one
+likes reading Json but we're going to do
+it anyway so here's a little example
+he's a pet this is a pallet cleanser to
+get you ready for a big Json file that's
+my dog
+Leo so here's an example open API schema
+a schema is basically a list of what
+properties uh a type has so uh the open
+the open API spec defines a bunch of
+operations you can see we've got some
+operations like uh under the paths we
+[07:04]
+have a list of paths and HTTP verbs so
+an operation is just a combination of
+path and verb you send a get to pet pet
+ID uh operations have some human
+readable Fields like the summary and
+they have some fields that are meant for
+machines as well but they also describe
+all the parameters that go into the
+request you can see here the parameter
+describes uh the pet ID that you see in
+this path over here that's a parameter
+that can be an integer so when you go
+into a UR be SL p33 or something and it
+shows you in a kind of human readable
+and machine readable way exactly what
+the constraints that data has to meet
+are and you can see the responses the
+endpoint gives you it shows you if you
+get an HTP 200 everything okay then this
+is what you'll be sent back you see here
+another schema the schema is not defined
+it's actually defined somewhere else so
+you get a reference to somewhere else in
+the schema this way shared types that
+you use all over your API like a pet you
+can Define once in one place and you can
+reference them from the Json file this
+is minimizing the of Json you need to
+read which is really kind because you
+[08:04]
+should need to read as little Json as
+possible again I apologize for this
+slide uh what is a schema actually what
+does it look like here's that pet schema
+from before it referenced this field
+inside the open API spec you've got this
+part components you've got this part
+schemas and you have a list of them so
+the pet is a type it tells you what type
+is it it's an object and for every
+property that object has tells you the
+property's name and its possible values
+its type so you can see this is nullable
+It's going to be an integer it tells you
+what the name is and everything you have
+another field called photo URLs which is
+an array of strings and it's got
+interesting it's got to be exactly two
+items so you can do some constraints you
+wouldn't always be able to do you know
+uh not all languages have a way to
+support the number of type the number of
+elements in an array but open API it's
+it's a little more sophisticated it's
+not great but it's good enough generally
+uh so yeah that's a lot of Json I
+apologize again this is technically
+human readable
+and the word human readable is a really
+[09:04]
+low bar uh mck is human readable but no
+one actually enjo reading it and I feel
+the same way about Jon so luckily
+there's a whole heap of Tools around
+there to make open API more pleasant to
+consume this is uh some example open API
+documented documentation generator so if
+you don't like reading Json files you
+can instead look at this I think this is
+much nice to look at and this works
+because it can take in the open API
+spec. Json and it can output this nice
+beautiful HTML page and this works
+because open API is a standard ecosystem
+there's a definition of the spec and you
+can write tools that consume an open API
+file and give you something better like
+this this is from some company called
+bump. maybe it's pronounced bump I'm not
+sure uh but I just kind of found it
+looking around it was the previous one
+this is not an endorsement I don't know
+how it works
+but so we have this schema we can
+understand it the machines can
+understand it it's all great sounds
+great there's only one problem which is
+that schemas can change right servers
+will change and then when you add a new
+field to your server the schema needs to
+[10:06]
+change and someone has to do that so at
+least in my experience every human I've
+ever worked with has been fallible and
+so you forget to do little operational
+tasks like this you'll forget to update
+the schema and then you'll get a message
+from an angry user or a test will start
+failing somewhere or the other people
+you work for who Supply the client team
+w't know about the change so a cloud FL
+we kind of solve this by having this
+service periodically Pro production it
+would make sure for that the schemas
+that you have published are actually
+correct in production that production
+actually matches the schema this isn't a
+great solution because you know tests
+are like you know tests are good don't
+don't stop writing tests by any means
+but tests are only ever going to be able
+to test a partial subset of the
+functionality you have I prefer to kind
+of design it such a way that the test is
+kind of inherent in the system this is
+hard but I think it's worth it uh so a
+better idea is don't hand write the spec
+don't rely on a programmer spec instead
+have your API server generate the spec
+because whenever your server changes it
+[11:06]
+can generate a new copy of the spec and
+you know it's correct whenever the
+server changes it generates a spec and
+it's kept in sync so how do you do this
+you can basically automate the API toil
+so there's a lot of great rust web
+servers out there one of the great
+things about rust is its macro system
+one of the terrible things about rust is
+also its macro system but it's uh it's
+very powerful and very much worth it in
+my opinion I think macros are kind of
+like salt you want to use a little it's
+basically unusable without a little bit
+of salt but you really don't want to
+pour too much in or you will also ruin
+the entire meal so careful use of macros
+is kind of essential I think this is an
+example web service that does the Pet
+Shop that we showed before this is from
+a web framework called drop shot it was
+discovered built discovered it was built
+at oxide computer by the smart folks
+there and our startup has some shared
+founder DNA with oxide so when I found
+her went to start this one she brought a
+drop shop with her so you can see here
+you have a web server it's got an
+endpoint it's got some parameters it
+[12:06]
+takes in and it has this endpoint macro
+on it this lets uh the rust macro look
+over the type signature of your endpoint
+and it knows okay this consumes a path
+parameter and I can look up the type of
+this path parameter struct and I see
+everything it contains here and it
+implements this trait Json schema from
+the schema RS crate or schema RS as it
+might be pronounced and so it can
+generate
+the right Json schema for all the types
+we need in our server and so overall
+drop shot can just generate this spec.
+Json from it it's really nice it really
+beats having a handr spec yourself
+there's a lot of support in other
+Frameworks I know we have uh we have Rob
+from actic web somewhere in the
+conference and I believe there's a whole
+ecosystem of things out there for your
+favorite web services and your favorite
+web Frameworks to automatically generate
+open API support it's still a bit of a
+niche uh n Niche use but it's really
+rapidly growing
+so once you can automatically generate
+the schema how do you keep it in sync
+[13:06]
+the way we have chosen to do it at
+kittyad uh is we basically use CI so on
+every PR we have a test in the codebase
+that runs the drop shot schema
+generation and it compares to the schema
+that we have stored on disk in the repo
+route and if they're different at faci
+and you get a message telling you hey
+regenerate the open API spec. Json
+you've changed something and the spec.
+Json in the reaper route is stale so now
+we know that whenever a PR is merged if
+it Chang the server it changed the spec
+too and then we can find everything that
+consumes the spec or maybe not
+everything that's a bit ambitious but a
+lot of the services that that consume
+the spec and whenever we merge to main
+we have another G of action that
+triggers and it opens up a PR to the
+repo and opens up a PR that updates that
+spec. Json so you can see some uh yaml
+again I'm sorry I've been putting Json
+and yaml on all these slides very
+unpleasant but whatever you can see
+we're using some yam here to just
+basically open a new commit to another
+repo commit the change spe and then open
+it up as a PR you can see the resulting
+[14:09]
+PR Down Below in the corner of the uh
+slide so what is actually consuming
+these specs the API clients consume them
+there's two main kinds of API clients
+there's these general purpose clients
+that just do web requests so curl in the
+terminal uh Postman is a guey that does
+it uh you can even have general
+purpose uh clients in programming
+languages so you know JavaScript has
+this neat little fetch function that'll
+basically do any HTP request you want so
+these clients can interface with any API
+including mine on the other hand there's
+also purpose-built web clients uh that
+really just hit one service in
+particular sometimes these are called
+software development kits or sdks these
+are basically packages that let your let
+you uh use an API from your favorite
+programming language so we obviously uh
+we love rust so much the company uh
+basically everything in the company
+except the very very very very front to
+the front end is JS the very very back
+of the back end is C++ and Cuda and
+everything in between the ring 80% is
+rust so we have a rust
+[15:10]
+API uh that's a it's a rust SDK you can
+just import you can use Kitty CAD in
+your code you can add the kitty card.
+toml add Kitty CAD to your cargo tunnel
+and you can just start using us within
+your code this is I think a vastly
+superior experience because shelling out
+to use Curl or something is always going
+to be a bit tricky you want to really if
+you're serious about making your apis
+usable you want to have your own crate
+or package or wheel or whatever weird
+little term of art any language uses so
+again you've got these clients and
+you've you've successfully been updating
+the schema great but how do the clients
+actually get the new schema uh you're
+going to need another PR to update the
+schema and if you're doing this by hand
+again you will forget and people will
+get mad you'll get uh an angry email
+from your users uh fun little fact
+before I started working for Jess frelle
+the CEO of zoo I worked at Cloud flare
+where I maintained the official Cloud
+flare rust API client I didn't intend to
+[16:11]
+but we were a fairly early adopter team
+of cloud flare and we needed to make
+some API calls we thought oh let's not
+just make an API call that would be too
+straightforward let's make a fully
+general purpose Cloud flare rust API
+client that can handle making any API
+call right every premature obstruction
+that's really really good right uh so we
+found ourselves maintaining the rust API
+client for cloud flare and we weren't
+paid to do that we were paid to ship
+features so we were always a little bit
+behind or uh very very very behind on
+latest schema changes and eventually I
+got an email from my managers managers
+managers managers manager fored all the
+way down to me angry email from Jess uh
+basically saying hey there's a bunch of
+PRS building up and the API scheme
+you've published it says it's official
+isn't actually accurate so would you
+mind merging all these PRS that fix all
+the problems with your API client and so
+uh sorry about that Jess if you're
+watching this uh I don't think I've
+actually told her that yet so this is
+how everyone in the audience finds out
+so you really want to make sure that if
+you want to make a good impression on
+your future boss you want known as the
+person who's got a really stale API
+[17:11]
+client how do you do that well you don't
+manually keep your API clients off the
+date you use code generation right if
+you can stop writing your API clients by
+hand you can instead generate them
+automatically whenever the spec changes
+just like we automatically generated the
+spec whenever the server changes then
+you don't have this problem anymore so
+we'll just write a fully purpose General
+API generator for API clients right that
+should be
+straightforward
+uh it takes a bunch of work the good
+news is there's already a bunch of
+solutions out there so I hope it's clear
+why you might want to do this because
+you don't want to do all the work of
+maintaining the these API clients by
+hand and especially if you want your API
+to be successful and you want to ship to
+a whole heap of different languages you
+really don't want to have to maintain uh
+be updating by hand a rust client and a
+typescript client and a go client and
+all these other languages trust me so we
+use a bunch of uh generators for this
+there are a lot of solutions out there
+there's language specific ones there's
+[18:12]
+cross language ones there's paid ones
+there's open source ones and these all
+basically take in an open API spec and
+will create a client in some language
+that matches that spec saves you a lot
+of
+work uh I'd like to tell you how to make
+your own of these because we weren't
+really happy with the state of them when
+we started company and we thought we
+could do better maybe a bit hristic but
+no point in uh not trying right I'd like
+to make sure that people get an idea for
+how these tools work because open API is
+an interesting ecosystem it's still a
+bit immature and it's also always
+growing so as we make new languages
+someone's going to have to make the
+tooling for them and when I started
+working at zoo I was very impressed and
+also intimidated by these code
+generators i' never really done before
+and I thought them as a bit magical and
+I thought if I give a talk about it that
+will force me to really understand them
+otherwise I'll just embarrass myself on
+stage so I want to make sure people can
+leave understanding how open API tooling
+works because you will find a gap or
+you'll find a tool that you don't like
+very much but it's kind of the best
+[19:12]
+thing out there and you don't have to
+settle for the best out there you can
+make your own too so uh open API tour is
+our rust API client Creator it basically
+takes in an open API spec. Json file as
+its input and it analyzes it figures out
+the structure and it outputs a rust
+crate I want to be clear it outputs a
+rust crate on disk so it'll output you
+know a source directory and a cargo.
+toml file and a bunch of RS files it
+doesn't use macros it doesn't create
+this in line it's outputting normal rust
+code and this is I think a really good
+approach because as much as I do like
+using macros they're so hard to debug
+and they can have some kind of
+transparent problems you can it's really
+easy to Output in valid code uh some
+people may have seen Sasha's talk
+yesterday about uh how easy it is to
+just output complete garbage from a rust
+macro I get really confusing compile
+errors some people may have seen the
+talk from uh Lucas about uh rust
+analyzer trying to give you good error
+messages inside macros they're powerful
+but if you can write handwritten code
+[20:14]
+instead do that and so we have a machine
+to Output normal rust code not macros
+and I think it's nice because you can
+then just open up the crate and look at
+it like a normal rust crate you can run
+cargo check you can see everything you
+can open PRS and you can have diffs to
+it so our tool outputs normal rust code
+onto your disc like you would have
+gotten from running cargo new-- lib uh
+this has also been really useful because
+like I said we run our company in Rust
+and this includes things like HR we have
+a service called the CIO the Chief
+Information officer it's not a person
+it's a program and so all of our
+employee management is done by having a
+big yaml file that finds all the
+employees and the CIO takes it in
+creates all the right groups you know
+the Google Groups and GitHub groups and
+zoom permissions for them uh and you
+know rust is a great language but a lot
+of these big SAS companies don't publish
+rust API clients you know your your
+banking provider of choice probably
+doesn't have a rust client so you can
+establish payroll so we found ones that
+had open API specs then we could
+generate it our own for them uh open API
+to is open source you can find at the
+[21:15]
+URL over there uh feel free to open PRS
+but you you know it's really uh it's
+built for our use cases and we're
+probably not going to be you know
+wanting to make it more complex and all
+use needes but feel free to Fork it or
+just use it as a learning experience so
+how does it actually work okay I got my
+slides out of order I already talked
+about the beautiful advantages of normal
+rust code basically what it does is it
+constructs R source code using strings
+uh specifically uses the quote crate to
+kind of build up rust syntax that we
+know is roughly correct and then we
+render those as strings eventually so
+you can see some example code on the
+right uh we are basically slowly
+constructing rust syntax inside our
+program and we write them out the disk
+and then we can run cargo check to make
+sure we didn't produce bogus crazy
+output we didn't have some invalid
+syntax we also run cargo clippy on it
+with uh the that flag that uh fixes it
+yeah cargo clippy D- fix so we know that
+if there's anything straightforward that
+we could have done in our comp in our
+code generator but it would have been a
+[22:15]
+bit painful too we can just run cliy
+clippy fix on the output and make sure
+that it's roughly as good idiomatic R
+rust code as we can make it so I'm going
+to walk you through what a crate from
+open API to looks like and how it works
+basically every operation this uh path
+and verb pair like get a pet from a
+certain URL becomes a rust function it's
+going to be an async rust function and
+we generate examples as well so you can
+see here the docs for the kitty CAD
+crate uh this is generated by open API
+tour so it generates an async function
+that takes in the right kind of
+parameters you know if it's a if it's
+got a body parameter it'll take in a
+body parameter if it takes in a query
+it'll takeen that in the parameters
+normally and then if it's successful it
+outputs the right type that the schema
+said it would if it's an error it
+defines an error type this looks like a
+standard rust crate we even generate
+examples I'm really proud of the example
+generation I think that's uh you
+shouldn't be shipping a rust crate
+without examples and even if you're
+generating them you can generate an
+example too we basically look at a
+[23:17]
+struct and we look at every field and we
+generate an arbitrary choice of value
+for that field and if that field is of a
+type struct then we kind of recurs down
+and we generate the start and end of
+that struct and then we generate all the
+fields within that struct so uh it's
+quite nice to be able to have the
+ability to automatically generate
+examples because again this business
+fails if no one uses our API and no
+one's going to use our API if it sucks
+so making the API as easy to use as
+possible is a big deal for us so we
+generate a function for each
+endpoint uh these endpoints take in
+types maybe in the body maybe in the
+query parameters maybe the return types
+we have to generate the types too every
+open API schema becomes a rust type you
+can see here the example we def a schema
+in our spec called Angle an angle has
+two Fields it's got uh a unit and a size
+so it might be 360 in degrees or 2 pi in
+radians and we generate a rust struct
+from it uh not all types are structs so
+you notice this one it has Type
+[24:17]
+object but not all them are so in open
+API you can have a one of which is like
+a list of Val list of possible values it
+sounds like a Rustin arm and it looks
+like a rust arm and it's we just map
+them to rust arms obviously so um we
+also you know we insert the
+documentation you can see the
+description becomes a dock string here
+in Rust your little triple forward slash
+doc string is actually a syntactic sugar
+for writing an attribute with a little
+hash square brackets doc equals blah
+blah blah so you can construct them just
+like you would construct any other kind
+of rust source
+code uh generated code is very
+convenient for the person generating it
+it isn't always Pleasant to use we
+really want to have a really high
+quality rust crate that feels familiar
+and pleasant to use and this means your
+types should Implement traits we can
+automatically derive traits when we they
+should be there you know we
+automatically derive clone and debug and
+serialize but we can't automatically
+figure out if a trait if a an opmi type
+[25:17]
+looks like a number and if it looks like
+a number and it smells like a number you
+should be able to use it like a number
+so for example that angle type we'd
+really like to be able to implement ad
+on it and there's no real way to look at
+an open API schema and know that this
+should work with ad so instead we also
+support handwritten code I'd say 95% of
+the crate is generated but we basically
+have a little file called methods. RS
+and you can write whatever handd code
+you want there so we use that to
+implement a bunch of useful traits you
+know we Implement ad for angles we
+Implement some useful constants like the
+Zer degree angle Constructors you can
+have one takes in you know a number and
+it knows its degrees or knows it's
+radians whatever you want these little
+bit of handwritten methods long way
+towards making the crate more usable I
+actually do have to use this crate day
+in day out so whenever I find a method
+that I wish I had there I can just go
+back to the open API tour and I can add
+these handwritten methods and then when
+open API tour generates a new crate it
+knows to look for this handwritten
+methods. RS file and leave it there
+[26:18]
+don't overwrite it we do the same thing
+for tests we only going to automatically
+generate tests because we only know the
+rough kind of shape of the inputs and
+outputs we don't know what processing
+happens in the server so we use uh we
+hand write a few tests as
+well basically open API tour works by
+going through every uh schema and it
+generates a rust type for it the schemas
+can be stored in a couple of different
+places like I said before you can have a
+schema defined right there along the
+operation or I can reference somewhere
+else in in the open API spec so we look
+for every place you could find a schema
+and for each of them we generate a type
+then for each operation we generate an
+async function that sends the right kind
+of request and and gets the right kind
+of response out there's a couple of
+other little wrinkles for example
+pagination it's really common to have a
+paginated API if your database has a
+billion customers in it firstly
+congratulations I'm very proud of you
+and your success but secondly you don't
+want to return a billion users if
+someone asks for them because that'll
+probably Doss your server as it tries to
+[27:18]
+buffer these all into memory you really
+want to enforce maximum amount of data
+you're willing to accept or return so
+pagination is key there's no real
+convention or there's there's no
+definition of paginated but there are
+conventions there's a whole bunch of
+ways people do in practice tend to
+paginate their apis so we try to
+identify these when we're going through
+the schema and if we identify them then
+we generate two endpoints two rust uh
+functions for this endpoint we generate
+a normal one like you saw before and we
+also generate an async stream where you
+generate a function that returns an
+async stream it will manage getting the
+pages for you so every time you pull
+data from that stream it'll go back and
+send another request to get the next
+page from the API again this goes a long
+way to making these combin API task
+really uh good and easier to use than if
+you had a kind of naive straightforward
+open API
+generator uh a couple of shortcomings
+this isn't certainly is not perfect uh
+firstly websockets websockets are really
+important to what we do at zoo. Dev uh
+if you remember that demo from before or
+[28:19]
+the screenshot before uh with that model
+we're using a web socket to accept
+commands to update your model we don't
+want to have to make people send a new
+HP request every time that would be a
+bit unnecessary so there's no
+standard for websockets and open API
+they made the reasonable choice to just
+not care about websockets that's fine no
+one can care about everything a lot of
+people do actually want to use
+websockets though they're pretty useful
+so there's no real standard for how to
+declare them in an open API but there is
+again there are ad hoc conventions out
+there we use dropshot which uses
+websockets and so they've got their own
+convention for how to identify websocket
+endpoint and we try to uh we basically
+return a request websocket the rec West
+req crate uh and there's no real way to
+say what that web socket should request
+it's a fully bir directional connection
+it can take in arbitrary binary so
+there's no real way to give a schema off
+a web socket on top of that there are
+other competing Technologies you can use
+grpc or Captain Proto if you mostly care
+about these long lived webstock at B
+[29:21]
+directional standards I'm kind of
+thinking maybe at some point we should
+also support grpc and Captain Proto but
+you know we're a startup we've got a
+whole list of things we'd like to
+support eventually some say uh the other
+thing is that when you're doing all this
+code generation it can add up to a lot
+of code and you can have quite a lot of
+compile time to do that uh right now if
+I go through our cargo crate and I look
+through all the depths that take the
+longest to compile most of them are
+autogenerated crates whether from us or
+from you know other apis out there like
+stripe so these apis can be really big
+they just offer a lot of functionality
+and they can be quite long quite take
+quite a long time to compile especially
+in release mode uh uh yeah I don't know
+what to say there's a lot of problems
+out there uh with just really big rust
+crates take forever to compile uh
+everyone runs into it eventually and
+there's a lot of great blog posts out
+there about how to shrink them down but
+eventually I kind of just decided I'd
+rather eat the long compile time and be
+able to give really high quality API to
+my users so uh we also offer things like
+a CLI and an electron app boo electron
+yeah yeah yeah but it's you know if you
+[30:22]
+want to serve video across every every
+single platform it's really nice to have
+one consistent Target for that so if you
+don't want to use our API directly you
+can use our CLI or our guey apps for it
+and that way you don't have to worry
+about compile times thank you so much I
+really hope that this talk can help
+share uh it's definitely a bit of group
+therapy for me because I spent so long
+worrying about getting PRS merged into
+keeping my API clients and servers and
+schemas in sync and I really hope that
+uh you if you're going through this
+experience as well can now think about a
+better way there's a whole heap of Open
+Standards out there there's a whole heap
+of Tooling in the open API ecosystem
+that can help youate these tools
+yourself and if there's not nothing out
+there that's quite right for you then go
+and make your own it's just code it can
+be a little intimidating at first like a
+lot of things you don't know but it's
+just code ultimately and if you read the
+specs and you do a bit you spend a bit
+of time learning it it's totally
+achievable thank you very much
+[Applause]
+[Music]
+
+=== ROW 175 | f011220 | https://youtube.com/watch?v=x4yUfs0GrI4 | 2024-12-13 | talks ===
+[00:06]
+as developers as Architects we actually
+have an incredibly important role in
+today's world a world in which let's
+face it is completely run by technology
+almost every part of our day-to-day life
+is in governed in some way by software
+and the users we build for have got a
+lot of different things that they want
+all users of course want things to be
+fast users are never happy things could
+always be faster be be quicker and
+actually the speed of your software you
+build can have a direct impact on
+people's job satisfaction and their
+productivity for anybody who's ever used
+sales for us with any gust store you'll
+know exactly what I mean but users as
+well as wanting things to be fast they
+also want things to be safe safe both
+for the people using the software but
+also safe for all of you as developers
+who's ever had a piece of software fail
+that they've built because of something
+out of their control a server failed
+unexpected that you've tried to upgrade
+a kubernetes cluster and it's gone wrong
+like these things happen but you can't
+[01:08]
+directly control them and as well as
+that we also want things to be
+sustainable both sustainable from a cost
+perspective but also sustainable from an
+environmental perspective and I believe
+we have a responsibility as people
+working in software to make things as
+sustainable as possible and as the great
+opra Winfrey said you can have it all
+you just can't have it all at
+once these three different things that
+you're trying to work with pull you in
+three different directions they're quite
+conflicting how do you build something
+that is fast and safe but also
+sustainable and that's what you're going
+to learn about in this talk how
+serverless compute and the rust
+programming language can work together
+to help you build systems that are
+faster safer and sustainable now I think
+it's also important I tell you what this
+talk isn't this talk isn't going to be a
+deep dive into the internals of rust to
+the programming language don't expect
+slides and slides and slides of
+application code this talks more about
+[02:08]
+what you do after you've written the Cod
+the kind of boring day two
+stuff so I'm James East I'm a developer
+Advocate at data dog and I actually want
+to start by being really honest with all
+of you I've worked in Frontline support
+I've been a DBA with SQL Server I've
+worked AWS I've built serverless systems
+I've built server full systems I'm
+really new to the world of rust so one
+thing I Ask of all of you is that if you
+see anything in my code samples anything
+with any of my content you might engage
+with online and you think this guy has
+no idea what he's doing with rust please
+point it out let me know because I'd
+love to learn from you as much as you
+learn from me and to make this really
+real for a moment I want you to forget
+everything you know about your day job
+the hundreds of jro tickets you've got
+in the backlog forget your day job
+because for the rest of this talk your
+role now Developers for a completely
+fictional pizza delivery company called
+plant-based Pizza
+the country's number one Roman style
+pizza delivery company now I realize I'm
+doing this talk in Italy this could be a
+[03:08]
+really contentious topic please just
+bear with me if you don't think Roman
+style pizza is the best and this is you
+you love your job your job's got that
+perfect balance of things just about
+being difficult enough that they're
+engaging but you're comfortable you know
+what you're doing you bounce into work
+every day things are good apart from
+when you're on call of course things are
+good and this is Helen Helen's a
+principal and engineer at plant-based
+Pizza she's also your line manager and
+she's one of the best developers you've
+ever worked with she's got this perfect
+balance between being really analytical
+and really understanding things as well
+as a lot of experience building large
+scale distributed systems and she comes
+to you with a problem it says you've got
+to build a new service the company wants
+to start supporting loyalty PS so when
+people come back and start buying more
+pizzas they can collect loow points and
+hopefully get some free pizza at some
+point but she gives you some
+constraints you need to work with the
+first constraint is you're going to be
+the only person working on the project
+[04:09]
+you can't rely on any other internal
+infrastructure teams any other
+developers this talk this this project
+is you and you only the system you build
+also needs to be fast this isn't on the
+core user floor through the application
+so it needs to not add additional
+latency to the
+application and the company's also got
+ambitious cost and sustainability goals
+so as well as both of them things you
+also need it to make make it sustainable
+or and one more thing actually you need
+to deliver it inside a
+week H stressful right feel that fear
+already coming over you frankly you try
+everything you can to stay in your
+comfort zone you start muttering
+something about it depends you remember
+something that Ora Winfrey once said no
+movement you still need to do it so you
+decide to bring out the big guns you
+decide to say it depends smugly of
+course it depends you can't have all
+them things surely things can't be fast
+safe and sustainable
+but you still need to build it so let's
+go off and let's try and build this
+system and at a high level this is the
+existing system you've got to work with
+[05:09]
+there's some kind of AUD processing
+system it's publishing events onto a
+Kafka topic you need to consume them
+events and that's when you know you need
+to add loyalty points to a customer
+account you also need some kind of web
+interface for the front end to be able
+to get a current users points and also
+for them to spend points to get free
+pizza so you decide at a really high
+level this is what you need to build and
+really there's three kind of primary
+components in the system that you need
+to build you need some kind of
+background service something running in
+the background that's going to pull the
+cka topic get the order completed events
+and then you're going to persist a
+user's loyalty account information
+somewhere and then of course you need
+some kind of web app that's going to
+allow the front end to retrieve this
+information and you need to do all of
+that in a way that's sustainable Fit
+Fast and
+safe so you decide to start picking
+these things off one by one remember
+you're a oneperson team on the project
+so you want this application to be safe
+safe from a security perspective of
+course but also safe from an operational
+[06:09]
+perspective you don't want to be
+spending all your time worrying about
+managing servers worrying about dealing
+with all that operational stuff you want
+to just write code you're a developer
+and when you really boil it down there's
+two types of safety you need to deal
+with there's application safety and
+there's infrastructure safety
+application safety is the stuff that you
+really have control over dealing with
+cases in your code error handling type
+safety memory management they're the
+things that you can control inside your
+application code and then you've got
+infrastructure safety infrastructure
+safety comes from how you choose to
+deploy that application how does the
+compute you choose to use affect your up
+time affect your resilience affect your
+latency so you decide to start with a
+thing that you've got control over
+application saf which brings us nicely
+on to rust and the adorable feris the
+crab now a really quick side note my
+girlfriend work Works in strength and
+conditioning so she knows nothing about
+tech she loves rust because of feris
+she's got a little sticker on her laptop
+and everything it's hilarious and you've
+[07:09]
+been learning rust for a little while
+now you're reasonably proficient in the
+language this seems like a perfect use
+case for what you need to build it's
+fast it's safe and it can do work with
+reasonably little resource consumption
+you think to yourself in all honesty
+that feris should really be wearing a
+cape
+actually now it's not just you that
+thinks rust is a safe
+language numerous Security Services from
+all over the world jointly published a
+paper talking about how we should all be
+using memory safe programming languages
+now rust is one of the strictest
+lowlevel languages as far as memory
+safety goes whilst also giving you some
+really nice zero cost abstractions on
+top of that now of course that's
+specifically focused on memory safety
+but if you call Daniel's talk yesterday
+and Ed's talk earlier today you'll have
+seen some of the features of the Russ
+language that make you write safer
+application code the way the functions
+can return results that have an okay
+value and an error value and that error
+could be an enum and if you don't handle
+[08:09]
+one of the options of the enum one of
+the edge cases your code won't compil so
+there's a lot of features in the
+language there's an entire talk about
+the features of the language that help
+you by write save for code but that's
+not what we're focused on today you
+focused on how you run this application
+so this is what you end up with you've
+got your application code written you've
+got a web API using axom framework
+you're using postgres as your database
+provider and you've got some kind of
+back background service that's using the
+Rd CFA crate to consume messages from
+the Kafka
+topic which brings us on to this topic
+of infrastructure safety if you're
+anything like me you really just want to
+write code you don't really want to care
+how that code runs I've spent longer
+than I would like to admit in my career
+deploying net applications to Windows
+servers I've even once accidentally
+turned off a production Windows server
+thinking it was my local machine I shut
+my laptop down walked out and left for
+the day and then 10 minutes later got a
+phone call because I was remote desktop
+that Windows didn't make these things
+[09:10]
+easy and remember you're a oneperson
+team you've got some apps that you just
+need to run and you don't really want to
+worry about anything
+else which brings you nicely onto the
+world of
+serverless how you can just take your
+application card pick it up and drop it
+into a serverless compute and well the
+cloud provider handles the rest that's
+the promise at
+least there's a slight challenge here
+though there's a rule inside plant-based
+Pizza that actually you should try and
+avoid manage services as much as
+possible someone once muttered something
+about vendor locking and now everyone's
+panicking about this thing called vendor
+locking we'll come back to that in a
+minute servus has also become a bit of a
+loaded term in recent times it was kind
+of co-opted by marketing teams and lots
+of things said they were serverless that
+probably weren't so the way to think
+about serverless is not as serverless or
+not serverless serverless is a spectrum
+it is not a binary choice you can choose
+to be more or less
+[10:13]
+serverless from a compute perspective
+you could choose to run your application
+as serous as possible which means you
+have very little if not zero operational
+overhead the trade-off you make if you
+do that is if you lose infrastructure
+flexibility so you get some really
+opinionated compute you lose control of
+the underlying infrastructure
+there's another interesting Dimension to
+think about this though that's the cost
+Dimension if you look at the line item
+cost of serverless compute it is more
+expensive than running raw virtual
+machines but when you consider the human
+cost of managing that infrastructure if
+you choose to run a virtual machine you
+need to pay somebody to run that virtual
+machine if you choose serverless compute
+you're paying the cloud provider to do
+that and Cloud providers are very good
+at running
+infrastructure so to make this really
+for a minute let's consider the compute
+options you have when it comes to
+serverless Technologies you've got the
+truest definition of serverless on the
+kind of far right of the spectrum things
+like Lambda things like a functions like
+[11:13]
+Google Cloud run Cloud flare workers
+these are the truest definition things
+that scale up when there's work to do
+scale all the way down to zero when
+there's no work to do and you only pay
+for your code exactly when it's running
+the truest definition of serus but as
+you start to move down this spectrum you
+start to move through some other
+interesting Technologies things like as
+you container apps and Amazon
+ECS services that are container
+orchestrators but allow you to deploy
+applications without worrying about
+what's going on under the hood a
+container apps is built on top of
+kubernetes but you can simply just give
+it a container image some CPU and some
+memory and a youer will manage
+everything
+else of course as you start to move down
+the Spectrum you start to get into
+things like kubernetes actually running
+kubernetes maybe you use a managed
+kubernetes service where the cloud
+provider operates the control plane for
+you but you've still got to worry about
+upgrading the cluster installing things
+on that cluster writing thousands of
+lines of yaml you've got to do all them
+things yourself and then of course at
+the bottom end of the spectrum you've
+[12:13]
+got actual virtual machines or even as
+seems to be coming back into fashion
+running physical machines and physical
+data centers again and remember there's
+no right or wrong place to be on this
+spectrum you can just choose where to
+sit based on what your application needs
+if you need some really specific gpus
+some really specific infrastructure you
+going to need to sit further left but
+for the majority of business
+applications that at least I've worked
+with you want to stay as far right on
+this spectrum as possible your users do
+not care how well you can operate and
+scale a kubernetes cluster they care
+about the application
+working and I want to say a really quick
+word actually on cloud Flur workers if
+you haven't heard Cloud Flur yeah those
+DNS and security people they've actually
+got an entire Cloud platform now now I'm
+not affiliated in anyway with Cloud Flur
+it's just a really powerful tool the
+developer experience is fantastic you
+can deploy rust to cloudfare workers
+orbe it you have to compile your code to
+web assembly which is its own talk again
+but it's a really good developer
+experience so if you want to build some
+[13:13]
+things PC some maybe sample apps Cloud
+flow is a really good place to do that
+and it's really low cost but moving on
+this serverless spectrum you look at
+doesn't just apply to compute it also
+applies to databases you need a
+postgrads database as your persistance
+store now you could choose to run paulg
+on a virtual
+machine do you really want to be doing
+that in 2024 that's call for you to make
+of course but remember you're a onep
+person team you don't really want to be
+thinking about
+infrastructure you could refactor your
+code to use a native database service
+something like Dynamo DB like Cosmos DB
+like fir store but coming back to that
+conversation around lockin actually
+using proprietary database Services
+where you have to use a specific SDK a
+specific data model that is more of a
+form of locking than the compute you
+choose to use yet everyone seems to
+focus on the
+computer so you don't really want to do
+that you could of course use a manage
+service that all the cloud providers
+give you to run postgres or you could
+use one of the third parties that are
+[14:13]
+starting to pop up companies like
+cockroach DB companies like neon DB
+companies that are starting to give you
+really low operationally overhead that's
+not a real word operationally light POG
+there we go and I want to give a quick
+shout out to Neon again again I'm not
+affiliated anyway it's just a really
+really cool technology you need poges
+this is fully serverless porges the
+database will scale up when there's work
+to do it will scale to zero it can cold
+start in about 10 milliseconds or 20
+milliseconds of course your compute
+scales to zero your storage doesn't
+scale to zero that wouldn't be ideal um
+but it's a really power thing you can
+Branch your database you can do all
+sorts of really cool stuff so I'd really
+recommend checking out neon if you need
+post for anything new and as you may
+expect this server Spectrum applies to
+other layers of your app as well your
+messaging layers your storage layers
+you've got these choices all the these
+different levels what you should take
+away is that thinking serverless first
+is just about reducing your operational
+overhead as much as possible so you
+decide to build with serverless you
+decide to take the risk you decide to
+[15:14]
+ignore the rules you've got internally
+this is kind of worth it with the value
+proposition you think and you go off and
+build at the moment you've got these two
+rust applications that you need to
+deploy one poll in the cathal cluster
+one serve in the web traffic and you
+have a look at the different options you
+have on ads for running containers
+plantbase Pizza is all in on ads that QR
+code you can see in the corner is to a
+GitHub repository that has this same
+application deployed to various
+different Cloud providers if you want to
+go and have a look at that the QR code
+is there again at the end so when you
+look at how you want to deploy your
+application now you know you know that
+you don't really want to use et2 you
+don't really want to worry about
+managing
+servers and you also think well lambda's
+this reactive style of compute reactives
+lambda's got its own programming model
+so surely lambda's not an option right
+hold that thought which gives you from a
+container orchestrator perspective
+kubernetes are ECS now kubernetes has
+its benefits it has its merits but there
+[16:14]
+is overhead to running kubernetes right
+you have still a one person team so you
+don't really want to use kubernetes
+which leaves you with Amazon ECS and
+farget if you're not familiar ECS just
+allows you to create a cluster clusters
+are zero cost they don't cost you
+anything you can define a service inside
+that cluster and that service can run
+your app with two different compute
+options one being ec2 virtual machines
+one being fargate fargate just allows
+you to say here's some CPU here's some
+memory I want you to run my application
+with that configuration the lowest
+memory you can allocate to a forgate
+task is 512
+megabytes and of course to run your rust
+application as a container you're going
+to need dock a Docker file when building
+serverless apps you want to try and keep
+your package size as small as possible
+when things are being dynamic Ally
+scaled up and scaled down the smaller
+you can make the package of application
+the faster things can be pulled the
+faster things can be started up now
+there's a lot going on in this Docker
+file I'm not going to dive through it in
+a lot of detail just know that it's
+[17:14]
+using Alpine as the base OS and it
+supports multi-architecture builds so
+you can build a container image that
+will support both x86 and r64 if you
+want to dive deeper on that there's a
+really good blog post that one of my
+colleagues Scott has written linked in
+the corner for how to set up Docker
+files for multi architect you're
+targeting in Rust it's really
+right so here's where you've ended up
+you've got your two rust applications
+package this container images One
+pulling the cfal cluster one running the
+web
+app you've got neon for your postgress
+database everyone's happy we're done
+celebrate right if I had a mic i' drop
+it and walk out easy easy as that you
+think you can go home you can wait for
+the promotions to start coming in Happy
+Days you've just delivered a complete
+new service in less than a week and
+you're running it with basically zero
+operational
+overhead and then Helen comes along
+again this is all well and good she says
+but how do you actually know how do you
+actually know that your application is
+fast and safe how do you actually
+understand what is happening inside your
+[18:15]
+application you might tell me that it's
+serverless and it's fast and it's safe
+but is
+it and this is where observability
+becomes really important being able to
+understand how your application is
+performing is well quite important when
+you choose where you're going to run
+that application and observability is
+simply the ability to understand the
+internal state of your system by looking
+at its external
+outputs now to look at external outputs
+of course you're going to need some
+external outputs coming out of your
+application and thankfully in Rust this
+is made really easy there's the whole
+tracing ecosystem tracing is a set of
+crates that make it really easy to
+collect structured diagnostics from your
+running application and that's really
+great it's really easy to use inside
+your application code but actually open
+Telemetry is becoming a bit of an
+standard nowadays for observing
+applications now thankfully there's a
+really useful crate in the tracing
+ecosystem called tracing - open
+[19:16]
+Telemetry which acts as a bridge between
+the tracing crate and the open Telemetry
+SDK for
+rust which means when your application
+starts up you simply need to configure a
+grpc exporter to send your t data to an
+open cemetry endpoint here you're using
+tonic and you're passing in that open
+cemetry endpoint as an environment
+variable you then need to set up your
+open Telemetry Tracer you can set some
+default service names you can configure
+some how the exporting works and then
+this last line of code here is the
+important one this is what adds the open
+Telemetry Tracer to the tracing the
+layers in the tracing crate which means
+whenever you instrument your code with
+the tracing crate that information will
+be sent via the grpc exporter to an open
+to lemetry compatible
+endpoint and then of course when your
+application starts up you just need to
+make sure that you configure this
+instrumentation you can move this into
+some kind of utility function and you
+can call that in the main function for
+all your
+[20:19]
+apps once you have all this set up it
+allows you to really easily start to
+instrument your application you can add
+macros to your functions to instrument
+the application to generate custom
+spans for that individual function's run
+T so this is the function that gets
+called by the axom web framework
+whenever someone's trying to retrieve
+loyalty information you can use this to
+understand the performance of that API
+endpoint and there's some really nice
+utilities that this tracing crate has as
+well it allows you to the trace the
+crate will automatically annotate your
+traces with the value of the variables
+you pass to the
+function so here you're passing self and
+you're passing your customer an ID now
+of course you probably don't want to
+annotate the entirety of self to a trace
+in a lot of cases that probably wouldn't
+even work so you can skip properties
+this can also be useful for pii
+information to allow you to skip certain
+properties that you might not want to
+store in your observability system but
+we do want to store the customer ID
+[21:19]
+maybe we want to keep track of which
+customer these given requests are
+far once you get into your observability
+system then you can start to understand
+the requests that are flowing through
+your system you can see the individual
+requests as they flow through and then
+you can start to sort these requests by
+the
+slowest which requests are affecting my
+latency the most and you can start to
+dive even deeper into them and
+understand exactly what is happening
+during these slow requests and maybe
+even do smart things start looking at
+your requests by customer start looking
+at your requests by order number by the
+number of lines on an order all these
+different things you can use to query
+your
+system now all this is really nice to
+have of course but fundamentally what
+you're trying to do is to prove that
+your system is performant when it's
+running on serverless
+compute so when you pull all this
+Telemetry together you can start to
+generate performance numbers so for this
+rust web app running on fargate the
+maximum latency of the API is 325
+milliseconds now I know in the context
+[22:19]
+of rust that could be considered slow
+but when you've got a web app query in a
+post database and returning results 300
+milliseconds is is pretty good and your
+p50 is 100 milliseconds it's pretty good
+so now it must be time to celebrate
+right we've proved that this app is
+performant enough for our users
+needs but there's a problem you're
+getting to the real challenge of the
+situation now because what you've got
+here is two long running container
+images they're running 24 hours a day 7
+days a week they've got 512 megabytes of
+memory
+assigned that doesn't feel particularly
+it so what about
+sustainability this is the big one
+there's plenty of Articles out there
+hundreds thousands of Articles YouTube
+videos on how to make software safer how
+to make software faster there's not many
+on how to make software more sustainable
+how do you both save money and save
+resources without sacrificing one of the
+[23:19]
+other two so you revisit your current
+system you've got your user facing web
+application that's quite happily
+chugging along serving requests and
+you're serving thousands of requests
+with a reasonably small number of
+running cont images because rust but
+you've got this background service this
+background service is only doing work
+when there's messages on the topic but
+other than that it's just sat there
+running 24 hours a day seven days a week
+not actually doing a lot and when you go
+and actually look at the resource
+consumption of the service even under Lo
+it's only using about 6% of the
+available CPU and about 1% of the
+available
+memory so you think well this seems like
+a perfect place to optimize
+which brings you to the truest
+definition of serverless services like
+Lambda services like a functions where
+reactivity is their superpower services
+that will scale up when there's work to
+do scale down when there's no work to be
+done and you only pay and use the
+resources when your code is actually
+[24:19]
+running you can hook your code up to
+some kind of event source that Event
+Source could be an API it could be a
+queue it could be a bus it could even be
+a cafa
+topic and when you think about functions
+as a service environments like Lambda
+they're fundamentally different ways of
+thinking about running applications
+instead of having a single running
+instance of your app where you've got
+multiple requests all being handled by
+that same running instance serverless
+environments typically restrict the
+concurrency that your application has so
+Lambda each environment that's running
+will only process one request at any one
+time Cloud run Google Cloud run allows
+you to configure that concurrency how
+many requests you want your app to be
+able to handle at any one
+which in practice makes your application
+look a little bit something like this
+you've got lots and lots of running
+instances of your application all
+handling a single Quest at a time and
+when you think about this as a model it
+really starts to look similar to how you
+might run iot devices R Edge
+[25:19]
+compute compute where you're pretty
+typically heavily resource constrained
+and you've got some application code
+that you need to run in a reasonably
+resource constrained
+environment indiv idual resource
+constrained environments where you want
+performance to be good sounds like a
+perfect place to bring back our crab
+shape superhero again this all sounds
+great doesn't it you've got this perfect
+place that seems to align really well
+with this reactive style of compute and
+you've got an application that needs to
+react to
+messages but when you actually look at
+your application cord your application
+Cod isn't really suitable for this your
+application Cod at the minute running
+inside a container is consum messages
+from the Kafka topic again this uses the
+Rd CFA create you set up a consumer
+where you configure a topic to consume
+from and then you call this receive
+function your codee's going to wait at
+this point until the message is received
+and once it's received it's actually
+going to call into your application code
+so you've got this long running process
+this long poll if you will once you're
+[26:19]
+actually processing an individual
+message all you really need to do is to
+deserialize the contents of the message
+you're going to pull that payload out of
+the the message on kafa deserialize that
+serialize that to a type relevant to
+your application and then just call into
+your business logic remember the way
+you've set your code up separates these
+things and then once all that's done you
+need to commit the message back to Kafka
+to move along where you're up to in that
+given
+partition this doesn't feel particularly
+ready to run in Lambda right so to
+understand what you need to do to get
+this ready to run in Lambda let's first
+understand more deeply how Lambda works
+and other functions as a service
+environments work in a similar way not
+identical
+so when a request comes into Lambda the
+execution life cycle is started and
+execution environment gets created your
+code gets downloaded the run time is
+started up the run time is initialized
+and then your application code runs the
+request is actually handled that
+initialization phase is what's known as
+[27:20]
+a cold start and if you're familiar with
+serverless you've probably seen people
+bashing cold starts all over the
+Internet what actually happens behind
+the scenes when you're first request
+comes into your Lambda function that
+execution life cycle is started so the
+application started up the request is
+handled and if a second request comes in
+whilst that first request is still in
+process another execution environment is
+created which sounds horribly
+inefficient right then if a third
+request comes in that third request well
+there's that first environment that's
+been created that's still in use these
+environments hang around for a little
+while so that third request will be
+handled by that same first environment
+which is what's known as a warm start
+that environment is being
+reused so because these environments are
+reused a little bit there's some
+patterns and practices you can use in
+your application code to make things
+more
+efficient when Lambda runs your rust
+application all it's going to do is
+download the binary the compiled binary
+and it's just going to run that code
+[28:20]
+which means you're still going to have a
+main function like you would in every R
+application in your main function you're
+going to want to configure anything that
+can be reused used with subsequent
+invokes setting up database connections
+downloading Secrets setting up your
+Telemetry all that thing that can be
+reused over and over again which
+actually is much the same as you would
+do if you were building a web app or a
+web API youd configure all the things up
+front and then you'd pass them as to the
+individual request to be
+used this last line of cord here is
+what's specific to the Lambda runtime
+this run function is actually going to
+start up the Lambda run time behind the
+scenes this is going to run a poll
+that's going to call the internal Lambda
+runtime apis and then it's going to
+actually invoke your function and then
+you just need to pass a function to this
+function that's then going to be called
+for each subsequent invoke and almost
+every Lambda function you'd ever write
+would look the same as this you're going
+to run that run function to start at the
+runtime and then you're going to pass it
+something to be called for each
+subsequent
+[29:22]
+invoke what actually happens behind the
+scenes is that the Lambda service
+manages a set of
+polers so a is managing these on your
+behalf you don't have to worry about
+these and it's these polers that are
+managing that interaction between Kafka
+and the Kafka topics and your Lambda
+function code these pollers are going to
+pull that message from the topic and
+they're going to invoke your
+function when these messages get P to
+your function of course that
+initialization phase is going to run if
+it needs to and then the actual function
+Handler is going to be
+called these function handlers will
+almost always have a very similar
+structure they'll always take at least
+Le one parameter and that parameter is
+going to be the actual payload of the
+event that comes in now Lambda functions
+are always invoked using a Json string
+as the
+payload but there's a really useful
+crate called AWS Lambda events which
+gives you types for all the different
+types of things that Lambda might
+receive so here you're receiving an
+[30:24]
+event it is a Lambda event of type CFA
+event if you were hooking this function
+up to say sqs that would be sqs
+event this allow the runtime will then
+automatically deserialize that payload
+that comes in and allow you to work with
+an actual time which you be
+useful notice you are then iterating
+over some
+stuff the pols will always invoke your
+Lambda function with a batch of messages
+if you were to connect two topics to the
+same function and then both them topics
+had multiple partitions you would
+receive them as separate batches so
+you'd get a top level batch for the
+different topics and then You' get sub
+vectors for the individual
+partitions and then of course you need
+to go through and you need to process
+the messages that you've received so
+your function handle the code when you
+process a message is going to
+deserialize the individual message that
+comes into Lambda and then it's going to
+call into your business
+logic now when you look at these two
+things side by side the one on the left
+[31:24]
+being the one from your container Runner
+the one on the right being the code from
+Lambda they're actually pretty similar
+in your container image You're simply
+calling the receive function to receive
+things from the CFA Topic in Lambda the
+Paul is doing that on your behalf and
+then you're deserializing the message
+and you're calling into your business
+logic of course in lamba you don't need
+to commit the message back to CFA
+because the polers are going to do that
+on your behalf providing your function
+complete
+successfully because of the way you've
+structured your cord base it gives you
+this ability to move your code around
+your core business logic is captured in
+that core
+crate that contains traits for your data
+access layers maybe your actual data
+access code and then the backend and web
+crates simply contain entry points if
+you will things that are handling the
+specifics about that specific way you're
+choosing to run your app this is what
+would be known as the ports and adapters
+or hexagonal architecture style of
+Building
+[32:24]
+Systems so now if you want to switch to
+a different compute provider you want to
+switch to a different adapter you simply
+just need to add a different entry point
+deal with the specifics of that specific
+way you're choosing to run your cord and
+then just call into your business logic
+it's this that gives you flexibility
+it's this that helps you avoid vendor
+locking so what you've ended up with
+here is actually a really powerful
+pattern in modern software systems
+you've got a long running container
+image handling web traffic giving your
+users that really fast really performant
+API and then you've got some reactive
+style of compute spinning up and
+spinning down when there's work to be
+done it's a really nice pattern and the
+way you've built that gives you
+portability because of the way you've
+structured your core base and you've
+designed your application portability
+has become a first class citizen which
+gives you the ability to move up and
+down that spectrum of compute options as
+you maybe start to understand your
+workload better maybe your team grows
+[33:24]
+maybe your CTO decides that you need to
+start doing platform engineering because
+platform engineering is cool you can do
+that some of the best success stories
+I've heard in the serverless world are
+teams who've started off with serverless
+and then as they've learned more about
+their applications they've moved that
+application to run somewhere
+else think think keeping that in mind
+when you start building helps you
+consider doing
+that but what about performance we've
+got them horribly inefficient cold
+starts happening right how is that going
+to affect the performance of our
+applications so here's the numbers of
+the application running on faret this is
+the time taken to process an individual
+message remember this is a container
+running with 512 megab of
+memory when you port this application
+code to Lambda you notice the
+performance doesn't really change at all
+this has now got 128 megabytes of memory
+so you're already using a fifth of the
+memory to process requests now this is
+just the time taken to process the
+[34:24]
+message member what about those
+initializations those code start surely
+they're going to really affect things
+so when you generated these numbers
+there were 850 invokes of your Lambda
+function and the average initialization
+took 330
+milliseconds so the slowest message
+processing in your system was 732 with
+the time taken to process the message
+plus the initialization which is about a
+second which well for a backend system
+might be okay but it's not
+ideal what you realize when you look at
+this though is that out of them 850
+books only three of them were cold
+starts only three initializations
+happened only three requests got
+anywhere near that 1
+second the p50 was still 300
+milliseconds this is the big win now
+you're starting to move towards
+sustainability even when all three of
+them environments are active with 128
+Mega of memory each you're still using
+less than your 512 and remember this
+[35:26]
+compute is only running when there is
+so this is becoming a bit of a win for
+sustainability now right you're starting
+to use resources only when they need to
+be
+used but you think what about this web
+app you've still got a web app running
+24 hours a day 7even days a week that
+they're waiting to do stuff even if
+there's nothing there to be done could
+this potentially move as
+well and that's when you notice that
+this run function that the Lambda
+runtime uses all that run function needs
+is something that conforms to the Tower
+Service
+tray and you also realize that the ax
+and web framework is also built on top
+of
+tower which means your web API built
+with axom can actually run inside Lambda
+as it
+is so in your startup code for your web
+app you can simply check if the Lambda
+task rout envir environment variable
+exists this will only exist if the code
+[36:28]
+is running inside Lambda and if it is
+is run the application inside Lambda of
+course if it isn't running inside Lambda
+then you need to start up your API as
+normal so how is that going to affect
+performance surely that's going to
+dramatically affect the performance of
+the API you can probably see what's
+coming here so these are the numbers for
+the API running on fargate the latency
+the response time Max response time 420
+milliseconds funny to think when you run
+this web app in Lambda the performance
+hasn't really degraded at all again
+really all you've done is shifted the
+memory from 512 Meg to 128 Meg so you're
+already using less resources and you're
+only using them when there's work to be
+done what about those cold starts there
+were
+1,350 invokes of your Lambda function
+over the time you run this analysis the
+average cold start time was 5503
+milliseconds so the total Max latency
+for your web app is just under a second
+which isn't ideal of course but only
+four of them
+[37:28]
+1,350 invokes where Cod
+starts at scale you start to see less
+and less Cod starts so now it can be
+really time to start to celebrate
+because now you're building an
+application that's only using resources
+when there's work to be done the
+application is still performing and it's
+safe and it's now that you realize that
+you're never going to need to worry
+about accidentally turning off a server
+again you're never going to need to
+worry about upgrading a kubernetes
+cluster or doing any infrastructure
+things that frankly a lot of us don't
+enjoy doing and you find yourself
+reflecting and thinking back to oah
+Winfrey Oprah's a wonderful person of
+course but in this case I'd say she's
+probably wrong because it is possible to
+have all
+three and remember I said at the start
+I'm pretty new to rust and I've been
+thinking about something Tim said in
+yesterday's keynote that the Russ
+language is there to empower everyone to
+build build reliable and efficient
+software I'd actually argue that serous
+[38:29]
+gives you that empowers everyone to
+deploy reliable and resilient software
+it democratizes building reliable
+scalable systems whether you are just
+starting out in a startup you're
+building a hobby project or you're
+building large scale systems servus can
+help you build that and maybe as you
+start to scale as your team grows maybe
+you do eventually choose to step out to
+kubernetes once you understand your
+workload better but next time you're
+looking to deploy a rust application
+into production just consider serous see
+how that might help
+you all the code samples for this talk
+are available on GitHub as I said
+earlier this is a real application you
+can go and deploy it and to kind of
+demonstrate this portability argument
+you can actually run the exact same
+application on ads on GTP on aure on fly
+iio there's a various different Services
+you can run this application as a sneak
+preview there's also an example in the
+repository using a fully serverless
+cache so I added a cache to this as well
+using a wonderful company called momento
+which changes the performance numbers to
+[39:29]
+something like
+this consistent double digit millisecond
+response times so pretty cool I'm also
+writing a book at the minute on Lambda
+functions and rust if you're interested
+in building with AWS specifically you
+can get that on Early Access now um it
+we've written about six chapters so the
+book's not complete you can get a
+discount because of that and you can
+also get an additional discount because
+it is Russ lab so why not and finally
+[Applause]
+thank you
+

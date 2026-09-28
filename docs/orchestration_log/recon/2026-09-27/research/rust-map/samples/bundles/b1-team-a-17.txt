@@ -1,0 +1,2429 @@
+=== ROW 137 | f007659 | https://maahl.net/blog/rust-aws-lambda | 2023-11-29T00:00:00 | individual-blogs;twir-links ===
+Create a Lambda in Rust using Terraform - maahl.net
+maahl.net
+Home
+CV
+Projects
+Create a Lambda in Rust using Terraform
+2023-11-05
+This blog entry will take you through the steps of creating an AWS Lambda in Rust, and
+deploying it to AWS via Terraform.
+The code showed in this article is hosted on Github.
+Each section has its own commit, so you can easily follow along with the repo.
+I am very much a beginner in Rust, so any feedback or suggestion for improvement is most
+welcome.
+We will assume that you have rust already set up, as well as Terraform and the AWS CLI.
+Those three commands shouldn't error out:
+cargo --version # 1.73.0 for me
+terraform -version # 1.6.3
+aws sts get-caller-identity --profile <your_profile>
+You can initialize a project with:
+cargo new rust-aws-lambda
+cd rust-aws-lambda
+Git commit
+The core function
+Let's start by implementing the core functionality of our lambda: it will greet either a
+name if provided, or "stranger".
+Edit src/main.rs:
+fn say_hello(name: Option<&str>) -> String {
+let name = name.unwrap_or("stranger");
+format!("Hello, {name}!")
+}
+fn main() {
+let response = say_hello(Some("world"));
+println!("{}", response);
+}
+You can try out the code with cargo run.
+To ensure that our function behaves as intended, we'll add some unit tests to it.
+The tests cover both the case where a name is provided, and not.
+#[cfg(test)]
+mod tests {
+use super::*;
+#[test]
+fn test_name_provided() {
+let name = "world";
+let result = say_hello(Some(name));
+assert_eq!(format!("Hello, {name}!"), result);
+}
+#[test]
+fn test_no_name_provided() {
+let result = say_hello(None);
+assert_eq!("Hello, stranger!".to_owned(), result);
+}
+}
+The tests can be run with cargo test.
+Git commit
+Cargo Lambda
+The Rust runtime for Lambda is
+best interacted with using Cargo Lambda.
+This tool will let you build and run your function locally, including with
+hot-reloading. It can also be used to bootstrap a lambda or deploy it, but we won't use
+these capabilities here.
+A note on cargo lambda deploy: unfortunately, the Rust AWS SDK does not implement
+sso_session yet.
+If, like me, sso_session is how you authenticate to AWS from the command line, you're out of luck.
+Support for it might come soon,
+though.
+If I remember by the time that is released, I will edit this post to include details
+on how to use Cargo Lambda's deploy function.
+Check out the installation
+method that best suits you, but
+keep in mind that you will likely want to use an installation method that also provides
+zig, for handling cross-compilation.
+I went for pip:
+pip3 install cargo-lambda
+Once cargo-lambda is installed, we can get started on wrapping our core function in
+Lambda-related stuff.
+Interacting with the Lambda runtime
+The Lambda runtime expects an async function that takes as parameter a LambdaEvent and
+returns some JSON.
+We will thus have to add a few dependencies to our project: an async runtime, the Lambda
+runtime, and serde, to serialize our response to JSON.
+cargo add lambda_runtime tokio serde_json
+Our core function needs to be wrapped in a function whose role will be to extract the
+relevant values from the incoming Lambda event, call our core function, and convert its
+response to JSON.
+async fn run_lambda(event: LambdaEvent<Value>) -> Result<Value, Error> {
+let (event, _context) = event.into_parts();
+let name = event["name"].as_str();
+let result = say_hello(name);
+Ok(json!(result))
+}
+Our main function must be updated to run the wrapper, which requires it to be async and
+return a Result.
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+lambda_runtime::run(service_fn(run_lambda)).await
+}
+At this point, cargo run won't do you much good anymore. Cargo Lambda will help us
+instead, by spawning a web server that will listen to incoming requests, and invoke the
+Lambda to process them. It will also recompile and hot-reload the Lambda upon detecting
+a change in its source files. You will also see any log messages in the output of the
+server.
+cargo lambda watch
+cargo lambda invoke rust-aws-lambda --data-ascii '{}'
+cargo lambda invoke rust-aws-lambda --data-ascii '{ "name": "world" }'
+The wrapper should also be tested, using the tokio::test attribute instead of the
+usual test, as it is async.
+#[tokio::test]
+async fn test_wrapper_name_provided() {
+let name = "world";
+let event = LambdaEvent::new(json!({ "name": name }), Context::default());
+let expected_result = json!(format!("Hello, {name}!"));
+let result = run_lambda(event).await;
+assert!(result.is_ok());
+let result = result.unwrap();
+assert_eq!(result, expected_result);
+}
+#[tokio::test]
+async fn test_wrapper_no_name_provided() {
+let event = LambdaEvent::new(
+json!({ "meaningless_key": "meaningless_value" }),
+Context::default(),
+);
+let expected_result = json!(format!("Hello, stranger!"));
+let result = run_lambda(event).await;
+assert!(result.is_ok());
+let result = result.unwrap();
+assert_eq!(result, expected_result);
+}
+Git commit
+A more structured response
+At the moment, our response doesn't go through any validation: we could send back a JSON
+of any structure.
+We can, however, leverage Rust's strong typing to do the work for us. We just need
+to make our core function return a structure that can be serialized to JSON.
+cargo add serde # for the Serialize trait#[derive(Debug, PartialEq, serde::Serialize)]
+struct HelloResponse {
+message: String,
+}
+fn say_hello(name: Option<&str>) -> HelloResponse {
+let name = name.unwrap_or("stranger");
+HelloResponse {
+message: format!("Hello, {name}!"),
+}
+}
+The tests will also need some adjustments that you can find in the
+git commit.
+Logging and tracing
+To gain some visibility into how our Lambda operates, we should add some tracing to it.
+Tracing is basically structured logging, and where a log line represents a moment in
+time, a trace represents a period of time. The tracing
+docs explain the concept better than I could.
+cargo add tracing --features log
+cargo add tracing-subscriber --features fmt,env-filter
+We just need to initialize the tracing subscriber in our main function:
+async fn main() -> Result<(), Error> {
+tracing_subscriber::fmt()
+.with_max_level(tracing::Level::INFO)
+.with_ansi(false) // no colors as they look messed up in Cloudwatch
+.init();
+[...]
+I've only included some basic options, but this
+page contains a number
+of useful ones that you can experiment with. The output of this project will definitely
+contain some redundant information when the logs are sent to Cloudwatch.
+In order to use the tracing framework, we add the instrument attribute to the wrapper
+function.
+This will create a span for each invocation of the lambda, and any log event sent from
+within that function will be assigned to the corresponding span.
+#[tracing::instrument()]
+async fn run_lambda(event: LambdaEvent<Value>) -> Result<Value, Error> {
+let (event, context) = event.into_parts();
+tracing::info!(event = ?event, context = ?context);
+[...]
+Git commit
+Deploy with Terraform
+A simple Terraform snippet can create our Lambda function and everything else it needs
+on AWS.
+I added it to infra/rust_lambda.tf:
+module "lambda_function" {
+source = "terraform-aws-modules/lambda/aws"
+function_name = "rust-aws-lambda"
+description   = "Create an AWS Lambda in Rust with Terraform"
+runtime       = "provided.al2"
+architectures = ["arm64"]
+handler       = "bootstrap"
+create_package         = false
+local_existing_package = "../target/lambda/rust-aws-lambda/bootstrap.zip"
+}
+I used this Terraform
+module
+for convenience, as it also handles all the boilerplate, such as a Cloudwatch log group,
+an IAM role and a policy.
+Of course, if you need to tailor these to your needs, you can adjust the arguments to
+that module, or create those resources yourself.
+We need to use the provided.al2 runtime, and I chose the arm64 architecture, as it
+should be cheaper, according to
+AWS:
+Lambda functions that use arm64 architecture (AWS Graviton2 processor) can achieve
+significantly better price and performance than the equivalent function running on
+x86_64 architecture.
+The Lambda must be compiled for arm64 and zipped. Cargo Lambda can help us once again,
+provided you have Zig available (should have been installed along with Cargo Lambda if
+you chose a suitable installation method).
+cargo lambda build --release --arm64 --output-format zip
+You can then create your infrastructure with the following commands:
+terraform -chdir=infra init
+AWS_PROFILE=<your_profile> terraform -chdir=infra plan
+# make sure the plan makes sense to you
+AWS_PROFILE=<your_profile> terraform -chdir=infra apply
+Going to the AWS Lambda console will allow you to test your Lambda with a custom event,
+which should now work.
+Git commit
+Automatically recompiling the Lambda in Terraform
+The Lambda at this stage is not automatically recompiled when we run terraform apply,
+we have to do that ourselves by re-running the cargo lambda build command.
+This should be solvable by making the lambda depend on a
+null_resource
+(or
+terraform_data
+from terraform 1.4), that will be triggered on changes to any of the source files.
+I tried to do that, but I started running into issues of Provider produced inconsistent final plan.
+While investigating that, I stumbled upon this
+comment by
+a member of the Hashicorp github organization, which explains that building artifacts is
+kinda supported but not really encouraged, and that the recommended way is to build
+stuff in a separate build step before terraform comes into play, so we're gonna do that.
+Here's the code for my failed attempt, in case you want to take a stab at it yourself:
+locals {
+# compute the list of all the files that might affect the lambda
+lambda_source_files = concat(
+[
+"../Cargo.toml",
+"../Cargo.lock",
+],
+tolist(fileset(".", "../src/**"))
+)
+# compute the hashes of each of these files
+lambda_source_files_hashes = {
+for source_file in local.lambda_source_files :
+source_file => sha256(file(source_file))
+}
+}
+# regenerate the release zip when a change to the source code is detected
+resource "terraform_data" "build_lambda" {
+triggers_replace = local.lambda_source_files_hashes
+provisioner "local-exec" {
+working_dir = ".."
+command     = <<-EOT
+cargo lambda build --release --arm64 --output-format zip
+EOT
+}
+}
+This will also need a depends_on = terraform_data.build_lambda in the
+module.lambda_function resource.
+Dockerize the Lambda
+If, for some reason, you need to run your Lambda from within a Docker image, this
+Dockerfile should get you going:
+# Use a multi-stage build to minimize the size of the final image
+FROM rust:1.70-bookworm AS builder
+WORKDIR /build
+# Installing cargo lambda with pip also installs zig
+RUN apt update && \
+apt install -y python3-pip && \
+pip3 install cargo-lambda --break-system-packages
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo lambda build --release --arm64
+# The final image will only contain the resulting binary
+FROM public.ecr.aws/lambda/provided:al2-arm64
+COPY --from=builder /build/target/lambda/rust-aws-lambda/bootstrap /bootstrap
+ENTRYPOINT ["/bootstrap"]
+Build it with:
+docker build -t rust-aws-lambda .
+The multi-stage build allows us to minimize the size of the final image: from 2.64GB when
+everything is done in a single image without cleanup, to 343MB with the multi-stage
+build, where the final image only contains the compiled binary.
+cargo-chef is a tool that
+allows caching compiled dependencies. I tried to fiddle with it to get it to work in
+combination with cargo-lambda, unfortunately unsuccessfully; the cargo lambda build
+command was not making use of the pre-built dependencies.
+If you manage to get that to work, I'm all ears!
+Cargo chef supports compiling with cargo-zigbuild, and setting the target
+architecture, so in theory getting both tools to play nicely with each other sounds
+possible.
+Git commit
+Deploying the containerized Lambda with Terraform doesn't have anything specific to
+Rust, so I'll just refer you to this blog
+post
+that explains the process for any dockerized lambda.
+Bonus performance improvements
+After I posted a link to this post on Reddit,
+u/HenryQFnord gave some useful
+feedback to improve
+this code.
+First off, we can configure our release build by adding this section to Cargo.toml:
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"
+opt-level = "z" tells the compiler to optimize for binary size.
+lto stands for "link-time optimization", and setting it to true (same as
+setting it to fat) enables optimizing for binary size across all of the crates in the
+project's dependency graph, at the cost of compile time.
+codegen-units controls the number of parallel jobs used to compile crates, which
+speeds up compilation but means we may miss out on some optimizations. Setting it to 1
+means we'll get the best possible optimizations, again at the cost of compile time.
+panic = "abort" is useful if you don't need to clean up any resource after a panic
+(which can be done in a
+catch_unwind): it will
+skip the unwinding phase entirely.
+strip = "debuginfo" will strip the debug symbols from the binary, which will reduce
+its size. You can also set this to symbols, but the gains aren't nearly as dramatic.
+Adding all of these options took us from a 3.6MB binary to a 1.8MB one, which should
+speed up the cold start of the Lambda. According to my very scientific tests consisting
+of measuring cold start times a couple of times for both versions, we went from 20ms on
+average without the optimizations to 17ms on average. That's not much, but the effect
+should be a lot more noticeable on larger programs with more dependencies; our Lambda is
+as barebones as it gets.
+You can read more about each of these options and more
+here.
+Git commit
+Finally, we can slightly improve the configuration of the tracing crate.
+We can disable its ansi feature since we won't be using it anyway, by disabling the
+default features in Cargo.toml:
+tracing-subscriber = { version = "0.3.17", default-features = false, features = [
+"fmt",
+"env-filter",
+"json",
+] }
+We can also make it output JSON logs, disable some redundant information and make it
+configurable via environment variables:
+tracing_subscriber::fmt()
+.json()
+.with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
+.with_max_level(tracing::Level::INFO)
+.with_target(false)
+.with_current_span(false)
+.without_time()
+.init();
+Git commit
+Conclusion
+I'm a mere beginner in Rust and AWS, and I've sometimes struggled to find documentation
+on how to piece some components together.
+I hope this blog post will fill in some of the gaps for other people, and I'm very open
+to feedback and suggestions for improvement.
+
+=== ROW 138 | f007703 | https://rust.code-maven.com/rocket-hello-world | 2023-12-27T00:00:00 | individual-blogs;twir-links ===
+Rocket: Web-based Hello World! with tests
+Home
+Tags
+Newsletter
+Projects
+Training
+Archive
+About
+Rocket: Web-based Hello World! with tests
+get
+mount
+build
+web
+Part of the series about the Rocket web framework.
+Create crate
+In order to have a Rocket, we need to create a regular Rust crate.
+cargo new hello-world
+cd hello-world
+Setup dependencies
+Add
+rocket = "0.5.0"
+to the Cargo.toml file:
+examples/rocket/hello-world/Cargo.toml
+[package]
+name = "hello-world"
+version = "0.1.0"
+edition = "2021"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+rocket = "0.5.0"
+Setup the use of the macros
+#[macro_use]
+extern crate rocket;
+Route
+Define a route and what it should do and return.
+#[get("/")]
+fn index() -> &'static str {
+"Hello, world!"
+}
+This create a route that will handle any GET request arriving to the root of the site: /.
+The function will be executed and the return value of the function will be returned to the
+client.
+Map the routes
+#[launch]
+fn rocket() -> _ {
+rocket::build().mount("/", routes![index])
+}
+This maps the "/" request to the index function. At first it is strange that we need to define the mapping of urls twice,
+but later we'll see how this can be actually useful.
+run the application
+Just type in
+cargo run
+It will compile the code and start running the server listening on port 8000 by default.
+Visit http://localhost:8000/ with your browser to see "Hello world!.
+Content-type is text/plain
+Using the curl command with the -i flag will show both the header and the content of the response.
+We can see that the content-type returned was text/plain.
+$ curl -i http://localhost:8000
+HTTP/1.1 200 OK
+content-type: text/plain; charset=utf-8
+server: Rocket
+x-content-type-options: nosniff
+x-frame-options: SAMEORIGIN
+permissions-policy: interest-cohort=()
+content-length: 13
+date: Fri, 22 Dec 2023 10:13:03 GMT
+Hello, world!
+Testing the application
+Before we end this example, let's see how can we test if it works properly.
+This is the testing code that goes into the src/main.rs file.
+It sets up a fake client and uses that to GET a url (by calling the get method.
+We then verify that the status code is 200 OK and we compare the received content to the expected content.
+#[cfg(test)]
+mod test {
+use rocket::http::Status;
+use rocket::local::blocking::Client;
+#[test]
+fn hello_world() {
+let client = Client::tracked(super::rocket()).unwrap();
+let response = client.get("/").dispatch();
+assert_eq!(response.status(), Status::Ok);
+assert_eq!(response.into_string(), Some("Hello, world!".into()));
+}
+}
+The full example
+examples/rocket/hello-world/src/main.rs
+#[macro_use]
+extern crate rocket;
+#[get("/")]
+fn index() -> &'static str {
+"Hello, world!"
+}
+#[launch]
+fn rocket() -> _ {
+rocket::build().mount("/", routes![index])
+}
+#[cfg(test)]
+mod test {
+use rocket::http::Status;
+use rocket::local::blocking::Client;
+#[test]
+fn hello_world() {
+let client = Client::tracked(super::rocket()).unwrap();
+let response = client.get("/").dispatch();
+assert_eq!(response.status(), Status::Ok);
+assert_eq!(response.into_string(), Some("Hello, world!".into()));
+}
+}
+Related Pages
+Rocket: Hello World with tests in separate file
+Rocket - web development with Rust
+Rocket - logging in the web application
+Author
+Gabor Szabo (szabgab)
+Gabor Szabo, the author of the Rust Maven web site maintains several Open source projects in Rust
+and while he still feels he has tons of new things to learn about Rust he already offers training courses in Rust
+and still teaches Python, Perl, git, GitHub, GitLab, CI, and testing.
+Get extra content and notifications in the Rust Maven newsletter!. source
+
+=== ROW 139 | f007736 | https://medium.com/@sam.van.overmeire/rust-macros-taking-care-of-some-lambda-boilerplate-96244d9e1924 | 2024-01-17T00:00:00 | individual-blogs;twir-links ===
+Rust macros taking care of some Lambda boilerplate | by Sam Van Overmeire | Medium
+1 capture
+22 May 2025
+Apr
+MAY
+Jun
+22
+2024
+2025
+2026
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20250522055750/https://medium.com/@sam.van.overmeire/rust-macros-taking-care-of-some-lambda-boilerplate-96244d9e1924
+Sitemap
+Open in app
+Sign up
+Sign in
+Medium Logo
+Write
+Sign up
+Sign in
+Rust macros taking care of some Lambda boilerplate
+Sam Van Overmeire
+Follow
+5 min read
+·Jan 10, 2024
+--
+1
+Listen
+Share
+Bing Image Creator, with prompt: “The Rust crab sitting behind his desk thinking about writing a blog about Rust macros for AWS Lambda”
+When you have a shiny golden hammer, you go looking for nice nails to hit.
+While I was writing my Rust macros book, I was thinking of how to use those macros to really nail setting up an AWS Lambda. Why? Well, look at this example from the AWS documentation on how you can write a simple Lambda function with tracing in Rust.use lambda_runtime::{service_fn, Error, LambdaEvent};
+use serde_json::{json, Value};
+#[tracing::instrument(skip(event), fields(req_id = %event.context.request_id))]
+async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
+// do stuff
+}
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+tracing_subscriber::fmt().json()
+.with_max_level(tracing::Level::INFO)
+.with_current_span(false)
+.with_ansi(false)
+.without_time()
+.with_target(false)
+.init();
+lambda_runtime::run(service_fn(handler)).await
+}
+There is definitely boilerplate here. Basically, we create a main function, set up tracing, and call the function that will serve as our ‘handler’. The reason for separating our code into at least two functions is the way Lambda works under the hood. In all its implementations, your code will have a handler function that runs every time the Lambda is invoked and a bit outside that handler that will run once every time AWS has to create a ‘container’ for your code to run in.
+This is useful, because you may have to do some expensive setup that could serve multiple invocations. If you have to connect to a database, that could take a relatively long time and there is little reason to assume that connections would suddenly become unusable when your code is invoked a second or third time.
+In Javascript or Python, simply putting initialization logic outside of your handler function will make it run once per ‘container creation’. In Java, you typically put that code inside the handler class, but outside the handler method. In Rust’s case, the obligatory main was a logical choice for expensive ‘one-time’ operations. In that scenario, the ability to customize both handler and main function is definitely valuable. For example, the following code fragment shows how to create an S3 client, passing it to our handler.async fn handler(client: &Client, event: LambdaEvent<Request>) -> Result<Response, Error> {
+// do stuff like getting keys from the bucket
+Ok(Response { keys })
+}
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+let shared_config = aws_config::from_env().load().await;
+// create an S3 client
+let client = Client::new(&shared_config);
+// and pass a reference to the handler
+let shared_client = &client;
+lambda_runtime::run(service_fn(move |event: LambdaEvent<Request>| async move {
+handler(&shared_client, event).await
+}))
+.await
+}
+But we are getting ahead of ourselves. In this blog post, we focus on the simplest case: using a procedural macro to get rid of all boilerplate from the first code example. In that particular setup everything inside main looks like boilerplate. Only the code within the handler is interesting.
+We will need to pick a suitable procedural macro. A derive macro would be great in theory since it only adds things, e.g. a main, without manipulating existing code. But unfortunately, we can’t use derive on a function. (And while we could create a struct with a handler method to circumvent this restriction, that raises other problems.) So we’ll go with an attribute macro.
+Before continuing: would you ever want to use a macro like this? For real applications: default to no. In most cases, either the boilerplate won’t be that much of a bother, or you will want to do some custom things like initializations in your main function (see the next blog post, though!). On the other hand, if you have a lot of very simple Lambdas, if you have a very low tolerance for boilerplate, or if you like to experiment a bit with Rust macros and serverless, this might be just the thing for you.
+To get started, we need to create a new Rust library, which we can do with cargo init --lib. The generated Cargo.toml has to declare that this is a procedural macro. We will also want to add two dependencies, syn and quote to make our lives easier.[dependencies]
+quote = "1.0.35"
+syn = "2.0.48"
+[lib]
+proc-macro = true
+Next, lib.rs, which contains the implementation, has only 29 lines for this naive implementation. You can see that this specific Lambda example had a high ratio of boilerplate to business code, as the macro needs very little input to spit out quite a few lines of code.use quote::quote;
+use syn::{ItemFn};
+use proc_macro::TokenStream;
+#[proc_macro_attribute]
+pub fn lambda_setup(_: TokenStream, input: TokenStream) -> TokenStream {
+let item: ItemFn = syn::parse(input.clone()).unwrap();
+let function_name = &item.sig.ident;
+quote!(
+#[tokio::main]
+async fn main() -> Result<(), lambda_runtime::Error> {
+tracing_subscriber::fmt()
+.with_max_level(tracing::Level::INFO)
+.with_current_span(false)
+.with_ansi(false)
+.without_time()
+.with_target(false)
+.init();
+lambda_runtime::run(lambda_runtime::service_fn(#function_name))
+.await?;
+Ok(())
+}
+#item
+).into()
+}
+The annotation tells Rust that this is an attribute macro. That means it takes two parameters, both of type TokenStream. We only need the second argument, which contains the function we annotated as a stream of tokens. Using the parse function from syn, we change this stream into an ItemFn struct, perfect for representing functions. We could also have gone for custom parsing, because as you can see we only need one thing from that entire input: the name of the function, which can be found in its signature (sig). We require this function_name because our main needs to know which function is the handler, as we saw in the example.#[tokio::main]
+async fn main() -> Result<(), Error> {
+// tracing setup...
+lambda_runtime::run(service_fn(handler)).await
+}
+Back to the macro implementation. With quote we return the generated main, invoke the function by its name, and re-add the original input. Since this is an attribute macro, forgetting the last step erases the original function, causing compilation to fail. Plus, erasing the function is probably not what the user wants…
+That’s it. Now we need to add the macro to our application. In my case, the library is in a nested directory of the example, so my application’s Cargo.toml needs a relative path:[dependencies]
+# path to the macro
+rust-lambda-macro = { path = "./rust-lambda-macro" }
+# other dependencies
+aws-config = { version = "1.1.1" }
+lambda_runtime = "0.9.0"
+serde = "1.0.195"
+serde_json = "1.0.111"
+tokio = { version = "1", features = ["macros"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+Next, add the attribute to the handler function.use serde::{Deserialize, Serialize};
+use lambda_runtime::{Error, LambdaEvent};
+use rust_lambda_macro::lambda_setup;
+// not using any of the input
+#[derive(Deserialize)]
+struct Request {}
+// return something simple in our response
+#[derive(Serialize)]
+struct Response {
+pet: String,
+}
+// put the macro on our handler
+#[lambda_setup]
+async fn func(_: LambdaEvent<Request>) -> Result<Response, Error> {
+Ok(Response {
+pet: "cat".to_string()
+})
+}
+// no main, no cry!
+You can now build and deploy the Lambda to your AWS account, e.g. by using cargo lambda: cargo lambda build — release && cargo lambda deploy — iam-role arn:aws:iam::{account}:role/{role}.
+When invoked, your Lambda should complete successfully. But it will only keep working as long as your code stays simple and you don’t need additional dependencies, like, for example, a client for calling DynamoDB.#[lambda_setup]
+async fn func(client: aws_sdk_dynamodb::Client, _: LambdaEvent<Request>) -> Result<Response, Error> {
+Ok(Response {
+pet: "cat".to_string()
+})
+}
+Because you will get the following error:error[E0593]: function is expected to take 1 argument, but it takes 2 arguments
+--> src/main.rs:13:1
+|
+13 | #[lambda_setup]
+| ^^^^^^^^^^^^^^^ expected function that takes 1 argument
+14 | async fn func(client: aws_sdk_dynamodb::Client, _: LambdaEvent<Request>) -> Result<Response, Error> {
+| --------------------------------------------------------------------------------------------------- takes 2 arguments
+Fixing that is for next time. :)
+Rust
+Rust Programming Language
+AWS
+Aws Lamb
+--
+--
+1
+Follow
+Written by Sam Van Overmeire
+53 followers
+·18 following
+Medium keeps bugging me about filling in a Bio. Maybe this will make those popups go away.
+Follow
+Responses (1)
+See all responses
+Help
+Status
+About
+Careers
+Press
+Blog
+Privacy
+Rules
+Terms
+Text to speech
+
+=== ROW 140 | f007797 | https://medium.com/@sam.van.overmeire/deploying-axum-to-lambda-and-ecs-using-lambda-web-adapter-2273bd56bb81 | 2024-02-21T00:00:00 | individual-blogs;twir-links ===
+Deploying Axum to Lambda and ECS, using Lambda Web Adapter | by Sam Van Overmeire | Medium
+1 capture
+05 Mar 2025
+Feb
+MAR
+Apr
+05
+2024
+2025
+2026
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20250305091027/https://medium.com/@sam.van.overmeire/deploying-axum-to-lambda-and-ecs-using-lambda-web-adapter-2273bd56bb81
+Open in app
+Sign up
+Sign in
+Write
+Sign up
+Sign in
+Deploying Axum to Lambda and ECS, using Lambda Web Adapter
+Sam Van Overmeire·
+Follow
+7 min read
+·Feb 16, 2024
+--
+1
+Listen
+Share
+Bing Image Creator, with prompt: “The Rust crab running code inside a container”
+AWS Lambda Web Adapter is “A tool to run web applications on AWS Lambda”. It allows you to build a REST API with tooling that you are probably already familiar with, deploying it on Lambda without any changes to your application code. In this blog post, we will use this tool with Axum, deploying the application to both Lambda and ECS.
+Let’s start by looking at the Rust code. Our application exposes two GET endpoints. The root endpoint returns a simple ‘hello world’, while /pet requires the owner as a path parameter and retrieves the pet from our database, based on its owner. (If you’ve read my blog posts on Lambda and Rust macros, you’ll notice that I’m being lazy here. I’m reusing some code — and the database — from those blogs.)
+For the API itself, we need Axum and Tokio as dependencies, with the tower dependency used for testing. Because our response will be JSON, we also need Serde. AWS config and the DynamoDB SDK are required for talking to our database.[dependencies]
+axum = {  version = "0.7.4" }
+tokio = { version = "1.20.4", features = ["full"] }
+aws-config = { version = "1.1.1" }
+aws-sdk-dynamodb = "1.9.0"
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+Our code is some forty lines long. In app, we set up our DynamoDB client and pass it as state to our Axum Router. We also configure our two endpoints in that Router. The first endpoint is defined inline, but the second one is a separate function, get_pet, which takes the owner from Path and uses the database from the state to retrieve the pet. In main, we create the app and expose it on port 8080. For simplicity’s sake, there are a lot of unwraps in the example code. Please use proper error handling for production code.// imports
+#[derive(Serialize)]
+struct Response {
+pet: String,
+}
+struct AppState {
+db_client: Client
+}
+async fn get_pet(Path(payload): Path<String>, State(state): State<Arc<AppState>>) -> (StatusCode, Json<Response>) {
+let response = &state.db_client.get_item()
+.table_name("example-with-names")
+.key("name".to_string(), AttributeValue::S(payload))
+.send()
+.await
+.unwrap();
+let pet = response.item.as_ref().unwrap().get("pet").unwrap().as_s().unwrap().to_string();
+(StatusCode::OK, Json(Response { pet }))
+}
+async fn app() -> Router {
+let config = aws_config::load_defaults(aws_config::BehaviorVersion {}).await;
+let client = Client::new(&config);
+let shared_state = Arc::new(AppState { db_client: client });
+Router::new()
+.route("/", get(|| async { "Hello, world!" }))
+.route("/pet/:owner", get(get_pet))
+.with_state(shared_state)
+}
+#[tokio::main]
+async fn main() {
+let app = app().await;
+let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+axum::serve(listener, app).await.unwrap();
+}
+Because we do not initialize the Router within main, this code is fairly easy to unit test.#[cfg(test)]
+mod tests {
+use axum::body::Body;
+// more imports...
+#[tokio::test]
+async fn test_get_root() {
+let app = app().await;
+let response = app
+.oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+.await
+.unwrap();
+assert_eq!(response.status(), StatusCode::OK);
+}
+}
+Testing the pet endpoint would require more work, but is very doable. Depending on our preferences we could hide the concrete database behind a trait, allowing us to ‘mock’ the client, or we could run DynamoDB locally.
+What is cool, is that we can run the application with a simple cargo run and everything will work, though you do need valid AWS credentials for calling the pet endpoint. We can also use cargo lambda build — release — arm64 (or similar) to build our project as an executable, and put it in a Dockerfile:FROM rust:1.75.0-buster
+EXPOSE 8080
+COPY output/bootstrap .
+ENTRYPOINT [ "./bootstrap" ]
+We start from a rust-buster image (smaller images would work as well, but might require more setup), expose our port, copy the cargo lambda output, and make it our entry point. After building the image, we can run docker run -p 8080:8080 name-of-the-image and see the output of our API:
+Root endpoint response from cargo or docker
+Ok, so how about deploying our solution to AWS? We can use the CDK for that, putting its code in an infra directory. We create a ‘LambdaStack’ to take care of the details for us. This Stack builds a Rust Lambda based on our zipped bootstrap. We allow Lambda to call DynamoDB and create an API Gateway to put in front of our compute.import * as cdk from 'aws-cdk-lib';
+// other imports
+export class LambdaStack extends cdk.Stack {
+constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+super(scope, id, props);
+const webAdapterFunction = createRustFunction(this)({
+zip: '../output/web-adapter.zip',
+}) // create the function
+webAdapterFunction.addToRolePolicy(createDynamoDbGetPolicy()) // allow calls to Dynamo
+buildGateway(this)(webAdapterFunction) // put an API Gateway in front of it
+}
+}
+Creating the function is easy. The only special thing we have to do is add the web adapter as a layer. In this example code, I have set the region of the layer to eu-west-1, which will only work if the corresponding Lambda is also deployed in that region.// imports and props type
+export const createRustFunction = (scope: Construct) => ({
+zip,
+duration = 3,
+environment = {}
+}: RustFunctionProps): Function => {
+const baseName = zip.split('/')?.pop()?.replace('.zip', '')
+if (!baseName) {
+throw new Error(`Invalid zip: ${zip}`)
+}
+const name = baseName.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('')
+// create the layer with the Web Adapter code
+const layer = LayerVersion.fromLayerVersionArn(scope, 'AdapterLayer', 'arn:aws:lambda:eu-west-1:753240598075:layer:LambdaAdapterLayerArm64:18') // note: set to eu-west-1...
+return new Function(scope, name, {
+handler: 'bootstrap',
+code: Code.fromAsset(zip),
+runtime: Runtime.PROVIDED_AL2,
+timeout: Duration.seconds(duration),
+memorySize: 1024,
+environment,
+logRetention: RetentionDays.ONE_MONTH,
+architecture: Architecture.ARM_64, // ARM is simpler for me because I'm building locally from a M1 MacBook
+layers: [
+layer
+]
+})
+}
+Our API Gateway is also simple. Our Lambda will respond to every incoming request, so a default integration is plenty.export const buildGateway = (scope: Construct) => (lambda: Function) => {
+const defaultIntegration = new HttpLambdaIntegration('WebAdapterIntegration', lambda);
+new HttpApi(scope, 'WebAdapterApi',
+{
+createDefaultStage: true,
+defaultIntegration,
+});
+}
+Deploying this will result in an API Gateway with two endpoints. Nice. But because the adapter has made our app independent from implementation details like ‘this runs on Lambda’, we can deploy to ECS as well. All we need is an ‘ECSStack’ to create a role for our Fargate Task and a cluster.export class ECSStack extends cdk.Stack {
+constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+super(scope, id, props);
+const ecsTaskRole = createEcsTaskRole(this)
+createRustCluster(this)(ecsTaskRole)
+}
+}
+The heavy lifting is done by createRustCluster, which uses aws-ecs-patterns to create a full-blown ECS service with a load balancer, running on Fargate, in just a few lines of code. What I was not aware of, is that your instances will be placed in a private subnet and will communicate to the outside world via a NAT Gateway, a famously pricy AWS service, so cost-conscious-reader beware, deploying this version of the project might cost you several dollars.
+We are using the Dockerfile we showed earlier in this post, which is located at the root of the project, for creating our Docker Image. Hence why the asset is located one directory up.export const createRustCluster = (scope: Construct) => (taskRole: IRole) => {
+const cluster = new Cluster(scope, 'WebAdapterCluster');
+new ApplicationLoadBalancedFargateService(scope, 'WebAdapterService', {
+cluster,
+memoryLimitMiB: 1024,
+cpu: 512,
+runtimePlatform: {
+operatingSystemFamily: OperatingSystemFamily.LINUX,
+cpuArchitecture: CpuArchitecture.ARM64,
+},
+taskImageOptions: {
+taskRole,
+containerPort: 8080,
+image: ContainerImage.fromAsset(".."), // get image from root of project
+},
+});
+}
+When deployed, this setup creates a cluster, service, and DNS endpoint that we can call to get the expected API responses. To make it easy to switch between infrastructures, bin/infra.ts deploys either the LambdaStack or ECSStack based on an environment variable. So if we want to deploy to Lambda, we run STACK_TYPE=lambda cdk deploy and the CDK will take care of everything for us.#!/usr/bin/env node
+import 'source-map-support/register';
+import * as cdk from 'aws-cdk-lib';
+// ...
+const app = new cdk.App();
+if(process.env.STACK_TYPE?.toLowerCase() === 'lambda') {
+new LambdaStack(app, 'LambdaWebAdapterStack', {});
+} else if(process.env.STACK_TYPE?.toLowerCase() === 'ecs') {
+new ECSStack(app, 'EcsWebAdapterStack', {});
+} else {
+throw Error('Expected STACK_TYPE env var to be "lambda" or "ecs"')
+}
+I also wanted to see how much faster my tasks would start if I used SOCI for the +- 130 MB sized images, so I deployed the ‘AWS Partner Solution’ to my account. In my limited testing, starting tasks went from 3 to a maximum of 40 seconds to a maximum of 20 seconds. Which is a nice improvement. But I was actually hoping that SOCI would make it possible to run an application without noticeable downtime because its single Task would restart really fast. Alas, not only did startup take longer than I thought, but I also failed to take into account that deprovisioning and provisioning can take several minutes. Guess you still have to deploy multiple Tasks for availability. Or, you know, just go for Lambda.
+Lambda Web Adapter not only makes it easier to develop and test code: it abstracts away the infrastructure from our application. And being able to seamlessly switch between Lambda and ECS could prove useful when requirements change (we need more time or memory than Lambda can provide), or when price is a major concern. An application that runs 24/7 on prod can be costly on Lambda, but cheap on ECS. On the other hand, if you have one or more infrequently used test environments, Lambda is the better choice. So deploying test environments to Lambda, and production to ECS, might be an idea. It’s a tradeoff because there is now a meaningful difference between the infrastructure your code runs on in test versus production. But in some scenarios, the cost savings might be worth it.
+Thanks for reading.
+Rust Programming Language
+AWS
+AWS Lambda
+Rust
+--
+--
+1
+Follow
+Written by Sam Van Overmeire
+54 Followers
+·18 Following
+Medium keeps bugging me about filling in a Bio. Maybe this will make those popups go away.
+Follow
+Responses (1)
+See all responses
+Help
+Status
+About
+Careers
+Press
+Blog
+Privacy
+Terms
+Text to speech
+Teams
+
+=== ROW 141 | f007846 | https://blog.kerollmops.com/how-meilisearch-updates-a-millions-vector-embeddings-database-in-under-a-minute | 2024-03-27T00:00:00 | individual-blogs;twir-links ===
+How Meilisearch Updates a Millions Vector Embeddings Database in Under a Minute
+Tamo
+March 25, 2024 — 0 comments
+How Meilisearch Updates a Millions Vector Embeddings Database in Under a Minute
+Note
+This is one blog post in a series:
+Spotify-Inspired: Elevating Meilisearch with Hybrid Search and Rust,
+Multithreading and Memory-Mapping: Refining ANN Performance with Arroy,
+Meilisearch Expands Search Power with Arroy's Filtered Disk ANN,
+How Meilisearch Updates a Millions Vector Embeddings Database in Under a Minute,
+Meilisearch Indexes Embeddings 7x Faster with Binary Quantization.
+In this blog post, we’ll talk about how we implemented incremental indexing in Arroy.
+By incremental, we mean that when inserting or deleting items in a tree, we can update only the required parts instead of rebuilding everything.
+At Meilisearch, that’s essential because our users usually send updates regularly, and their content constantly changes.
+Rebuilding everything from scratch is very costly and won’t give a good experience; that’s why we already spent a lot of time on our latest release to make all the datastructures support incremental indexing and arroy being one of them, we HAD TO implement it as well!
+The Theory
+The following schema shows a high-level view of what should happen when adding and deleting documents into an existing tree.
+As a reminder, arroy is a vector store based on LMDB, an embedded transactional memory-mapped key-value store. It stores your vectors in trees composed of three kinds of nodes:
+The split nodes - Store information on which item IDs are spread out between its left and right.
+The descendants' nodes - Store multiple item IDs.
+The items - A single vector.
+For the following examples, we’ll consider the descendants node cannot contain more than two items and that the closer the IDs are, the closer the items are in space.
+For example, the item 1 is close to the item 2 but is farther from the item 10.
+Here, we’re trying to insert items 2 and 7 and delete items 3 and 11.
+Following what we do on the search, we split the items to insert between the left and right split nodes.
+But the deleted items are no longer present in the database! We don't have their associated vector, and therefore we'll need to iterate over all the leaves to find and delete them.
+Fortunately, since we use roaring bitmaps, this list doesn't consume much memory, and since we never update it, we can share it with every thread without ever copying it 🎉
+Notice how the items to insert were balanced between the left and right split nodes.
+In the next step, we’ll follow the same process and split both lists of items to insert on the split node.
+It’s on this step that all the good stuff happens. From the left to the right:
+The first descendant node gets its item 3 removed, and item 2 added.
+The second descendant node gets too big and must be replaced by a new split node.
+The item 8 becomes a descendant containing both the items 7 and 8.
+After deleting item 10 in the last descendant node, we replace it with a direct link to an item to reduce the number of nodes in the tree (and improve search time by reducing the number of lookups).
+Now that you’ve seen all the steps of our incremental indexing process, we’re still going to take a few notes on what happened:
+In the first three steps, we had to read all of the tree nodes, which, by default, is equal to the total number of items in the database.
+In the last step, we had to write four new tree nodes. Previously we would have rewritten the whole tree. The number of writes, which is the slowest operation in databases, is reduced to the bare minimum.
+The process works on a single tree which means we can still multi-thread the computation of every tree.
+The IDs aren’t sequential anymore, which doesn't play well with the ID generation strategy described in Writing the tree in parallel.
+How Did We Fix the ID Generation?
+At the start of the indexing process, we need to gather all the existing tree IDs.
+The information we need to generate new nodes are:
+The total number of tree nodes used to know when to stop building trees.
+The « holes » in the used IDs that we want to re-use. This fragmentation is produced when we edit the trees.
+The highest ID existing in the trees to generate the next new IDs.
+The « simple » idea is to have a counter for the total number of tree nodes. A counter that we can increment to generate new fresh IDs. The most challenging part is to pick an available ID shared between threads and without big mutexes. It took me quite some time to find a solution for this last point; I implemented a whole complex solution (150loc) that I ended up rewriting entirely from scratch in one hour for an easy and more efficient solution. We're going to see all the ideas we went through before finding our final solution.
+Sharing an Iterator Over the Available IDs
+The first and most straightforward idea that comes to mind is to create and share an iterator over all the available IDs.
+let mut available_ids = available_ids.into_iter();
+roots.into_par_iter().for_each(|root| {
+// stuff
+let next_id = available_ids.next();
+// stuff
+});
+If you’re familiar with Rust, you’ll notice immediately that the for_each closure cannot capture a mutable reference over the available_ids because we use the into_par_iter method from rayon that execute the next methods on the iterator in a multi-threaded way. Which means we can't call .next().
+By using a mutex (short for mutual exclusion), we can make it compile:
+let mut available_ids = Mutex::new(available_ids.into_iter());
+roots.into_par_iter().for_each(|root| {
+// stuff
+let next_id = available_ids.lock().unwrap().next();
+// stuff
+});
+That is safe and will yield the right results, but won’t scale well as all the threads have to wait for each other on the lock.
+Let Each Thread Own Its List of IDs
+When you need to remove a lock, a common solution is to split the work beforehand so each thread can work to its full capacity without ever having to know what’s happening on the other threads. That’s the solution I implemented initially. The idea is to explode the roaring bitmap into as many smaller roaring bitmaps as there are trees to update.
+The following function can split a roaring bitmap into n sub-bitmaps of equal size:
+pub fn split_ids_in(available: RoaringBitmap, n: usize) -> Vec<RoaringBitmap> {
+// Define the number of elements per sub-bitmap
+let chunk_size = available.len() / n as u64;
+let mut ret = Vec::new();
+let mut iter = available.into_iter();
+for _ in 0..(n - 1) {
+// Create a roaring bitmap of `chunk_size` elements from the iterator without consuming it
+let available: RoaringBitmap = iter.by_ref().take(chunk_size as usize).collect();
+ret.push(available);
+}
+// the last element is going to contain everything remaining
+ret.extend(iter);
+ret
+}
+With this function available, it's then trivial to use one bitmap per tree to update with the zip method on the parallel iterators of Rayon:
+let available_ids = split_ids_in(available_ids, roots.len());
+roots.into_par_iter().zip(available_ids).for_each(|(root, available_ids)| {
+let mut available_ids = available_ids.into_iter();
+// stuff
+let next_id = available_ids.next();
+// Here, we can use the available_ids without any locks or inter-thread synchronization
+// stuff
+});
+This works well while we're updating the already existing root trees.
+But later on, we may want to create new trees from scratch, and we can't know in advance how many new trees we’ll need to create. That's an issue because, without this information, we don't know how many sub-bitmaps we need to create. At this point, I couldn’t see an easy fix to this problem, but I made the assumption that we rarely create a lot of new trees and that all new trees would use a lot of IDs. This means, giving all the IDs to the first new tree would probably work out. (it’s hard to be 100% sure without monitoring it in prod)
+The Final Solution
+The previous solution was complex and did not even work perfectly.
+While I was scrolling through the documentation of the Roaring Bitmap, I saw the select method and immediately understood how I could make the initial approach works.
+This method lets you get the values in your bitmap by index in an efficient way.
+For example, with the following values in a bitmap: 13, 14, 15, 98, 99, 100:
+select(0) returns 13.
+select(3) returns 98.
+select(5) returns 100.
+select(6) returns None.
+With that in mind, if we share the bitmap with all threads in read-only and share the index in the bitmap as an atomic number, we can have multiple threads get available IDs at the same time with lock-free synchronization. Once the select method returns None, it means we can stop picking IDs from the bitmap and instead simply generate new IDs from scratch with the old method.
+Even if it's super fast, calling the select method still takes some time, so once a thread gets a None returned from the method, we're going to update an atomic boolean telling us if there are still values to look at in the bitmap. If not, we can skip calling select and directly generate a new ID.
+With that in mind, the cool ConcurrentNodeIds structure we showed you before in part 2 got a little bit more complex but it still let us generate IDs fairly without any locks!
+/// A concurrent ID generator that will never return the same ID twice.
+pub struct ConcurrentNodeIds {
+/// The current tree node ID we should use if no other IDs are available.
+current: AtomicU32,
+/// The total number of tree node IDs used.
+used: AtomicU64,
+/// A list of IDs to exhaust before picking IDs from `current`.
+available: RoaringBitmap,
+/// The current Nth ID to select in the bitmap.
+select_in_bitmap: AtomicU32,
+/// Tells if you should look in the roaring bitmap or if all the IDs are already exhausted.
+look_into_bitmap: AtomicBool,
+}
+impl ConcurrentNodeIds {
+/// Creates an ID generator returning unique IDs, avoiding the specified used IDs.
+pub fn new(used: RoaringBitmap) -> ConcurrentNodeIds {
+let last_id = used.max().map_or(0, |id| id + 1);
+let used_ids = used.len();
+let available = RoaringBitmap::from_sorted_iter(0..last_id).unwrap() - used;
+ConcurrentNodeIds {
+current: AtomicU32::new(last_id),
+used: AtomicU64::new(used_ids),
+select_in_bitmap: AtomicU32::new(0),
+look_into_bitmap: AtomicBool::new(!available.is_empty()),
+available,
+}
+}
+/// Returns a new unique ID and increases the count of IDs used.
+pub fn next(&self) -> Result<u32> {
+if self.look_into_bitmap.load(Ordering::Relaxed) {
+let current = self.select_in_bitmap.fetch_add(1, Ordering::Relaxed);
+match self.available.select(current) {
+Some(id) => Ok(id),
+None => {
+self.look_into_bitmap.store(false, Ordering::Relaxed);
+Ok(self.current.fetch_add(1, Ordering::Relaxed))
+}
+}
+} else {
+Ok(self.current.fetch_add(1, Ordering::Relaxed))
+}
+}
+}
+Performances in Practice
+I haven’t run a lot of benchmarks yet (I would like to, though, and may update this post later), but on my benchmarks with a few hundred thousand items, here are the results I get:
+On average, we get more than a 10x speedup after three batches of items indexed.
+The little bumps we observe afterward that make us go from ~700ms to ~3s are due to the creation of new trees as the number of items increases.
+I expect this benchmark to represent a worst-case scenario:
+All my item IDs are randomly generated, which means there are very few duplicates/updates but always new insertions and more writing.
+My vectors are also randomly generated with a uniform distribution, which means there shouldn’t be clusters as we observe in a real-life dataset.
+This feature is now being used on production data with millions of documents, and we've seen numbers in the range of 9000 items added on a 2M items database in under a minute.
+🙂 ✚
+❤️ 2
+🚀 5
+0 comments, join the discussion
+About Tamo
+I like rust
+Subscribe to my RSS/Atom feed for the latest updates and articles.
+
+=== ROW 142 | f007884 | https://alonely0.github.io/blog/unions | 2024-05-01T00:00:00 | individual-blogs;twir-links ===
+Designing an efficient memory layout in Rust with unsafe & unions, or, an overlong guide in avoiding dynamic dispatch
+../unions
+Published on: 2024-04-28
+Designing an efficient memory layout in Rust with unsafe & unions, or, an overlong guide in avoiding dynamic dispatch
+Introduction
+First and foremost, this post is addressed to people already familiar with the Rust language, and knowledge of how typical Rust data structures are laid out in memory is certainly advised (though, everything is explained in detail just in case). However, I will not be assuming knowledge of how things work under-the-hood, and I will try my best to explain everything.
+This is the first blog post in a series of how to build a CLI spreadsheet program, mostly because I'm too tired of all other spreadsheets' deficiencies. In this blog post, I will be designing the memory layout of each of the values in the spreadsheet's cells, so we should start with the question: What does a spreadsheet cell contain?
+A number? Perhaps!
+A string of characters? Perhaps!
+A formula, which is itself a domain-specific-language? Perhaps!
+However, that is not just it. I am not aware if that is the case in Excel, but in Google Docs, a cell can get its value overridden by a matrix displayed on another cell that covers it. Matrices and iterators will be the core design of this spreadsheet engine, but that is for another blog post. However, that means that a value is either one of the listed before, or an iterator that yields these values.
+A first attempt: dynamic dispatch
+The naive approach, which is the one I'd recommend myself, would be to use enums. However, for educational purposes, we will start modeling this with dynamic dispatch; because as we will see in just a moment, its memory layout is very efficient (always two words/usizes). For starters, let's define a trait that models the behavior for any cell value:
+trait CellValue: Display + Any {}
+I have decided not to include any methods, and instead require that a) it implements Display for printing on the screen, and b) It implements Any so that we can "downcast" the value out of dynamic dispatch if necessary. Downcasting is a practice in which you can save an "ID" of a type inside its dynamic function table (what the keyword dyn generates); and if you statically assert that its ID is of a known type, it is safe to convert it back to its non-dynamic type.
+Thus, we can now define each individual type:
+type DynCellValue = Box<dyn CellValue>;
+struct Num(f64);
+struct Str(String);
+struct Formula; // To-do
+struct Iter(Box<dyn Iterator<Item = DynCellValue>);
+// Display & CellValue impls left as an exercise for the reader.
+The most important conclusion we can draw is that Iter has two dynamic dispatch indirections, for itself (since we want to allow arbitrary matrices), and for its values, as they themselves could be anything. Before discussing why this is a bad approach, let's take a look at DynCellValue's layout:
+[ 64bits               | 64bits                ]
+|______________________|_______________________|
+Pointer to the heap,   Pointer to a VTable,
+where the data lives.  where we can find the
+pointers to the
+functions it implements.
+However, the Num case is as big as a pointer, so perhaps we could include it inline, instead of allocating it! If only we had a way of distinguishing between those two cases^[1]... Not only that, but maybe we could use a ThinVec to store the String' contents, which would also store its length and capacity inside its allocation (surprise! a String is just a Vec<u8>). That would only leave the Formula as a variant possibly bigger than a word, but I plan on it being inside a reference-counted allocation anyway (an Rc container), so in the future, it'll be just a pointer. That means that all allocations of Box<dyn CellValue> would just be... slow and needless indirections. There is a point why I started the article with dyn, even though it's the slowest and least idiomatic: it will always be two words, regardless of what we throw at it. From now on, our objective is to keep that while removing all of Box<dyn ...>'s unneecessary indirections.
+Enum dispatch
+This is what you should always try before resorting to dynamic dispatch. enum_dispatch is a useful crate in situations where you know all the types of a dyn Trait, as it automagically does the following:
+enum CellValue {
+Num(f64),
+Str(ThinVec<u8>),
+Formula(Rc<Formula>),
+Iter(Box<dyn Iterator<Item = CellValue>>),
+}
+impl Display for CellValue {
+fn fmt(&self, f: ...) -> ... {
+match self {
+Self::Num(x) => x.fmt(f),
+Self::Str(s) => s.fmt(f),
+Self::Formula(o) => o.fmt(f),
+Self::Iter(i) => todo!(),
+}
+}
+}
+The todo!() there is beacuse Iter has spooky action at a distance (meaning, it affects more cells than itself); so in the future, we'll engineer a way to allow it to do its thing, but, right now, that is not a priority. Layout:
+[ 64bits               | 64bits                ]
+|______________________|_______________________|
+Tag                    An f64, a ThinVec<u8>
+or an Rc<Formula>.
+As you can see, we managed to keep the enum at two words (one for the value, one for the tag that tells which variant is inside), and by removing the heap allocations & pointers and the opaque function calls, it now is orders of magnitude faster. All the Display::fmt() functions are now static, and in the enum's, we dispatch it to the implementation of the inner values using the tag (what match is doing). However, I lied before, our number is not a single word, it's going to be two (just like an u128), and for now we will call it Long to annoy C programmers (joke, IYKYK). That breaks our previous goal of keeping it at two words, since enums are as big as their bigger variant plus the tag, so it'd be three words:
+[ 64bits              | 64bits                | 64bits                ]
+|_____________________|_______________________|_______________________|
+Tag                     Half a Long, or a full  The other half of a
+ThinVec<u8> or          `Long`, or nothing
+Rc<Formula>.            otherwise.
+That is a whole wasted word when the value is not a Long, we can do better than that! However, we will have to rely on a giant hack: our Long does not use its entire bit pattern. Otherwise, if it being just two words long was really necessary, or there was a very big variant in contrast to very small ones, the best approach would be to box said variant, which is still way more performant than Box<dyn ...> (so, as you can see, avoid it if you can).
+The decimal number type, ft tagged pointers.
+Disclaimer: from now on, the code might only work on 64-bits little-endian architectures (basically all the widely used ones).
+That is the correct name for our Long, Decimal. It is a number like a floating-point one, but much more precise and suitable for financial computations. Its layout is as follows:
+[ 15bits | 113 bits                                             ]
+|________|______________________________________________________|
+Unused.   The actual decimal number, irrelevant.
+Although these first bits are unused, they're always zero, and the moment they're not, we may hit UB in the internal implementations of the number.
+If you've ever played with tagged pointers, perhaps you already know what we're getting into here. For any pointer, if the pointee has an alignment bigger than one, we can store as much data in the lower part of the pointer as its alignment. That is because in Rust, all safe reads are aligned, so we can assume that our values are aligned. Note that this data stored in the pointer must be removed before the pointee is read (for obvious reasons). From now on, all our cell values will be of alignment of two, so:
+[ 2bits | 62 bits              ... ]
+|_______|__________________________|
+Always   The rest of the pointer.
+zeroed.
+Thus, we can exploit these common unused bits to store the enum's tag, and this is what the tagged_pointer crate will do for us. Explaining tagged pointers beyond the conceptual points is out of scope for this post, so I recommend you read tagged_pointer's documentation and source if you're interested.
+Now with unions, also known as C's untagged enums or Friedrich Transmute.
+Unions are the backing data for enums, these allow you to define a space of data which may be used by a set of types; but only one at a time, and without taking note of which one it is. The Friederich Transmute pun comes from the fact that these effectively allow you to do the same as std::mem::transmute, since by accessing using a different type than what was written, you're reinterpreting the bytes of a type as a different one.
+For starters, let's copy our previous enum:
+union CellValue {
+num: Decimal,
+str: ThinVec<u8>,
+formula: Rc<Formula>,
+iter: Box<dyn Iterator<Item = CellValue>>,
+}
+The first thing we'll get is a screaming message from rustc telling us to wrap everything that's not Copy in a ManuallyDrop<T>. As it turns out, unions are one of the many reasons why destructors are just a suggestion in Rust, and that is what ManuallyDrop<T> does, remove the drop implementation from its inner. This is needed because there is no info for the compiler to codegen the drop of the union since it can't possibly know what's inside, so it nicely asks us not to ask it to do so. The next thing we'll do is add a field with a TaggedPtr<Aligned, 2> where Aligned's alignment is two; so that we can use what's inside the union as a tagged pointer to get, set, and remove the tag. As it stands, we get the following:
+union CellValue {
+tag: TaggedPtr<Aligned, 2>,
+num: Decimal,
+str: ManuallyDrop<ThinVec<u8>>,
+formula: ManuallyDrop<Rc<Formula>>,
+iter: ManuallyDrop<Box<dyn Iterator<Item = CellValue>>>,
+}
+Manually implementing iter's dyn.
+Before continuing, there's something we should do, desugar Box<dyn ...>. This allows us to remove a pointer of indirection: the whole vtable. It is true that Iterator has like eighty methods we will want to use, but these all have default implementations which we will not override, so we won't need a pointer to a vtable of functions, only to one function (I bet you know where this is going). The only required function is Iterator::next(), so that is the only one we will keep as an opaque one, and we will statically generate the rest. First, let's create a struct with the data:
+struct DynIter {
+data: TaggedPtr<Aligned, 2>,
+next: NonNull<()>, // All function pointers are guaranteed not to be null
+}
+Then let's tell the compiler to codegen the rest of the iterator's functions with our opaque next() for us:
+impl Iterator for DynIter {
+type Item = CellValue;
+fn next(&mut self) -> Option<Self::Item> {
+type NextFn = for<'a> fn(&'a mut Aligned) -> CellValue;
+unsafe { transmute::<_, NextFn>(self.next)(self.data.ptr().as_mut()) }
+}
+}
+Taking advantage of this, I will be refactoring the unions so as to limit when a value is or is not allowed to be an iterator (this will make our life easier in the coming posts):
+const MASK_BITS: usize = 2;
+union Value {
+tag: TaggedPtr<Aligned, MASK_BITS>,
+num: Decimal,
+str: ManuallyDrop<ThinVec<u8>>,
+formula: ManuallyDrop<Rc<Formula>>,
+}
+struct DynIter {
+data: TaggedPtr<Aligned, MASK_BITS>,
+next: NonNull<()>,
+}
+union CellValue {
+tag: TaggedPtr<Aligned, MASK_BITS>,
+value: ManuallyDrop<Value>,
+iter: ManuallyDrop<DynIter>,
+}
+Messing with TaggedPtr
+Now we have to choose the bitmasks for the tags of each value. The 0b00 and 0b01 tags will be the fastest ones, so I will be giving them to num and iter, being the no-op one (0b00) for num because I'd rather not mess with it:
+const NUM_MASK: usize = 0b00;
+const ITER_MASK: usize = 0b01;
+const STR_MASK: usize = 0b10;
+const FORMULA_MASK: usize = 0b11;
+Because TaggedPtr::new(ptr, tag) is the way you construct a new one, we will have to figure out a way to have the ptr it gets to be the same as the low bits of our CellValue. The easiest way out of here would just be to use arguably the most unsafe function in all Rust, the chaotic sibling of Friedrich Transmute: std::mem::transmute_copy. This allows us to copy the CellValue's low 64 bits into TaggedPtr::new()'s first argument, which is likely to get optimized away after inlining:
+impl Value {
+unsafe fn tag(mut self, tag: usize) -> Self {
+self.tag = TaggedPtr::new(transmute_copy(&self), tag);
+self
+}
+fn num(dec: Decimal) -> Self { Self { num: dec } }
+fn str(str: ThinVec<u8>) -> Self {
+unsafe { Self { str: ManuallyDrop::new(str) }.tag(STR_MASK) }
+}
+fn formula(f: Rc<Aligned>) -> Self {
+unsafe { Self { formula: ManuallyDrop::new(f) }.tag(FORMULA_MASK) }
+}
+}
+The last thing I will show on this blog post is how to get back a value from our union, which can be done by checking whether the tag matches the value you want back:
+impl CellValue {
+pub fn get_value(&mut self) -> Option<&mut Value> {
+if self.downcast_iter().is_none() {
+Some(unsafe { transmute(&mut self.value) })
+} else {
+None
+}
+}
+pub fn get_iter(&mut self) -> Option<&mut DynIter> {
+if unsafe { self.tag }.tag() == ITER_MASK {
+Some(unsafe { transmute(&mut self.iter) })
+} else {
+None
+}
+}
+}
+impl Value {
+fn get_num(&mut self) -> Option<&mut Decimal> {
+if unsafe { self.tag }.tag() == NUM_MASK {
+Some(unsafe { transmute(&mut *self) })
+} else {
+None
+}
+}
+// the rest are almost the same, so I leave as an
+// exercise to the reader creating a macro for them.
+}
+There's only one little thing that we are forgetting, the drop code. Because I left as an exercise for you creating a macro for accessing each field, I will do the same with the drop code that uses it (this is long enough, I'm tired).
+Conclusion
+Unions are not just an archaic tool from the long forgotten era of Dennis Ritchie, they are still a very useful tool which can yield amazing results in the right hanSegmentation fault (core dumped)
+[1]: Note that this is what Niko Matsakis proposed with its dyn* blog post, and we will be exploiting this later.
+Theme and color theme licensed under MIT.
+Built with Zola using anemone theme, suCSS framework & veqev.
+
+=== ROW 143 | f008217 | https://cliffle.com/blog/exhubris-super | 2024-12-18T00:00:00 | individual-blogs;twir-links ===
+Crash recovery in 256 bytes - Cliffle
+41 captures
+15 Dec 2024 - 21 Jun 2026
+May
+JUN
+Jul
+21
+2025
+2026
+2027
+success
+fail
+About this capture
+TIMESTAMPS
+The Wayback Machine - http://web.archive.org/web/20260621152031/https://cliffle.com/blog/exhubris-super/
+Cliffle
+Fortuna Eruditis Favet
+About Me
+Blog
+Projects
+Electronics Store
+Papers
+Food
+Colophon
+Copyright ©2011-2024 Cliff L. Biffle
+Contact
+— RSS
+Crash recovery in 256 bytes
+The exhubris supervisor.
+2024-12-14
+The role of the supervisor in Hubris
+Aside: what happens without a supervisor?
+A minimal supervisor
+The notification response loop
+Kernel IPCs (KIPCs)
+Crash handling policy
+How reinitialize_task prevents pile-ups
+Who supervises the supervisor?
+The cost of supervision
+Conclusions
+(This continues my series of posts on the exhubris tools I’m building, to
+enable more people to use Hubris in their embedded systems.)
+One of Hubris’s strongest features is its ability to handle crashes in drivers
+and other application logic. It leaves the specific crash handling behavior up
+to the application programmer through a mechanism called a supervisor.
+In this post I’ll look at why I made this decision, how it works in practice,
+and walk through the exhubris supervisor reference implementation,
+minisuper. (Spoiler: it’s very small.)
+The role of the supervisor in Hubris
+Bugs happen, and programs crash. That’s more or less the single-sentence motivation
+for Hubris. But what happens when a program crashes?
+On your phone or a desktop computer, you probably get a popup warning saying
+that an application had stopped. You can launch it again if you want. This
+approach requires human interaction — to read the error message, and to
+restart the program (or not) as desired.
+Servers in datacenters usually can’t expect a human operator to click dialog
+boxes, so programs on these machines are usually restarted automatically by some
+sort of service framework. Usually there will be tools to control how often the
+program can be restarted, or if there are circumstances where we want the system
+to give up and stop trying.
+Hubris is designed for systems that don’t require human interaction, and may not
+even have any sort of interface. The tiny microcontrollers inside a keyboard or
+power adapter need to just keep working without asking for help. So, in such
+systems, what should we do if a task crashes?
+We could immediately restart it, but if we’re in a situation where a task may
+endlessly crash on startup, that could be very expensive, preventing the machine
+from meeting its other responsibilities.
+We could leave it be, but what will cause it to start back up again? Does the
+user have to turn us off and back on again?
+We could introduce some sort of backoff strategy, waiting longer periods of time
+each time a task crashes. But how do we cap the wait? If the wait begins at one
+second and doubles every time, after ten crashes we’re waiting 17 minutes, which
+is an awfully long time for a toaster to become unresponsive!
+My conclusion is that there is no right answer to this question. The correct
+action to take when a program crashes depends on the context and the
+application’s requirements. So, Hubris leaves it up to you, the programmer.
+Specifically, the decision is left up to the supervisor task. All Hubris
+applications must include one task playing the role of supervisor. The
+supervisor will be informed about any crashes, and have the opportunity to take
+any corrective action it likes.
+When a task in a Hubris application crashes — whether it’s because it abused a
+syscall, dereferenced a wild pointer, or explicitly called panic! — the
+kernel does only three things.
+It records information about the crash (called a fault) in the task’s
+control block in kernel memory.
+It posts a notification to the supervisor task.
+It invokes the scheduler to choose a different task to run, since the current
+task is dead. This almost always chooses the supervisor task1.
+That’s it. The kernel does not alter the crashed task’s other state in any way.
+It also does not immediately unblock any other tasks that are trying to send
+messages to the crashed task (more on this later).
+1
+This is because the supervisor task is normally the highest priority
+task in the system, able to preempt anything else, and normally hangs out
+waiting for the notification to arrive. While this is probably the behavior
+you want, you could choose to do things differently. I’m not the cops.
+Aside: what happens without a supervisor?
+You could choose to build an application that doesn’t contain a supervisor
+task. I don’t recommend doing this, but if you did, here’s what would happen.
+When any task in your application crashes, the kernel will post notification 0
+to task 0 (the first task in the config file) as if it were a supervisor. Your
+task, which is not a supervisor, would get this spurious notification and
+perhaps just ignore it, going on about its day.
+The crashed task, which I’ll call Task A, will be left in a Faulted state
+unable to run.
+Now, what if Task A responds to messages from other tasks? If a client (Task B)
+tries to send to A while A is Faulted, B will block (as in any case where A is
+unavailable) … and has no way to unblock.
+In fact, if A crashes while processing a message from B, B will also sit
+blocked, waiting for the reply… which will never come.
+It’s not unusual for a Hubris application to have several layers of tasks
+exchanging messages. If some task C goes to send to B while B is waiting for A
+(which is dead), C is now blocked too.
+This will continue as a sort of “pile-up” with more and more tasks waiting
+(transitively) for a message that will never arrive. This is why it’s important
+to include at least a minimal supervisor implementation in your application if
+there’s any risk of a task crashing. (And I think it’s always best to assume
+that the risk exists!) Hubris’s design assumes the supervisor exists, and a lot
+of fundamental operations (like inter-task messaging) have defined behaviors
+that just don’t make sense without it.
+A minimal supervisor
+Just because your Hubris application should include a supervisor doesn’t mean
+you have to write a supervisor. The exhubris repo contains a minimal
+supervisor (called minisuper) that you can use to get started — or use
+forever, if it meets your needs.
+Let’s take it apart!
+I’ll be discussing the code at a specific commit (cae47f138) in the
+exhubris repo if you want to follow along.
+minisuper lives at the path task/minisuper in the repository. In that
+directory are three files:
+task/minisuper
+├── Cargo.toml
+├── README.mkdn
+└── src
+└── main.rs
+This is the simplest possible project layout for a Rust executable, and there’s
+nothing all that interesting in Cargo.toml, so the rest of this section will
+focus on task/minisuper/src/main.rs. Here’s the entire program, with some
+comments removed because we’re going to walk through it in detail below.
+#![no_std]
+#![no_main]
+const FAULT_NOTIFICATION: u32 = 1;
+#[export_name = "main"]
+fn main() -> ! {
+loop {
+userlib::sys_recv_notification(FAULT_NOTIFICATION);
+// Recovery action: find the dead task, starting with the first
+// non-supervisor task index (1).
+let mut next_task = 1;
+while let Some(fault_index) = kipc::find_faulted_task(next_task) {
+let fault_index = usize::from(fault_index);
+kipc::reinitialize_task(fault_index, kipc::NewState::Runnable);
+// keep moving, there could be more than one
+next_task = fault_index + 1;
+}
+}
+}
+The notification response loop
+minisuper, like all Hubris tasks, is written as an infinite loop. Once
+started, it runs until it crashes (which it shouldn’t).
+At the top of the loop, minisuper calls the function sys_recv_notification,
+passing it a bitmask with bit 0 set. This is a specialized wrapper for the more
+general RECV syscall: sys_recv_notification blocks the current task until
+a notification arrives whose corresponding bit in the mask is set. So, this call
+blocks waiting for this task’s notification 0.
+The Hubris kernel-to-supervisor interface specifies that notification 0 is the
+one the kernel will post on a crash, so, this causes minisuper to wait for a
+crash.
+Technically, minisuper might also wake without any tasks crashing. This is
+because other tasks can use the POST syscall to manually set the supervisor’s
+notification 0 to pending. As a result, the loop is designed to gracefully
+handle the case where no tasks have actually crashed, by going back to sleep in
+sys_recv_notification.
+(sys_recv_notification returns a bitmask indicating which notifications caused
+the task to wake up. We ignore it, since we only set one bit in the mask — we
+know if we wake that it’s notification 0!)
+Kernel IPCs (KIPCs)
+Supervisors need to be able to act on other tasks — to read out information
+about the crash, and to restart them. These are not powers that other tasks
+should have! But they require help from the kernel to actually implement.
+Most Hubris kernel operations are exposed as system calls (like the RECV
+that sys_recv_notification used above). System calls are available to all
+tasks.
+If the supervisor-specific actions were implemented as system calls, we’d now
+have a set of system calls that are only available to some tasks. They would
+need to check the identity of the caller, and treat calls from any task other
+than the supervisor as errors. Those checks would need to consistently happen in
+every protected syscall, and not in others. This seemed unfortunate, and I
+wanted to avoid it.
+The Hubris system call interface is also relatively stable. We rarely add new
+things and have never removed anything. The supervisor interface, on the other
+hand, has been regularly adjusted over the years, as we learn from our own
+systems.
+These two properties led me to expose supervisor-specific operations through a
+different mechanism, kernel IPCs or KIPCs. From the supervisor’s perspective,
+a KIPC looks just like using SEND to send a message to another task, but
+instead of a valid task ID, the message is sent to a special ID reserved for the
+kernel.
+The kernel handles these messages internally, giving it a convenient single
+place to screen out tasks other than the supervisor. KIPCs can also send and
+return more complex serialized Rust types than the simpler system call
+ABI can.
+minisuper uses two KIPCs, specifically: find_faulted_task and
+reinitialize_task.
+find_faulted_task asks the kernel to scan its task table starting at a given
+index, returning the index of the next task in the Fault state, if there is a
+task in the Fault state. This KIPC lets minisuper scan for faulted tasks
+efficiently; in the usual case of a single faulted task, only two KIPCs are
+required, one to find it and a second one to find that there are no others.
+reinitialize_task resets a task to its default state and optionally sets it
+running. (The alternative is to leave it stopped.) “Default state” here means
+that the CPU registers are reloaded to their initial values, including moving
+the program counter back to the task’s entry point, and resetting the task’s
+stack pointer. (It does not clear the task’s RAM; tasks are responsible for
+doing this themselves.)  reinitialize_task has some other important effects
+that I’ll save for a section below.
+With that explanation of the KIPC operations out of the way, let’s look at what
+minisuper is doing with them.
+Crash handling policy
+Because minisuper’s code has probably scrolled out of view by now, let me
+repeat the crash handling code here:
+let mut next_task = 1;
+while let Some(fault_index) = kipc::find_faulted_task(next_task) {
+let fault_index = usize::from(fault_index);
+kipc::reinitialize_task(fault_index, kipc::NewState::Runnable);
+next_task = fault_index + 1;
+}
+The search starts at task index 1; this is because the supervisor is task index
+0, and if the supervisor has faulted, this code is no longer running!
+Each time a faulted task is found, minisuper calls reinitialize_task to
+rewind it to starting state, and passes NewState::Runnable to ask the kernel
+to start it. It then resumes the search starting from the next task, until all
+faulted tasks have been reinitialized.
+In practice, this restarts one task at a time:
+The supervisor is the highest priority task in an application, so other tasks
+can’t preempt the supervisor.
+Therefore, if any other task crashes, it happens while minisuper has yielded
+the CPU with sys_recv_notification.
+The supervisor is immediately notified on any crash, which causes minisuper
+to wake and enter this loop.
+Until minisuper yields again at the top of the loop, no further crashes can
+occur, so this loop only sees one crash in practice.
+It is possible to construct a weird application where this property is not true,
+but don’t.
+From stepping through this code, it’s clear that minisuper implements a policy
+of immediately reinitializing and running any task that crashes.
+How reinitialize_task prevents pile-ups
+I left two loose ends above:
+I mentioned that, without a supervisor, task pile-ups can occur, but never
+explained how they can be fixed.
+I also mentioned that reinitialize_task had some additional behavior that I
+wasn’t explaining yet.
+These both lead to the same explanation!
+The reinitialize_task operation is very carefully designed to not leave any
+task behind. In addition to restarting the target task, it may also have effects
+on other tasks:
+Any tasks that are waiting in SEND with a message to the restarted task
+is broken out of its wait with an error code. (Often, tasks will just try to
+send again to the new incarnation of the task, but that’s up to them!)
+If the crashed task was already processing one or more messages from other
+tasks — that is, the other tasks are blocked waiting for the reply —
+those other tasks are broken out of their waits with an error code. (This
+looks just like the first case to the sending tasks.)
+If any tasks are waiting in a closed RECV to the crashed task, they are
+broken out of their wait, too. (Closed RECV is a little-used Hubris syscall
+feature that I won’t explain here; if you’d like to know more, there’s a
+section on closed RECV in the reference manual.)
+This all happens when the task is restarted, rather than when the task initially
+crashes. This is because the other tasks are somewhat likely to retry their
+sends; delaying that until the crashed task has been restarted means the sends
+will succeed right away, without hitting the crashed task and failing. This also
+makes it easier to view the state of all the tasks at the time of the crash,
+through a debugger or other tools.
+Thus, when minisuper restarts a crashed task using reinitialize_task, it
+also ensures that all the tasks that depend on the crashed task are left in a
+valid state, and are able to make progress.
+Who supervises the supervisor?
+If the Hubris kernel notifies the supervisor when a task crashes, what happens
+if the supervisor crashes?
+The answer: nothing. Not right away, anyway.
+If the supervisor crashes, the kernel leaves it be. Any other tasks that crash
+will not be restarted, resulting in a potential pile-up. This is bad.
+Ideally, the supervisor will not crash, and supervisor tasks should be written
+to avoid crashing. If the supervisor needs to do something complex where
+crashing is a possibility, however, you’ll want to use a hardware watchdog timer
+to ensure the system can restart if the supervisor dies. (How exactly to do this
+depends on the microcontroller model, and is out of scope for this post.)
+The exhubris libraries provide a feature that can help you write a supervisor
+that cannot crash: the no-panic feature on userlib. All tasks depend on
+userlib; if they add the no-panic feature, any panics that are not optimized
+away by the compiler will cause a link failure with an error message.
+The error message is currently not very good; it looks something like:
+rust-lld: error: undefined symbol: you_have_introduced_a_panic_but_this_task_has_disabled_panics
+>>> referenced by lib.rs:565 (sys/userlib/src/lib.rs:565)
+>>>               /home/cbiffle/proj/exhubris/play/.work/demo/build/super:(rust_begin_unwind)
+This provides a way to ensure, at compile time, that a task cannot panic. If the
+task is written in safe Rust, then it also should not be able to crash due to
+memory protection violations, illegal instructions, and the like. This makes
+this feature really helpful when writing a supervisor, and if you check
+task/minisuper/Cargo.toml, you’ll see that the feature is on:
+[dependencies]
+userlib = {workspace = true, features = ["no-panic"]}
+This is not a guarantee against bugs, only crashes. The code can still do wrong
+things, enter an infinite loop, etc. But it can’t crash, at least.
+The cost of supervision
+The fact that Hubris requires a supervisor task means that most applications
+have one more task than they would otherwise need. Since embedded applications
+are usually space-constrained (in either RAM or flash), is this an impractical
+cost?
+Adding minisuper to an application typically requires…
+About 32 bytes of flash for the in-kernel task descriptor.
+About 100 bytes of RAM for the in-kernel task control block.
+256 bytes of flash for the compiled minisuper program.
+128 bytes of RAM for its stack. (256 bytes on a part with an FPU.)
+This is pretty small. I haven’t had any trouble fitting minisuper into even
+the smallest of supported microcontrollers.
+Conclusions
+With any luck, you now understand the role of the supervisor task in a Hubris
+application, and have a sense of what you would need to do to write your own.
+(Try it!)
+The supervisor task is only one of several places where Hubris puts the
+application programmer in the driver’s seat, instead of hardcoding behavior into
+the kernel. I may touch on a few others (like peripheral and memory sharing) in
+future posts.
+I feel that this design decision has held up well, and having a very compact
+reference implementation (minisuper) shows that crash recovery doesn’t have to
+be expensive and complex to be useful. The same “no questions asked”
+restart-on-crash policy is what we use in Oxide’s production firmware (in
+Oxide’s supervisor implementation), and it’s been working well.
+#embedded
+#hubris
+#rust
+
+=== ROW 144 | f008237 | https://ideas.reify.ing/en/blog/complete-guide-to-wasip2-for-rust-python-programmers | 2025-01-01T00:00:00 | individual-blogs;twir-links ===
+A Complete Guide to WASIp2 for Rust and Python Programmers | Ideas Reifying
+Ideas Reifying
+AI
+Apple
+AR
+CHI
+LLM
+metadata
+misc
+OpenAI
+Patent
+Product Dev
+Random Thoughts
+Rust
+Scientific Computing
+Vision Pro
+WASI
+Web
+WebAssembly> 中文
+#Rust #WebAssembly #WASI
+A Complete Guide to WASIp2 for Rust and Python Programmers
+A guide to a true universal runtime
+Since long time ago, programmers have dreamed of a universal runtime that unifies all the languages and platforms. Any programs targeting this runtime can be run on any platform without any modification. One (virtual) machine to run them all. For me, the first “universal runtime” that comes to mind is Java Virtual Machine (JVM). If you come from different backgrounds, you might think of .NET Runtime, Beam VM, or even Javascript runtimes. Yes, they are successful and widely used, but they are still not that universal. For example, JVM is primarily designed for Java, so a garbage collector is built in, but not all languages need it. My favorite Rust does not need it either, while my another favorite, Python, does garbage collection a bit differently from Java. As web browsers and web technologies are everywhere, how about just writing JS programs? That would be possible (take a look at Electron and Node.js), but we all know JS is a bit slow compared to compiled languages like C/C++/Rust. But the direction is roughly right, so we have a new and yet another solution: WebAssembly (WASM).
+WASM is only part of the story of this blog. Here I am going to introduce WebAssembly System Interface Preview 2 (WASIp2). As the name suggests, WASIp2 is about the interface of WASM. In this guide, I will show you how to compile Rust and Python programs to WASIp2 components (special WASM modules), compose them into a more powerful component, and how to run these components in Rust, Python and Wasmtime (the standard WASM runtime). For the code in this guide, you can find the complete code in wasi_mindmap repository.
+Copyrights and References
+Before we start, first and foremost, I want to make it clear that this guide is the combination of official documents and my experiences when stumbling through the tutorials in the official documents and various GitHub issues. In contrast to the official documents, I want to make this guide self-contained from concepts to implementations but I don’t want make crappy summaries of some well-written documents, so I will just copy and paste some content from the official documents. When I copy and paste, I will end the very paragraphs with symbol ↪ to link the reference, avoiding excessive reading distraction. When I want to highlight some quotes, I will just use quote marks and quote sections.
+Here are the references:
+Mostly from The WebAssembly Component Model documentation (hereafter “WACMDoc” for short), licensed under CC-BY-4.0.
+README and documentation of wit-bindgen, licensed under Apache-2.0 and MIT.
+Documentation of Wasmtime, licensed under Apache-2.0.
+Related GitHub issues: I will link them explicitly in-situ.
+This guide is also licensed under CC BY-SA 4.0 which is compatible with the licenses of the references.
+WASM
+Before we dive into WASIp2, let’s first take a look at WASM.
+Quoting from Wikipedia:
+WebAssembly (Wasm) defines a portable binary-code format and a corresponding text format for executable programs as well as software interfaces for facilitating communication between such programs and their host environment.
+The main goal of WebAssembly is to facilitate high-performance applications on web pages, but it is also designed to be usable in non-web environments. It is an open standard intended to support any language on any operating system, and in practice many of the most popular languages already have at least some level of support.
+The very last sentence in the quote block is the key for us. WASM does not only support languages like C/C++/Rust, but also supports languages like Python, JavaScript, etc. Programs can be compiled as WASM modules and run in any environment that supports WASM.
+Just to summarize, the key points are:
+“Any language” can be compiled to WASM.
+WASM modules can be run in any environment that supports WASM.
+If you are interested in various use cases of WASM and why WASM is getting momentum, WASM in the Wild series is a good starting point.
+Concept: WASIp2
+OK, now that we have “the one” virtual machine, is it the end of the story? Not quite.
+For a simple program, it is often enough to just compile it as a WASM module and run it on a WASM runtime. By “simple”, I mean a program that can be written in a single language, say Rust, C or Python. But more complexity arises from a curious and practical question: Since these programs are compiled to a common assembly language as modules, can we compose them into a more powerful program?
+If you come from compiled languages, you might know something about linking/linker and application binary interfaces (ABIs), which do roughly the same, except that the common assembly is something specific to processors, for example, x86 assembly.
+To do the composition of WASM modules, we need to define a standard for the interfaces of WASM modules. This is where WASIp2 comes in.
+WASM module + WASIp2 interface specs ≈ WASIp2 component
+For brevity, in the following sections, I will just call:
+WASM module ⇒ module
+WASIp2 component ⇒ component
+A visualized analogy is Lego blocks. Below we have three blocks (i.e., components) and each block has a different shape. Consider that the shape of a block/component is defined by its WASIp2 interface specs. The core logic of a component is still inside a module, though.
+Component A has an export that is compatible with Component B’s import. Component C requires an import satisified by Component B’s export.
+Zooming in, Component A has a module as its core.
+Basics
+There are 5 basic concepts in WASIp2: components, interfaces, worlds, WIT and packages.
+Components, as we know, are building blocks. Logically, components are containers for modules or other components, which express their interfaces and dependencies via WIT. Conceptually, components are self-describing units of code that interact only through interfaces. “self-describing” means components have interface descriptions inside. Physically, a component is a specially-formatted WebAssembly file. Internally, the component could include multiple traditional (“core”) WebAssembly modules, and sub-components, composed via their imports and exports. So, for instance, the composed file of Component A, B and C is also a component. ↪
+An interface describes a single-focus, composable contract, through which components can interact with each other and with hosts. Interfaces describe the types and functions used to carry out that interaction. ↪
+A WIT world is a higher-level contract that describes a component’s capabilities and needs. On one hand, a world describes the shape of a component - it says which interfaces the component exposes for other code to call (its exports), and which interfaces the component depends on (its imports). A world only defines the surface of a component, not the internal behaviour. On the other hand though, a world defines a hosting environment for components. An environment supports a world by providing implementations for all of the imports and by optionally invoking one or more of the exports. ↪
+The WIT (Wasm Interface Type) language is used to define interfaces and worlds. A WIT spec, or “WASIp2 interface specs” as we informally call earlier, is stored in a .wit file. For details of WIT language, please see the related section of WACMDoc.
+A WIT package is a set of one or more WIT (Wasm Interface Type) files containing a related set of interfaces and worlds. ↪
+OK, enough talking. Let’s take a look at the simplest example of WIT files:// interfaced-adder.wit
+package wasi-mindmap:interfaced-adder;
+interface add {
+add: func(a: s32, b: s32) -> s32;
+}
+world adder {
+export add;
+}
+wasi-mindmap is the namespace for this package, interfaced-adder the name of this package. When we refer to a package, we usually refer it with its package ID, wasi-mindmap:interfaced-adder in our case. A package ID can optionally include a semver-compliant version, wasi-mindmap:interfaced-adder@0.0.1 for example.
+In this package, we define a world adder for adder implementations. This world exports only one interface named add. The interface defines only one item, a function named add. Of course, in a world, we can import and export more interfaces. And an interface can define more items like data types, resources and/or functions.
+Since this is just a tutorial, not a book, we won’t dig into the WIT specification, but later we will have a more complex WIT file and corresponding component, I promise.
+More Code
+For the purpose of demonstration, I will write programs in Python and Rust. These two are my favorite, so please bear with me. As WASM is “universal”, you can try to compile code in your favorite languages into components. This section of WACMDoc shows more examples in more languages.
+Adder Components
+When I previously said “the simplest example”, it’s partially correct and partially wrong. There is a simpler WIT file than interfaced-adder.wit. The name, of course, is adder.wit:package wasi-mindmap:adder;
+world adder {
+export add: func(a: s32, b: s32) -> s32;
+}
+The adder world in adder.wit directly exports a function add rather than exposing it via interface add. This is technically allowed but also a bit unusual. We will come back to the reason when we talk about compositions. For now, we use adder.wit for demonstrating how an adder component can be implemented.
+For Rust implementation, you need nothing more than the wasm-wasip2 target of rustc.
+To install the wasm-wasip2 target, run rustup target add wasm32-wasip2
+The cargo project is simple as below:├── Cargo.toml
+├── src
+│   └── lib.rs
+└── wit
+└── adder.wit
+The dependencies are minimum:# Cargo.toml
+[package]
+name = "guest-adder-rs"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+wit-bindgen = "0.62.0"
+With the magical wit_bindgen::generate macro, we don’t have to write boilerplate glue code. Even better, all implementation code is statically checked by our beloved rustc.// Use a procedural macro to generate bindings for the world we specified in
+// `wit/adder.wit`
+wit_bindgen::generate!({
+// the name of the world in the `*.wit-files` input file
+world: "adder",
+});
+// Define a custom type and implement the generated `Guest` trait for it which
+// represents implementing all the necessary exported interfaces for this
+// component.
+struct Adder;
+impl Guest for Adder {
+fn add(a: i32, b: i32) -> i32 {
+a + b
+}
+}
+// export! defines that the `Adder` struct defined below is going to define
+// the exports of the `world`
+export!(Adder);
+With dozens of lines in total, you can then simply run cargo build --target wasm32-wasip2 and get a freshly-baked component guest_adder_rs.wasm in target/wasm32-wasip2/debug.
+To inspect .wasm files and more, you can install wasm-tools by cargo install --locked wasm-tools, or refer to the repo for more instructions.
+To see guest_adder_rs.wasm component is indeed self-describing:$ wasm-tools component wit guest_adder_rs.wasm
+package root:component;
+world root {
+export add: func(a: s32, b: s32) -> s32;
+}
+guest_adder_rs.wasm itself includes all necessary descriptions of its import and export interfaces.
+Adder in Python
+Python doesn’t have native support for WASIp2, so we need to install componentize-py:pip3 install "componentize-py==0.21.0"
+For a Python program to implement the exports of world adder, we can generate bindings by:componentize-py --wit-path adder.wit --world adder bindings ./adder
+The output directory adder contains the generated wit_world Python package, which provides the abstract class to inherit from.# in guest-adder.py, place it in ./adder
+# wit_world is generated in ./adder
+from wit_world import WitWorld
+# the class MUST be named `WitWorld`, same as the abstract class
+class WitWorld(WitWorld):
+def add(self, a: int, b: int) -> int:
+return a + b
+Then you need to componentize this Python program:componentize-py --wit-path adder.wit --world adder componentize guest-adder -o guest_adder_py.wasm
+What is the difference between guest_adder_py.wasm and guest_adder_rs.wasm?
+I was surprised to see that guest_adder_py.wasm sizes much bigger than guest_adder_rs.wasm, which we will come back later.
+Guests and Hosts
+Now we have compiled adder components from programs in Rust and Python, what then? As the adder components export one function, we should be able to call that function in our programs, like with libraries. In contrast to the notion of “caller” and “callee”, we use “guest” and “host”, because a host may need the offer from a guest (i.e., the exports of the component) while it may also provide capabilities a guest relies on (i.e., the imports of the component).
+There are two ways to read the following content:
+you can read it sequentially, as it starts from basic examples to more involved ones.
+or, you can skip ahead by looking up the following table.
+Host/GuestRust Adder ↪Python Adder ↪Rust KVDatabase
+Rust Host ↪✅✅✅ ↪
+Python Host ↪✅🛠️🛠️
+Command Component (from Rust)✅↪📌📌
+✅: Currently supported
+🛠️: Not supported for now, under development of wasmtime-py
+📌: TODO and welcome contributions
+Rust Host
+The implementation of a host is a bit complicated, so let’s take a look at the full code in Rust and then break it down.
+We need latest wasmtime >= 49.0, which is the crate of the reference WASM runtime, and wasmtime-wasi >= 49.0, which provides utilities for running WASIp1 modules and WASIp2 components:# in host-rs/Cargo.toml
+[package]
+name = "host-rs"
+version = "0.5.2"
+edition = "2024"
+[dependencies]
+wasmtime = "49.0"
+wasmtime-wasi = "49.0"
+Before diving into the main logics, we need some utilities:// in host-rs/src/utils.rs
+use wasmtime::error::Context;
+use wasmtime::component::{Component, Linker, ResourceTable};
+use wasmtime::{Engine, Result, Store};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+// reference: https://docs.rs/wasmtime/latest/wasmtime/component/bindgen_examples/_0_hello_world/index.html
+// reference: https://docs.wasmtime.dev/examples-rust-wasi.html
+pub(crate) struct ComponentRunStates {
+// These two are required basically as a standard way to enable the impl of WasiView
+pub wasi_ctx: WasiCtx,
+pub resource_table: ResourceTable,
+}
+impl WasiView for ComponentRunStates {
+fn ctx(&mut self) -> WasiCtxView<'_> {
+WasiCtxView {
+ctx: &mut self.wasi_ctx,
+table: &mut self.resource_table,
+}
+}
+}
+impl ComponentRunStates {
+pub fn new() -> Self {
+ComponentRunStates {
+wasi_ctx: WasiCtxBuilder::new().build(),
+resource_table: ResourceTable::new(),
+}
+}
+}
+pub fn bind_interfaces_needed_by_guest_rust_std<T: WasiView>(l: &mut Linker<T>, r#async: bool) {
+if r#async {
+wasmtime_wasi::p2::add_to_linker_async(l).unwrap();
+} else {
+wasmtime_wasi::p2::add_to_linker_sync(l).unwrap();
+}
+}
+pub fn get_component_linker_store(
+engine: &Engine,
+path: &'static str,
+alt_path: &'static str,
+) -> Result<(
+Component,
+Linker<ComponentRunStates>,
+Store<ComponentRunStates>,
+)> {
+let component = Component::from_file(engine, path)
+.or_else(|_| Component::from_file(engine, alt_path))
+.with_context(|| format!("Cannot find component from path: {path} or {alt_path}"))?;
+let linker = Linker::new(engine);
+let state = ComponentRunStates::new();
+let store = Store::new(engine, state);
+Ok((component, linker, store))
+}
+get_component_linker_store is the helper function we need, which creates a Component, a Linker<ComponentRunStates> and a Store<ComponentRunStates> all at once for us.
+The bind_interfaces_needed_by_guest_rust_std helper registers the WASI imports required by a guest’s Rust standard library, including the debug builds used here.
+Component represents a compiled component that is ready to be instantiated while Linker is used to instantiate Components, linking components together as well as supplying host functionality to components. Store is conceptually a bit complicated. A Store is a collection of WebAssembly instances and host-defined state. All WebAssembly instances and items will be attached to and refer to a Store. For example instances, functions, globals, and tables are all attached to a Store. Instances are created by instantiating a WASM module (that resides in a component) within a Store.
+For more details, see the documentations about Component, Linker and Store.
+As for ComponentRunStates, it contains necessary fields to implement WasiView trait, which is essential for interacting with the functionalities provided by wasmtime_wasi.
+If the above is a lot to take in, fear not. All you need to know for now is that all the code in src/utils.rs except my little helper function is basically standard to get started. You can take your time later to dig into the details of the wasmtime runtime.
+With these utilities, we are ready to host a component. To synchronously call the add function of an adder component, we just need a few lines of code:// in host-rs/src/main.rs
+use crate::utils::{bind_interfaces_needed_by_guest_rust_std, get_component_linker_store};
+use wasmtime::component::bindgen;
+use wasmtime::{Engine, Result};
+mod utils;
+bindgen!({
+path: "../wit-files/adder.wit",
+world: "adder",
+});
+fn main() -> Result<()> {
+let engine = Engine::default();
+let (component, mut linker, mut store) = get_component_linker_store(
+&engine,
+"./target/wasm32-wasip2/debug/guest_adder_rs.wasm",
+"./target/wasm32-wasip2/release/guest_adder_rs.wasm",
+)?;
+bind_interfaces_needed_by_guest_rust_std(&mut linker, false);
+let adder_bindings: Adder = Adder::instantiate(&mut store, &component, &linker)?;
+let a = 1;
+let b = 2;
+let result = adder_bindings.call_add(&mut store, a, b)?;
+assert_eq!(result, 3);
+Ok(())
+}
+That’s it! The magic lies in wasmtime::component::bindgen macro, which generates bindings according to adder.wit at compile time.
+You can run cargo expand -p host-rs --bin host-rs to see the generated code by bindgen, which is sometimes necessary for debugging.
+Note that bindgen can generate asynchronous bindings as well, which is useful when a component internally performs IOs like networking. Please refer to the async examples in wasi_mindmap.
+Python Host
+Hosting a component in Python is not well-supported yet, so we can run a small subset of components that don’t use any WASIp2 Resources. This for now also means we cannot run any components compiled from Python programs.
+Follow this issue for updates.
+Notwithstanding, we can still run simple components compiled from Rust programs.
+First we will need to install wasmtime-py:pip install "wasmtime==38.0.0"
+If you haven’t done so, compile the Rust adder component as mentioned in Adder Component.
+With the Rust adder component, we need to generate Python bindings:# replace guest_adder_rs.wasm with the path to your Rust adder component
+python -m wasmtime.bindgen guest_adder_rs.wasm --out-dir adder_rs_bindings
+This will create a Python package named adder_rs_bindings in the current directory.
+To run the component, we can simply do the similar thing as in the Rust host:# in run_guest_adder_rs.py
+from wasmtime import Store
+from adder_rs_bindings import Root
+def run_adder_rs_guest():
+store = Store()
+adder_component_instance = Root(store)
+result = adder_component_instance.add(store, 1, 2)
+assert result == 3
+print(f"{__name__}: 1 + 2 = {result}")
+run_adder_rs_guest()
+Or, with such a simple component, there’s a magic loader from wasmtime-py to load the component without manually generating bindings and run the component:# in run_guest_adder_rs_magic_loader.py
+from wasmtime import Store
+# The magic, refer to https://github.com/bytecodealliance/wasmtime-py?tab=readme-ov-file#usage
+import wasmtime.loader
+from guest_adder_rs import Root
+def run_adder_rs_guest():
+store = Store()
+adder_component_instance = Root(store)
+result = adder_component_instance.add(store, 1, 2)
+print(f"{__name__}: 1 + 2 = {result}")
+assert result == 3
+run_adder_rs_guest()
+Complications
+So far so good. The above examples are simple and straightforward, except that we have a few points that were glossed over:
+Why can’t this Python host run the Python component we built?
+Why does a Python component size much bigger than a Rust component?
+Why did we have a interfaced_adder.wit which is different from adder.wit?
+Before diving into these, please read through the Overview of WIT from WACMDoc, which is prerequisite for understanding the following sections.
+OK, welcome back!
+Standard Libraries
+Let’s dive right into the first 2 questions.
+According to the issue, wasmtime-py does not currently support running components build with componentize-py, because wasmtime-py does not yet support resources, which components built with componentize-py always use, as componentize-py unconditionally imports most of the wasi:cli world. ↪
+The explanation is simple, but why does componentize-py unconditionally import most of the wasi:cli world in the first place?
+We need to zoom more into the compiled component.
+In the case of guest_adder_py.wasm, as we don’t need 3rd party libraries, the only logical parts in the module inside the component are Python’s std libs and our add logic. Because of the needs from Python’s std libs (e.g., handling crashes, reading env vars to modify the behavior of std libs), the compiled Python component imports most of the wasi:cli world.
+The batteries-included std libs of Python are huge, so the component size is much bigger than a Rust component, even though much of the std libs are not used in our adder example.
+Therefore, the compiled component may be bloated by std libs:
+in terms of logics:
+std libs may include unused code in the component.
+std libs may also include useful code that we don’t explicitly require, like error handling.
+in terms of interfaces:
+std libs may include interfaces that we don’t need anyway
+std libs may require interfaces that we indirectly need, for example, stderr interface when a crash happens and error messages are printed.
+A leaner language like Rust is no exception. For those who are interested, you can take a look at this issue in Rust repository, filed by me :) A brief summary of the issue is that when a simple functionality from Rust std is used, say the format! macro, the Rust compiler will include the whole wasi:cli world that includes some interfaces that are useless in this case, like wasi:cli/env for accessing environment variables.
+Command Component from Rust and Compositions
+We have tried running a component on a Rust and a Python host, but can we run a component on a WASM host? Yes and No.
+We cannot run an adder component, say guest_interfaced_adder_rs.wasm, with wasmtime in command line, but we can run a command component with wasmtime in command line, for example:wasmtime run command_component_hosting_adder.wasm
+A command component is (just special) one that exports the wasi:cli/run interface, and imports only interfaces listed in the wasi:cli/command world, which allows it to be executed directly by wasmtime (or other wasi:cli hosts). ↪
+For the purpose of demonstration, we will create a command component in Rust, which hosts an interfaced-adder component.
+We can create a command component as a regular Rust binary project:# create a new command component called `host-command-component`
+cargo new host-command-component
+Inside the host-command-component project, you need to add the following content to Cargo.toml:# other content omitted..........
+[dependencies]
+wit-bindgen = "0.62.0"
+In host-command-component/wit, you need to add a WIT file for this command component, specifying its world:// host-command-component/wit/host.wit
+package wasi-mindmap:host;
+world host {
+import wasi-mindmap:interfaced-adder/add;
+}
+The wit_bindgen::generate! macro generates bindings for the imported adder interface at compile time. The main function of this command component is simple:mod bindings {
+wit_bindgen::generate!({
+// Load the imported package before the world that uses it.
+path: ["../guest-interfaced-adder-rs/wit", "wit"],
+world: "wasi-mindmap:host/host",
+generate_all,
+});
+}
+use bindings::wasi_mindmap::interfaced_adder::add::add;
+fn main() {
+let result = add(1, 2);
+println!("result: {}", result);
+}
+To compile this command component, run cargo build --target wasm32-wasip2 from host-command-component. You will find the compiled component in target/wasm32-wasip2/debug/host-command-component.wasm.
+This command component imports the add interface from interfaced-adder component and the interfaces from wasi:cli/command world, and then calls the add function. For main(), it exports the wasi:cli/run interface. Therefore, you cannot run this command component with wasmtime in command line yet, because wasmtime does not have the add interface implemented.
+What we can do is composition. We compose the interfaced-adder component with the host-command-component to form a new component, which imports only the wasi:cli/command interfaces and exports only the wasi:cli/run interface.
+The “shapes” of individual components and the composed component.
+The composed component is run by wasmtime in command line.
+The composition can be done programmatically or visually with wasmbuilder.app. For the purpose of demonstration, we will use the visual way.
+Please refer to Compose with WAC if you are interested in the programmatic way.
+Compose with wasmbuilder.app
+The steps are straightforward:
+Add components by uploading them.
+Drag them onto the canvas.
+Link the exported add interface to the imported add interface.
+Check the box to set host-command-component as the main component.
+Download the composed component with a name, say composed-component.wasm.
+Then finally, you can run the composed component with wasmtime in command line:$ wasmtime run composed-component.wasm
+result: 3
+You can do such compositions with any compatible components, not just for a command component and a trivial adder component. This is where WASIp2 really shines. Imagine you have a Python component, a Go component and a C# component, as long as they have compatible import and export interfaces, you can compose them together to form a new component. This is a great relief if you have struggled with gluing programs via C ABIs.
+Back to the question: Why did we have a interfaced_adder.wit which is different from adder.wit?
+The composability of components is at the interface level. What we match against when composing components are the interfaces exported and imported by components, not the imported or exported functions. So, even though functions can be imported or exported at the top level of a world, they are not the unit of composition.
+Host: Importing Interfaces at Runtime
+In the Rust host example, we know that the magical bindgen macro generates bindings for the interfaces of a component at compile time. But what if we want to import interfaces dynamically at runtime? For example, fuzzing any components that have arbitrary interfaces.
+wasmtime crate provides APIs to look up exports and inspect their types at runtime, but the user experience is intentionally not good to discourage users from doing so. But, anyway, here’s a simple example:// in host-rs/src/main.rs
+use crate::utils::{bind_interfaces_needed_by_guest_rust_std, get_component_linker_store};
+use wasmtime::{Engine, Result};
+pub fn run_adder_dynamic(engine: &Engine) -> Result<()> {
+let (component, mut linker, mut store) = get_component_linker_store(
+engine,
+"./target/wasm32-wasip2/debug/guest_interfaced_adder_rs.wasm",
+"./target/wasm32-wasip2/release/guest_interfaced_adder_rs.wasm",
+)?;
+bind_interfaces_needed_by_guest_rust_std(&mut linker, false);
+let instance = linker.instantiate(&mut store, &component)?;
+let interface_name = "wasi-mindmap:interfaced-adder/add";
+let (_, interface_idx) = instance
+.get_export(&mut store, None, interface_name)
+.unwrap();
+let parent_export_idx = Some(&interface_idx);
+let func_name = "add";
+let (_, func_idx) = instance
+.get_export(&mut store, parent_export_idx, func_name)
+.unwrap();
+let func = instance.get_func(&mut store, func_idx).unwrap();
+// Reference:
+// * https://github.com/WebAssembly/wasi-cli/blob/main/wit/run.wit
+// * Documentation for [Func::typed](https://docs.rs/wasmtime/latest/wasmtime/component/struct.Func.html) and [ComponentNamedList](https://docs.rs/wasmtime/latest/wasmtime/component/trait.ComponentNamedList.html)
+let ty = func.ty(&store);
+// If you don't know the types of arguments and return values of the function at compile time
+// iterate over the types of arguments at run time
+for (i, p) in ty.params().enumerate() {
+println!("Type of {i}th param: {p:?}");
+}
+// iterate over the types of return values at run time
+for (i, r) in ty.results().enumerate() {
+println!("Type of {i}th result: {r:?}");
+}
+// If you know the types of arguments and return values of the function at compile time
+let typed_func = func.typed::<(i32, i32), (i32,)>(&store)?;
+let (result,) = typed_func.call(&mut store, (1, 2))?;
+assert_eq!(result, 3);
+Ok(())
+}
+fn main() -> Result<()> {
+let engine = Engine::default();
+run_adder_dynamic(&engine)
+}
+You need to recursively get a handle (i.e., wasmtime::component::ComponentExportIndex) to an exported item (e.g., an interface, a function, a resource, etc.) get_export returns an item’s description and its handle, a wasmtime::component::ComponentExportIndex. Use the interface’s handle as the parent when looking up its add function. For a function object (i.e., wasmtime::component::Func) that you get with a handle, you can iterate over the types of arguments and return values. If you know the types of arguments and return values at compile time, you can use Func::typed to get a TypedFunc object, which can be used to call the function with the types checked.
+Conclusion
+We have explored various axes of WASIp2 concepts and APIs:
+Implementations of hosts and guests
+Languages: Rust, Python
+Async and sync APIs: We’ve seen sync APIs in the examples while async examples are in the wasi_mindmap repository.
+Compile-time and runtime interface imports: We’ve seen compile-time interface imports using bindgen and touched on runtime interface imports.
+Standalone components and compositions
+Application complexity: We’ve seen simple adder examples while I leave a more complex example in the Appendix
+With these, I hope this guide is more than a good start for WASIp2. Have fun hacking with WASIp2!
+Issues and Contribute
+Along my way stumbling through the WASIp2 tutorials, documentations and examples, I found a few issues and missing pieces, some resolved, some not:
+Resolved ones by me, just FYI:
+Missing examples for using bindgen! async, imports and resource in host
+Bindgen improvement: Remove the use of async_trait
+Documentation: Wrong doc about Config::wasm_component_model
+Renovate host example with latest wasmtime and wasmtime_wasi
+Renovate the WASI example
+Unresolved ones, for those who may be interested in contributing:
+Compiled wasm32-wasip2 component from simple code requires excessive WASI interfaces
+Bindgen! gives weird name to an interface well-named in WIT file
+As WASIp2 technologies are rather young, if you find WASIp2 is interesting, please consider contributing code and/or documentation to the related WASIp2 projects, like wasmtime and WebAssembly Component Model Documentation.
+Finally, my code is also open sourced:
+wasi_mindmap: A collection of examples and tutorials about WASIp2.
+ideas reifying: The source of this blog site.
+Contributions to my repos are also welcome!
+Personal Notes and Beyond WASIp2
+My motivation for using WASIp2 is to make modern software interops for large language models (LLMs) and autonomous agents. LLMs and agents can now solve difficult coding problems, and they will be much more capable very soon, but today’s softwares are very fragmented. The foundation of software interops is still legacy C ABIs, which are not only fragile but also dangerous. I can’t imagine how these (soon-to-be) super intelligence will be able to solve real-world software problems with today’s software interops, since we humans also suffer from the same problem.
+Besides LLMs which may or may not end humanity, I also see some interesting explorations by us humans:
+Making WebAssembly and Wasmtime More Portable: This will enable wasmtime to run on more platforms, including mobile and edge devices.
+In the use case of robotics, with WASIp2, we can run components (written in different languages) on a robot and/or MCUs of body parts of it while keeping them interoperable. This may be more powerful and flexible than Robot Operating System (ROS).
+k23: This is a OS kernel reimagined with WebAssembly. It leverages the built-in sandboxing of WebAssembly to provide a secure environment for running untrusted code. With WASIp2, programs (including the kernel) can be written in any languages with max interoperability and flexibility.
+Appendix: More Examples
+Here we have a more complex example - KV store.package wasi-mindmap:kv-store;
+interface kvdb {
+resource connection {
+constructor();
+get: func(key: string) -> option<string>;
+set: func(key: string, value: string);
+remove: func(key: string) -> option<string>;
+clear: func();
+}
+}
+world kv-database {
+import kvdb;
+import log: func(msg: string);
+export replace-value: func(key: string, value: string) -> option<string>;
+}
+As we don’t want to pass the entire KV store by value, we need to use resources. In this world, we need the interface kvdb to get a connection resource, and then use the connection resource to get/set/remove/clear values. The log function is also needed to log errors. The exported replace-value function is used to replace the value of a key, returning the old value if the key exists.
+The implementation of the guest component in Rust is simple:// guest-kv-store-rs/src/lib.rs
+wit_bindgen::generate!({
+// the name of the world in the `*.wit` input file
+world: "kv-database",
+});
+struct KVStore;
+use crate::wasi_mindmap::kv_store::kvdb::Connection;
+use std::sync::LazyLock;
+static KV_CONNECTION: LazyLock<Connection> = LazyLock::new(Connection::new);
+impl Guest for KVStore {
+fn replace_value(key: String, value: String) -> Option<String> {
+// replace
+let old = KV_CONNECTION.get(&key);
+KV_CONNECTION.set(&key, &value);
+old
+}
+}
+export!(KVStore);
+LazyLock keeps the connection alive between calls on the same component instance, so replacing a key can return its previous value.
+The host providing the kvdb interface and the log function is more complicated:// in host-rs/src/main.rs
+use crate::utils::get_component_linker_store;
+use crate::utils::{bind_interfaces_needed_by_guest_rust_std, ComponentRunStates};
+use std::collections::HashMap;
+use wasmtime::component::bindgen;
+use wasmtime::component::{HasSelf, Resource};
+use wasmtime::{Engine, Result};
+bindgen!({
+path: "../wit-files/kv-store.wit",
+world: "kv-database",
+with: {
+"wasi-mindmap:kv-store/kvdb.connection": Connection
+},
+// Interactions with `ResourceTable` can possibly trap so enable the ability
+// to return traps from generated functions.
+imports: { default: trappable },
+});
+pub struct Connection {
+// use a hashmap to store key-value pairs
+pub storage: HashMap<String, String>,
+}
+impl KvDatabaseImports for ComponentRunStates {
+fn log(&mut self, msg: String) -> Result<(), wasmtime::Error> {
+println!("Log: {}", msg);
+Ok(())
+}
+}
+impl wasi_mindmap::kv_store::kvdb::Host for ComponentRunStates {}
+impl wasi_mindmap::kv_store::kvdb::HostConnection for ComponentRunStates {
+fn new(&mut self) -> Result<Resource<Connection>, wasmtime::Error> {
+Ok(self.resource_table.push(Connection {
+storage: HashMap::new(),
+})?)
+}
+fn get(
+&mut self,
+resource: Resource<Connection>,
+key: String,
+) -> Result<Option<String>, wasmtime::Error> {
+let connection = self.resource_table.get(&resource)?;
+Ok(connection.storage.get(&key).map(String::clone))
+}
+fn set(&mut self, resource: Resource<Connection>, key: String, value: String) -> Result<()> {
+let connection = self.resource_table.get_mut(&resource)?;
+connection.storage.insert(key, value);
+Ok(())
+}
+fn remove(&mut self, resource: Resource<Connection>, key: String) -> Result<Option<String>> {
+let connection = self.resource_table.get_mut(&resource)?;
+Ok(connection.storage.remove(&key))
+}
+fn clear(&mut self, resource: Resource<Connection>) -> Result<(), wasmtime::Error> {
+let large_string = self.resource_table.get_mut(&resource)?;
+large_string.storage.clear();
+Ok(())
+}
+fn drop(&mut self, resource: Resource<Connection>) -> Result<()> {
+let _ = self.resource_table.delete(resource)?;
+Ok(())
+}
+}
+pub fn run_kv_store_sync(engine: &Engine) -> Result<()> {
+let (component, mut linker, mut store) = get_component_linker_store(
+engine,
+"./target/wasm32-wasip2/debug/guest_kv_store_rs.wasm",
+"./target/wasm32-wasip2/release/guest_kv_store_rs.wasm",
+)?;
+KvDatabase::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)?;
+bind_interfaces_needed_by_guest_rust_std(&mut linker, false);
+let bindings = KvDatabase::instantiate(&mut store, &component, &linker)?;
+let result = bindings.call_replace_value(store, "hello", "world")?;
+assert_eq!(result, None);
+Ok(())
+}
+fn main() -> Result<()> {
+let engine_sync = Engine::default();
+run_kv_store_sync(&engine_sync)?;
+Ok(())
+}
+This code example should give you a sense of how to implement a host and a guest with resources.
+Metadata
+Version: 0.3.0
+Date: 2026.09.22
+License: CC BY-SA 4.0
+Changelog
+2025.01.08: Updated tracking issues
+2025.03.03: Updated to wasmtime >= 30.0 and fixed typos
+2025.11.14: Updated to use latest code
+2025.11.21: Updated to use latest wasmtime 39
+2026.09.22: Updated Rust examples to wasmtime 49.0, wasmtime-wasi 49.0, and wit-bindgen 0.62.0, including host API fixes. Fixed KV connection persistence and switched command-component builds to ordinary Cargo targeting wasm32-wasip2. Clarified Python bindings and pinned componentize-py to 0.21.0; Python Wasmtime remains at 38.0.0.
+Theme by Float
+
+=== ROW 145 | f008241 | https://gregstoll.wordpress.com/2025/01/08/floating-point-to-hex-converter-now-supports-16-bit-floats-plus-i-rewrote-it-in-rust-and-webassembly | 2025-01-08T00:00:00 | individual-blogs;twir-links ===
+Floating point to hex converter – now supports 16-bit floats, plus I rewrote it in Rust and WebAssembly! – Greg's Blog
+Skip to content
+Greg's Blog
+Menu
+Home
+Greg’s homepage
+Mobile apps
+Pictures
+Mastodon
+Goodreads
+LinkedIn
+Floating point to hex converter – now supports 16-bit floats, plus I rewrote it in Rust and WebAssembly!
+Here it is!
+(this post linked to by This Week in Rust!)
+This is a pretty small project, but it’s by far the most popular page on my website, so it’s a bit overdue for some sprucing up.
+One of the ideas on my “potential projects” list was to add support for 16-bit float types, like half-precision floating point and Google bfloat. It had languished on the list because it sounded pretty esoteric, but after reading about LLM quantization it seemed like it might be more useful!
+Doing it in C
+The converter backend was written in Python, which called a Python module built with C. When I originally implemented this in 2006(!), this was a fun experiment, and I thought it might be something I would do more often in the future since I was very into Python at the time.
+So I did some research into C support for those types, and to my mild surprise, both of the types are in C++23, and gcc 13 supposedly supports them. Unfortunately, the gcc on my Linux system is a bit older, and to upgrade it would require pulling in some packages from a newer Ubuntu version (possible but probably painful), or upgrading my Ubuntu version. I’ve been meaning to upgrade Ubuntu for a while now, but I want to set aside a chunk of time for it to deal with the inevitable random breakages.
+So I resigned myself to putting the project on hold until I did the upgrade.
+Maybe…Rust?
+A few days later I had the obvious-in-retrospect idea to see if Rust had support for these types. I’ve rewritten some larger projects in Rust like my baseball stats parser and Clue solver, and it’s been a while since I’ve had a chance to write some Rust code, so it seemed like a good match!
+Rust does have support for half-precision floating point as f16, but unfortunately only in Nightly compilers, which I wasn’t thrilled about needing, and there was no support for Google bfloat anyway. But I quickly found the half crate which supports both of these and had the simple functionality I needed!
+Looking back, I didn’t even think about looking for a C/C++ library that supports these types, although some surely exist. I think this is an example of why having a good builtin package manager matters; even if I had found a C/C++ one I would have had to copy its source into my project or something. (since I wanted to develop mostly on Windows but deploy it to Linux) But just running cargo add half is so easy!
+Step 1: Rewriting it in Rust
+Anyway, the first step was writing a Rust CGI script with the same functionality as the existing one. That was pretty straightforward – here’s a git diff of the changes. Major props to myself from two years ago for writing tests and keeping the test cases in a nice JSON file!
+One major annoyance was that for some reason the Rust Language Service in Visual Studio Code wasn’t working in the integration test file, which meant no type hints or autocomplete. This was painful because I haven’t written any Rust in a while so I badly needed those type hints! I never did figure out why this was happening, but I muddled through.
+I did ask Claude (my LLM of choice for programming questions) a few things – one was about what to use these days instead of lazy_static! to store a bunch of test cases in a static variable that needed to be loaded once (I ended up using the builtin std::sync::OnceLock<Vec<TestCase>>), and the other was about slicing off the first n elements of a slice. (it’s &s[..s.len().min(n)], I was sort of hoping for a builtin method but this is fine)
+After it was done and working, I decided to do an incredibly rough benchmark of the script’s performance versus Python by using Firefox’s DevTools Timing section and seeing how long the request was in the Waiting state; this was reasonably consistent over a local network. The Python script took 42-48ms, while the Rust version took 3-10ms, for something like a 7x speedup! This isn’t too surprising because the operation is very fast, so the time taken is mostly the overhead of starting the CGI executable, and of course since Rust compiles to a native executable that’s going to be faster than starting the Python interpreter.
+Step 2: Adding 16-bit float support
+After getting to parity, adding support for the two new types was pretty straightforward – here’s the GitHub diff for this part. This also involved changing the frontend (written in React) to add sections for the two new types. Happily, the existing HexConverter class I had written to show the breakdown between sign/exponent/mantissa worked for these new types; all I had to do was set up the new parameters and instantiate two new HexConverters! Hooray for reusable classes!
+I also took the opportunity to make the page look a little nicer, to the best of my meager abilities. (I did need to ask Claude how to use CSS to make a div only as wide as its contents: the answer is width: fit-content which I honestly should have been able to figure out!)
+One other tiny Rust thing was to make the query parsing use a std::borrow::Cow<&str> instead of a String (here’s the commit). Cow is a clone-on-write string that, in the optimal case, avoids an allocation. I really like how obvious Rust makes it when you’re doing allocations and that makes me want to avoid them, even when the performance impact is minuscule.
+At this point I was done with what I had wanted to accomplish…but there was one more thing!
+Step 3: Rust + WebAssembly!
+I’ve been interested in WebAssembly for a while, and several times I’ve started a Rust project with the intention of compiling it to WebAssembly but run out of steam by the end. But this project is small enough that I still had a bit of energy to investigate it!
+These days, WebAssembly is supported by all major browsers, so that’s one concern down. I was worried that the half crate used unsafe code (it does), and that would prevent me compiling to WebAssembly. (it doesn’t!)
+So I read a bit of the wasm-bindgen and wasm-pack books, and it was surprisingly straightforward! Here are the commits, and it’s all working great; you can verify this by seeing that no network requests are done when you convert a float.
+The .wasm file itself is bigger than I would have expected (100 KB). At first I thought this might be because I kept the exact same API as the CGI script, so it just takes a single string and parses it, but even if I take that out it only drops to ~95 KB.
+I did a quick benchmark with performance.now() , and the WebAssembly call is too fast to measure – it shows up as 0.00ms 🙂
+One of the reasons I felt intimidated by using WebAssembly from Javascript is that I kept reading about how there’s just a linear chunk of memory that gets shared, and I wasn’t sure how more complicated data types got passed between them. For example, the main function hexfloatcgi() returns a Result<String, String>, and I wasn’t sure what that even meant in Javascript. Well, I took a look at the generated bindgen code (in pkg/floattohexlib_bindgen.js) and the function returns an array of four numbers. The first two numbers are the (offset, length) of the returned string, and the bindgen code handles all of that so the JS side just gets a string back, yay! The second two numbers are if the Result is an Err, and if that’s the case, the bindgen code creates the string and then throws it. Which makes a lot of sense!
+A few last notes
+Although I was very happy that my existing React component worked for the new float types without needing any changes, I would still prefer to not use frameworks when I don’t need them; the fewer external dependencies I need, the better! I’d like to use something like Web Components instead; unfortunately, my last experience using Web Components didn’t leave me feeling very confident in doing this. Maybe I’ll have more energy to try this in the future.
+As this is the most popular page on my website, I considered adding some sort of advertising to make a bit of money. I would love to use something like Ethical Ads which specifically targets developers and doesn’t require a cookie banner or anything. Unfortunately, they’re looking for sites that get 50K+ monthly visits, and this page gets around 20K visits a month.
+Of course, I could just use Google/AdMob, like I do on my mobile apps. But assuming the CPM is comparable (is it? I have no idea!) I’d be getting around $1.50 CPM, which would mean around $30 a month. And while I’m not against ads per se, I’m not going to muck up my website for so little benefit.
+Thanks for reading! If you enjoyed this you might enjoy some of my favorite writings, or writeups of projects I’ve worked on.
+Share this:
+Share on Bluesky (Opens in new window)
+Bluesky
+Share on Mastodon (Opens in new window)
+Mastodon
+Share on Facebook (Opens in new window)
+Facebook
+Share on Reddit (Opens in new window)
+Reddit
+Share on LinkedIn (Opens in new window)
+LinkedIn
+Like Loading...
+Author  gregstollPosted on January 8, 2025January 9, 2025Tags essay, programming, projects, rust
+3 thoughts on “Floating point to hex converter – now supports 16-bit floats, plus I rewrote it in Rust and WebAssembly!”
+David says:
+February 26, 2025 at 3:59 pm
+10/10, use on the daily
+LikeLike
+Reply
+Pingback: Wa-tor simulation – watch the sharks eat the fish! – Greg's Blog
+Pingback: my 2025 in review – Greg's Blog
+Leave a comment Cancel reply
+Δ
+Post navigation
+Previous Previous post: AI Snake Oil review – a clear-eyed look at what AI can and can’t do
+Next Next post: linked list saturday: carbon removal, the hundred page idea, unoptimized charity
+Search
+Search for:
+Search
+Goodreads
+Social Media
+Mastodon
+Goodreads
+LinkedIn
+Home
+Greg’s homepage
+Mobile apps
+Pictures
+Mastodon
+Goodreads
+LinkedIn
+Greg's Blog
+Blog at WordPress.com.
+Comment
+Reblog
+Subscribe
+Subscribed
+Greg's Blog
+Join 111 other subscribers
+Sign me up
+Have a WordPress.com account? Log in now.
+Greg's Blog
+Copy shortlinkView post in Reader
+Manage subscriptionsSign upLog in
+Report this content
+Collapse this bar
+%d
+
+=== ROW 146 | f008381 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-42 | 2025-04-02T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #42
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #42
+The Embedded Rustacean Issue #42
+Mar 28, 2025
+In partnership with
+Get 10% off with Code (details below)
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag @theembeddedrust on Twitter/X or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+📢
+Book Update Announcement
+Simplified Embedded Rust has been updated!
+Here’s what’s new:
+🔹 no-std edition: esp-hal v1.0 crate updates.
+🔹 std edition: esp-idf-svc v0.51 crate updates.
+🔹 Development container support introduced.
+🔹 Streamlined repositories.
+🔹 Various typo, code, and reference fixes across both editions.
+The latest update is already available for print versions on Amazon.
+If you already purchased the ebook version, download the latest copy here.
+Click here for more information about the Standard Edition.
+Click here for more information about the Core Edition.
+🚨
+Issue Highlights
+📋 2025 Edge AI Report is Out
+🔼 Rust Update Merged into GCC
+♾ Arduino Getting into SVDs
+🦀 Rust 1.85.1 Release Announced
+💪 ARM Announces Intro to AI MOOC
+🎁 Ferrous Donates Rust Spec to Rust Foundation
+🪁 Rust on Zephyr Talk Upcoming
+📷 OpenMV Announces AI Cameras for the Edge
+💰 Softbank Acquiring Ampere
+💬
+Quote of the Issue
+❝
+Software comes from heaven when you have good hardware.
+Ken Olsen
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+Zephyr Tech Talk Announcement: Rust on Zephyr ⭐
+Solid Sands and HighTec partner to qualify Rust libraries for automotive
+Rust News 🗞🦀
+Ferrous Systems Donates Ferrocene Language Specification to Rust Project ⭐
+Big Rust Update Merged For GCC 15 ⭐
+Announcing MCPR 0.2.2: The a Template Generator for Anthropic's Model Context Protocol in Rust
+Highlights from Git 2.49
+Asahi Linux loses another prominent dev as GPU guru calls it quits
+New Linux Kernel Rust Module Unveiled to Detect Rootkits
+Announcing Rust 1.85.1 ⭐
+March 2025 Leadership Council Update
+Hiring for Rust program management
+General Embedded News/Trends 📈
+The 2025 Edge AI Technology Report ⭐
+SoftBank to acquire semiconductor designer Ampere in $6.5B all-cash deal ⭐
+New platform lets anyone rapidly prototype large, sturdy interactive structures ⭐
+Arduino Gets Into Software-Defined Vehicles
+Renesas announces BLE SoC for automotive applications
+Report: Pathways to Cybersecurity Best Practices in Open Source
+Microchip Launches the Dual-Core Lockstep AVR SD Family, for Functionally Safe Devices
+Infineon Gives PSoC Edge MCUs an Edge AI Upgrade With Nvidia TAO Support
+Green Hills Software and NXP collaborate on integrated solutions for S32K5 microcontroller family
+BB's QNX Partners Advantech to Fuel Innovation in Embedded Systems
+Researcher Hacks Embedded Devices to Uncover Firmware Secrets
+ARM Education introduces introduction to AI MOOC ⭐
+rpi-image-gen build system creates custom images for Raspberry Pi boards
+Qualcomm’s Software Acquisitions May Finally Overcome Edge Friction
+Comparisons with other Languages 🔍
+Choosing the Right Programming Language for Your Embedded Linux Device
+GPU Monte Carlo Simulations in Python and Rust
+Cost of C++ Abstractions in C++ Embedded Systems
+Why Rust is Winning in Backend Systems: A Startup Must-Know
+Microsoft TypeScript Devs Explain Why They Chose Go Over Rust, C#
+TrapC: Memory Safe C Programming with No UB
+Hardware 🛠
+OpenMV N6 & AE3 - Low Power, Python Programmable AI Cameras ⭐
+SparkFun IoT RedBoard – Raspberry Pi RP2350 or ESP32 WiFi & Bluetooth boards with Arduino UNO R4 form factor
+Introducing the FRDM i.MX 91 Development Board
+Synaptics Astra SR series Arm Cortex-M55 MCUs feature Arm Ethos-U55 NPU
+XIAO Logger HAT - A tiny temperature, humidity and light add-on module for XIAO with RTC and battery voltage monitoring
+Waveshare CM5-NANO-B is a compact Raspberry Pi CM5 carrier board
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+Making STM32WL55 work with Rust
+Nine Pico PIO Wats with Rust (Part 2)
+Visualizing Rust Code Coverage in VS Code
+A Simple Guide to Read Rust Source Code Effectively
+Mastering Error Handling in Rust: Beyond Result and Option
+Insights, Tools, & Case Studies 📑
+Embedded Platform Choice Guide
+Repository-level Code Translation Benchmark Targeting Rust
+Can Rust Work for Safety-Critical Embedded Systems?
+Rust Learning Resources 2025
+How we built our 2025 Embedded World Demos
+Crabtime: Zig's Comptime in Rust
+Datafix - A New Rust Serialization Framework
+Rust Concurrency: A Beginner’s Exploration
+Rust Async Programming: Future Executors and Task Scheduling
+Inside the ESP32-P4: USB, GUI, and Rust Support
+Getting Rust ready for aerospace and defence
+Enabling seamless interop between Rust and other languages
+Fast Tokenizers: How Rust is Turbocharging NLP
+General Embedded 📟
+Build The Smallest ESP32 Drone (ESP-FLY) ⭐
+ESP32 WiFi Superstitions
+Low-Code Platforms: A Revolution for Edge Computing
+Environmental sound recognition on embedded devices using deep learning: a review
+Generating AutoML-based models for Zephyr platforms in Kenning
+Getting Started with Android Studio and Edge Impulse
+Containers on Embedded: Bundling your App with Torizon
+Robust OTA Updates For Linux Devices, the Easy Way
+AI Is Coming to the Edge, but It Will Look Different
+Why choose C++ and Slint for your next embedded project?
+Behind the scenes of debugging the Thingy:91 X for launch with Memfault
+An Early Quitting Time Means Big Efficiency Gains for TinyML Models Running on Smart Sensors
+PicoSysLog Makes Remote Logging of Espressif ESP8266, ESP32 Projects a Breeze
+Edge AI and TinyML
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Rust for System Programmers
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+zerocopy v0.8.24
+semihosting v0.1.20
+w5500 v0.6.0
+jh71xx-hal v0.7.2
+Upcoming Events & Deadlines 🎭
+Rust on Zephyr - State of the Union  - April 2, 2025, Online
+Rust Konf Türkiye - April 20, 2025, Istanbul, Turkey
+Embedded Online Conference - May 12-16, 2025, Online
+RustWeek by RustNL - May 13-17, 2025, Utrect, The Netherlands
+Open Hardware Summit - May 30 & 31st, 2025, Edinburgh, Scotland
+Rust Summit -- Call For Proposals Open - June 7, 2025, Belgrade, Serbia
+Rust Forge - Call For Sponsors Open - August 2025, Wellington, New Zealand
+RustConf - September 2-5, 2025, Seattle, USA
+Oxidize - September 16-18, 2025, Berlin, Germany
+NDC Techtown - Call for Papers Open - September 22-25, Kongsberg, Norway
+EuroRust - October 9-10, 2025, Paris, France
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 (NEW) Rust Developer (Junior to Senior) - wallPen, Wissen, Germany
+🦀 Embedded Linux Developer - Distran, Zurich
+🦀 Rust Developer/Promoter - Collabora, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🦀 Embedded Linux Software Engineer - Canonical, Global, Hybrid
+🦀 Doctoral Thesis: Functional Software Generation - Infineon, Munich, Germany
+North America-Based Jobs 🌎
+🦀 Rust Software Engineer, Vehicle Simulation - Tesla, Palo Alto, CA
+🦀 Open Source Robotics Engineer - rerun.io, Remote
+🦀 Sr. Embedded Software Engineer, Customer Hardware (Starlink) - SpaceX, Bastrop, TX
+🦀 Rust embedded Software Engineer - General Dynamics, Dedham, MA
+🦀 Sr. Embedded Software Engineer, Energy Products - Tesla, Palo Alto, SF
+🦀 Flight Software in Rust - NASA, USA
+🦀 Sr Embedded Systems Engineer (Gateway Experience) - Lynq, Boulder, CO
+🦀 Satellite Flight Software Engineer (Rust), Senior - Lynk, Falls Church, VA
+🦀 Rust Software Engineer - K2 Space, Los Angeles, CA
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🦀 Embedded Linux Software Engineer - Canonical, Global, Hybrid
+🦀 Various Rust-Oriented Positions - MIT Lincoln Laboratory, Lexington, MA
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Poststation is a tool from James Munns for connecting embedded devices with applications running on a PC, laptop, or embedded linux system. It works with any device speaking the postcard-rpc protocol. See more and download at poststation.rs, and if you like it, purchase a license with discount code ERNEWSLTR5 for 10% off to support the Embedded Rustacean Newsletter!
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+

@@ -1,0 +1,2119 @@
+=== ROW 23 | f001398 | https://forums.swift.org/t/se-0430-second-review-sendable-parameter-and-result-values/71685 | 2024-05-07 | domain-subframes ===
+SE-0430 (second review): `sendable` parameter and result values
+
+@beccadax · 2024-05-07T23:55:29.603Z:
+Hello Swift community,
+The second review of "sendable parameter and result values" (formerly "transferring isolation regions of parameter and result values") begins now and runs through May 13, 2024. The proposal is available here:
+https://github.com/apple/swift-evolution/blob/main/proposals/0430-transferring-parameters-and-results.md
+This proposal builds upon SE-0414 Region-based Isolation, which was accepted in February 2024. After the first review in March, the Language Steering Group accepted the proposal's design but asked the authors to select a keyword which better aligns with its role in concurrency.
+Therefore, the scope of this second review is limited to the newly-chosen sendable keyword and potential alternative keywords. Given its limited scope, the review period will be relatively brief.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to the review manager by email. When emailing the review manager directly, please include "SE-0430" in the subject line.
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at
+swift-evolution/process.md at main · swiftlang/swift-evolution · GitHub
+Happy reviewing,
+—Becca Royal-Gordon
+SE-0430 Review Manager
+
+---
+
+@filip-sakel · 2024-05-08T00:44:45.279Z:
+I think the name spendable perhaps limits this feature to just concurrency when there are broader use-cases related to ownership. From my understanding, most (if not all) of types we’d consider non Sendable have reference semantics. Thus, when we send a value across isolation domains, what we want to know is that the value in the new isolation won’t interact with any piece of data from the isolation domain we came from and thus race. With value semantics it’s guaranteed not to, so we have nothing else to check. For types with reference semantics, we basically have to guarantee that the instance on hand is unique (i.e. is only referenced once). While the other use cases for this feature are niche and likely limited, I can think of types that might need to take ownership of an object to fully manage it (perhaps even circumventing reference counting if they don’t reference it more that once).
+So I guess my suggestion would be for something like noSideEffects or uniquelyReferenced.
+Edit: I see that Rust has Unique<T> which is pretty similar. This feature could be implemented with the compiler automatically injecting that type:
+// Definition
+@propertyWrapper
+struct Unique<T: ~Copyable>: ~Copyable {
+private let value: T
+init(_ make: @autoclosure () -> T) {
+self.value = make()
+}
+var wrappedValue: T { … }
+}
+extension Unique: Sendable & Copyable where T: Sendable {}
+// Usage
+func acceptsUnique(@Unique x: some Any) {}
+func sendUnique() {
+// The compiler could automatically add @Unique
+@Unique let x = NonSendable()
+// The compiler could automatically add the underscore
+acceptsUnique(_x)
+print(x) // Error: Wrapper _x already consumed
+}
+
+---
+
+@Jumhyn · 2024-05-08T00:46:03.607Z:
+I feel pretty strongly that sendable doesn't quite fit here. I think it invokes a lot of the right stuff, i.e., that this modifier is 'concurrency-y', but I don't think it maps closely enough onto Sendable to make the overloading elucidating rather than confusing. I think it will be difficult to explain to those encountering Swift concurrency for the first time exactly what the difference is between sendable and Sendable.
+I can tell myself a story that is perfectly coherent: a type which conforms to Sendable is one that is inherently 'sendable' in a broader sense, but individual values can still be sendable in this broader sense (namely, by being in a disconnected region). So we can mark a function parameter of a non-Sendable type T as sendable T to indicate that the particular value must be sendable by virtue of being in a disconnected region.
+But this is subtle and I really don't like having keywords which mean different things based on capitalization. About the only exception is self vs. Self, which is interesting in that it makes the same value vs. type distinction, but there self really is a value of type Self. We would not have that property here: sendable is a modifier attached to a parameter type which nonetheless indicates something about the particular value which callees are allowed to pass.
+I think if we choose sendable for this keyword it will make Swift's concurrency story harder to explain and talk about for no real benefit (over other available alternatives).
+The proposal's rationale for sendable rather than sending (which remains my preferred spelling) is as follows:
+It was also suggested that perhaps instead of renaming transferring to sendable , it should have been renamed to sending . This was rejected by the authors since it runs into the same problem as transferring namely that it is suggesting that the value is actively being moved to another isolation domain, when we are expressing a latent capability of the value.
+But this doesn't strike me as particularly convincing. It is a higher bar than what we have generally held other parts of the function signature to. A throws isn't a function which always throws, it is a function which is permitted to throw. An async function doesn't necessarily suspend, yet nonetheless we mark the potential suspension point with await as though it always will. Externally, we treat the call as the suspension point even though the suspension may not occur precisely at the point of entry to the called function.
+I view sending similarly. It is a description of the interface a function presents, which external clients must view as a single step. The function purports that it will be transferring the value across isolation domains, and indeed is permitted to, so external clients must act as though it always does, and moreover act as if the actual 'send' occurs at the point of the call. That the 'real' transfer may occur later (or not at all) is an implementation detail, immaterial to the caller.
+
+---
+
+@beccadax · 2024-05-08T01:36:56.977Z:
+filip-sakel:
+For types with reference semantics, we basically have to guarantee that the instance on hand is unique (i.e. is only referenced once).
+That isn't quite what’s happening here. (If it was, we wouldn’t need a separate feature for this—noncopyable types already model unique ownership.)
+Swift is basically enforcing that:
+The current function has the only external references to anything in the object graph.
+Any references into the object graph within the current function are never used after you “send” it somewhere else.
+But the current function can have multiple references into that object graph—it’s just that when any of them are sent, all of them can’t be used anymore (so the function they sent it to knows that it now has the only external references). And there can also be references from one part of the object graph to another.
+
+---
+
+@KeithBauerANZ · 2024-05-08T03:12:54.926Z:
++1 on disliking sendable here. Sendable is already a "see an error I don't understand, but it mentions Sendable so I add : Sendable and it goes away" kind of a feature, which is concerning enough. Now we'd have sendable and Sendable, which mean different things, but sometimes you can use either to silence an error, and sometimes you can't?
+I also don't think sendable helps me understand what happens when I add the modifier. SE-0414 already blurs what Sendable means (in that non-Sendable types can in fact end up being "sent"), and this sendable keyword just blurs the line further. It's extremely unintuitive to me that a non-Sendable type could be sent to a sendable parameter (and in fact, that's the point of the keyword), rather than that a sendable parameter could only accept Sendable types.
+(and if you had trouble reading that paragraph, that's part of the point I'm trying to make!)
+Whilst obviously this PR is necessary to make SE-0414 useful, and given the ship has sailed on SE-0414 I'm on board with the general concept of this one, I think what's really missing is a coherent story about what Sendable means now (given that it no longer means what it did when the name was chosen; perhaps we would choose UnconditionallySendable if we were starting over), and what it means to "send" something that's "not sendable" — that'll give us a name for the concept here (and probably make SE-0414 more understandable too)
+
+---
+
+@xwu · 2024-05-08T04:42:27.386Z:
+We obviously need better documentation and other resources to teach these concepts.
+But the relationship between the feature we're reviewing here and Sendable is actually pretty well captured exactly by what you mention here.
+When a type conforms to a Fooable protocol, it's a guarantee that every value of that type can be fooed, but it isn't to the exclusion of other values (of non-conforming types) that may also be fooed. For a recent example, not every bitwise copyable value is of a type that conforms to BitwiseCopyable; but every value of a BitwiseCopyable type is bitwise copyable.
+And so likewise, while every value of a Sendable type can be sent, also "non-Sendable types values can in fact end up being 'sent' ... (and in fact, that's the point of the keyword)." In fact we just adopted this feature in a mutex API proposed in SE-0433 precisely because transferring sendable was an appropriate relaxation of the originally proposed Sendable requirement.
+We aren't confused by what SignedInteger is just because some values of floating-point types are also integers (which are signed), nor are we confused by what RandomAccessCollection is just because some string values can also support efficient random access (e.g., ASCII strings).
+I'm not particularly married to sendable as the spelling for this feature, as opposed to (say) sending or sent, but I do vastly prefer something of that ilk, because it is precisely the point that we are describing the sending of a value across isolation regions.
+The terminology we use to describe what the Fooable protocol guarantees to every value of a conforming type should be called "foo(-ing, -ed, -able)"; it doesn't make sense that for region isolation specifically we have to cast about for an alternative word so that Fooable guarantees that all values are "florpable" simply because non-Fooable values might be "florpable" too.
+
+---
+
+@filip-sakel · 2024-05-08T04:59:44.110Z:
+Thank you for your prompt reply!
+beccadax:
+it was, we wouldn’t need a separate feature for this—noncopyable types already model unique ownership
+That was kind of my point except there’s no current built-in Ownership feature that does what Unique<T> does.
+beccadax:
+The current function has the only external references to anything in the object graph
+Could you expand on what « external references » are and perhaps give an example?
+beccadax:
+Any references into the object graph within the current function are never used after you “send” it somewhere else.
+Thank you for pointing this out, I hadn’t really thought about that. But is there a use case where having this is essential or even useful as compared to @Unique arguments as I showed above?
+
+---
+
+@KeithBauerANZ · 2024-05-08T05:13:50.404Z:
+Stepping away from Sendable for the moment and using the example above of BitwiseCopyable, suppose we were making a new API to make a bitwise copy, we might start with:
+func bitwiseCopy<T: BitwiseCopyable>(_ value: T) -> T { ... }
+Now we do what this proposal does, and say that we want to extend this function to take values that the compiler can prove are bitwise copyable in that moment, as well. What syntax should we choose?
+This proposal suggests,
+func bitwiseCopy<T>(_ value: bitwiseCopyable T) -> T { ... }
+Which, I guess makes perfect sense  — BitwiseCopyable refers to a type which always has the property, bitwiseCopyable refers to a value that currently has the property. I have to say, I'm not sure why I feel more strongly that sendable is bad, than that bitwiseCopyable would be.
+An earlier commenter mentioned that Self and self have kind of a similar relationship, so it's not entirely unprecedented to have two keywords that differ only in case.
+Still, please consider those of us trying to explain Swift concurrency over a video call or in a conference presentation! The difference between these is not easily pronounceable.
+
+---
+
+@beccadax · 2024-05-08T05:35:59.508Z:
+filip-sakel:
+But is there a use case where having this is essential or even useful as compared to @Unique arguments as I showed above?
+Absolutely. If you're familiar with Rust (I'm guessing you are, since you cited it), you're probably also familiar with the trouble its ownership model has with arbitrary object graphs where two objects can both point to each other; you often have to restructure your data to avoid doing that. This feature handles those situations a lot better.
+Imagine you have an actor which loads some data from the network and constructs a bunch of objects from it, with all of those objects pointing to each other:
+class CurrencyData {
+var currencies: [String: Currency] = [:]
+class Currency: Hashable {
+let root: CurrencyData
+let code: String
+var rates: [Currency: DecimalNumber] = [:]
+}
+}
+actor CurrencyDataLoader {
+func fetchCurrencyRates() async throws -> sendable CurrencyData {
+let rawData: [String: [String: DecimalNumber]] = try await fetchJSONData()
+let data = CurrencyData()
+// First pass: Create all currencies
+for (code, _) in rawData {
+data.currencies[code] = CurrencyData.Currency(root: data, code: code)
+}
+// Second pass: Populate rates
+for (thisCode, rateTable) in rawData {
+guard let thisCurrency = data.currencies[thisCode] else { ... }
+for (otherCode, rate) in rateTable {
+guard let otherCurrency = data.currencies[otherCode] else { ... }
+thisCurrency.rates[otherCurrency] = rate
+}
+}
+return data
+}
+}
+CurrencyData and CurrencyData.Currency are classes with unsynchronized shared mutable state, so they can't safely be made Sendable. And the data variable in fetchCurrencyRates() is not a unique reference—every single Currency has a reference to the exact same instance. But reading this code, we can easily see that only one outside reference to the CurrencyData object or any of its related Currency objects escapes the function—via the return value—and that therefore it really ought to be safe to let the CurrencyData be passed to a different concurrency domain.
+SE-0414 and SE-0430 together make it possible for the compiler to prove that fact and allow this code to be compiled. You activate that by (in this case) marking the result type of fetchCurrencyRates() as sendable; this tells the compiler that the CurrencyData you return needs to be one that has this property of being provably reachable only by the caller of the method once it returns.
+(If you'd like to know more about the details of the analysis, I strongly suggest you look at SE-0414 and the discussion around it; fully explaining it would get pretty far into the weeds for this review thread.)
+Unique ownership is also a super useful feature in many scenarios, including some concurrency scenarios; that's why the ownership model (noncopyable types and related features) has gotten so much attention over the last couple years. But it isn't good at handling the cases that this feature handles, which is why we have both.
+
+---
+
+@benlings · 2024-05-08T06:07:23.759Z:
+Jumhyn:
+I think if we choose sendable for this keyword it will make Swift's concurrency story harder to explain and talk about for no real benefit (over other available alternatives).
+I came to say the same thing, but realised while reading the comments that actually sendable is the fundamental concept and making a type Sendable or a function @Sendable is just one way to do this. If these concepts were being explained from scratch, you would probably start with sendable and then go on to explain the Sendable protocol.
+However, from the proposal:
+The "sending parameter" behavior of actor initializers is a generally useful concept
+This concept is introduced as ‘sending parameter’, so maybe that is a better name?
+Jumhyn:
+A throws isn't a function which always throws, it is a function which is permitted to throw
+Or, would sends be a suitable alternative, along these lines? Just as a throws function doesn’t have to throw, it just has the option to do so, a sends parameter/ return value has the option to be sent?
+
+---
+
+@MPLewis · 2024-05-08T06:15:56.500Z:
+Just going to make another pitch for reisolating as the keyword - I think it adequately conveys the meaning of what the modifier does, we’re already having to teach users about “isolation”, and it’s a case-insensitively unused name which will aid in searchability.
+
+---
+
+@Nickolas_Pohilets · 2024-05-08T10:32:28.268Z:
+Proposal text seems to not cover how sendable keyword interacts with types known to be Sendable (or have I missed it?).
+struct S: Sendable {}
+func foo(_ x: sendable S) {} // ok, error or warning?
+func bar<T>(_ x: sendable T) {}
+bar(S()) // ok, error or warning?
+
+---
+
+@vns · 2024-05-08T13:18:50.699Z:
++1 on vote against the sendable keyword. The possible confusion with Sendable protocol is too much here, and examples from the proposal IMO only support that it is complicated. The particular one that catches attention there is one of the most obvious uses:
+func getNonSendable() -> sendable NonSendable {
+return NonSendable() // okay
+}
+Reads more like "make it Sendable", rather then moves it out of the region. Paired with region isolation it even more confusing:
+func getNonSendable() -> sendable NonSendable {
+let ns = NonSendable() // initially sendable
+someActor.consume(ns)
+return ns // not okay
+}
+If you understand every part of that, it makes sense, but when you are trying to catch up with sendability in general it starts to fall apart. Because type that conforms to Sendable won’t produce an error in the example above, but sendable type does.
+benlings:
+I came to say the same thing, but realised while reading the comments that actually sendable is the fundamental concept
+It’s too fundamental I’d say. Just mentioning all of that together in a conversation adds so much overload and friction to distinguish.
+I would favour disconnected suggested in previous thread, as it makes a lot of sense in connection with regions, overall behaviour and zero conflict in naming with existing concepts before region based isolation. If not that one, transferring or any variation of it seemed OK too.
+
+---
+
+@vns · 2024-05-08T13:22:49.654Z:
+Under first edit at least it was stating that Sendable types are transferring (using previous terminology) as well, as marked with the new keyword. I think at most there might be a warning that this keyword is redundant in that case.
+
+---
+
+@cal · 2024-05-08T13:34:49.837Z:
+I like the new sendable name:
+The motivation under "Alternatives Considered" is strong.
+I find the sample code easier to read and more intuitive since it reuses familiar concepts.
+I like that it avoids introducing new terminology, especially complex terminology derived from region-based isolation (which is very advanced and beyond what I hope most Swift engineers will need to understand deeply).
+
+---
+
+@grynspan · 2024-05-08T13:56:03.005Z:
+This feature, however it is spelled, will be a useful addition to the language that smooths over some of the rough edges of isolation domains.
+I think, for someone new to Swift, having @Sendable, Sendable, and sendable in the language is confusing. "Why is it," a novice might ask, "that a closure/function argument uses @Sendable but any other type uses sendable?"
+Keeping my novice hat on for a bit longer… I see this discussion of sendable vs. consuming:
+When a call passes an argument to a sendable parameter, the caller cannot use the argument value again after the callee returns. [...] Unlike consuming parameters, sendable parameters do not have no-implicit-copying semantics.
+And I wonder whether the distinction between sendable and consuming is semantically important at the source level? I (hat off for a second here) understand it affects codegen, at least as implemented today, but from an external developer's perspective, would it make sense to just use consuming here?
+I'm unsure under what conditions I would want borrowing sendable. An example would be helpful.
+sendable inout (but not inout sendable?) could also use some more explanation. I would assume that it means the value is transferred into the callee's domain for computation, then transferred back, but how would that differ from the normal semantics of inout? Could sendable simply be inferred here, or are there dangers in doing so?
+
+---
+
+@Gero · 2024-05-08T15:09:58.475Z:
+I think the usefulness of the proposal is not in doubt at all so far (by anybody), but the disagreement of using sendable as a keyword in this way is strong. I am also someone that dislikes this much, as sendable NonSendable always seems to be in conflict.
+Please also consider the mentioned issues about explaining this to novices. While there exist other, comparable contradictions in naming things in pretty much every language, including Swift, concurrency is a hard concept already and I think we should take care to try to alleviate any further complications in learning it.
+Yes, even if you consider "learning" to be a one-time investment people have to do (which is debatable, too).
+I tried looking at this from a more "general human language" perspective and I believe part of what irks us critics here is simply the fact we lack the needed abstracts in any regular pair of words. Sendable as protocol (and excuse me if I just toss its counterpart @Sendable in the same bucket) fits to "things being sendable" in the sense that we pass a "thing" over from one "place" (in this the languages isolation context) to another. The problems arise that in the real world, this usually means you can't do anything once you have sent it. Not so in our programming world, where it's normal that you can do stuff with things you have a reference to, whether they were also sent somewhere else or not. I wouldn't even say that was an oversight when choosing Sendable as a fitting protocol name, btw. The emphasis was simply on the sending aspect of this... process, not so much the "consequence" the word implies.
+Now sendable refers to the same process, but this time the emphasis is basically put on "having lost the ability to work with it further".
+I can see why the proposal does not want to use transferring as a keyword because it is not an action you apply to the parameter at the callsite, it is an adjective that tells that we must only use a reference that is sendable in the sense that we indeed no longer use it afterwards. Which is, agreed, an aspect of something that can be sent, but still: We have all learned that Sendable does specifically not mean that necessarily...
+All that is to say: I don't believe having send in the keyword is nice. sending implies we actively do something with the parameter, which we don't, sendable gives huge friction to  Sendable.
+Since we kind of want to communicate that we "can give up on this parameter", what about relentable?
+
+---
+
+@xwu · 2024-05-08T15:20:15.176Z:
+Gero:
+I am also someone that dislikes this much, as sendable NonSendable always seems to be in conflict.
+That would indeed be in conflict. Fortunately, there is no type or protocol named NonSendable, and I would trust that no one would create such a type because, with region isolation, values of that type can indeed be sent. If someone does, then the fault lies with them.
+
+---
+
+@Gero · 2024-05-08T15:30:34.862Z:
+I did not not mean to imply NonSendable as a real protocol or type name, I was using it in the same way others have before, i.e. a type that is not conforming to Sendable (explicitly or implicitly). That's a little less terrible, but still not good imo.
+
+---
+
+@xwu · 2024-05-08T15:43:29.193Z:
+It might be helpful to see how you feel with a concrete example and plausible (or real) API. For example, sketch out what it would be like to use the (actual) mutex API I mentioned above.
+
+---
+
+@wadetregaskis · 2024-05-08T15:45:47.646Z:
+vns:
+The particular one that catches attention there is one of the most obvious uses:
+func getNonSendable() -> sendable NonSendable {
+return NonSendable() // okay
+}
+This feels similar to ~Copyable.  The absence of Sendable conformance (in this case) doesn't actually mean anything specific - it just means the type is not categorically sendable.  Specific instances of it could be.  Calling a type NonSendable is just wrong unless there truly is some categorical reason why instances of that type can never be sent (in which case, it's a rather good name for it since it'll pre-empt the compiler errors that will otherwise result from trying to send a non-sendable thing).  I'm not actually sure if that's possible.
+While I still prefer sending over sendable because it's more consistent with other parameter modifiers, I think either will work in practice; they are explicable.  I think the syntactic aspects are not going to be big problems in reality - it's not that hard to simply explain the difference between a whole type being categorically sendable (by conforming to Sendable) vs individual instances being sendable (by virtue of their usage patterns).  It's the whole concept of "sending" and isolation in general that are the actual hard parts.
+What I don't really like is that it's technically the wrong direction.  The existing parameter modifiers are either neutral (e.g. inout) or from the callee's point of view (e.g. consuming).  sending (the word) is from the caller's point of view.  I worry that it will create some subtle confusion (even if only subconsciously).  sendable does side-step that by being technically neutral in direction.
+Can you have a sendable inout T parameter?
+
+---
+
+@sliemeobn · 2024-05-08T16:06:35.211Z:
+To provide some counter-balance to the thread: I like the sendable spelling.
+I think the reasoning provided in the proposal is spot on, and in general this wording/way of thinking about what is expressed makes the a lot of sense in my mind.
+Also, to me no other keyword that is floating around is really "clearly better" in terms of helping a newcomer explain what is going on.
+If anything, one could argue the potential "confusion" around Sendable, sendable, and @Sendable is a feature. You should be confused, and you should be motivated to understand all these options when you are first confronted with the isolation/sendability/concurrency domain. No matter what the keyword is, you will need to learn about it anyway to be effective.
+As a little side-rant:
+I find the narrative - I am paraphrasing here - "but what about a novice that just want's compiler warnings to go away, they now will be confused which random keywords to throw a the code" a bit odd. I am all for progressive disclosure, but this ain't it. if you need to deal with isolation control, you will need to understand the language tools for it. No oh-so-cleverly named keyword will be able to take the inherent complexities of the domain off your shoulders.
+
+---
+
+@James_Dempsey · 2024-05-08T16:06:58.998Z:
+I wanted to confirm that I understand correctly.
+These parameters / return values will accept both:
+A value of a type that conforms to ’Sendable’
+A value that is in a disconnected isolation region
+Is that correct?
+
+---
+
+@taylorswift · 2024-05-08T16:16:11.123Z:
+xwu:
+It might be helpful to see how you feel with a concrete example and plausible (or real) API. For example, sketch out what it would be like to use the (actual) mutex API I mentioned above.
+i think what @Gero is getting at is that there are certain types in which the "non sendable" aspect is a major part of the education for how to use the type correctly. for example, Mongo.Session has documentation that relentlessly hammers the point that you cannot safely share it between concurrency domains. so when you see such a type, you're supposed to think "oh, that's some NonSendable thing".
+i think between sendable and sending, the latter is a little less confusing.
+
+---
+
+@Jumhyn · 2024-05-08T16:17:59.584Z:
+sliemeobn:
+If anything, one could argue the potential "confusion" around Sendable, sendable, and @Sendable is a feature. You should be confused, and you should be motivated to understand all these options when you are first confronted with the isolation/sendability/concurrency domain
+I don't find this compelling. I think there's a good reason that Sendable was one of the first parts of the model that got put in place and that sendable hasn't been addressed until now. You can get quite far in your handling of concurrency issues dealing only with Sendable, and never worrying about sendable--in many cases region-based isolation will make things 'just work' and users can be blissfully unaware of the concept of isolation regions, which IMO are massively more complex to reason about than types. I really don't think we should want or expect users to have to encounter or learn about these concepts 'all at once'
+sliemeobn:
+No oh-so-cleverly named keyword will be able to take the inherent complexities of the domain off your shoulders.
+Yeah, I don't think we're ever going to converge here on a pithy keyword that instantly makes it clear to a reader what's going on, and I don't think that should be our north star here. However, I also think that reusing sendable makes it more difficult for someone who is interested in understanding what's going on at a deeper level. Even just a search for 'sendable swift' would turn up many results which undoubtedly address the 'wrong kind' of 'sendable', without any indication to the user (other than the case of the first letter) that they're really reading about a different concept. At the very least, even if 'sending swift' turns up identical results, there would be a strong indication that they're not addressing the user's question head-on: it's a totally different word!
+
+---
+
+@Jumhyn · 2024-05-08T16:21:29.096Z:
+wadetregaskis:
+Can you have a sendable inout T parameter?
+sendable inout parameters
+A sendable parameter can also be marked as inout, meaning that the argument value must be in a disconnected region when passed to the function, and the parameter value must be in a disconnected region when the function returns. Inside the function, the sendable inout parameter can be merged with actor-isolated callees or further sent as long as the parameter is re-assigned a value in a disconnected region upon function exit.
+
+---
+
+@sliemeobn · 2024-05-08T16:32:20.413Z:
+Jumhyn:
+You can get quite far in your handling of concurrency issues dealing only with Sendable, and never worrying about sendable--in many cases region-based isolation will make things 'just work' and users can be blissfully unaware of the concept of isolation regions, which IMO are massively more complex to reason about than types. I really don't think we should want or expect users to have to encounter or learn about these concepts 'all at once'
+I get your point, absolutely.
+However, on this specifically, I believe that it might do more "harm" than good: having developers plow through "blissfully unaware" - applying Sendable, actor, and global actor annotations on everything that moves - will ultimately result in a a lot of "bad code".
+A first-class surfacing of non-sendable values flowing through isolation domains is in my opinion under-represented at the moment. Sure, if you don't know the screwdriver exists you end up not needing it - you'll be hammering in a lot of screws with the one hammer you have though.
+
+---
+
+@Michael_Gottesman · 2024-05-08T16:35:40.018Z:
+grynspan:
+Keeping my novice hat on for a bit longer… I see this discussion of sendable vs. consuming:
+When a call passes an argument to a sendable parameter, the caller cannot use the argument value again after the callee returns. [...] Unlike consuming parameters, sendable parameters do not have no-implicit-copying semantics.
+And I wonder whether the distinction between sendable and consuming is semantically important at the source level? I (hat off for a second here) understand it affects codegen, at least as implemented today, but from an external developer's perspective, would it make sense to just use consuming here?
+With consuming one gets a var like argument + no implicit copy diagnostics, while with sendable one just gets a var like argument. From a codegen perspective they are actually the same. The only difference is the additional diagnostic.
+The reason why it is separated is that conceptually one may not want sendable to imply no implicit copy. One can always achieve that by marking the parameter consuming sendable.
+I'm unsure under what conditions I would want borrowing sendable. An example would be helpful.
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+sendable inout (but not inout sendable?) could also use some more explanation. I would assume that it means the value is transferred into the callee's domain for computation, then transferred back, but how would that differ from the normal semantics of inout? Could sendable simply be inferred here, or are there dangers in doing so?
+It will actually be inout sendable. That is just a typo in the proposal.
+The difference is that an inout parameter only provides guarantees around the actual memory usage of the var. It doesn't provide any guarantees around concurrency. Consider the following:
+class MyKlass {
+}
+@MainActor func sendToMain<T>(_ t: T) async { ... }
+func f(_ x: inout MyKlass) async {
+await sendToMain(x)
+}
+func g() {
+var x = MyKlass()
+f(&x)
+print(x)
+}
+There is nothing in the current semantics of inout that would prevent this code from being written and we would have a race in between print(x) and whatever occurs in sendToMain(x).
+The interesting use case here can be seen in the mutex proposal where it is used: [Pitch] Synchronous Mutual Exclusion Lock.
+
+---
+
+@xwu · 2024-05-08T16:36:46.890Z:
+Jumhyn:
+Yeah, I don't think we're ever going to converge here on a pithy keyword that instantly makes it clear to a reader what's going on, and I don't think that should be our north star here. However, I also think that reusing sendable makes it more difficult for someone who is interested in understanding what's going on at a deeper level. Even just a search for 'sendable swift' would turn up many results which undoubtedly address the 'wrong kind' of 'sendable', without any indication to the user (other than the case of the first letter) that they're really reading about a different concept. At the very least, even if 'sending swift' turns up identical results, there would be a strong indication that they're not addressing the user's question head-on: it's a totally different word!
+That is a good point. I was also reflecting after my prior post that if we call this feature sendable, then the uppercase protocol might be more describing "sendable-able-ness."
+In that case, and building on your argument that throws doesn't mean something always throws, I think it'd be fine not to be super fussy about parts-of-speech here and just spell this send T — as in:
+// Actual line of code from mutex PR:
+public init(_ initialValue: send consuming Value) { ... }
+[Addendum: I think from the perspective of the analogy it is fine to say that something is "sent" here. It is correct to say that you have "sent" a letter when you drop it in the mailbox, when in truth until the postal carrier picks it up it hasn't gone anywhere at all. You wouldn't correct someone and tell them that they've "isolated" their letter in the mailbox and made it "sendable."]
+
+---
+
+@Michael_Gottesman · 2024-05-08T16:36:59.746Z:
+This is correct. One can always pass a Sendable typed value to a sendable parameter. I am imagining a diagnostic that in the case of concrete Sendable typed things or generic typed things that are constrained to be Sendable would get a diagnostic saying that sendable is redundant.
+
+---
+
+@Michael_Gottesman · 2024-05-08T16:38:59.469Z:
+James_Dempsey:
+I wanted to confirm that I understand correctly.
+These parameters / return values will accept both:
+A value of a type that conforms to ’Sendable’
+A value that is in a disconnected isolation region
+Is that correct?
+Yes.
+
+---
+
+@vns · 2024-05-08T16:40:08.989Z:
+wadetregaskis:
+This feels similar to ~Copyable. The absence of Sendable conformance (in this case) doesn't actually mean anything specific - it just means the type is not categorically sendable. Specific instances of it could be. Calling a type NonSendable is just wrong unless there truly is some categorical reason why
+I don’t disagree with overall behaviour. Yet the case of non-copyable generics I believe has made a point of the concept being hard to tackle. Here we have additional complexity of sendability concept, and to understand that keyword and type conformance with difference in one capital S has different impact and range of it, together with a bit of implicit behaviour of when instance is treated as sendable, and when it becomes not to, is a quite hard task, especially when you are new to all of that.
+It is also not about naming of a type itself, but code snippet is expressive in how you can understand code.
+And in terms of region based isolation, Sendable type and with this proposal now sendable type are in disconnected regions, which categorically I’d say express state in less ambiguous way.
+
+---
+
+@Gero · 2024-05-08T16:44:40.330Z:
+I actually read the mutex proposal, but before transferring was changed to sendable (at least in 0433 itself), so I did not notice it then. I actually thought it to be very reasonable and useful (even though I personally have no use-case for it atm), but did not feel confident enough in actually voting.
+But I can gladly provide a small example, pretending to be a novice and not knowing what I know from this entire discussion: Let's assume I have some very simple reference type I want to protect with a mutex:
+class PleaseProtecc: ~Copyable {
+// let's for a moment ignore that a novice probably won't get ~Copyable either...
+var maybeARawFileHandle: Int32
+}
+Let's assume I am already using this elsewhere in my app and the strict concurrency diagnostics successfully prevented me from passing this around isolation regions because it does not conform Sendable. Perhaps I, although I am a novice, even know that whatever I do with it (let's say some socket I/O) is not "thread-safe", but I don't know exactly how I could make it thread-safe (because low-level C, buffers, whatever). I come across the Mutex API precisely because I am looking for something to protect my instance with.
+But then, with autocompletion, I see:
+public init(_ state: sendable consuming State)
+Even if I just complete the snippet and do
+let myMutex = Mutex(myPleaseProteccInstance)
+and it doesn't show me an error or warning, I am most likely very hesitant that this is okay.
+I might be under the impression that the sendable tells me that whatever I pass must conform to the Sendable protocol, which I tried to avoid having to conform to in the first place.
+Now, taking the novice hat off, I know that this cannot be what is meant, as a required protocol conformance would be expressed via generics in the Mutex definition (which just requires State to be ~Copyable and not explicitly Sendable), but that's beside the point.
+All in all, I am not completely against it, but a difference between this point of friction and others, language-wise, is that with Sendable we have taught people that the emphasis is explicitly not on the "you can't use stuff you have sent away", but sendable is precisely that.
+That's different from, e.g. "not adopting BitwiseCopyable does not imply NotBitwiseCopyable problem. Here we're relying on two different aspects of the original (English) semantic of the word "sendable".
+@taylorswift: Yes, that was one of my major issues.
+And @sliemeobn: You are right, I am also not a fan of "over-protecting" any newcomers, complex things are complex and falling flat on your face with those once is actually often better in the long run, but in this case we should also not not regard it. We are using the same word.
+I try to rephrase it better: "Sendable" in an English meaning would imply two things at once: A thing that can be "put from one place to another" (a form of sharing) AND, once that actually happens, "you cannot use it at the first place anymore" (relenting control).
+Sendable focuses on the first part (we can still use a Sendable reference in the isolation region we "sent" it from), sendable on the second (we cannot).
+
+---
+
+@xwu · 2024-05-08T16:55:18.576Z:
+Gero:
+I try to rephrase it better: "Sendable" in an English meaning would imply two things at once: A thing that can be "put from one place to another" (a form of sharing) AND, once that actually happens, "you cannot use it at the first place anymore" (relenting control).
+Sendable focuses on the first part (we can still use a Sendable reference in the isolation region we "sent" it from), sendable on the second (we cannot).
+When you "send" a letter, you no longer have the original—but when you "send" an email, you very much have the original. Both letters and emails are small-s sendable; the action you take when you exercise that ability is called sending, and yet you relinquish only one but not the other. There is not a mountain of daily confusion about this, though, is there?
+
+---
+
+@Gero · 2024-05-08T17:05:38.772Z:
+I could be cheeky here and point out that there's a lot of people who are very confused by email indeed, but just in jest...
+Granted, perhaps I am overthinking this, but in our case we're not comparing two things quite as different as emails and letters, right? It's instances of types in both cases, and in both cases they're passed as parameters to a function. You'd be very surprised if you put two letters in two mailboxes, one of which has a "sendable letters" label and one just a "letters" label, and to your surprise, after putting them in, you'd still have a copy left in your hand of the one you put into the "letters" mailbox (yes, I kind of turned the example around here).
+Oh, and since I am not sure: I hope it's clear I am all tongue-in-cheek here and not at all fighting for this to the teeth! I'd consider myself a small voice in this community and by far I am not of the opinion to be as qualified as many others in here!
+To my surprise I also find myself much less conflicted about just using send (or sending), like in your edited post above. The problems with searching @Jumhyn mentioned would be addressed with this and are probably more important than my (non-native speaker) feel for the English language...
+
+---
+
+@xwu · 2024-05-08T17:47:22.456Z:
+No, of course! This is key feedback and your voice is very important. We want to make sure that how we name things doesn’t make an advanced concept artificially more difficult to understand. It’s good to see how far we can push explanations and analogies for clarity to get a sense of how this stuff is best to be documented and taught.
+
+---
+
+@wadetregaskis · 2024-05-08T19:05:39.779Z:
+xwu:
+In that case, and building on your argument that throws doesn't mean something always throws, I think it'd be fine not to be super fussy about parts-of-speech here and just spell this send T — as in:
+// Actual line of code from mutex PR:
+public init(_ initialValue: send consuming Value) { ... }
+I think that's workable too, but sending still seems better as it's more in line with convention (similar parameter modifiers end with ing already).  Ironically for people not fluent in English they probably don't care, whereas pedantic buggers like myself will  be mentally tripping over the inconsistent tense forever.
+I think it's a good point that if you search for sending you'll almost certainly get results for Sendable, because current search engines are stupid, but if you're paying any real attention you'll quickly realise that you're not getting exactly what you asked for.  Yet, what you are getting is probably going to be helpful anyway - whether because you didn't know about Sendable (but you should, if you're using sending, because they're merely different mechanisms for working on the same concept) or because the results talk about sending holistically, covering sending and Sendable and all the rest.
+And, there's always quoting the search terms (or using a better search engine) to enforce a literal match.  That's already something experienced programmers know to do anyway, because a lot of programming terms get mangled by default by popular search engines.
+xwu:
+When you "send" a letter, you no longer have the original—but when you "send" an email, you very much have the original. Both letters and emails are small-s sendable; the action you take when you exercise that ability is called sending, and yet you relinquish only one but not the other. There is not a mountain of daily confusion about this, though, is there?
+Hah, well, my grandparents would print emails before sending them in order to keep a copy for themselves, so…
+But, I concur that while presuming 'sending' unilaterally has reference semantics (basically) is not an implausible mistake for a learner to make, it's also not a big deal nor hard to correct.  For better or worse Swift already has a complicated and sometimes obtuse system for value vs reference types, and I don't think anything in this proposal or naming discussion materially changes that.
+
+---
+
+@wadetregaskis · 2024-05-08T19:19:00.419Z:
+To elaborate, I like the subtle clarity from careful use of language:
+Passive attributes are adjectives.  e.g. the "able"s.  Sendable, Codable, etc.  Things that can have specific things done to them, or perform specific things, but don't imply anything about when those things occur - because that's up to how they're used, by other code (at least technically, and usually conceptually too).
+Present progressive tense for parameters.  e.g. "ing"s.  Consuming, borrowing, sending.  Things that apply only when the function in question is called (or property in question accessed, similarly).
+Seemingly these could have been past-tense just as easily, and arguably that would be easier to explain too - "when this function is called, this argument is sent and this one is borrowed" - but that ship has sailed.
+There are exceptions today, like "inout", which is a bit more adjectivy, but off the top of my head they're all not real words, which gives them some leeway.  An alternative for "inout" would arguably be something like "mutating", or "replacing", or "returning" (whole other bike-shed there, not the point to discuss it here ).
+I can't think of an existing example of a past-tense keyword like these.  I think past tense is likely to confuse since (a) it's different for no reason and (b) it could be interpreted as being a prerequisite for the parameter, not something that happens to it upon the call.  e.g. "sent T" means some T that was previously sent [somewhere].  I dunno if that sounds convincing or contrived, but I think for "beginners" - which is most people using Swift today, in this context - we should be sympathetic to them misunderstanding these things.
+
+---
+
+@wes1 · 2024-05-08T19:47:56.003Z:
+As for alternatives, adopting was the conventional term in early C++ to indicate that the callee was keeping instead of copying the value.
+Semantically, adopting takes the callee's perspective and has the requisite overtones of transfer, finality, and completeness (reachability).  The implicit "parent/caretaker" is a bit weaker than "owner" but related in establishing a kind of context (like isolated), reinforcing its role in this ownership/async feature family.
+But I might add that the perspectivism breaks down for me (for all proposed terms) when annotating not a parameter but the result.
+Others have suggested evaluating this both from the perspective of experts and newbies.  But I think the key perspective is how these kinds of features transit "Monkey see, monkey do": developers basically copy them and see how they work in practice, likely investigating fully only when it doesn't work as expected, after they've already invested in it.
+The fault model there is establishing the wrong expectations; people get angry at being wrong.  It's hard to change how you think about something, and you may feel mislead and become mistrustful.
+To me the proximity of sendable and Sendable is likely to set the wrong expectation.  Things that are close in meaning need distinctive terms to maintain separation.  (E.g., imagine if internal and private were called invisible and hidden)
+I appreciate Becca's emphasis on reachability in the object graph, which leads me in this case to focus on graph-completeness over sendability, and to prefer adopting.
+
+---
+
+@wadetregaskis · 2024-05-08T20:02:45.289Z:
+I like adopting, although it feels more appropriate for reference types than value types.  Usually when you adopt a child that means taking the specific child in question, not cloning them.
+
+---
+
+@KeithBauerANZ · 2024-05-08T22:46:41.986Z:
+I think with adopting it's clear that we'd need a second keyword for the return position, eg.
+func f(x: adopting T) -> orphaning T { ... }
+Which, I mean, I think that improves clarity. I get the argument about "use the same word for the same concept", but I'm unconvinced that I'll be thinking about this as "the same" as Sendable in practice — more likely I'll be thinking about it in terms of "avoiding Sendable".
+IDK, I think I've arrived right back at transferring being the right spelling
+I'm also unconvinced that the keyword should go on the type in argument position, it seems more like it should go on the argument (there is some precedent for this in result builders):
+func f(sendable x: T) -> sendable T { ... }
+(which is even better if you choose other keywords too)
+
+---
+
+@dnadoba · 2024-05-08T22:49:31.685Z:
+Michael_Gottesman:
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+Can we at least make Continuation.yield(with:) consuming by keeping the old ABI name around with the old implementation and introduce a new method with the same API name but a different ABI name though @_silgen_name or similar?
+
+---
+
+@taylorswift · 2024-05-08T22:59:15.286Z:
+dnadoba:
+Can we at least make Continuation.yield(with:) consuming by keeping the old ABI name around with the old implementation and introduce a new method with the same API name but a different ABI name though @_silgen_name or similar?
+isn’t it already allowed to overload on consuming?
+
+---
+
+@dnadoba · 2024-05-08T23:08:33.439Z:
+Yes, but it will become ambiguous at the call side.
+
+---
+
+@Karl · 2024-05-09T15:17:49.936Z:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+If so, I worry that it may be quite a fine line. It might be difficult to teach.
+
+---
+
+@FranzBusch · 2024-05-09T16:01:07.793Z:
+I am not sure how I feel about the proposed sendable  spelling. Taking the following extreme example:
+func foo<A: Sendable, B>(_ operation: @Sendable (A) -> sendable B)
+I know this isn't what one would write regularly but just trying to explain what this method does and what each different Sendable/@Sendable/sendable annotation seems hard.
+I am not saying transferring or any other suggestion here is better but I just wanted to spell out an extreme example that we have to be able to teach people.
+
+---
+
+@beccadax · 2024-05-09T16:42:21.791Z:
+[Review manager hat off for this post.]
+Karl:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+FranzBusch:
+I am not sure how I feel about the proposed sendable spelling. Taking the following extreme example:
+func foo<A: Sendable, B>(_ operation: @Sendable (A) -> sendable B)
+I know this isn't what one would write regularly but just trying to explain what this method does and what each different Sendable/@Sendable/sendable annotation seems hard.
+Yeah, I’m worried about this too. I think we might want to step back from using precisely sendable and instead use some other variant of “send”. I’m not super-fussed about exactly which of those words we use, but sent might read a little better on e.g. property types (which might allow this keyword in the future) than many of the alternatives.
+
+---
+
+@Michael_Gottesman · 2024-05-09T17:47:45.594Z:
+Just to add to what you said here Becca, this is what the various options look like graphically on properties (just for the purpose of helping to visualize during the review, I am not taking a specific perspective):
+struct S {
+var x1: transferring MyKlass { ... }
+var x2: sendable MyKlass { ... }
+var x3: sending MyKlass { ... }
+var x4: send MyKlass { ... }
+var x5: sent MyKlass { ... }
+}
+
+---
+
+@Jumhyn · 2024-05-09T17:59:15.084Z:
+Michael_Gottesman:
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+I believe in the prior review the possibility was raised of giving borrowing senable a different meaning than this; namely, a borrowing sendable value would also 'borrow' the isolation region and return it to the caller undisturbed (rather than merging the region into the callee). Is the intent to rule that out as a future direction? If not, could we provide the 'preserve ABI but still merge the region' functionality via a private underscored modifier/attribute and give borrowing sendable the alternative meaning? Or, if the intent is to affirmatively rule out that direction, why was that decided?
+
+---
+
+@Michael_Gottesman · 2024-05-09T18:02:51.700Z:
+Jumhyn:
+Michael_Gottesman:
+borrowing sendable is mainly expected to be used in situations where one needs to change an API to use sendable, but one cannot change from +0 -> +1 due to ABI constraints. An example of this would be the Continuation.yield(with:) API in AsyncStream. The API takes a result at +0 so if we changed the parameter to be just sendable, we would be breaking ABI.
+I believe in the prior review the possibility was raised of giving borrowing senable a different meaning than this; namely, a borrowing sendable value would also 'borrow' the isolation region and return it to the caller undisturbed (rather than merging the region into the callee). Is the intent to rule that out as a future direction? If not, could we provide the 'preserve ABI but still merge the region' functionality via a private underscored modifier/attribute and give borrowing sendable the alternative meaning? Or, if the intent is to affirmatively rule out that direction, why was that decided?
+No, this is something that has not been ruled out. We were thinking of perhaps calling it 'preserved' (don't take the word used seriously) instead of 'borrowing'. Borrowing is an ownership concept so we do not want to overload it with meaning based off of context here.
+
+---
+
+@John_McCall · 2024-05-09T18:06:04.794Z:
+Karl:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+They're two different points on the same spectrum, yes.  A @Sendable function has a sendable type, which means it must be innately thread-safe: it can be sent around and used concurrently (i.e. called from multiple threads at once).  A sendable function is a sendable value, which means it does not have to be innately thread-safe, just separable from the current context: it can sent around to new concurrent contexts but can only be used by one context at a time.[1]
+As we've gotten more experience with the impact of region-based isolation, we've come to realize that it's a much more fundamental part of the concurrency design toolbox than we initially understood.  For better or worse, the sendable naming and this concept of sendable values vs. sendable types is an attempt to come to terms with that.
+As a practical example of this, in Swift 5.10, the Task initializer takes a @Sendable function.  That seems to make sense because calling the function on a new task that will run concurrently with the current context is a send, right?  But it's actually overly-strict: the task function is not called concurrently (in fact, it's only called once).  So the right model is that it's a sendable function, and it's okay for it to capture non-Sendable state as long as that state is only used from the new task.
+For function values specifically, sendability is mostly a restriction on the captures. A @Sendable function must either not capture anything non-Sendable or be isolated to an actor (in which case such values are merged into the actor's region).  A sendable function can capture non-Sendable values, but they must be disconnected from everything else.  There are some future directions here that could allow those values to then be transferred again when the closure is called. ↩︎
+
+---
+
+@Jumhyn · 2024-05-09T18:17:34.157Z:
+Just to pull on this thread a little bit, since this proposal as written would rule out the borrowing sendable naming, at the very least. In the previous review borrowing sendable was called "almost useless" as-proposed. If we were to use the 'preserved' terminology, is consuming preserved something that would make sense, or would that also be almost useless? While sendable and preserved aren't strictly about ownership, they are also not entirely unrelated: there is a reason that sendable also implies consuming.
+ETA: I don't think this has to be resolved or justified as part of SE-0430, necessarily. But I'm wary of 'burning' the borrowing sendable syntax solely in the name of an ABI compatibility kludge that could also be accomplished with an underscored modifier. Unless there's a high degree of confidence that borrowing sendable is really, truly the wrong way to spell this, I'd rather make it an error for now and leave it open to future design work.
+
+---
+
+@FranzBusch · 2024-05-09T18:25:20.020Z:
+John_McCall:
+As a practical example of this, in Swift 5.10, the Task initializer takes a @Sendable function. That seems to make sense because calling the function on a new task that will run concurrently with the current context is a send, right? But it's actually overly-strict: the task function is not called concurrently (in fact, it's only called once). So the right model is that it's a sendable function, and it's okay for it to capture non-Sendable state as long as that state is only used from the new task.
+Just to emphasise this. I have recently spent some time looking over all of our Sendable and @Sendable annotations in NIO and came to the realisation that a lot all of them can be replaced with sendable/transferring instead. We often don't have to concurrently access the value but we just need to make sure it is transferred from the callers isolation domain.
+
+---
+
+@Karl · 2024-05-09T18:35:19.089Z:
+I also recall there being some debate as to whether swift-system's FileDescriptor should be Sendable. There are compelling arguments on either side.
+The ability to transfer values across regions (and values of non-sendable types became more usable as a result) could mean it is better to keep non-Sendable.
+
+---
+
+@Jumhyn · 2024-05-09T18:54:35.654Z:
+John_McCall:
+For better or worse, the sendable naming and this concept of sendable values vs. sendable types is an attempt to come to terms with that.
+Yeah, I don't actually begrudge the discussion of sendable values vs. sendable types: I think that's a really great way to think, talk, and teach about the concurrency model. But I don't think that sendable as a modifier attached to a parameter type, does basically anything to evoke that distinction. Explaining that a type written as sendable T doesn't actually describe a type T that is 'sendable' feels quite silly to me. IOW, to the extent we're trying to illustrate this spectrum:
+John_McCall:
+They're two different points on the same spectrum, yes.
+I don't think a single capital/lowercase letter of difference does us any good. OTOH if we keep Sendable as a concept which exclusively applies at the type level, while still talking about 'sending' more broadly, I think it more naturally raises the right questions: e.g., "This parameter type is marked sending/sent/send, but the type isn't Sendable—so how can a non-Sendable type be sent?"; "Well, the compiler needs to be able to prove something about the specific argument values which ends up being passed here at the call sites in order to be certain that each usage won't introduce data races."
+Perhaps I'm over-narrativizing, but the more I think about it the more I prefer the story I can tell if we don't reuse sendable for this purpose.
+
+---
+
+@Michael_Gottesman · 2024-05-09T19:02:41.820Z:
+Jumhyn:
+Just to pull on this thread a little bit, since this proposal as written would rule out the borrowing sendable naming, at the very least. In the previous review borrowing sendable was called "almost useless" as-proposed. If we were to use the 'preserved' terminology, is consuming preserved something that would make sense, or would that also be almost useless? While sendable and preserved aren't strictly about ownership, they are also not entirely unrelated: there is a reason that sendable also implies consuming.
+ETA: I don't think this has to be resolved or justified as part of SE-0430, necessarily. But I'm wary of 'burning' the borrowing sendable syntax solely in the name of an ABI compatibility kludge that could also be accomplished with an underscored modifier. Unless there's a high degree of confidence that borrowing sendable is really, truly the wrong way to spell this, I'd rather make it an error for now and leave it open to future design work.
+It isn't just an ABI compatibility kludge. That is just a nice side-effect of the actual ownership semantics. More importantly it provides no implicit copy semantics like consuming does. I view it as an orthogonal semantic to region based isolation.
+That being said, I would argue that it would be actively harmful to make borrowing imply anything about the region something belongs to. It is mixing the ownership layers and the region layers of the language, effectively adding a special case to borrowing. In my opinion, we should avoid more special cases unless it is really necessary and this misses the mark for me. Someone should be able to work with ownership outside of concurrency and with ownership in concurrency and know semantically that borrowing has the same effect.
+Just to add to this, would borrowing without transferring when one crosses an isolation boundary mean preserving as well? If we were to use borrowing this way, we would effectively burn that part of the API design space. Example:
+actor MyActor {
+var myData: MyNonSendableData
+var otherDataFromNonSendableData: OtherData
+// I am doing something performant here and I want to ensure that the copies introduces
+// are known and explicit.
+func doSomethingPerformant(_ x: borrowing MyNonSendableData) async {
+// ... do stuff ensuring that no copy is performed ...
+// If borrowing means preserving, I can't do this.
+myData = copy x // One copy.
+// Or this:
+otherDataFromNonSendableData = x
+}
+}
+func f() async {
+let a = MyActor()
+let x = MyNonSendableData()
+a.doSomethingPerformant(x)
+}
+
+---
+
+@Jumhyn · 2024-05-09T19:06:50.860Z:
+Michael_Gottesman:
+It isn't just an ABI compatibility kludge. That is just a nice side-effect of the actual ownership semantics. More importantly it provides no implicit copy semantics like consuming does.
+Sure, but that would already be available as consuming sendable no?
+Michael_Gottesman:
+Someone should be able to work with ownership outside of concurrency and with ownership in concurrency and know semantically that borrowing has the same effect.
+It seems to me like the design in this proposal is what makes borrowing sendable 'different'. Normally, borrowing values are returned back to the callee for continued use after a call completes. But a borrowing sendable value is merged into the isolation region of the callee, preventing further use. IMO borrowing sendable which allows use after the call is more expected.
+
+---
+
+@Michael_Gottesman · 2024-05-09T19:08:16.607Z:
+Jumhyn:
+Michael_Gottesman:
+It isn't just an ABI compatibility kludge. That is just a nice side-effect of the actual ownership semantics. More importantly it provides no implicit copy semantics like consuming does.
+Sure, but that would already be available as consuming sendable no?
+No because consuming implies a +1 parameter. I realize that you posted before my edit above where I actively use the +0-ness (my apologies).
+Michael_Gottesman:
+Someone should be able to work with ownership outside of concurrency and with ownership in concurrency and know semantically that borrowing has the same effect.
+It seems to me like the design in this proposal is what makes borrowing sendable 'different'. Normally, borrowing values are returned back to the callee for continued use after a call completes. But a borrowing sendable value is merged into the isolation region of the callee, preventing further use. IMO borrowing sendable which allows use after the call is more expected.
+To me that isn't what borrowing means. Borrowing to me means that from an ownership perspective, the value will not be destroyed by the callee. It doesn't state anything about how you can use it in the caller afterwards. The fact that you can do it normally is not a result of borrowing itself. The transferring rule here to me is overlaid on top of that borrowing rule.
+
+---
+
+@wadetregaskis · 2024-05-09T19:09:40.250Z:
+Karl:
+Am I correct that this proposal would allow both:
+func foo(_: @Sendable () -> Void)
+func foo(_: sendable () -> Void)
+And they would mean different things?
+If so, I worry that it may be quite a fine line. It might be difficult to teach.
+My gut instinct is that sendable will be the most common, by a significant-enough margin to kind of become the default.  I suspect that a genuine desire for @Sendable in this position will be rare; it might be used more often because the compiler [seemingly] demands it.
+Which leads to the question of cargo-culting susceptibility - if people habitually write sendable and the compiler says a specific use isn't sendable, are they going to understand that probably they should reconsider how the value is used after the call (i.e. try not to use it after the call, or anything it's connected to, so that it can just be implicitly sendable) or are they going to dogmatically try to slap @Sendable / Sendable (the protocol) on things until the compiler stops complaining?
+Beyond that, I think that their relationship is conceptually pretty simple and clean - "sendable" is essentially a superset of Sendable / @Sendable types.  Logic 101; all Sendables are sendable but only some sendables are Sendable.  This is already a very common bit of logic in Swift (and most popular languages), e.g. type inheritance, Any vs AnyObject, etc.
+
+---
+
+@Jumhyn · 2024-05-09T19:10:23.854Z:
+Michael_Gottesman:
+// I am doing something performant here and I want to ensure that the copies introduces
+// are known and explicit.
+func doSomethingPerformant(_ x: borrowing MyNonSendableData) async {
+// ... do stuff ensuring that no copy is performed ...
+// If borrowing means preserving, I can't do this.
+myData = copy x // One copy.
+// Or this:
+otherDataFromNonSendableData = x
+}
+Oh, perhaps we are talking past each other? I am not suggesting that borrowing should imply preserving/sendable, just that borrowing sendable be given the meaning of preserving (or borrowing preserving).
+
+---
+
+@Michael_Gottesman · 2024-05-09T19:18:19.140Z:
+Jumhyn:
+Michael_Gottesman:
+// I am doing something performant here and I want to ensure that the copies introduces
+// are known and explicit.
+func doSomethingPerformant(_ x: borrowing MyNonSendableData) async {
+// ... do stuff ensuring that no copy is performed ...
+// If borrowing means preserving, I can't do this.
+myData = copy x // One copy.
+// Or this:
+otherDataFromNonSendableData = x
+}
+Oh, perhaps we are talking past each other? I am not suggesting that borrowing should imply preserving/sendable, just that borrowing sendable be given the meaning of preserving (or borrowing preserving).
+I am trying to illustrate why making borrowing sendable mean preserving is an active special case that expands the language rules around borrowing.
+If borrowing sendable (e.g. where we are being explicit about sendable) implies preserving... when sendable behavior is implicit... shouldn't borrowing also imply preserving? With my naive programmer hat on, I would expect that borrowing should work the same around any type of "transferring" semantics.
+In a sense we are saying that borrowing when transferring occurs is just a normal ownership semantic (with normal transferring semantics) unless it is paired with sendable in which case there is a different rule (where we preserve).
+
+---
+
+@Jumhyn · 2024-05-09T19:43:52.994Z:
+Okay, I think I have a better understanding of where you're coming from now, thanks! I can definitely see what you're saying, and might be able to be convinced that it's the right way to go with a bit more thought/discussion, but I'm not totally convinced. The fact that sending implies consuming already illustrates that there's some sort of conceptual linkage here, IMO. Just as you're wary of introducing a special case to borrowing, I'm wary of introducing a separate preserved concept which could be modeled as the composition of existing concepts: e.g. borrowing sendable composed explicitly borrows the value, but also 'borrows' the value's region.
+So that's why I'd prefer to punt on this question and leave the meaning of borrowing sending as a future direction. If I've misunderstood and borrowing sending is not almost useless as previously described, i.e., we'd be missing out on some major piece of functionality if we didn't include it in this proposal, then I'd be much more amenable to revising my opinion here. But I'm not hearing any urgency to support borrowing sending except as a compatibility thing: in the example you posted borrowing sending doesn't appear in source (even though the region transfer semantics do).
+
+---
+
+@brendon · 2024-05-09T21:16:06.393Z:
+I think sending would be a better choice than sendable, both given that it is distinct from @Sendable and Sendable in function and meaning, and that it is more consistent with borrowing/consuming. Plus func eat(_ banana: sending Banana) {} reads better than sendable would, IMO.
+
+---
+
+@nkbelov · 2024-05-11T05:33:47.661Z:
+FWIW, as someone who's initially supported sending in the first review too, my intuition wasn't really based on aligning the keyword with borrowing/consuming, but more on the superficial flair of "what the function does" — it sends a value which is suitable for being sent to a different isolation region. It just reads well to me: I understand foo(sending bar: Bar) as a function that takes bar and "sends it somewhere else". Arguably, this is exactly the same thing that the original transferring conveyed, the only difference being that it still relates to the existing S/send* family of keywords.
+I'm trying to underline this because when reading code, my bet is that people do not necessarily think of such -ing parameter annotations as type modifiers, but as "actions": while an @escaping closure is, strictly speaking, a subtype, I'm more convinced that, on average, people think that "the closure does something / there's somethig being done to the closure" (it escapes) than "it's a closure which is allowed to escape" — @escapable would have conveyed the latter better.
+All in all, the precedent for specifically sending is in my eyes twofold:
+send* is the only relevant and already established "concurrency-y" wordstem in Swift to date, and
+-ing, by precedent, works the best as the suffix for conveying both "being done to by the accepting function" and "is able to be passed to the accepting function".
+While I understand that the precise motivation against sending was in conveying that a value has to be innately sendable (a property), I'm again more convinced that, in context, programmers will be benefitting much more from the "action being done to" perspective (an action enabled by the property).
+
+---
+
+@nkbelov · 2024-05-11T05:42:09.235Z:
+I'll perhaps also repeat my other readability/intuition argument: for a value to be "sent", it either has to be:
+innately Sendable/@Sendable, or
+be explicitly sent by a function that does so.
+The first one is clearly a property (expressed by protocol conformance), while the latter is an action. Of course, the action can only be done to values that permit this, but here it's the function that declares this requirement (read as "I will be sending/escaping this parameter, so you better conform") rather than the value.
+
+---
+
+@beccadax · 2024-05-14T22:31:31.978Z:
+Thank you all for your highly constructive feedback during this review! The Language Steering Group has decided to accept with the following modifications:
+The sendable keyword is changed to sending.
+The proposed borrowing sending feature has been removed; this combination of keywords will instead be rejected by the compiler unless a future proposal assigns a meaning to it.
+For more details or to discuss this outcome, please see the announcement thread.
+
+=== ROW 24 | f001401 | https://github.com/bytecodealliance/wasmtime/issues/8573 | 2024-05-07 | domain-subframes ===
+Small difference makes suspicion performance decreasing
+
+---
+
+@hungryzzz · 2024-05-07T16:00:40Z:
+### Test Cases
+[cases.zip](https://github.com/bytecodealliance/wasmtime/files/15237560/cases.zip)
+
+### Steps to Reproduce
+
+Hi, I run the attached two cases(`good.wasm`&`bad.wasm`) in `Wasmtime`, `WasmEdge(AOT)` and `Wamr(AOT)`, and collect their execution time respectively (measured by `time` tool).
+
+### Expected Results & Actual Results
+
+For `good.wasm`, the execution time in different runtimes are as follows:
+- `Wasmtime`: 4.67s
+- `WasmEdge`: 2.81s
+- `Wamr`: 3.29s
+
+For `bad.wasm`, the execution time in different runtimes are as follows:
+- `Wasmtime`: 9.34s
+- `WasmEdge`: 2.35s
+- `Wamr`: 3.29s
+
+The difference between the attached two cases is as follow, i.e., changing the address of `i32.load` from `local.get 0` to `i32.const 0`, the case with `i32.const 0` has the bad performance in `Wasmtime`, whose execution time is 2x slower than the former one. I think the decreasing is confused and suspicious, why is an immediate operation slower than a local variable operation? Moreover, the `i32.load` is out of the loop, I cannot understand why the operation could affect the overall performance so vastly.
+
+
+![截屏2024-05-07 23 19 36](https://github.com/bytecodealliance/wasmtime/assets/32137313/be606e8b-7da9-4f99-9697-e23b3b53e376)
+
+### Versions and Environment
+
+Wasmtime version or commit: d0cf46a098d97bab9c4cf54a2f3aeaddea7d3831
+
+Operating system: Linux ringzzz-OptiPlex-7070 5.15.0-97-generic
+
+Architecture: Intel(R) Core(TM) i5-9500T CPU @ 2.20GHz
+
+
+
+
+---
+
+@cfallin · 2024-05-07T16:10:13Z:
+cc @fitzgen , perhaps this is something to do with our bounds-checking cases?
+
+---
+
+@fitzgen · 2024-05-07T16:15:18Z:
+@hungryzzz can you share how you are configuring and executing the Wasm in Wasmtime? I.e. the exact flags you are passing to the CLI or the exact Rust code that you are using when embedding Wasmtime if you aren't using the CLI.
+
+> cc @fitzgen , perhaps this is something to do with our bounds-checking cases?
+
+With the default configuration of Wasmtime we should be eliding basically all bounds checks, I'd be surprised if this was bounds-check related unless guard pages are being disabled or something.
+
+---
+
+@hungryzzz · 2024-05-07T16:22:33Z:
+@fitzgen I use the CLI to run the case, the command I use is `wasmtime good.wasm` without extra flags.
+
+---
+
+@fitzgen · 2024-05-07T16:30:58Z:
+@hungryzzz ah okay, that means that you are measuring compilation time as well, not just execution time.
+
+If you want to measure execution performance specifically, you should instead do something like
+
+```
+$ wasmtime compile test.wasm -o test.cwasm
+$ time wasmtime run --allow-precompiled test.cwasm
+```
+
+Wasmtime is technically a JIT in the sense that it can compile code on demand and map it executable into the same process that did the compiling right before executing the code. But it is not a JIT in the same sense that engines like V8 and SpiderMonkey are, where there are speculative optimizations, lazy tiering up based on which functions are hot, dynamic deoptimization when speculative assumptions fail, etc... Given all that, I'd highly recommend the two-phase process I sketched above, where the Wasm is first compiled and then second the compiled code is executed (and this second part is what you are timing).
+
+---
+
+@hungryzzz · 2024-05-08T05:42:15Z:
+@fitzgen Thank you for your advice, I recollect the execution time with the above commands and the results are as follows. I guess the JITed code would be cached after the first compilation, so the execution results are nearly the same as the above one.
+
+```bash
+➜  case ✗ wasmtime compile good.wasm -o good.cwasm
+➜  case ✗ wasmtime compile bad.wasm -o bad.cwasm
+➜  case ✗ time wasmtime run --allow-precompiled good.cwasm
+~/wasmtime/target/release/wasmtime run  good.cwasm  4.67s user 0.00s system 100% cpu 4.674 total
+➜  case ✗ time wasmtime run --allow-precompiled bad.cwasm
+~/wasmtime/target/release/wasmtime run  bad.cwasm  9.36s user 0.01s system 100% cpu 9.365 total
+```
+
+
+---
+
+@cfallin · 2024-05-08T06:32:13Z:
+@hungryzzz a request for your posts: would you mind posting your results as plain text (or formatted as appropriate), rather than PNG screenshots of a terminal?
+
+There are several reasons for this:
+* Plain text shows up in email clients for folks who have GitHub email notifications, whereas images may not load at all, or require an extra action to load (personally the case for me: I have to click through to see your content)
+* Plain text follows the configuration of the user's browser, including font-sizes, color and contrast settings, etc., some of which are not just cosmetic but necessary for folks with vision issues (which will be most of us eventually!)
+* Plain text can be searched (local Ctrl-F, and also indexed by search engines and GitHub's search functionality), copied and pasted, and otherwise handled as needed, whereas a PNG is just pixels
+* Plain text is visible to screen-readers and other tools that inspect the semantic page contents, whereas an image is not
+
+It may take ever so slightly longer (copy & paste, use markdown triple-backtick quotes) but it's a great kindness to readers here for all the reasons above, and we want to set a standard here for maximally accessible and usable discussion content. Thanks!
+
+(EDIT: thanks for your edit! I'll leave this here for posterity)
+
+---
+
+@primoly · 2024-05-09T00:15:42Z:
+Probably irrelevant, but could code alignment play a role? I noticed that both modules compile to basically the same instructions, just assigned different registers. Yet for `func1`, good gets more operations aligned to four bytes than bad.
+
+**bad.cwasm** `func1` x86-64: 60 instructions, 17 start at addresses divisible by four (28%)
+**good.cwasm** `func1` x86-64: 62 instructions, 25 start at addresses divisible by four (40%)
+
+Unsurprisingly no difference for `func2` since it generates identical instructions for better or worse... I mean good and bad.
+
+---
+
+@hungryzzz · 2024-05-14T16:21:17Z:
+I use `Perf` tool to profile the execution time and surprisingly find that the hotspot is not in `func1` where the small difference happens, but in the `func2`. I continue to check the binary compiled by `Cranelift` and find that the binary of `func2` is the same before and after the small difference. It is really confused to me how the difference in `func1` could affect the execution of `func2`.
+
+```shell
+Samples: 38K of event 'cycles', Event count (approx.): 34572923013
+Overhead  Command          Shared Object        Symbol
+  74.91%  wasmtime         jitted-4044282-1.so  [.] 000000000000004f                                                                                             ◆
+  24.63%  wasmtime         jitted-4044282-1.so  [.] 0000000000000071                                                                                             ▒
+   0.32%  wasmtime         jitted-4044282-1.so  [.] 0x0000000000000067                                                                                           ▒
+   0.01%  wasmtime         [kernel.kallsyms]    [k] __handle_mm_fault                                                                                            ▒
+   0.01%  wasmtime         [kernel.kallsyms]    [k] sync_regs                                                                                                    ▒
+   0.01%  wasmtime         [kernel.kallsyms]    [k] native_irq_return_iret                                                                                       ▒
+   0.01%  wasmtime         [kernel.kallsyms]    [k] vm_unmapped_area                                                                                             ▒
+```
+
+```shell
+Samples: 38K of event 'cycles', 4000 Hz, Event count (approx.): 34572923013
+000000000000004f  /home/ringzzz/performance_debug/case1-wasmtime/wasmtime-perf/jitted-4044282-1.so [Percent: local period]
+Percent│
+       │
+       │
+       │     Disassembly of section .text:
+       │
+       │     0000000000000040 <wasm[0]::function[2]>:
+       │     wasm[0]::function[2]():
+       │       push %rbp
+       │       mov  %rsp,%rbp
+       │       xor  %eax,%eax
+       │       mov  %rax,%r8
+       │ 3a:   cmp  $0xffff,%eax
+       │     ↓ jne  58
+       │       mov  0x80(%rdi),%rdi
+       │       movl $0x1,(%rdi)
+       │       mov  %rbp,%rsp
+       │       pop  %rbp
+       │     ← retq
+       │ 58:   lea  0x1(%r8),%edx
+       │       mov  %r8,%rax
+       │       mov  %rdx,%r8
+       │     ↑ jmpq 3a
+```
+
+```shell
+# the commands to profile
+perf record -k mono ~/wasmtime/target/release/wasmtime run --profile jitdump --allow-precompiled bad.cwasm
+perf inject --jit --input perf.data --output perf.jit.data
+perf report --input perf.jit.data --no-children
+```
+
+---
+
+@fitzgen · 2024-05-14T16:37:58Z:
+> It is really confused to me how the difference in `func1` could affect the execution of `func2`.
+
+Is it changing the alignment of `func2`? We have both preferred and required alignments inside Cranelift, and it is possible that something is getting bumped from its preferred down to just its required alignment.
+
+---
+
+@alexcrichton · 2024-05-14T16:43:40Z:
+Testing locally I've got the "good" function 2 starting at 0x140 and "bad" starts at 0x130. That makes sense to me because we align functions to 16-bytes and the "bad" version has more constant propagation so function is a bit smaller in the "bad" version, hence starting a bit earlier.
+
+This program appears to be effectively a benchmark of the second function, which you've pasted the machine code above. In `perf` locally the `jmpq` and `jne` instructions are the hottest instructions. My suspicion is that this is CPU-specific for you (I can't reproduce the slowdown myself) where it's falling over some branch predictor heuristics. 
+
+That being said in general the "function 2" here is a pretty bad layout choice for cranelift. The loop is spread across the epilogue instead of tightly put together which might omit a jump. Cranelift can probably do better here in terms of block layout on the second function and that might help branch predictor heuristics on your CPU as well
+
+---
+
+@cfallin · 2024-05-14T17:03:22Z:
+FWIW, the usual "fetch bandwidth sin" to avoid is forcing partial fetch lines -- the CPU frontend grabs an aligned 32B or 64B chunk at a time so if a function starts halfway through a fetch line, we're wasting frontend bandwidth. I suspect a 32B function alignment would be a pretty reasonable default in general -- is there a reason we only require 16B now? Did we find it mattered a lot for object file bloat or somesuch?
+
+---
+
+@alexcrichton · 2024-05-14T17:51:00Z:
+Looks like the 16-byte alignment was added in #4826 as the minimum require for functions at the time to properly align constants in the constant pool. I don't think 32-bytes was specifically rejected in favor of a smaller size. Looks. like aarch64 is aligned to 32-bytes.
+
+---
+
+@cfallin · 2024-05-14T18:04:56Z:
+Cool -- @hungryzzz, I think we'd be happy to take a PR to change x86-64's function alignment to 32 bytes as well, if you'd like to create one!
+
+---
+
+@hungryzzz · 2024-05-15T08:26:12Z:
+> Is it changing the alignment of `func2`?
+
+Yes, the machine codes of `func2` before and after changes are the same excpet the start address of the `func2`.
+
+```shell
+# machine code of `func2` in `bad.wasm` generated by Cranelift
+0000000000000130 <wasm[0]::function[2]>:
+     130:	55                   	push   %rbp
+     131:	48 89 e5             	mov    %rsp,%rbp
+     134:	31 c0                	xor    %eax,%eax
+     136:	49 89 c0             	mov    %rax,%r8
+     139:	81 f8 ff ff 00 00    	cmp    $0xffff,%eax
+     13f:	0f 85 12 00 00 00    	jne    157 <wasm[0]::function[2]+0x27>
+     145:	48 8b bf 80 00 00 00 	mov    0x80(%rdi),%rdi
+     14c:	c7 07 01 00 00 00    	movl   $0x1,(%rdi)
+     152:	48 89 ec             	mov    %rbp,%rsp
+     155:	5d                   	pop    %rbp
+     156:	c3                   	retq   
+     157:	41 8d 50 01          	lea    0x1(%r8),%edx
+     15b:	4c 89 c0             	mov    %r8,%rax
+     15e:	49 89 d0             	mov    %rdx,%r8
+     161:	e9 d3 ff ff ff       	jmpq   139 <wasm[0]::function[2]+0x9>
+
+# machine code of `func2` in `good.wasm` generated by Cranelift
+0000000000000120 <wasm[0]::function[2]>:
+     120:	55                   	push   %rbp
+     121:	48 89 e5             	mov    %rsp,%rbp
+     124:	31 c0                	xor    %eax,%eax
+     126:	49 89 c0             	mov    %rax,%r8
+     129:	81 f8 ff ff 00 00    	cmp    $0xffff,%eax
+     12f:	0f 85 12 00 00 00    	jne    147 <wasm[0]::function[2]+0x27>
+     135:	48 8b bf 80 00 00 00 	mov    0x80(%rdi),%rdi
+     13c:	c7 07 01 00 00 00    	movl   $0x1,(%rdi)
+     142:	48 89 ec             	mov    %rbp,%rsp
+     145:	5d                   	pop    %rbp
+     146:	c3                   	retq   
+     147:	41 8d 50 01          	lea    0x1(%r8),%edx
+     14b:	4c 89 c0             	mov    %r8,%rax
+     14e:	49 89 d0             	mov    %rdx,%r8
+     151:	e9 d3 ff ff ff       	jmpq   129 <wasm[0]::function[2]+0x9>
+```
+
+
+
+> In `perf` locally the `jmpq` and `jne` instructions are the hottest instructions. My suspicion is that this is CPU-specific for you (I can't reproduce the slowdown myself) where it's falling over some branch predictor heuristics.
+
+Hi, could I ask why the function alignment could affect the CPU branch prediction? Thanks!
+
+---
+
+@cfallin · 2024-05-15T14:46:50Z:
+> Hi, could I ask why the function alignment could affect the CPU branch prediction? Thanks!
+
+I addressed this a few comments up:
+
+> FWIW, the usual "fetch bandwidth sin" to avoid is forcing partial fetch lines -- the CPU frontend grabs an aligned 32B or 64B chunk at a time so if a function starts halfway through a fetch line, we're wasting frontend bandwidth. I suspect a 32B function alignment would be a pretty reasonable default in general -- is there a reason we only require 16B now? Did we find it mattered a lot for object file bloat or somesuch?
+
+The problem isn't actually with branch prediction, but with the way the instruction fetch works on most modern superscalar machines. (In more detail, fetches are big aligned chunks because it's fewer wires and transistors to grab only an aligned chunk from an icache line rather than any arbitrary alignment with arbitrary shifting.)
+
+Would you be willing to send a PR to update the alignment on x86-64? Someone else can do it if not, but hopefully it's an easy-ish change!
+
+---
+
+@hungryzzz · 2024-05-15T14:59:58Z:
+> Would you be willing to send a PR to update the alignment on x86-64? Someone else can do it if not, but hopefully it's an easy-ish change!
+
+Hi, I am really willing to do it, but I am not familiar with `Rust` and code generation implementation, could you please give me some references or advices to help me start it?
+
+---
+
+@cfallin · 2024-05-15T15:02:57Z:
+I think it's just [this constant](https://github.com/bytecodealliance/wasmtime/blob/c477424f45871563be02eba14815ba3446158441/cranelift/codegen/src/isa/x64/inst/mod.rs#L2705-L2707) that needs to be changed; probably with a comment update noting that we're aligning for better formance and a link to this issue?
+
+---
+
+@hungryzzz · 2024-05-15T15:06:18Z:
+> The problem isn't actually with branch prediction, but with the way the instruction fetch works on most modern superscalar machines.
+
+The `func2` would be called many times, in my opinion, once the instructions of `func2` have been fetched into the icache, wouldn't it be necessary to fetch them again when calling `func2` again?
+
+---
+
+@hungryzzz · 2024-05-15T15:07:01Z:
+> I think it's just [this constant](https://github.com/bytecodealliance/wasmtime/blob/c477424f45871563be02eba14815ba3446158441/cranelift/codegen/src/isa/x64/inst/mod.rs#L2705-L2707) that needs to be changed; probably with a comment update noting that we're aligning for better formance and a link to this issue?
+
+Thank you very much! I'll try it!
+
+---
+
+@cfallin · 2024-05-15T15:14:00Z:
+> > The problem isn't actually with branch prediction, but with the way the instruction fetch works on most modern superscalar machines.
+> 
+> The `func2` would be called many times, in my opinion, once the instructions of `func2` have been fetched into the icache, wouldn't it be necessary to fetch them again when calling `func2` again?
+
+Fetch is part of the CPU pipeline, and happens every time an instruction executes: the instructions are fetched *from* the icache *into* the pipeline (and then decoded, renamed, scheduled, executed, ...). So fetch bottlenecks affect even inner-loop performance. The step that puts instructions into the icache on a miss is usually called "cache fill" and happens in a separate pipeline.
+
+(This is slightly less true on machines with uop caches and/or loop stream buffers, but those have their own limitations as well)
+
+=== ROW 26 | f001515 | https://iroh.computer/blog/iroh-0-17-0-everything-is-a-little-better | 2024-05-24 | domain-subframes ===
+iroh 0.17.0 - Everything Is A Little Better - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.17.0 - Everything Is A Little BetterMay 24, 2024 by dignifiedquire
+Welcome to a new release of iroh, the open source distributed systems toolkit with tools for connecting devices directly, moving data, and syncing state.
+This release focused on improving iroh in many aspects of daily use, from wider support of operating systems to HTTP proxy support to simpler APIs for interacting with documents. There is something for everyone to enjoy!
+🤓 Make Simple Things Simpler
+Iroh docs are great, but getting started with them can be daunting. Our API did not always help with this, so we have introduced a few additions to simplify things.
+Default Authors
+When you create an iroh Node, it always has an author, so you don't have to worry about creating one.
+let node = iroh::node::Node::memory().spawn().await?;
+let author = node.authors.default().await?;
+// lets gooo
+CopyCopied!
+Document Import
+Importing a document is one of the most basic things you need to do, but until now, it hasn't been very easy to know when the imported document was synced or when the content was downloaded. This is now super easy
+let ticket: DocTicket = "<doc ticket from your friend>".parse()?;
+// import the document via ticket, and subscribe to its events
+let (doc, mut events) = node.docs.import_and_subsribe(ticket).await?;
+while let Some(event) = events.try_next().await? {
+match event {
+LiveEvent::SyncFinished(_) => {
+// this event is emitted when the initial sync is finished
+println!("sync finished")
+}
+LiveEvent::PendingContentReady => {
+// this event is emitted when all content of the initial sync is downloaded
+println!("all content downloaded");
+break;
+}
+_ => {
+// ignore other events
+}
+}
+}
+// Use your document, knowing that the initial data is all available
+CopyCopied!
+Checkout PR #2303, PR #2302 and PR #2299 for details.
+🚇 HTTP Proxy Support
+Sometimes, you just want to use another tunnel, and sometimes, this tunnel is an HTTP proxy. If so, you are in luck, as we now have support for HTTP_PROXY and HTTPS_PROXY, including authentication. If you use iroh, it will automatically parse these environment variables and do the right thing, and if you use iroh-net, you can call Builder::proxy_from_env to load the configuration.
+Checkout PR #2298 for details.
+🍦 More than one flavour of BSD
+With iroh being used in different projects, more people want to use it on new platforms, and so we got the request for iroh to work on OpenBSD and FreeBSD. Thanks to the community's help, we are happy to report that with patches to iroh-quinn and iroh itself, everything should now work on OpenBSD, FreeBSD, and NetBSD.
+This support is quite new, and we might have missed something, if so please be sure to file an issue to let us know.
+Checkout PR #2311 for details.
+🔎 Better DNS resolution
+DNS is hard, and while things were working, they could always work better. In this release, we improved timeouts and strategies for DNS resolution to ensure swift and correct resolution of DNS records when needed.
+Checkout PR #2313 and PR #2301 for details.
+🪦 The MagicEndpoint  is dead, long live the Endpoint
+Fun names are great, but sometimes they get in the way, and while we all loved MagicEndpoint as a name, it just became too long. So now it is called just Endpoint, short and to the point. But don't worry; it is still as magical as ever under the hood, I promise!
+Checkout the PR #2287 for details.
+🤯 WASM Phase 0
+We want to support browsers and other WASM-compatible targets sooner rather than later, so the first small step was done: ensuring that iroh-base compiles for the WASM target.
+Checkout the PR #2305 for details.
+🤨 iroh-perf - Some Good and Some Bad News
+Measuring things is crucial for performance, but sometimes those measurements do not reveal what you want.
+Starting with the bad news, iroh is not as fast as we would like it to be. More specifically, it reduces throughput more than we thought it had, compared to using just quinn.
+TransportThroughput (MiB/s)
+Quinn@0.10 (MacOS)358.88
+iroh-net (MacOS)187.31
+Quinn@0.10 (Linux)1030.50
+iroh-net (Linux)884.75
+The good news is that we have a new testing tool, iroh-perf, which makes it much easier to get these numbers. We can now roll up our sleeves and get to work on fixing the performance.
+Checkout the PR #2186 for details.
+⚠️ Breaking Changes
+MSRV increased to 1.76
+Protocol Changes
+None!
+API Changes
+iroh
+added
+client::Docs::import_namespace
+client::Docs::import_and_subscribe
+LiveEvent::PendingContentReady
+client::Authors::default
+client::Authors::set_default
+util::path::IrohPaths::DefaultAuthor
+removed
+node::Node::subscribe
+node::Event
+renamed
+node::Node::magic_endpoint -> node::Node::endpoint
+iroh-net
+renamed
+magic_endpoint → endpoint
+magic_endpoint::MagicEndpoint -> endpoint::Endpoint
+magic_endpoint::MagicEndpointBuilder -> endpoint::Builder
+added
+endpoint::Builder::proxy_url
+endpoint::Builder::proxy_from_env
+relay::http::ClientError::Proxy
+endpoint::Endpoint::watch_home_relay
+moved
+dns::node_info::lookup_by_domain → ResolverExt::lookup_by_domain
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.17.0.
+Want to know what is coming up, check out the 0.18.0 milestone. Do you have any wishes? Let us know about it in the issues! And to keep up with all things iroh, check out our Twitter.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 28 | f001609 | https://iroh.computer/blog/healing-connections | 2024-06-17 | domain-subframes ===
+Healing Connections After Network Migration - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Healing Connections After Network MigrationJune 17, 2024 by ramfox
+We've put a lot of effort into ensuring that iroh connections "just work" in most situations. To achieve this, iroh’s networking stack does a lot of clever things. It allows you to dial by NodeID, using certain discovery mechanisms. It allows you to communicate with another machine, even if your computer and the other computer are each behind a NAT, using hole punching.
+But did you know that iroh can maintain connections even if your network changes? Switch Wi-Fi networks, jump on a mobile hotspot, or turn on your VPN, and your connections stay intact. This works because connections correlate with your Node ID, not your IP address.
+Healing Connections when you have a relay
+Iroh uses relay servers to coordinate hole-punching efforts and to heal connections when your network configuration changes. This process involves a few steps:
+detecting network interface changes,
+sending probes,
+using discovery messages to communicate those changes to your node.
+The process completes when new addresses are added to our node’s address book.
+Detecting Network Configuration Changes
+When you create an iroh Endpoint, you also start a network monitoring service that periodically checks the network interfaces and the routing table of your own computer. This is very finicky work—each OS has a different way of maintaining its routing table. We've supported Windows, Linux, and macOS ever since launching hole punching in iroh, and recently added support for FreeBSD, NetBSD, and OpenBSD.
+If your network changes, like turning off mobile data to rely solely on Wi-Fi, these changes will show in the available interfaces. The network monitoring service will alert the iroh Endpoint to re-launch the next step: netcheck.
+Netcheck
+Once we know the interfaces, we must determine what the outside world sees as our IP address and router configuration details. We do this by launching our netcheck probe, which sends STUN and ICMP probes to known relay servers to learn the node's public addresses and latency to the server.
+Once the probes finish, we have a list of addresses we can potentially be dialed on.
+Even if the public addresses change, we're still connected to any known relay nodes, maintaining a relayed connection. This allows us to send and receive data from the remote peer, albeit with potentially lower throughput and higher latency.
+Sending DISCOvery messages
+With new addresses in hand, we use the hole-punching protocol to migrate the connection. We send a disco message through the relay server to the remote node, encrypted with your node’s private key and the remote node’s Node ID.
+We send a particular type of disco message here: a CallMeMaybe message, which contains a list of all the addresses the remote node can use to try and contact your node, including the new ones discovered by netcheck.
+The Remote Node Decodes Your Message
+The disco message can only be opened using the remote node’s private key and your Node ID, ensuring a secure correlation of addresses to your Node ID. Once the remote node updates its address book with the new addresses, the connection may be healed, associating data from your new IP addresses with your Node ID.
+If the remote node is behind a NAT, healing the connection requires the full hole-punching dance, which is a topic for another blog post. While this hole-punching dance progresses, we are still able to send data back and forth over the relay connection, so data never stops flowing. Once hole punching is completed, the connection has been migrated successfully.
+Healing connections, when you don’t have a relay
+Consider this: if you have a direct connection to a remote node and your network changes, can you still heal the connection without any relay nodes?
+The answer is likely yes, depending on key factors. The connection can be healed if you have a direct connection and one or both nodes have a public IP address.
+If your node's configuration changes, such as moving behind a router, but the remote node still has a public address, you can dial that node without the help of a relay server for hole punching. However, the connection will close if both nodes end up behind NATs.
+Let’s focus on the scenario where your node’s address changes, but the remote node’s address remains public. How can we heal the connection without a relay server?
+Discovering Network Changes
+This step is the same: detect changes through the network monitoring service.
+Netcheck
+Without a relay server, we cannot send STUN, ICMP, or HTTPS probes and won't have a list of contactable addresses. This step is skipped.
+Send DISCOvery message?
+Without a relay, we don't send CallMeMaybe messages.
+But CallMeMaybe messages are not the only kind of disco message we send. We also send disco::Ping messages. These ping messages are encoded with your private key and the remote’s Node ID, the same as the CallMeMaybe message, with one additional piece of information. Since they can arrive over a direct address, the remote node can associate the IP address that sends the message to the Node ID of the message.
+We regularly send pings, especially to connections that we deem “active” to ensure that the connection won’t close unexpectedly. Every 5 seconds we check if we need to send pings, so if there are any network interface changes, your node will communicate those changes to any active connections within about 5 seconds.
+The Remote Node Decodes Your Message
+Once the remote node receives your disco message, it can associate your Node ID with the new IP address, healing the connection.
+Use Iroh for connection resilience
+Iroh’s networking stack effectively maintains connections across network changes, whether or not a relay server is involved. By using mechanisms like hole punching and disco messages, iroh ensures communication remains intact by correlating connections with Node IDs. This adaptability provides a stable and reliable solution for diverse network environments, keeping connections steady even through network transitions and complex NAT configurations.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 29 | f001617 | https://github.com/zed-industries/zed/pull/13253 | 2024-06-19 | domain-subframes ===
+Add language-agnostic snippets
+
+---
+
+@osiewicz · 2024-06-19T10:18:06Z:
+Note that right now we can't attach a language server to arbitrary buffer, which is why I've listed a bunch of languages verbatim. 
+See https://github.com/zed-industries/simple-completion-language-server/tree/main for docs on how to define your snippets. They should be placed in ~/.config/zed/snippets ; `snippets.(toml|json)` file can be used to define language-agnostic snippets, and any other name (e.g. `python.toml`) will apply only to buffers of that particular type.
+
+There's https://github.com/rafamadriz/friendly-snippets you can use as a repository of snippets, for your convenience.
+
+Fixes https://github.com/zed-industries/zed/issues/4611
+
+Release Notes:
+- Added support for snippets via simple-completion-language-server
+
+
+---
+
+@zed-industries-bot · 2024-06-19T10:27:39Z:
+
+<!--
+  0 failure: 
+  1 warning:  This PR is missin...
+  
+  
+  DangerID: danger-id-Danger;
+-->
+
+
+<table>
+  <thead>
+    <tr>
+      <th width="50"></th>
+      <th width="100%" data-danger-table="true">Warnings</th>
+    </tr>
+  </thead>
+  <tbody><tr>
+      <td>:warning:</td>
+      <td>
+
+  This PR is missing release notes.
+
+Please add a "Release Notes" section that describes the change:
+
+```
+Release Notes:
+
+- (Added|Fixed|Improved) ... ([#<public_issue_number_if_exists>](https://github.com/zed-industries/zed/issues/<public_issue_number_if_exists>)).
+```
+
+If your change is not user-facing, you can use "N/A" for the entry:
+```
+Release Notes:
+
+- N/A
+```
+  </td>
+    </tr>
+  </tbody>
+</table>
+
+
+
+<p align="right">
+  Generated by :no_entry_sign: <a href="https://danger.systems/js">dangerJS</a> against 758fe26b71ab129c928d7c42741bd20cc805f15e
+</p>
+
+
+---
+
+@d1y · 2024-06-19T11:03:00Z:
+The official support now is really great.
+I also made this extension before
+And I would like to offer some suggestions and ideas:
+
+1.  wonder if it's possible to change its service name to `scls`, which would be much easier to remember?
+2. How about adding a command to obtain [rafamadriz/friendly](https://github.com/rafamadriz/friendly-snippets)? like `Zed:: FetchFriendlySnippets`?(https://github.com/d1y/scls/commit/d0d1daf075d44d8cf9749754bf031073f7b2615e)
+3. The completion sorting of `scls` should be able to sort (#12028)
+4. Always highlight code blocks ([d1y/scls/8](https://github.com/d1y/scls/pull/8))
+
+---
+
+@osiewicz · 2024-06-19T11:34:20Z:
+Hey @d1y,
+Oh, I didn't know that we've had an extension based on scls already. 
+On one hand yeah, scls is easier to remember, but on the other how are you supposed to know what it means? I think it makes sense to spell out `snippets` explicitly in the name to make it a bit easier on the users.
+For the other ideas, I'd just wait for users feedback to make a call. I'm a bit skeptical of adding a zed action that's specific to an extension. 
+As for sorting, that sounds like a good idea; though we can probably implement in on the side of language server (setting it's sortText to something low-ish). 
+As for code highlighting, can we reliably assume that the snippet description contains just code?
+
+---
+
+@osiewicz · 2024-06-19T11:37:05Z:
+Nevermind, you're right about highlighting; since we're using the body as doc, it should be valid code. It may contain unsubstituted variables tho, which is a bit of a bummer.
+
+---
+
+@eproxus · 2024-06-19T13:28:49Z:
+@osiewicz I'm trying to use this according to these instructions and nothing shows up for me. I've installed the extension and created the following snippet files:
+
+`~/.config/zed/snippets/snippets.json`:
+```json
+{
+  "my snippet": {
+    "prefix": "my-snippet",
+    "body": [
+      "console.log('Hello World')"
+    ],
+    "description": "Log Hello World to the console"
+  }
+}
+```
+`~/.config/zed/snippets/erlang.json`:
+```json
+{
+    "horizontal line": {
+        "prefix": "foo",
+        "body": [
+            "%--- Internal ------------------------------------------------------------------"
+        ],
+        "description": "horizontal comment line"
+    }
+}
+```
+
+However, typing `my-snippet` or `foo` anywhere (either in any syntax or in an Erlang file) doesn't actually show any completions. I even restarted Zed after setting everything up, but still nothing. Is there anything else one has to do to get it to work?
+
+---
+
+@osiewicz · 2024-06-19T13:32:38Z:
+@eproxus I think that's because Erlang is not in a list of languages for which this language server is enabled (see [this line](https://github.com/zed-industries/zed/pull/13253/files#diff-4a4040983d1956db42718bdbc429ad466f5799ce955b38c094fb737ac53849dfR11)). That can be fixed. You should see completion from `snippets.json` in any other file (I think we don't do plain text right now); can you try it in e.g. go file?
+
+---
+
+@eproxus · 2024-06-19T13:35:27Z:
+@osiewicz Yes, please support more languages! ❤️ 
+
+I tried in a file with `Shell` syntax but the snippet above from `snippets.json` still doesn't show up...
+
+---
+
+@osiewicz · 2024-06-19T13:37:05Z:
+Oh, it looks like there's a typo in languages list; "Shell" should be a "Shell Script" syntax. TL;dr: try other file. I'll fix the shell association in a sec.
+
+---
+
+@eproxus · 2024-06-19T13:38:53Z:
+Alright, it works in a Python file. However I noticed it does not work in any supported syntax if the file is not saved. Is that supposed to work?
+
+---
+
+@osiewicz · 2024-06-19T13:39:56Z:
+No, it's not supposed to work (unrelated to this PR); we don't support LSPs in unsaved files right now.
+
+---
+
+@eproxus · 2024-06-19T13:40:23Z:
+Do you want a PR to add more languages?
+
+---
+
+@osiewicz · 2024-06-19T13:41:10Z:
+I'm on it, but thanks anyways. =)
+
+---
+
+@osiewicz · 2024-06-19T14:13:07Z:
+0.0.3 is out now. Give it a go =)
+
+---
+
+@eproxus · 2024-06-19T15:33:41Z:
+@osiewicz Works! Thanks for the quick work! 😍 
+
+---
+
+@danremollino · 2024-06-20T01:14:27Z:
+You mention that you should be able to use a snippets.toml file. Have not been able to get this to work. Do I have something formatted wrong?
+
+```
+[snippet]
+prefix = "log"
+body = ["console.log(\"$1\")"]
+description = "Expand `log` to `console.log()`"
+```
+
+---
+
+@osiewicz · 2024-06-20T08:04:39Z:
+@danremollino yeah, I think the first line should be `[[snippets]]` and not `[snippet]`.
+
+---
+
+@eproxus · 2024-06-20T09:03:57Z:
+Here's an example `erlang.toml` that I use:
+
+```toml
+[[snippets]]
+prefix = "hr"
+scope = ["erlang"]
+body = '%--- ${1:Internal} ------------------------------------------------------------------'
+
+[[snippets]]
+prefix = "iof"
+scope = ["erlang"]
+body = 'io:format("--> ${1}: ~p~n", [${1}])'
+```
+
+@osiewicz Is there any chance advanced text replacements will be added? I'm thinking like filter than VS Code or Sublime uses, with support for regex replacements etc. In the above example I'd like the first `${1}` instance in the second snippet to be upper case but I couldn't figure out a way to do it...
+
+---
+
+@osiewicz · 2024-06-20T09:09:13Z:
+@eproxus I guess it might be added at some point, yeah - it's [in the spec](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#snippet_syntax), so I don't see why not; [our snippet support](https://github.com/zed-industries/zed/tree/main/crates/snippet) is relatively scarce right now, so please create a new issue for it.
+
+
+---
+
+@eproxus · 2024-06-20T09:24:42Z:
+@osiewicz Great! I'll file an issue. Do you know if those variables are supported already, like `TM_FILENAME_BASE`?
+
+---
+
+@osiewicz · 2024-06-20T09:25:58Z:
+Hehe, nope: https://github.com/zed-industries/zed/issues/13255
+
+---
+
+@tepavcevic · 2024-06-23T21:07:27Z:
+@osiewicz I have an issue with starting snippets language server on Ubuntu.
+My installation process went as follows:
+- installed the extention
+- added a sample `console.log` snippet to `~./config/zed/snippets/snippets.json`
+- no snippets show up
+
+In my zed logs I've found errors related to starting the snippets server:
+`[ERROR] failed to start language server "snippet-completion-server": no asset found matching "simple-completion-language-server-x86_64-unknown-linux-musl.tar.gz"`
+
+Can you please help me decode the issue here, since my best guess was that the extention is not installed correctly and I've tried reinstalling multiple times with no result?
+
+---
+
+@osiewicz · 2024-06-23T22:35:49Z:
+@tepavcevic Thankfully this is relatively straightforward - I've screwed up the name of a platform for Linux. None of this is your fault and I'm sorry for it being so confusing.
+I'll release a new version which should fix it shortly.
+
+---
+
+@osiewicz · 2024-06-23T22:50:12Z:
+@tepavcevic Can you give 0.0.5 snippets extension a try?
+
+---
+
+@tepavcevic · 2024-06-24T06:24:24Z:
+> @tepavcevic Can you give 0.0.5 snippets extension a try?
+
+Just tried out 0.0.5, working as intended. Thanks
+
+=== ROW 30 | f001724 | https://github.com/apache/datafusion/issues/11442 | 2024-07-12 | domain-subframes ===
+2024 Q3-Q4 Roadmap?
+
+---
+
+@alamb · 2024-07-12T19:20:38Z:
+### Is your feature request related to a problem or challenge?
+
+@comphead  asked https://github.com/apache/datafusion/pull/11426#discussion_r1676137598
+
+> do we have a roadmap for 2024?
+
+Which I think is an excellent question. 
+
+In general since this project isn't really coordinated centrally the roadmap typically follows what people are working on / want to invest time in
+
+However it is a neat idea to collect any thoughts people have / want to share about what they might work on 
+
+
+### Describe the solution you'd like
+
+Let's collect any projects that people think they are likely to spend time on or projects that the broader community would really like to see done and write them down!
+
+Then we can add it to the roadmap on the doc site https://datafusion.apache.org/contributor-guide/roadmap.html
+
+### Describe alternatives you've considered
+
+_No response_
+
+### Additional context
+
+_No response_
+
+---
+
+@alamb · 2024-07-12T19:25:55Z:
+🤔  I have stuff I would like to do. But that doesn't really count as a roadmap for the project 😆 
+
+Here are some things I might guess
+1.  streaming stuff https://github.com/apache/datafusion/issues/11404  (@ozankabak and @ameyc perhaps)
+2. ASOF / range joins https://github.com/apache/datafusion/issues/318 (InfluxData might do something here)
+3. Performance improvements  (what I hope to would personally like to spend more time on): #3463 #6937 #9403 
+4. @XiangpengHao 's work on StringView: https://github.com/apache/datafusion/issues/10918 / #10921 
+
+Possibilities:
+1. Logical / user dfined Types: https://github.com/apache/datafusion/pull/11160 @notfilippo
+2. Make window functions user defined https://github.com/apache/datafusion/issues/8709
+3. Split DataSource / catalogs from the core: https://github.com/apache/datafusion/issues/11182#
+
+
+
+
+---
+
+@ozankabak · 2024-07-13T09:20:20Z:
+It would be great to have one or two quarters where we focus on perf. I think we are at a pretty good place in terms of extensibility/customizability (evidenced by rapidly increasing number of projects), but the situation could be much better wrt performance.
+
+That being said, team Synnada will keep adding baseline mechanisms to upstream DF to enable streaming use cases (when appropriate and not overfitting, obviously) by downstream projects.
+
+---
+
+@alamb · 2024-07-14T15:29:13Z:
+> It would be great to have one or two quarters where we focus on perf. I think we are at a pretty good place in terms of extensibility/customizability (evidenced by rapidly increasing number of projects), but the situation could be much better wrt performance.
+
+I agree with this sentiment. 
+
+Something about performance improvements is I think they take sustained engineering investment and significant existing engine expertise (thus it is hard to have newcomers to the project make singificant performance improvements)
+
+I will try and find time from myself and InfluxData these next two quarters to meaninfully invest in improvements in this area
+
+However, I can't realistically do that if I am also helping to shepherd other large projects along (I am thinking specifically of https://github.com/apache/datafusion/pull/11160 from @notfilippo) so I need to make some hard choices there
+
+> That being said, team Synnada will keep adding baseline mechanisms to upstream DF to enable streaming use cases (when appropriate and not overfitting, obviously) by downstream projects.
+
+Thank you. Your help (and everyone else's help) with documentation and reviews I think would also be tremendously beneficial
+
+
+---
+
+@notfilippo · 2024-07-14T17:55:14Z:
+> However, I can't realistically do that if I am also helping to shepherd other large projects along (I am thinking specifically of #11160 from @notfilippo) so I need to make some hard choices there
+
+As a side thought, I would argue that introducing proper support for logical types would benefit performance, especially in late materialization for REE arrays and string views. 
+
+That said, I fully agree with focusing on performance, and I would be happy to rescope my proposal to make it easier to manage.
+
+---
+
+@lewiszlw · 2024-07-15T03:45:17Z:
+I would like to see more progress on logical type https://github.com/apache/datafusion/pull/11160 and index support https://github.com/apache/datafusion/discussions/9963.
+
+---
+
+@jayzhan211 · 2024-07-15T06:27:02Z:
+> It would be great to have one or two quarters where we focus on perf. I think we are at a pretty good place in terms of extensibility/customizability (evidenced by rapidly increasing number of projects), but the situation could be much better wrt performance.
+> 
+> That being said, team Synnada will keep adding baseline mechanisms to upstream DF to enable streaming use cases (when appropriate and not overfitting, obviously) by downstream projects.
+
+Do you have a list in mind the area that is worth for performance improvement? Somethings I known that are still active in my head
+
+- Aggregate Group by
+- Joins
+- Apply StringView
+- Planning
+- Parquet
+
+Anything else?
+
+There's always room for improvement, particularly in terms of performance. Regularly updating the **active** lists could provider valuable pointer for the community
+
+---
+
+@alamb · 2024-07-15T10:18:29Z:
+> Do you have a list in mind the area that is worth for performance improvement? Somethings I known that are still active in my head
+
+In my mind, here are somre "obvious" performance projects (the ones I have the most confidence that would make a meaningful difference on ClickBench or TPCH queries) are as follows (I can maybe put this in the documentation)
+
+## Integrate StringView into Parquet / Filtering / Grouping
+* #10918 
+
+@XiangpengHao is doing this as his summer project and doing an amazing job. I also think this is a great example of the the level of effort required to drive one of these performance projects. It requires implementing the features, then analyzing / profiling, identifying the bottlenecks, and then making PRs to remove the bottlenecks. ee #10918  and https://github.com/apache/arrow-rs/issues/5374 have the entire list. Some of my favorites: 
+* https://github.com/apache/arrow-rs/pull/6009
+* https://github.com/apache/arrow-rs/issues/6034
+
+
+
+**What**: Use newly added `StringView` from arrow to improve performance (by avoiding variable length/string data copies)
+**Why**: This For queries that deal with string data in ClickBench or TPCH a large amount of time is spent in parquet decoding as well as filtering and grouping. 
+**What is left**: See #10918  and https://github.com/apache/arrow-rs/issues/5374
+
+
+
+
+
+---
+
+@alamb · 2024-07-15T10:19:42Z:
+
+## Complete Parquet Filter Performance
+* https://github.com/apache/datafusion/issues/3463
+
+**What**: Enable the most advanced form of predicate pushdown / late materialization that DataFusion
+**Why**: Influx enables this and it helps with many of our queries. I think Coralogix uses it too (maybe @Dandandan  or @thinkharderdev  could correct me)
+**What is left**: The actual code is straight forward (change a default config value). The hard part is that last time we ran benchmarks this option actually made some queries slower. So the work is to help debug / profile / figure out why and then what changes are needed to ensure performance doesn't slow down. There are some ideas :
+* https://github.com/apache/arrow-rs/issues/5523
+* https://github.com/apache/datafusion/issues/4028)
+
+
+---
+
+@alamb · 2024-07-15T10:21:55Z:
+## Improve Aggregate performance for multi-column grouping when at least one column is variable length
+* https://github.com/apache/datafusion/issues/9403
+
+**What**: Queries like `GROUP BY url, code` where `url` is a string are significantly slower than `GROUP BY url`. We already have the single string column case handled with https://github.com/apache/datafusion/issues/7064
+**Why**: There are several queries like this in ClickBench where copying string data to form group keys consumes significant time
+**What is left**: @jayzhan211  already has shown the basic idea of #9430 works in https://github.com/apache/datafusion/pull/10976. What is left is to figure out how to get the types to work out in the plans and ensure it doesn't cause performance regressions
+
+
+---
+
+@alamb · 2024-07-15T10:24:59Z:
+## Aggregate performance / memory use for high cardinality aggregates
+* https://github.com/apache/datafusion/issues/6937
+
+**What**: Improve Queries when the number of groups is very high (1 million+)
+**Why**: Queries when the number of groups is high are significantly slower than DuckDB and use substantially more memory. I think there is at least a factor of 2 of performance here
+**What is left**: There are ideas on https://github.com/apache/datafusion/issues/6937 but someone has to try them out, prototype / see if they would work and then productionize them
+
+
+---
+
+@alamb · 2024-07-15T10:29:52Z:
+## Join performance with dynamic join filters / Sideways Information Passing
+
+* https://github.com/apache/datafusion/issues/7955
+
+**What**: Introduce filters apply join filtering during the Scan in addition to during the actual join. 
+**Why**: Joins in general (and TPCH definitely) end up being very selective (they filter many rows). However join operators are complex and often much slower than filters (this applies to DataFusion too). By pushing much of the filtering work that would be done in the join down into a scan, plans can be made to go much faster
+**What is left**: There has been no work yet on this. The first thing to do would be to prototype some ideas and see if we can make the TPCH queries much faster, and then figure out how to structure the code
+
+
+---
+
+@alamb · 2024-07-15T10:31:46Z:
+> As a side thought, I would argue that introducing proper support for logical types would benefit performance, especially in late materialization for REE arrays and string views.
+
+@notfilippo  -- I think `LogicalType`s would make it easier to support improved performance for the reasons you mention, but I don't think it would alone improve performance.
+
+---
+
+@thinkharderdev · 2024-07-15T10:40:12Z:
+> ## Complete Parquet Filter Performance
+> * [Enable parquet filter pushdown by default #3463](https://github.com/apache/datafusion/issues/3463)
+> 
+> **What**: Enable the most advanced form of predicate pushdown / late materialization that DataFusion **Why**: Influx enables this and it helps with many of our queries. I think Coralogix uses it too (maybe @Dandandan or @thinkharderdev could correct me) **What is left**: The actual code is straight forward (change a default config value). The hard part is that last time we ran benchmarks this option actually made some queries slower. So the work is to help debug / profile / figure out why and then what changes are needed to ensure performance doesn't slow down. There are some ideas :
+> 
+> * [Adaptive Parquet Predicate Pushdown arrow-rs#5523](https://github.com/apache/arrow-rs/issues/5523)
+> * [Return TableProviderFilterPushDown::Exact when Parquet Pushdown Enabled #4028](https://github.com/apache/datafusion/issues/4028))
+
+Yeah, we use it as well. We have some custom code to decide when to push down predicates and in general its a pretty tricky thing to get right. 
+
+---
+
+@alamb · 2024-07-15T10:50:02Z:
+> Yeah, we use it as well. We have some custom code to decide when to push down predicates and in general its a pretty tricky thing to get right.
+
+My (perhaps unrealistic) hope is that we could find additional improvements (like https://github.com/apache/datafusion/issues/4028 or other optimizations) that could make back up any performance that was lost so that we didn't have to have code to choose. 
+
+---
+
+@notfilippo · 2024-07-15T11:05:15Z:
+> @notfilippo -- I think `LogicalType`s would make it easier to support improved performance for the reasons you mention, but I don't think it would alone improve performance.
+
+I agree! 😄 I was just highlighting how the logical/physical separation could support performance improvements while simplifying things, such as handling custom code for dictionaries.
+
+That said, if the next quarter's focus is on performance, should I continue drafting a complete proposal for this change or put it on hold?
+
+---
+
+@ozankabak · 2024-07-15T11:17:58Z:
+I think further improvements to planning code structure will also help w.r.t. performance, we used to spend a lot of time in planning phase due to avoidable issues (cloning etc.). We are at a better state now, but still have more work to do.
+
+Also we can finalize our previous discussion on a better statistics infrastructure and start using this information in better ways during planning.
+
+---
+
+@ozankabak · 2024-07-15T11:22:57Z:
+> That said, if the next quarter's focus is on performance, should I continue drafting a complete proposal for this change or put it on hold?
+
+@notfilippo, I think we should complete the exploratory work. Even if we don't get to full-focus on it, this is something we likely want to do at some point (gradually or otherwise).
+
+For example, it was through your draft I started to think about what would happen to `ScalarValue` in such a design. It is widely used in physical-level machinery, so contemplating a change to logical types for that object could be problematic. Maybe we should have a logical scalar value and a physical one, maybe we will think of something else. But all these thinking was induced by your exploratory work, so I think we should complete it. Then we can decide what to do with the full findings.
+
+---
+
+@alamb · 2024-07-15T11:23:52Z:
+> I think further improvements to planning code structure will also help w.r.t. performance, we used to spend a lot of time in planning phase due to avoidable issues (cloning etc.). We are at a better state now, but still have more work to do.
+
+
+I think we are at a much better place now for LogicalPlaning -- I don't think we have done anything similar for the various physical optimizer passes for `ExecutionPlan` and I suspect there is quite a bit of improvement to be had there
+
+---
+
+@alamb · 2024-07-15T11:25:50Z:
+> For example, it was through your draft I started to think about what would happen to ScalarValue in such a design. It is widely used in physical-level machinery, so contemplating a change to logical types for that object could be problematic. Maybe we should have a logical scalar value and a physical one, maybe we will think of something else. But all these thinking was induced by your exploratory work, so I think we should complete it. Then we can decide what to do with the full findings.
+
+I agree with this basic approach -- my feeling is that introducing logical types successfully will require some concerted effort from existing committers and people with expertise with the current code to help it along. @notfilippo  is doing a great job but unless we find them help / support I think the project would struggle to be successful
+
+---
+
+@Abdullahsab3 · 2024-09-15T11:57:34Z:
+If I may chime in with my 2 cents. I have been following Datafusion and its development over the last couple of months and I think Datafusion is a really unique project in the DMBS space and fits the "Future is extensible" vision greatly. I think especially in the RND world (industrial and academic), Datafusion makes research easier and more interesting, since you're starting from a already-present foundation and extending it/modifying it as you need. I think that Datafusion could probably benefit greatly from more academic collaborations?  I'd imagine that a lot of the performance optimisations, but also other kinds of projects, would make a great Master thesis or research paper in the DBMS world. Not sure how you can attract more people to this kinds of projects, but it's just an idea I wanted to share.
+
+ I think though that Datafusion could benefit from more visibility and presence. The sigmod conference and all the other conferences in which Datafusion was presented were great to promote it among different audiences, ranging from industry to academics and open source developers. It would be great to see Datafusion in other conferences and journals as well (e.g. fosdem, Foundations and Trends in Databases, etc). I think especially in Europe, Datafusion is still not as well-known, and if more DBMS people were to know about it, it would be beneficial to the future of the project.
+
+It might also be interesting if projects that are built on top of Datafusion could also present and explain how they used Datafusion to build their project and what the advantages were of using Datafusion. 
+
+---
+
+@alamb · 2024-09-16T17:20:46Z:
+>  I think especially in the RND world (industrial and academic), Datafusion makes research easier and more interesting, since you're starting from a already-present foundation and extending it/modifying it as you need. I think that Datafusion could probably benefit greatly from more academic collaborations?  I'd imagine that a lot of the performance optimisations, but also other kinds of projects, would make a great Master thesis or research paper in the DBMS world. 
+
+I agree entirely @Abdullahsab3 -- thank you. In fact I believe it is exactly the plan of @XiangpengHao to do so. Perhaps he has some insights about how to make it more appealing to researchers
+
+I also think Andy Pavlo's Advanced Database Course was an early adopter and tried to make projects based on DataFusion Spring 2024:  https://15721.courses.cs.cmu.edu/spring2024/project.html . I didn't hear much about how this actually went or what we could do to make it easier next time. 
+
+> It might also be interesting if projects that are built on top of Datafusion could also present and explain how they used Datafusion to build their project and what the advantages were of using Datafusion.
+
+100% agree. This was the topic of many of the DataFusion San Franciso meetup talks recently, and I spoked about it in this talk:
+*  [DataCouncil 2024: ](https://www.datacouncil.ai/talks24/building-influxdb-30-with-apache-arrow-datafusion-flight-and-parquet?hsLang=en)Building InfluxDB 3.0 with Apache Arrow, DataFusion, Flight and Parquet. [slides](https://docs.google.com/presentation/d/12kdYHLyH79B5__9xs3de_hZyG9geW4jC3vUpiy39VA0), [recording](https://www.youtube.com/watch?v=I-Z7kFGsYRI),
+
+I am particularly excited about the CMU database series this spring promises to be full of such explanations (the majority of those systems use DataFusion in some  way) : https://db.cs.cmu.edu/seminar2024/
+
+---
+
+@alamb · 2024-09-16T17:22:40Z:
+> I think especially in Europe, Datafusion is still not as well-known, and if more DBMS people were to know about it, it would be beneficial to the future of the project.
+
+I also 10% agree. I am actually speaking at the first DataFusion meetup in Europe next week: 
+* #11431 , organized by @gruuya ❤️ 
+
+Any chance anyone on this issue (or @Abdullahsab3 ) wants to help organize another European meetup? Perhaps as 2025 CIDR: https://www.cidrdb.org/cidr2025/ 🤔 
+
+---
+
+@findepi · 2024-09-17T14:56:59Z:
+> I am actually speaking at the first DataFusion meetup in Europe next week:
+> 
+> * [DataFusion Belgrade Meetup 2024/09/27 #11431](https://github.com/apache/datafusion/discussions/11431) , organized by @gruuya
+
+✌️  me too
+
+---
+
+@Abdullahsab3 · 2024-09-19T16:11:34Z:
+> Any chance anyone on this issue (or @Abdullahsab3 ) wants to help organize another European meetup? 
+
+Yes! My team and I would be interested in helping organize a meetup. We don't use Datafusion directly but we use it through influxdb -- might be an interesting POV/angle to see how technical customers of a product built on top of Datafusion can (ab)use and benefit from Datafusion :D and also how using something like Datafusion, which can sound scary to use for building a product/doing RND, can actually have great benefits. 
+A lot of the influxdb issues that we found and tackled with Datafusion were actually guided and/or solved by people from outside influxDB that are also working with Datafusion. It reminds me of the multi-vendor participation that Andrew often mentions in his talks. 
+
+I will try to solidify something with my team this week/next week regarding a Western Europe meetup and come back with a proposal :) 
+
+---
+
+@alamb · 2024-09-19T19:38:23Z:
+One possibility might be to try and arrange something colocated with CIDR in Amsterdam https://www.cidrdb.org/cidr2025/  -- there might be many people in town already that could be interested
+
+---
+
+@alamb · 2024-11-06T12:01:09Z:
+This one was great -- let's discuss current roadmap plans on a next ticket
+- https://github.com/apache/datafusion/issues/13274
+
+=== ROW 31 | f001749 | https://github.com/emilk/egui/pull/4849 | 2024-07-18 | domain-subframes ===
+Upgrade winit to 0.30.2
+
+---
+
+@ArthurBrussee · 2024-07-18T23:57:23Z:
+* Closes https://github.com/emilk/egui/issues/1918
+* Closes https://github.com/emilk/egui/issues/4437
+* Closes https://github.com/emilk/egui/issues/4709
+* [x] I have followed the instructions in the PR template
+
+Hiya,
+
+I need new winit for a specific fix for a android_native_actvity. There are already two PRs, but both don't seem to have a lot of movement, or are entirely complete:
+
+https://github.com/emilk/egui/pull/4466
+Seems to have gone stale & is missing some bits.
+
+https://github.com/emilk/egui/pull/4702
+Also seems stale (if less so), and is missing a refactor to run_on_demand. I also *think* the accesskit integration has a mistake and can't be enabled. I've marked them as a co-author on this as I started from this branch. (I think! Haven't done that on git before...).
+
+Sorry for the wall of text but just dumping some details / thoughts here:
+
+- There's an issue with creating child windows in winit 0.30.1 and up on macOS. The multiple_viewports, "create immediate viewport" example crashes on anything later 0.30.1, with a stack overflow in unsafe code. I've create [a winit issue](https://github.com/rust-windowing/winit/issues/3800), it *might* already be fixed in 0.31.0 but I can't test as 0.31 will likely require another refactoring. For now I have just pinned things to 0.30.0 exatly.
+
+- Winit has deprecated run_on_demand, instead requiring the ApplicationHandler interface. In 0.31.0 run_on_demand is removed. I've refactored both the integration and the WinitApp trait to follow this pattern. I've left user_events a bit more opaque, as it seems 0.31.0 is doing a rework of UserEvents too.
+
+- I've used the new lazy init approach for access kit from this branch https://github.com/mwcampbell/egui/tree/accesskit-new-lazy-init and marked Matt as co-author, thanks Matt!
+
+- There was very similair but not quite the same code for run_and_return and run_and_exit. I've merged them, but looking at the github issues graveyard it seems vey finnicky. I *hope* this is more robust than before but it's a bit scary.
+
+- when receiving new_events this also used to check the redraw timing dictionary. That doesn't seem necesarry so left this out, but that is a slight behaviour change?
+
+- I have reeneabled serial_windows on macOS. I wondered whether it was fixed after this PR and does seem to be! However, even before this PR it seems to work, so maybe winit has sorted things out before that... Windows also works fine now without the extra hack.
+
+- I've done a very basic test of AccessKit on Windows and screen reader seems ok but I'm really not knowleadgable enough to say whether it's all good or not.
+
+- I've tested cargo tests & all examples on Windows & macOS, and ran a basic Android app. Still, testing native platforms is wel... hard so if anyone can test linux / iOs / older mac versions / windows 10 would probably be a good idea!
+
+- For consistencys sake I've made all event like functions in WinitApp return a `Result<EventResult>`. There's quite a bit of Ok-wrapping now, maybe too annoying? Not sure.
+
+Thank you for having a look!
+
+# Tested on
+* [x] macOS
+* [x] Windows
+* [x] Wayland (thanks [SiebenCorgie](https://github.com/SiebenCorgie))
+* [x] X11 (thanks [crumblingstatue](https://github.com/crumblingstatue)!,  [SiebenCorgie](https://github.com/SiebenCorgie))
+
+
+# TODO
+* [x] Fix "follow system theme" not working on initial startup (winit issue, pinning to 0.30.2 for now).
+* [x] Fix `request_repaint_after`
+
+---
+
+@emilk · 2024-07-30T09:31:40Z:
+I found a couple of issues during testing; added them under the `TODO` heading in the PR description. I'll do some more testing and code review soon™️. I'd like to get this in as soon as possible!
+
+---
+
+@ArthurBrussee · 2024-07-30T09:47:32Z:
+Wooh awesome! Thank you for doing some testing, good catch on request_repaint_after! I missed a pretty crucial check for redraw in the 'new_events' callback when porting.
+
+I'm not sure about follow system theme. On my macbook anyway the window seems to change theme when I change the system theme. Is this broken on windows/linux? Or, pre-Sonoma? Or broken in a different way?
+
+---
+
+@emilk · 2024-07-30T10:31:21Z:
+> I'm not sure about follow system theme. On my macbook anyway the window seems to change theme when I change the system theme. Is this broken on windows/linux? Or, pre-Sonoma? Or broken in a different way?
+
+_Changes_ to the system theme are reported correctly to egui, but not the initial system theme. If I set my system theme to bright and start `egui_demo_app`, the initial egui theme is dark (the default). (I edited the TODO item to clarify).
+
+**EDIT:** `window.theme()` returns `None` on my Mac here:
+
+https://github.com/ArthurBrussee/egui/blob/f10cf80654a71c4cb71b1b0e7390cf6f094b2177/crates/eframe/src/native/winit_integration.rs#L123-L124
+
+Oh, it's changed behavior:
+
+https://docs.rs/winit/0.29.15/i686-pc-windows-msvc/winit/window/struct.Window.html#method.theme
+
+vs
+
+https://docs.rs/winit/latest/winit/window/struct.Window.html#method.theme
+
+I guess there is no way to ask winit about the current system theme anymore?
+
+---
+
+@ArthurBrussee · 2024-07-30T11:19:42Z:
+Seems so :/ From what I can find:
+
+- This started in 0.30.3 after this PR https://github.com/rust-windowing/winit/pull/3736
+- New API to detect actual system theme will land for 0.30.5 probably https://github.com/rust-windowing/winit/issues/3837, https://github.com/rust-windowing/winit/pull/3838
+
+So back to version hell haha. I guess could:
+- Pin 0.30.2
+- Wait for 0.30.5
+- Hack some winit internals somehow to keep this patched for 0.30.4
+
+---
+
+@emilk · 2024-07-30T14:59:08Z:
+I think pinning to 0.30.2 until https://github.com/rust-windowing/winit/issues/3837 / https://github.com/rust-windowing/winit/pull/3838 is resolved is the best option, especially since winit 0.30.5 is likely to be released before then next egui/eframe release. I don't see anything in the changelog entries for 0.30.3 or 0.30.4 that we need: https://docs.rs/winit/latest/winit/changelog/index.html
+
+
+
+---
+
+@ArthurBrussee · 2024-07-30T15:22:36Z:
+Sounds good! I've pinned to 0.30.2 with a comment, will keep an eye on the 0.30.5.
+
+---
+
+@emilk · 2024-07-30T18:14:18Z:
+I've tested this on macOS, but we need some testing on Windows, X11 and Wayland too.
+
+A few things to test:
+* `cargo -p custom_window_frame`
+* `cargo -p egui_demo_app`
+* `cargo -p egui_demo_app -F wgpu`
+* `cargo -p multiple_viewports`
+
+---
+
+@ArthurBrussee · 2024-07-30T19:02:08Z:
+Thanks for the fixes! 
+
+Done some more testing on Windows now (including all the above projects), and all seems to behave. (though there's a weird amount of latency for `cargo -p egui_demo_app -F wgpu` but it seems that's there both before and after the patch?)
+
+I can try a bit on WSL later but even before the winit patches it had all kinds of sketchy behaviour & crashes, so it won't say that much. Would be good to have someone who daily drives linux to test.
+
+---
+
+@crumblingstatue · 2024-07-30T19:48:45Z:
+@emilk Everything seems to be working on Linux X11 (openbox), apart from resizing in the egui demo app when the window is maximized.
+Not sure if it's intended to work or not when the window is maximized. But the resizes seem to be ignored when the window is maximized.
+
+---
+
+@SiebenCorgie · 2024-07-30T21:10:01Z:
+> I've tested this on macOS, but we need some testing on Windows, X11 and Wayland too.
+
+
+I tested it on Wayland (Cosmic desktop and Gnome-46) as well as X11 on Gnome-46. Everything seems to work. 
+The only thing I found was some _strange_ decoration on Gnome+Wayland for the window controls. But it also happens on `master`, so I'm confident that this not an issue related to the upgrade.
+
+![Screenshot](https://github.com/user-attachments/assets/6e548fa4-d4dc-4a18-9da1-c8a6ab2a0a7d)
+
+
+---
+
+@torokati44 · 2024-07-30T21:20:42Z:
+Oh that's just the result of GNOME folks _insisting_ that window decorations _have_ to be done by the clients (applications), and not by the server (the compositor / window manager), lest they may be _too consistent_. :roll_eyes: Window decorations look normal on KDE.
+
+See: https://github.com/rust-windowing/winit/issues/1967
+
+---
+
+@emilk · 2024-07-31T07:42:32Z:
+Awesome - thanks for the help with the testing! Let's go 🚀 
+
+---
+
+@mwcampbell · 2024-07-31T07:58:24Z:
+I just did a quick test of accessibility with a screen reader on Windows, and it looks good. Thanks @ArthurBrussee for getting this across the finish line.
+
+---
+
+@torokati44 · 2024-08-07T12:28:55Z:
+> Sounds good! I've pinned to 0.30.2 with a comment, will keep an eye on the 0.30.5.
+
+Soon! :tm: @ArthurBrussee 
+https://github.com/rust-windowing/winit/pull/3849
+
+---
+
+@ArthurBrussee · 2024-08-07T12:46:51Z:
+Oh nice! Though seems actually so far 0.30.5 doesn't have the fix this needs alas. Have asked there whether it still might be included.
+
+---
+
+@torokati44 · 2024-08-08T18:31:35Z:
+'Tis out!
+
+---
+
+@emilk · 2024-07-19T15:37:30Z:
+Should link to https://github.com/rust-windowing/winit/issues/3800 too/instead
+
+---
+
+@emilk · 2024-07-19T15:40:56Z:
+Unfortunately, by pinning to 0.30.0 we have the problem that https://github.com/rust-windowing/winit/pull/3684 solves, which is crashes during shutdown.
+
+Running this branch gives me this one exit:
+![image](https://github.com/user-attachments/assets/43bb6313-380a-4297-80e1-7ccddb931510)
+
+
+---
+
+@emilk · 2024-07-19T15:41:46Z:
+Finally fixed!
+
+---
+
+@emilk · 2024-07-19T15:45:21Z:
+Is there an relevant issue on `wayland-cursor` we can link to?
+
+---
+
+@ArthurBrussee · 2024-07-19T18:44:05Z:
+Tried to understand this a bit better - it's an issue where wayland-cursor relied on wayland-backend to enable nix/fs. Somehow winit uses an older wayland-backend than wayland-cursor, leading to this problem.
+
+This is moot in the future after https://github.com/Smithay/wayland-rs/commit/edd0f60d0baf09604553525c2636df5d6ba05d44, as rustix/shm enables rustix/fs as well.
+
+Have a made a note of that here, quite a mess!
+
+---
+
+@ArthurBrussee · 2024-07-19T18:47:16Z:
+Ah crap :/ That weirdly doesn't repro for me - either by closing windows or ctrl-c'ing but well, it's definitely missing the bugfix so makes sense....
+
+I tried some more workarounds for 0.30.4 but really can't find anything that prevents the crash. I guess that leaves a few options:
+
+- Go with 0.30.0 and crash on exit on mac
+- Go with 0.30.4 and crash on immediate viewports (perhaps with an error)
+- Rejig immediate viewports to be more like deferred somehow
+- Wait for a patched winit release / workaround to be available
+
+Lmk your thoughts!
+
+---
+
+@emilk · 2024-07-23T13:27:16Z:
+>Go with 0.30.0 and crash on exit on mac
+
+Having eframe always crash on exit on Mac is not an option imho.
+
+> Go with 0.30.4 and crash on immediate viewports (perhaps with an error)
+
+This is better, but not great. Users _can_ switch to using deferred viewports if they work. We could guide users towards it gently (with a log message) or harshly (with `#[cfg(not(target_os = "macos"))]` on `show_viewport_immediate`)
+
+> Rejig immediate viewports to be more like deferred somehow
+
+If we can circumvent the bug somehow that would be great, but seems unlikely?
+
+> Wait for a patched winit release / workaround to be available
+
+Waiting won't give us much unless someone volunteers to work on https://github.com/rust-windowing/winit/issues/3800
+
+---
+
+@ArthurBrussee · 2024-07-26T01:00:25Z:
+Thank you for that! All good points.
+
+Good news though :) I gave it one last go as you're right someone has to volunteer, and noticed this time that the crash complains about a reference which just so happens to come from an unsafe block not too far up in the call stack from egui....
+
+Integrations register a callback for immediate viewports. When registering this gets an &ActiveEventLoop, then uses unsafe to cast away the lifetime, and store that pointer in the callbak. That's really not allowed! At any point there might be an aliased mutable reference, and the comment about how the lifetime outlives the callback doesnt really make sense to me - winit is free to do what it wants! The value could even just be moved in the meantime? This probably worked by happenstance on older winit versions.
+
+So, instead I now make a tiny thread_local context which stores the pointer for the duration of the painting. I'm not very happy with it, this still leaves an unsafe block, but still seems much easier to reason about. See the safety comment for some justification, though I've never PR'ed unsafe code before so beware :) 
+
+To really get rid of unsafe require a bigger rework that would get rid of this depencency injection shenannigans entirely I think.
+
+---
+
+@emilk · 2024-07-30T09:06:18Z:
+Nicely done!
+
+---
+
+@emilk · 2024-07-30T10:12:17Z:
+Alternatively we can just add a `wayland-cursor = 0.31.1` here with a similar note
+
+---
+
+@emilk · 2024-07-30T10:14:57Z:
+```suggestion
+            // First resume event. Create our root window etc.
+```
+
+---
+
+@emilk · 2024-07-30T10:17:52Z:
+Shouldn't this work just as well?
+
+```suggestion
+            let context = current_gl_context.as_ref().ok_or(
+                egui_glow::PainterError::from("failed to get current context to swap buffers".to_owned())
+           )?;
+```
+
+---
+
+@emilk · 2024-07-30T10:23:17Z:
+We should not be ignoring the returned `Result` here
+
+---
+
+@ArthurBrussee · 2024-07-30T10:33:52Z:
+Oh yes nice!
+
+---
+
+@ArthurBrussee · 2024-07-30T10:42:47Z:
+Hm yes - have folded it into event_result now so it goes through the same shutdown path as other errors.
+
+---
+
+@ArthurBrussee · 2024-07-30T10:46:17Z:
+Oh yes that's nicer!
+

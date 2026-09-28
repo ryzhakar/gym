@@ -1,0 +1,2005 @@
+=== ROW 100 | f004371 | https://forums.swift.org/t/new-codable-prototype-available-for-feedback/85186 | 2026-03-06 | domain-subframes ===
+"New Codable" prototype available for feedback
+
+@kperryua · 2026-03-06T18:15:21.406Z:
+(Apologies for the re-post. We thought it best to create a new topic for increased visibility since some might not be following the original thread.)
+Hello again Swift Community!
+Here we are, almost a full year after my “future of serialization & deserialization APIs” post. I’ve spent a lot of time since then working to make this into a reality, and I’m happy to announce that I have something concrete for you to try out!
+Please take a look at GitHub - swiftlang/swift-foundation at experimental/new-codable · GitHub ! You’ll find therein the core components of this design exposed in a new target temporarily called NewCodable:
+CommonEncodable and CommonDecodable protocols. These are the format-agnostic protocols that are the closest relatives to Encodable and Decodable, but are designed in such a way that avoids many of the performance limitations of the latter.
+CommonEncoder and CommonDecoder protocols. Similarly, these are format-agnostic protocols for encoders and decoders in the same vein as Encoder and Decoder, but with a better design.
+JSONEncodable and JSONDecodable protocols. These are shaped similarly to their Common counterparts, but with modifications that are specific to JSON, including certain performance optimizations.
+JSONDecoderProtocol (naming discrepancy acknowledged, but I can’t name it JSONDecoder!) with concrete implementations JSONParserDecoder and JSONPrimitiveDecoder.
+JSONDirectEncoder (no protocol here yet, despite room for an alternative JSONElementEncoder to mirror JSONElementDecoder. Will discuss elsewhere.)
+“Top-level” NewJSONEncoder and NewJSONDecoder (names TBD, since I similarly can’t name them JSONEncoder and JSONDecoder!)
+JSONElement and other supporting protocols and types.
+Please note that swift-foundation is acting as a convenient and temporary holding place for this project. We’ll evolve it on this branch for a while as we iterate on it and refine it. We’ll determine what the final locations for the various pieces will be as we get closer to its productization.
+This is still very much a work in progress! Please excuse our dust! You’ll find plenty of TODOs scattered throughout, somewhat haphazard inlining of functions, and probably plenty of bugs and issues. I have ported over many of the tests from the existing JSON Codable-based unit tests in swift-foundation, but a few of those are still failing for various reasons.
+Despite all of that, I hope some of you get an opportunity to take a look and try adopting the protocols use the new encoders/decoders with some of your own types. Let us know about any pain points or friction you’re experiencing with the API.
+There are some benchmarks included (still of bespoke infrastructure) which are quite promising. When decoding twitter.json, I personally observe that JSONDecodable and JSONParserDecoder provide a throughput improvement of approximately 6x over Decodableand JSONDecoder! I hope that with community involvement we’ll be able to improve both overall quality and performance to even higher levels.
+To try using the “New Codable”, change your swift-foundation dependency to
+.package(
+url: "https://github.com/apple/swift-foundation.git",
+branch: "experimental/new-codable"
+)
+and import NewCodable. Swift 6.3 is required.
+To run the tests, execute the following in a swift-foundation checkout of this branch:
+swift test --filter NewCodableTests
+To run the benchmarks:
+swift test --configuration release --filter NewCodableBenchmarks
+Please take note of this rough roadmap that lies ahead for this project:
+Finalize the Common* protocols
+Finalize the JSON* APIs
+Support Embedded Swift
+Add support for XML and Binary Property List
+Design and implement macros for @JSONCodable, @PropertyListCodable, @CommonCodable, and even @Codable.
+Publish a library for owners of other format-specific protocols to facilitate development of their own @<Format>Codable macros that use common patterns established by the above macros.
+If you see an issue or have a question, please speak up! I’ll be happy to try to address any concerns. Feel free to create an Issue on the swift-foundation GitHub tagged with the new-codable label. If you want to fix something, feel free to create a Pull Request against this experimental/new-codable branch, again tagged with the new-codable label.
+To help drive community involvement towards finalizing milestones #1 and #2, I will be starting threads that discuss different aspects of the prototype’s API with explanations of why that design was chosen, challenges we’re still facing, and alternatives we’ve considered. I hope to get your focused feedback in those discussions.
+As a footnote, while the inspiration for the origins of this project was heavily rooted in Rust serde, I found that the general shape of the musli crate was a better fit for adapting to Swift. (Though, it’s quite a bit more reliant on closures with inout arguments rather than consumed and reborrowed mutable references. I’ll start a discussion about that as well.)
+
+---
+
+@sliemeobn · 2026-03-07T11:13:09.971Z:
+I am super excited about this, twice excited even!
+On the one hand it's just great to see progress towards modern serialization in Swift - we need to catch up with today's performance expectations. It was my impression that good old Codable was increasingly becoming a real bottleneck in certain cases.
+On the other hand I am super curious if/how this can fit into an Embedded WebAssembly in the Browser use case, where code size matters a lot and we are running in a JS runtime that ships JSON serialization for free.
+I haven't had time to fully process the API shapes of it all, but I am curious if you have thoughts on this use case.
+I see roughly three directions:
+use "NewJSONEncoder/Decoder" in Swift, interop with copied strings/byte arrays
+(probably nicest experience in Swift, probably biggest code size cost)
+create JSEncoder/JSDecoder (common? or JSON?) that encodes to JS objects and decodes from JS objects + JS-native JSON.parse/stringify
+more interop calls, but less data copying and no JSON parsing in Swift... not sure how this would perform
+create specialized JS encoders + macros
+not quite sure what that would give us, but again the goal is to "reuse" the built-in JSON serialization that ships with javascript
+Any thoughts or comments are appreciated!
+Also, I noticed a lot of files start with "import Foundation(Essentials)" - I know this is meant to be temporary, but it would be great to start organizing the code in a way to contain the spread. As it is right now it looks pretty messy to try this out for Embedded Swift.
+
+---
+
+@filip-sakel · 2026-03-07T15:19:32.769Z:
+This is very exciting! It’s about time Swift got the fast and expressive serialization facilities  it deserves.
+After skimming the post and some of the code I have three questions/concerns:
+Why do we overload “visit(_: …)” in the decoder visitor protocols? Doesn’t that slow down type checking?
+I’m a little concerned about all these new protocols that most users won’t touch polluting the namespace. However, I understand it’s important for performance. Are there any mitigation strategies?
+You mentioned there’s an up to 6x performance improvement over the current JSONDecoder, which is great. So I’m wondering if we plan to benchmark against other json serialization libraries like simdjson which offers incredible performance.
+
+---
+
+@tera · 2026-03-07T23:39:10.293Z:
+The future of serialization & deserialization APIs
+// Written code:
+@JSONCodable
+struct BlogPost {
+...
+@CodingDefault([])
+let tags: [String]
+}
+Could this use the default value provided normally? var tags: [String] = []
+BTW, do you plan to have an ability to opt-out some fields from being encodable/decodable?
+Either on a per field manner or, on a per type manner.
+The future of serialization & deserialization APIs
+// Synthesized code:
+extension BlogPost: JSONEncodable {
+func encode(to encoder: inout JSONEncoder2) throws -> Person {
+try encoder.encodeStructFields() { fieldEncoder in
+try fieldEncoder.encode(field: CodingFields.title, value: self.title)
+try fieldEncoder.encode(field: CodingFields.subtitle, value: self.subtitle)
+let publishDateValue = self.publishDate.formatted(.iso8601)
+try fieldEncoder.encode(field: CodingFields.publishDate, value: publishDateValue)
+try fieldEncoder.encode(field: CodingFields.body, value: self.body)
+let tagsValue = self.tags ?? []
+try fieldEncoder.encode(field: CodingFields.tags, value: tagsValue)
+}
+}
+}
+I wonder if this could be more generic like this (pseudocode):
+// generic
+func encode(to encoder: inout JSONEncoder2) throws -> T {
+try encoder.encodeStructFields() { fieldEncoder in
+fieldEncoder.allFields { field in
+try fieldEncoder.encode(field: field.title, value: field.value)
+}
+}
+}
+in which case having this per-type might be not required. Similarly for decoding.
+I like the desire, but maybe we could invest into a more complete, robust and performant mirror machinery first... and reimplement new codable on top of that.
+
+---
+
+@tera · 2026-03-08T01:05:03.653Z:
+The future of serialization & deserialization APIs
+But moreover, while you might make archive-specific choices, you don't always have archive-specific knowledge. Take for example, trying to decode a value from an archive that might include any common "property tree" value:
+public init(from decoder: Decoder) throws {
+let container = try decoder.singleValueContainer()
+if container.decodeNil() {
+self = .null
+} else if let stringValue = try? container.decode(String.self) {
+self = .string(stringValue)
+} else if let intValue = try? container.decode(Int.self) {
+self = .integer(intValue)
+} else if let doubleValue = try? container.decode(Double.self) {
+self = .double(doubleValue)
+} else if let boolValue = try? container.decode(Bool.self) {
+self = .boolean(boolValue)
+} else if let array = try? container.decode([DatabaseLiteralValue].self) {
+self = .array(try JSONEncoder().encode(array))
+} else {
+self = .object(try JSONEncoder().encode(container.decode([String: DatabaseLiteralValue].self)))
+}
+}
+We have no lookahead. We can't peek to see if the next char is a double-quote, a digit or a bracket. Without overloading the Decoder to emit lookahead metadata as decodable types, you simply need to try each possibility, in turn, incurring the overhead and disruption of thrown errors.
+Yeah, there are quite some limitations here... Note how you had to put decoding Int before decoding Double. Or what if there was a Float in one case's payload and Double in another, or String in one and StringProtocol type in another. The limitations are more serious that just that, e.g, you might have an enum with:
+enum E {
+case a(A)
+case b(B)
+...
+}
+where A and B are similar types as far as decoding is concerned:
+// example
+struct A { let x: UInt }
+struct B { let x: Int }
+or a more complicated case:
+enum E {
+case a([A])
+case b([B])
+...
+}
+with the payload to decode being an array of 100K positive elements and the last element being negative.
+Ideally type information should be available during decoding one way or another... JSON won't be able preserving that (aside from embedding extra information in some custom way) but other serialisation formats (like XML) will be able preserving it.
+
+---
+
+@t089 · 2026-03-08T20:48:56.137Z:
+@kperryua Amazing work, this looks all very good. I am playing with the new API and adopting it in some projects. One question though:
+Shouldn‘t the top-level decoder (and encoder) add a “span-based” API for coding? Currently you always need to go through Data which seems … unnecessary.
+public func decode<T: JSONDecodable & ~Copyable>(_ type: T.Type, from data: borrowing RawSpan) throws(CodingError.Decoding) -> T
+?
+
+---
+
+@kperryua · 2026-03-09T17:03:24.683Z:
+sliemeobn:
+On the other hand I am super curious if/how this can fit into an Embedded WebAssembly in the Browser use case, where code size matters a lot and we are running in a JS runtime that ships JSON serialization for free.
+Oh this is an interesting concept I hadn’t considered. The intersection of WebAssembly and JS runtimes in Swift is unknown to me. Is there already a bridge in this environment between JS objects and Swift values and a way to call JS functions from Swift?
+I can definitely see the value in making encoder/decoder level interfaces that reuse Javascript’s native JSON (de)serialization. However, I think there’s also an interesting tradeoff to consider here. One of the advantages of a decodable type is that it specifies which fields of JSON the client cares about and which can be skipped entirely. JSON.parse is always going to deserialize the entire tree as an intermediate representation and then perform the decode on that structure (similar to the original implementation of JSONDecoder which used JSONSerialization to make a Foundation object structure). I’m sure that such an implementation would still be very performant overall, but wonder if there’s also still desire to reduce memory overhead by performing a selective parse.
+sliemeobn:
+Also, I noticed a lot of files start with "import Foundation(Essentials)" - I know this is meant to be temporary, but it would be great to start organizing the code in a way to contain the spread. As it is right now it looks pretty messy to try this out for Embedded Swift.
+Yes, I agree, we should start sooner than later to get this codebase ready for Embedded. I especially don’t want to get caught in a situation where the API itself accidentally makes that harder than necessary!
+It’s primarily there today because there’s some unanswered questions about how what level of support we want in NewJSONDecoder for Data and Date and other Foundation types that JSONDecoder enjoys. Like the various instance-global strategies. It’s hard to implement this in a way that allows Foundation to layer it on top of NewJSONDecoder via extension. I’ll go more into depth on this later.
+
+---
+
+@sliemeobn · 2026-03-09T17:39:39.895Z:
+kperryua:
+The intersection of WebAssembly and JS runtimes in Swift is unknown to me. Is there already a bridge in this environment between JS objects and Swift values and a way to call JS functions from Swift?
+There very much is!
+github.com
+GitHub - swiftwasm/JavaScriptKit: Swift framework to interact with JavaScript...
+Swift framework to interact with JavaScript through WebAssembly.
+kperryua:
+I can definitely see the value in making encoder/decoder level interfaces that reuse Javascript’s native JSON (de)serialization. However, I think there’s also an interesting tradeoff to consider here.
+Ideally the final code size of the new JSON serialization in an Embedded wasm binary is small enough that this can just be the "default" - but it is pretty hard to compete against "for free" ...
+
+---
+
+@kperryua · 2026-03-09T18:50:23.846Z:
+filip-sakel:
+Why do we overload “visit(_: …)” in the decoder visitor protocols? Doesn’t that slow down type checking?
+The point of the visitor is that the decoder gets to inform the client which primitive type it has encountered next in the parse. This overload style is very very similar to both serde’s and musli’s visitor patterns.
+We already have similar levels of overloading in present-day Encoder/Decoder and Codable container APIs. I haven’t seen any type checker performance issues reported for those.
+filip-sakel:
+I’m a little concerned about all these new protocols that most users won’t touch polluting the namespace. However, I understand it’s important for performance. Are there any mitigation strategies?
+The only way I can see how to avoid “polluting” the namespace is by hoisting the protocols into some other type. I’m not aware of any common precedent for doing so, however. Doing so might also have the effects of increasing verbosity and decreasing discoverability.
+filip-sakel:
+You mentioned there’s an up to 6x performance improvement over the current JSONDecoder, which is great. So I’m wondering if we plan to benchmark against other json serialization libraries like simdjson which offers incredible performance.
+I don’t have any immediate plans for formalizing this, but I’d welcome a community contribution. I have done these comparisons myself informally, and we still do currently fall somewhat short of simdjson and serde in terms of throughput. Some of the additional overhead is, in my estimation, unavoidable due to the additional safety and correctness guarantees of Swift. Some of it just due to the fact that the benchmarks are still written to create the standard CoW’d arrays/dictionaries instead of ~Copyable variants. And various other things. Obviously simdjson uses highly advanced SIMD constructions, which I haven’t been able to replicate in this implementation (though I have done some experimentation in this area). This is another area I’d gladly welcome community involvement in!
+
+---
+
+@Jon_Shier · 2026-03-09T19:08:50.477Z:
+kperryua:
+Obviously simdjson uses highly advanced SIMD constructions, which I haven’t been able to replicate in this implementation (though I have done some experimentation in this area). This is another area I’d gladly welcome community involvement in!
+Have you looked at building JSON decoding on top of other JSON engines, not just the Swift native version? ZippyJSON was able to put simdjson under Decodable, and ReerJSON does something similar on top of yyjson. Have you seen what kind of overhead we're still looking at?
+
+---
+
+@kperryua · 2026-03-09T19:39:04.719Z:
+tera:
+Could this use the default value provided normally? var tags: [String] = []
+Short answer: Maybe. I think this touches on macro design descisions, which are far from set in stone.
+Longer answer: One complication I foresee is in regards to decoded value initialization. Note that in this design we’re using static func decode(from:) -> Selfinstead of an init(from:). Therefore there is an implicit dependency on a memberwise initializer, or at least an initializer that takes all the decodable fields. Initializing the property directly like this has two implications: 1) it must be a var in order to be overwritten by an initializer (probably not a showstopper), and 2) such an initializer must take an Optional for this field and know to overwrite the value IFF the parameter is not nil. This is not the behavior of a standard memberwise initializer.
+This question of initializers opens a can of worms I was intending to put off until we do macro design—do we require an extant memberwise initializer? Does the macro generate an initializer itself, called by decode(from:)? Something else?
+
+---
+
+@kperryua · 2026-03-09T19:40:41.483Z:
+tera:
+BTW, do you plan to have an ability to opt-out some fields from being encodable/decodable?
+Either on a per field manner or, on a per type manner.
+Yes, this is straightforward to provide with macro attributes, though opted-out fields must be accounted for upon decoding in order to be able to instantiate the type (like, providing a default value).
+
+---
+
+@kperryua · 2026-03-09T19:49:29.428Z:
+tera:
+I wonder if this could be more generic like this (pseudocode):
+// generic
+func encode(to encoder: inout JSONEncoder2) throws -> T {
+try encoder.encodeStructFields() { fieldEncoder in
+fieldEncoder.allFields { field in
+try fieldEncoder.encode(field: field.title, value: field.value)
+}
+}
+}
+in which case having this per-type might be not required. Similarly for decoding.
+I like the desire, but maybe we could invest into a more complete, robust and performant mirror machinery first... and reimplement new codable on top of that.
+I get the desire, but I only have so much influence on the language and runtime development, and have to work with what we have available today. I’ve not gotten the impression that “complete, robust and performance mirror machinery” is high on the priority list at the moment.
+Also, there’s a hidden type system complication in your pseudocode. What is the type signature of the allFields() closure and fieldand .value? Is there a way to ensure it provides static dispatch and compatibility with Embedded? What does the decoding side look like, and how do you use this collection of decoded “fields” to initialize the type?
+If your proposal is to use existentials, then, even with the new support for existentials in Embedded Swift, my understanding is that this kind of design would be outside the limitations for what it supports.
+Happy to be proven wrong on this one though. I spent a fair bit of time trying various solutions to make this kind of thing work!
+
+---
+
+@tera · 2026-03-10T00:07:12.900Z:
+Could this use the default value provided normally? var tags: [String] = []
+I wonder if this could be more generic...
+Consider this approach for both issues:
+User(from: decoder, default: User(name: "customised"))
+The default parameter is "defaulted" and if absent then default member wise initialiser is used. The idea is that it acts as a placeholder some (var) fields of which are overwritten by the values from JSON/plist/etc.
+A pseudocode for a generic decoding that won't involve a temporary dictionary:
+init<T>(from decoder: JSONDecoder2, `default`: T = T()) {
+self = `default`
+...
+T.allFields.forEach { field in
+if decoder.has(field: field.title) {
+self[field] = decoder.decode(field: field.title)
+}
+}
+}
+This approach pushing away from lets to vars, which could be somewhat undesirable, understandably, but hopefully not a show stopper.
+kperryua:
+I’ve not gotten the impression that “complete, robust and performance mirror machinery” is high on the priority list at the moment.
+So imagine we do what you propose first. And later (say in a year) do a more complete, robust and performant mirror machinery, that if existed today we'd probably use for new codable. Will we change Codable then at that point, risking breaking something?
+
+---
+
+@miku1958 · 2026-03-10T08:32:50.588Z:
+A long time ago, I wrote a library called HappyCodable, and I added macro support as soon as it became available. Here are some of my experiences and thoughts:
+@CodingKey should allow supporting multiple keys at the same time. For example, change it to CodingKeys, which is more intuitive—you can tell at a glance that it supports multiple keys:
+@CodingKeys("keyA", "keyB")
+let value: Int
+Both of these can be decoded into a value.
+{
+"keyA": 10
+}
+{
+"keyB": 10
+}
+Or keep CodingKey but allow multiple usages (though this is less intuitive):
+@CodingKey("keyA") @CodingKey("keyB")
+@CodingDefault should support being simplified to direct usage with var like:
+var value = xxxx
+In a data type with lots of optionals, I would rather just use var directly.
+Missing: @Uncoding should prevent this property from being encoded/decoded, and the developer needs to provide a default value, for example:
+@Uncoding
+let id = UUID()
+@Uncoding
+let id: String // error: not initialized
+Missing: @ElementNullable allows the JSON to contain nullable elements, but filters them out during decoding. For example:
+{
+"data": ["a", "b", null]
+}
+@ElementNullable
+var data: [String] = [] // After decoding, data will be ["a", "b"]
+
+---
+
+@tera · 2026-03-10T19:12:38.231Z:
+I like that!
+miku1958:
+@CodingKeys("keyA", "keyB")
+Here you mean that the subsequent two values will use these names, right?
+@CodingKeys("keyA", "keyB")
+var x = 1 // keyA
+var y = 2 // keyB
+var z = 3 // z
+miku1958:
+Missing: @ElementNullable allows the JSON to contain nullable elements, but filters them out during decoding. For example:
+{
+"data": ["a", "b", null]
+}
+For arrays this could be quite dangerous... as indices are shifted:
+{
+"names": ["a", null, "b"]
+"values": [1, 2, 3]
+}
+An unorthodox idea (for future Swift? as it's probably impossible now):
+// not current Swift
+struct User: NewCodable {
+var id: UUID                             // normal case
+var userName: String & SnakeCased        // user_name
+var dob: Date & ISO8601                  // iso8601 date formatting
+var value: Double & ThrowOnNonConformingValues // throws on non-conforming numbers
+var extraData: Data & Base64             // base64 encoded
+var password: Optional<String & Uncoded> // won't be in JSON
+var picture: UIImage? & Uncoded          // or maybe this? (won't be in JSON)
+var wfh: (Bool & Uncoded) = true         // and this (won't be in JSON)
+}
+Somewhat similar to Objective-C's SomeClass<SomeProtocol>
+Could possibly be used to support more advanced use cases, albeit somewhat less flexibly than what JSONEncoder/Decoder has. Example:
+protocol CustomDateEncoding {
+static func custom(_ : Date, _ : encoder: any Encoder)
+}
+struct MyCustomDateEncoding: CustomDateEncoding {
+static func custom(_ : Date, _ : encoder: any Encoder) {
+.. ...
+}
+}
+struct User {
+...
+var dob: Date & MyCustomDateEncoding
+...
+}
+Plus we'd still need something for the whole type and/or encoder (things like outputFormatting or sortedKeys).
+
+---
+
+@kperryua · 2026-03-10T19:36:19.372Z:
+t089:
+Shouldn‘t the top-level decoder (and encoder) add a “span-based” API for coding? Currently you always need to go through Data which seems … unnecessary.
+public func decode<T: JSONDecodable & ~Copyable>(_ type: T.Type, from data: borrowing RawSpan) throws(CodingError.Decoding) -> T
+Yes, absolutely! This is just something one of those simple things that I hadn’t gotten around to yet.
+I made sure that we’ll keep track of this with this issue.
+
+---
+
+@kperryua · 2026-03-10T19:59:26.773Z:
+Jon_Shier:
+Have you looked at building JSON decoding on top of other JSON engines, not just the Swift native version?
+I haven’t. It’d be an interesting experiment to see what kind of boost it provides, if any.
+My concern with this approach is that, at least as implemented in these projects, it instantiates the entire parsed JSON document in memory as an intermediate representation, then wraps the decoder around that. I’m aiming to try to avoid an IR whenever possible. In theory it seems like that should have the highest possible performance ceiling, in terms of both CPU and memory usage, especially for JSONDecodable types that don’t decode the entire JSON document. Maybe there’s a way to use these libraries in a way that’s driven by the decode requests so the IR isn’t necessary?
+
+---
+
+@kperryua · 2026-03-10T20:47:29.395Z:
+tera:
+init<T>(from decoder: JSONDecoder2, `default`: T = T()) {
+self = `default`
+...
+T.allFields.forEach { field in
+if decoder.has(field: field.title) {
+self[field] = decoder.decode(field: field.title)
+}
+}
+}
+I would like to avoid requiring a “default-initialized” value for each client struct. This technique would work for an intermediate struct for which all the fields are optional, and which is then used to instantiate the real struct. (see the various JSONBuilder types in Twitter.swift in the project’s benchmarks for an example of something like what I’m imagining).
+I still see a couple of roadblocks with your pseudocode:
+JSONParserDecoder cannot provide a .has(field:) call. It does not collect keys from JSON objects in advance, nor does it allow decoding values from the object in arbitrary orders. It only allows decoding in the order present in the JSON document. We could only implement this with JSONPrimitiveDecoder, which requires additional CPU and memory.
+In order for self[field] = decoder.decode(field: field.title) to maintain a compile-time value type, required by decoding, the type for field would need to be generic over the field’s type, e.g. struct Field<Value: JSONDecodable>. However, an allFields.forEach function would need to erase that type parameter to work (e.g. func forEach(_ closure: (AnyField) -> Void)), which blocks this. Perhaps with the improved reflection this could be expanded at compile time into separate type-specific invocations of the closure for each field. But it would still be type-driven decoding, and therefore incompatible with the parser-driven decode of this new design.
+These things are what makes the decoding side much more difficult to model in this way than the encoding side. Definitely open to any creative solutions to these blockers!
+tera:
+So imagine we do what you propose first. And later (say in a year) do a more complete, robust and performant mirror machinery, that if existed today we'd probably use for new codable. Will we change Codable then at that point, risking breaking something?
+Any reflection improvements would need to be compatible with parser-driven decoding in order to be useful to this project. If such end up existing, which feels unlikely, my expectation is that we could use it with the proposed interfaces, or that we could easily extend those interfaces to work with it.
+
+---
+
+@kperryua · 2026-03-10T20:49:43.974Z:
+miku1958:
+A long time ago, I wrote a library called HappyCodable, and I added macro support as soon as it became
+These are excellent suggestions for macros, thank you! These should be feasible. Please be sure to chime in again when we start the macro design in earnest.
+
+---
+
+@tera · 2026-03-10T21:15:36.495Z:
+kperryua:
+I would like to avoid requiring a “default-initialized” value for each client struct.
+I think it's very nice and clean approach, and it's a defaulted (non required) parameter for types that have init(). YMMV.
+kperryua:
+JSONParserDecoder cannot provide a .has(field:) call
+I see. For that the following pseudocode should do:
+jsonField.forEach { field in
+self[field] = decoder.decode(field: field)
+}
+where the assignment is a no-op if there's no field "field.name" in T.
+As for the field type, in broad strokes, the field is like a key path (think string). Not sure about the situation with its value though, could it be generic or not.
+Your other concerns are valid.
+kperryua:
+If such end up existing, which feels unlikely, my expectation is that we could use it with the proposed interfaces, or that we could easily extend those interfaces to work with it.
+Experience tells it's hard to change the foundation layer without disturbing what's on top, such endeavours typically lead to problems with backward compatibility or waste of efforts, or much bigger scope or a combination of those. I think we saw precedents in Swift evolution where we deliberately postponed certain things to be done after other for them to be done "in order", which in this case I believe should be NewMirror -> NewCodable. I might be wrong though, or it's a matter of opinion, so please don't feel discouraged.
+
+---
+
+@t089 · 2026-03-10T22:40:05.829Z:
+I went ahead and implemented (with some LLM help) a couple of useful JSON macros at GitHub - t089/swift-json-macros at new-codable · GitHub based on this work. Not fully tested and might be broken, but all the features I wanted were possible to do quite straightforwardly.
+
+---
+
+@kperryua · 2026-03-10T22:52:27.421Z:
+That’s awesome @t089 , thank you for doing that!
+This actually coincided with this PR that @tevelee posted for inclusion directly in the swift-foundation branch. I’d be happy to have a combination of efforts here to get us the best result.
+(Note for all consumers: these macros don’t necessarily represent the full extent and design of the final macros, but I think these are an excellent jumping off point for that work!)
+
+---
+
+@tera · 2026-03-10T23:17:24.874Z:
+kperryua:
+If your proposal is to use existentials, then, even with the new support for existentials in Embedded Swift, my understanding is that this kind of design would be outside the limitations for what it supports.
+Could you point me to the current limitations?
+Edit: Found some info here.
+However... it's somewhat out of date, for example this compiles fine on embedded:
+func mayFail() throws {}
+and so is this:
+protocol P: AnyObject { }
+func casting(object: AnyObject) {
+if let p = object as? P {
+}
+}
+Is it known if the remaining limitations are temporary or permanent?
+I didn't follow this so it was news to me that embedded supports existential at all  – thought they are fundamentally impossible unwise  – just checked: indeed it does work on the nightly build, before it was failing with  - error: cannot use a value of protocol type 'any P' in embedded Swift.
+
+---
+
+@kperryua · 2026-03-10T23:53:32.421Z:
+I think this is more up-to-date here, but I’m reaching out to make sure it’s accurate. This testclearly shows existentials of *non-class-bound *protocols working.
+
+---
+
+@miku1958 · 2026-03-11T09:10:47.103Z:
+tera:
+Here you mean that the subsequent two values will use these names, right?
+I mean supporting multiple keys for the same property to allow reuse across highly similar but different JSON data. Of course, it will also be encoded multiple times during the encoding process.
+tera:
+For arrays this could be quite dangerous... as indices are shifted:
+That is true. However, this merely provides a tool; whether and how to use it depends entirely on the developer.
+
+---
+
+@tera · 2026-03-11T20:09:26.215Z:
+tera:
+An unorthodox idea (for future Swift? ...)
+Or "past" Swift  (We lost this superpower of marking individual properties with protocols.) Here's how it would be done with the help of Obj-C:
+Some machinery
+import Foundation
+import ObjectiveC
+// part of machinery
+struct PropertyInfo {
+let name: String
+let objcClass: AnyClass?
+let protocols: [Protocol]
+let typeEncoding: String
+func conforms(to proto: Protocol) -> Bool {
+if let cls = objcClass {
+return class_conformsToProtocol(cls, proto)
+}
+return false
+}
+func hasProtocol(_ proto: Protocol) -> Bool {
+let target = NSStringFromProtocol(proto)
+return protocols.contains { NSStringFromProtocol($0) == target }
+}
+}
+func properties(of cls: AnyClass) -> [PropertyInfo] {
+var count: UInt32 = 0
+guard let properties = class_copyPropertyList(cls, &count) else { return [] }
+defer { free(properties) }
+return (0..<Int(count)).map { I in
+let prop = properties[I]
+let name = String(cString: property_getName(prop))
+var objcClass: AnyClass? = nil
+var protocols: [Protocol] = []
+var typeEncoding = "?"
+if let attrs = property_getAttributes(prop) {
+let attrString = String(cString: attrs)
+let parts = attrString.split(separator: ",")
+if let first = parts.first, first.hasPrefix("T") {
+typeEncoding = String(first.dropFirst())
+}
+if let start = attrString.range(of: "T@\""),
+let end = attrString[start.upperBound...].firstIndex(of: "\"") {
+var rawName = String(attrString[start.upperBound..<end])
+if let openAngle = rawName.firstIndex(of: "<"),
+let closeAngle = rawName.firstIndex(of: ">") {
+let protoString = rawName[rawName.index(after: openAngle)..<closeAngle]
+protocols = protoString.split(separator: ",").compactMap {
+objc_getProtocol(String($0))
+}
+rawName = String(rawName[..<openAngle])
+}
+objcClass = NSClassFromString(rawName)
+}
+}
+return PropertyInfo(name: name, objcClass: objcClass, protocols: protocols, typeEncoding: typeEncoding)
+}
+}
+func snakeCased(_ input: String) -> String {
+var result = ""
+let chars = Array(input)
+for (i, char) in chars.enumerated() {
+if char.isUppercase {
+let nextIsLower = i + 1 < chars.count && chars[i + 1].isLowercase
+let prevIsLower = i > 0 && chars[i - 1].isLowercase
+if i > 0 && (prevIsLower || nextIsLower) {
+result += "_"
+}
+result += char.lowercased()
+} else {
+result += String(char)
+}
+}
+return result
+}
+This function dumps class fields, snake-casing where needed:
+// part of machinery
+func dumpClassSnakeCasingWhereNeeded(_ cls: AnyClass) {
+print(cls, "{")
+for prop in properties(of: cls) {
+let protos = prop.protocols.map(NSStringFromProtocol)
+let key = prop.hasProtocol(SnakeCased.self) ? snakeCased(prop.name) : prop.name
+print("   ", key)
+}
+print("}")
+}
+Test example
+// ---------- BridgingHeader.h
+#include "objc.h"
+// ---------- objc.m
+#include "objc.h"
+@implementation User @end
+// ---------- objc.h
+#include <Foundation/Foundation.h>
+@protocol SnakeCased @end
+// ---------- objc.h continued
+@interface User: NSObject
+@property NSString<SnakeCased>* userName;
+@property NSString* normalText;
+@end
+Testing in Swift:
+dumpClassSnakeCasingWhereNeeded(User.self)
+outputs:
+User {
+user_name
+normalText
+}
+Looks like this obj-c feature of attaching protocol markers to individual properties was not useless after all!
+
+---
+
+@benrimmington · 2026-03-12T04:14:24.545Z:
+kperryua:
+CommonEncoder and CommonDecoder protocols. Similarly, these are format-agnostic protocols for encoders and decoders in the same vein as Encoder and Decoder, but with a better design.
+Those protocols each have 10 or 12 requirements for fixed-width integers. (CommonDecoder is missing Int128 and UInt128 requirements.) Did you consider using generic requirements instead?
+mutating func encode(
+_ value: some FixedWidthInteger
+) throws(CodingError.Encoding)
+mutating func decode<T: FixedWidthInteger>(
+_ type: T.Type
+) throws(CodingError.Decoding) -> T
+For example:
+XML property list and JSON would encode/decode any decimal description.
+CBOR "preferred serialization" encodes the shortest form (e.g. Int64.zero is one byte).
+
+---
+
+@kperryua · 2026-03-12T23:12:33.305Z:
+(U)Int128 support in the protocols will come across the entire API surface—it just wasn’t a high priority at the moment.
+I did consider `FixedWidthInteger`, but my understanding of why the old Codable API did this still exists today: Swift can produce much more efficient specialized implementations of each type with separate overloads. Of course, a concrete implementation can @specialize, but that’s still not quite the same as dispatching directly to the desired implementation. Perhaps some aggressive inlining could provide reasonable solutions here, but for now I felt it best to stick with the established pattern.
+(I would reach for serde or musli as further support for this approach, but of course Rust doesn’t have a standard trait that is equivalent of FixedWidthInteger. kotlinx.serialization also does it this way, but I have even less familiarity with that whole ecosystem.)
+
+---
+
+@kperryua · 2026-03-23T19:45:56.924Z:
+Hello all!
+Thanks for your initial interest in this project. Your feedback is critical for us bringing this to a successful conclusion.
+As promised, I’ve started a series of discussions about the API surface that explains and justifies various design decisions. There are also a number of open topics that need further discussion and decision making in order to reach a satisfying conclusion.
+I currently have several different discussions identified and organized into GitHub issues on the swift-foundation repo. I’ll flesh each one out with concrete information. The first one is here, covering all the core decoding APIs:
+github.com/swiftlang/swift-foundation
+[New Codable API] Common/JSONDecodable + CommonDecoder/JSONDecoderProtocol
+opened 09:54PM - 18 Mar 26 UTC
+kperryua
+new-codable
+In this issue we will discuss and iterate on the CommonDecodable, JSONDecodable,… CommonDecoder,  JSONDecoderProtocol, and all associated APIs (excluding those covered by their own issue), with the goal of preparing them for an evolution proposal.
+Please join the discussion here and especially weigh in on the open questions/discussions at the bottom of the document.
+
+---
+
+@kperryua · 2026-03-23T20:04:14.308Z:
+I also want to encourage folks to chime in on any outstanding implementation issues, or even offer PR contributions.
+GitHub
+swiftlang/swift-foundation
+The Foundation project. Contribute to swiftlang/swift-foundation development by creating an account on GitHub.
+You're all welcome to comment on any outstanding PRs as well.
+GitHub
+swiftlang/swift-foundation
+The Foundation project. Contribute to swiftlang/swift-foundation development by creating an account on GitHub.
+
+---
+
+@kperryua · 2026-03-25T22:22:45.417Z:
+The next discussion topic has started here, covering the "field" APIs:
+github.com/swiftlang/swift-foundation
+[New Codable API] CodingField, et al
+opened 10:22PM - 18 Mar 26 UTC
+kperryua
+new-codable
+In this issue we will discuss and iterate on the CodingField, StaticStringCoding…Field, and JSONOptimizedCodingField APIs, with the goal of preparing them for an evolution proposal.
+
+---
+
+@kiel · 2026-03-26T00:45:57.246Z:
+In Swift this would require type erasing boxes and dynamic casting, which are much more expensive in Swift than Kotlin, and is also fundamentally incompatible with Embedded Swift.
+I’ve seen ideas bounce against this wall a few times now and I’m wondering what improvements could be made to the compiler that enable a flexible API design we can live with for years to come (e.g.: in the most recent case, a design that can include integer and string based field keys without an expensive performance penalty for Embedded Swift)?
+
+---
+
+@kperryua · 2026-03-26T19:14:18.422Z:
+@kiel, I share some of the the sentiment, believe me. I'm all for finding ways to evolve the language to expand the capabilities and expressiveness of APIs. Unfortunately, I'm not a great candidate for postulating about what changes could be reasonably made to the language to accommodate what we'd like to achieve. I'd love to get more attention from the LSG on the problems we're facing to see if they have any opinions about what the language could provide.
+Swift's design definitely has some characteristics to it that impede expressiveness when performance is the primary goal, including the higher costs of working with dynamic types compared to other languages. Our commitment to Embedded Swift for this project support only intensifies our constraints. That said, I think Swift also gains a lot of advantage over other languages because of its design decisions. So I think we have to strike a careful balance between trying to expand the language's capabilities and finding the best API that fits what the language provides. It can be OK that the "best" Swift serialization API won't match some aspects of the "best" Rust or Kotlin serialization API.
+It is frustrating though when the definition of "best Swift API" itself can vary so much depending on the preferences or requirements of the client. The "best" == "most capable" non-Embedded Swift API might be impossible for Embedded Swift. The "best" == "highest throughput" Swift API might be the hardest to use or have the worst code size. And so on for various definitions of "best". At the end of the day, it's impossible to please everybody, so when there aren't reasonable compromises, we are often forced to choose our priorities and move forward.
+I've personally spent the better part of the last two years trying to tread this path as successfully as possible. But as I said, I'm not the best person to consider what else the language could reasonably provide, so by all means, I'll welcome any and all thoughts on the matter.
+
+---
+
+@kperryua · 2026-03-31T22:19:00.894Z:
+The next discussion topic has started here, covering the error reporting strategy
+github.com/swiftlang/swift-foundation
+[New Codable API] CodingError
+opened 09:49PM - 18 Mar 26 UTC
+kperryua
+new-codable
+In this issue we will discuss and iterate on the error reporting interfaces in t…he CommonCodable & JSONCodable APIs, with the goal of preparing it for an evolution proposal.
+
+---
+
+@kperryua · 2026-05-05T00:59:19.474Z:
+I've shifted gears lately a little bit on this project to focus more on the macro capabilities, building off what @t089 initially contributed (thanks again!).
+One of the big things we've known would be needed from the beginning was a way to customize how a particular field is encoded and decoded. This is very often where developers are forced to abandon Codable code synthesis in favor of custom implementations (though clever use of property wrappers works sometimes). This is not the experience we want for the new Codable design. We want the macro functionality to reduce the need for custom implementations to a vanishingly small number of cases.
+Please check out this PR to see what I'm proposing for macro and API design to enable these transformations. I hope you all will be as excited as I am about these advancements!
+github.com/swiftlang/swift-foundation
+CodableBy macro, CodingStrategy protocols, and CodingStrategySyntax (#1945)
+experimental/new-codable ← kperryua:new-codable/coding-by-macro-and-strategies
+opened 12:50AM - 05 May 26 UTC
+kperryua
++2409
+-49
+Adds the `@CodableBy` macros and associated APIs that allow transformation of an… encoded value into arbitrary runtime values.
+### Motivation:
+Sometimes an encoded value needs to be decoded into a different type at runtime. Or sometimes a client wants to use a different encoding/decoding algorithm than the default. A very common example of the former case is dates. The native runtime type in Swift for dates is, of course, `Date`, but most serialization formats don't natively handle dates. Instead they're often encoded as strings and then reinterpreted as dates at runtime. With the exception of the `Date`- or `Data`-specific "global strategies" that exist on `JSONEncoder` & `JSONDecoder`, this kind of customization used to require manual implementations or clever propertyWrappers.
+The `@CodableBy` macro allows clients to define arbitrary transformations of encoded values to decoded types, and vice versa. These attributes instruct a `@XYZCodable` macro to call the specified "strategy" implementation instead of the runtime type's default implementation. These strategies can be format-agnostic (`CommonCodableStrategy`), and can also be format-specific (`JSONCodableStrategy`) to take full advantage of the format's own capabilities.
+### Modifications:
+* Adds `CodableBy`, `EncodableBy`, and `DecodableBy` macros.
+* Adds `CodableStrategy` macros for both "Common" and "JSON"
+* Adds `CodingStrategySyntax` to allow more concise and expressive `CodableBy` attribute declarations.
+* Implements the `passthrough`, `losslessStringConversion`, `.format()`, `.dateFormat()`, and `.base64` strategies (the last 3 destined for Foundation)
+### Testing:
+Adds both macro expansion and integration tests to verify macro functionality.
+
+---
+
+@kiel · 2026-05-05T02:07:43.814Z:
+These advancements really are very exciting, and should definitely reduce the need for custom implementations. Well done to you and all contributors!
+
+---
+
+@0xTim · 2026-05-05T10:07:49.018Z:
+One of the issues with macros is the inability to pass variables into it. So let's say I have a global date format style set, there's no way for me to use that with all my macros. Which makes switching or testing them difficult. E.g.
+let formatStyleToUse = .iso8601
+@JSONCodable @CommonCodable
+struct Event {
+@CodableBy(.dateFormat(formatStyleToUse))
+let timestamp: Date
+let name: String
+}
+Depending on where the variable is declared, it's no in scope when the macro is evaluated so can't be used. Are there any workarounds for this?
+(As an aside, you can't use AssertMacroExpansion in Swift Testing because it will happily tell you that the test passes, even if it fails - see Add support for Swift Testing in SwiftSyntaxMacrosTestsSupport by 0xTim · Pull Request #3192 · swiftlang/swift-syntax · GitHub)
+
+---
+
+@kperryua · 2026-05-05T18:03:45.371Z:
+0xTim:
+One of the issues with macros is the inability to pass variables into it. So let's say I have a global date format style set, there's no way for me to use that with all my macros. Which makes switching or testing them difficult. E.g.
+let formatStyleToUse = .iso8601
+@JSONCodable @CommonCodable
+struct Event {
+@CodableBy(.dateFormat(formatStyleToUse))
+let timestamp: Date
+let name: String
+}
+Depending on where the variable is declared, it's no in scope when the macro is evaluated so can't be used. Are there any workarounds for this?
+FWIW, this builds and runs just fine for me:
+let globalDateFormat = Date.ISO8601FormatStyle()
+@JSONCodable
+struct CodableByArrayOfDates: Equatable {
+@CodableBy([.dateFormat(globalDateFormat)])
+let timestamps: [Date]
+}
+The macro does need to syntax and type check the contents at macro expansion time, but in this case, it can find the global and everything seems to work fine.
+If you were to instead write .dateFormat(someVariableThatsDefinedInSomeOtherContext), then sure that won't work. But that's not inconsistent with any other aspect of Swift. (It feels like that would require some version of Kotlin's context() to work.)
+0xTim:
+(As an aside, you can't use AssertMacroExpansion in Swift Testing because it will happily tell you that the test passes, even if it fails - see Add support for Swift Testing in SwiftSyntaxMacrosTestsSupport by 0xTim · Pull Request #3192 · swiftlang/swift-syntax · GitHub)
+Yep. But this is actually a custom function (vs *a*ssertMacroExpansion) that does Issue.record on errors to properly emit them to swift-testing.
+
+---
+
+@duan · 2026-05-05T20:11:34.675Z:
+For a variable from outer scope, you can probably just access it.
+For code created by the outer macro (this is a little cursed, but it works in many contexts), you can escape its text somehow (e.g base64), pass the escaped text as an argument to the inner macro, and unescape it within.
+I'm sorry.
+
+---
+
+@taylorswift · 2026-05-05T23:19:36.184Z:
+kperryua:
+Oh this is an interesting concept I hadn’t considered. The intersection of WebAssembly and JS runtimes in Swift is unknown to me. Is there already a bridge in this environment between JS objects and Swift values and a way to call JS functions from Swift?
+there is my jss library, which is built atop JavaScriptKit, and provides a serialization-free system for converting structures to and from JavaScript objects.
+kperryua:
+I can definitely see the value in making encoder/decoder level interfaces that reuse Javascript’s native JSON (de)serialization. However, I think there’s also an interesting tradeoff to consider here. One of the advantages of a decodable type is that it specifies which fields of JSON the client cares about and which can be skipped entirely.
+i am not sure i follow. if anything, the tradeoff is reversed, JSON is the format that requires eager parsing of the entire AST, native JavaScript objects on the other hand give you the opportunity to extract data by key without needing to inspect all other fields of an object.
+
+---
+
+@kperryua · 2026-05-05T23:27:16.028Z:
+taylorswift:
+i am not sure i follow. if anything, the tradeoff is reversed, JSON is the format that requires eager parsing of the entire AST, native JavaScript objects on the other hand give you the opportunity to extract data by key without needing to inspect all other fields of an object.
+Oh I see. This is a scenario where we have already have an in-memory JavaScript object and we want to decode Swift objects from it. I was thinking along the lines of rewriting the parser to take an unparsed string, pass it to JSON.parse() and then decode from the resulting JavaScript objects. Unless there are JavaScript tricks that I'm not aware of (which could VERY easily be the case, considering my inexperience here), the latter has to fully parse AND allocate objects before the decode even starts.
+
+---
+
+@kperryua · 2026-05-14T19:50:30.439Z:
+Another proposed new macro feature is up in PR here:
+github.com/swiftlang/swift-foundation
+Add CodableNaming: compile-time key naming conventions for codable macros (#1980)
+experimental/new-codable ← kperryua:new-codable/field-naming
+opened 07:29PM - 14 May 26 UTC
+kperryua
++2133
+-18
+A first attempt at specifying full-struct field/case/label naming patterns. Agai…n, this mirrors the capabilities from other packages like serde. Please take note of the `CodableNaming` documentation, as this does behave significantly differently than `JSONEncoder/Decoder`'s snake case conversions.
+This enables type-wide field name transformations with a wide variety of naming schemes. A quick example:
+@JSONCodable(fieldNaming: .snake_case)
+struct TestStruct {
+let userName: String
+let imageURL: String
+let parseHTTPResponse: Int
+}
+will produce:
+{
+"user_name": "kperryua",
+"image_url": "http://somewhere"
+"parse_http_response": 404
+}
+Unlike present-day JSONEncoder/Decoder, this transformation is enacted only at compile time. It establishes a 1:1 bidirectional mapping between the compile-time variable name (imageURL) and the encoded name (image_url). That means no more round trip issues with global convertTo/FromSnakeCase strategies.
+(If you aren't aware, JSONDecoder with convertFromSnakeCase reads image_url, converts it to camelCase as imageUrl, and attempts to match it against the Decodable type's available CodingKey values. However, when following normal Swift conventions, the struct property and its CodingKey will usually be named imageURL which does not match, yet still produces image_url via convertToSnakeCase.)
+Like all macro attributes and other compile-time entities, these naming schemes are NOT recursively applied. Types embedded inside your struct are not affected.
+All feedback welcome!
+
+---
+
+@tera · 2026-05-14T20:16:10.322Z:
+kperryua:
+It establishes a 1:1 bidirectional mapping between the compile-time variable name (imageURL) and the encoded name (image_url).
+What happens to these Swift variables?
+imageUrl -> image_url ->
+imageTiff -> image_tiff ->
+imageTIFF -> image_tiff ->
+itemId -> item_id ->
+itemID -> item_id ->
+item_id -> item_id (right?) ->
+How exactly do you achieve 1:1 bidirectional mapping?
+A slight angle
+Across my career I spent many extra man-hours thanks to these conversions... E.g. with log files or data json files containing one spelling and Swift sources containing a different spelling, and then I have to remember to manually unconvert them to match when searching... In personal projects I tend to stay away from those conversions altogether, whether that's snake_case fields in Swift - so be it, or be it camelCase fields in backend - equally, so be it.
+
+---
+
+@Jon_Shier · 2026-05-14T20:33:46.486Z:
+Are the key transforms still available in the encoder / decoder? I have run into cases where different backends return the same model with different key encodings.
+
+---
+
+@kperryua · 2026-05-14T20:40:56.269Z:
+tera:
+How exactly do you achieve 1:1 bidirectional mapping?
+Ah, well, that's a great question!
+TBH, I kind of assumed the author of a particular struct wouldn't likely add both imageUrl and imageURL properties to their type. Of course that's not forbidden... the macro will probably need to be enhanced with diagnostics that detect collisions like these.
+I'll admit I did face some interesting friction when adapting this behavior over from Rust serde. In Rust, the compiler semi-enforces snake case (struct fields) or PascalCase (enum variants), which makes this kind of confusion far less likely (unless you disable the built in linter). We don't have that at all in Swift, though the conventions strongly favor camelCase with all capital acronyms (except the first word). Thus, the "splitting" part of the algorithm is a little more extensive than Serde's.
+
+---
+
+@taylorswift · 2026-05-14T21:05:49.383Z:
+i would lean towards having no case transformations in the new system, over time i have found this type of “feature” to be more of a nuisance than an assistance. i think many JSON APIs are adopting camelCase anyway, and i think it is not too much to ask those who are working with snake_case APIs to provide the manual mapping they want.
+
+---
+
+@kperryua · 2026-05-14T21:14:55.302Z:
+Jon_Shier:
+Are the key transforms still available in the encoder / decoder? I have run into cases where different backends return the same model with different key encodings.
+This currently isn't in the plans, but is not entirely out of the realm of possibility.
+It feels like a straightforward ask because JSONEncoder/Decoder already do it. But the additional decoding performance cost of enabling such a feature in the new design is likely to be significantly higher, percentage-wise, compared to JSONDecoder's. The current design enables the decoder (in ideal circumstances) to avoid any allocations at all when processing keys by passing the JSONDecodable type a UTF8Span of the key and matching known keys against it. Enabling such a feature would require a separate allocation (maybe reusable) in addition to the dynamic string manipulation.
+Even worse, it would conflict oddly with other features like @CodingKey and @DecodingAlias. Suppose I write a type like this:
+@JSONCodable
+struct Test {
+@DecodingAlias("compat_name")
+let userName: String
+}
+... and I tried to decode this under a global convertFromSnakeCase strategy. An input containing "user_name" would work just fine because that gets converted to "userName" and matches against the CodingFields generated for this type. But if the input contained "compat_name", then that would get blindly converted by the decoder into "compatName" and fails to match, since the type explicitly expects "compat_name".
+
+---
+
+@kperryua · 2026-05-14T21:22:50.907Z:
+taylorswift:
+i think it is not too much to ask those who are working with snake_case APIs to provide the manual mapping they want.
+Thanks for sharing this perspective.
+To be clear, your preference is that types wanting to encode to snake_case should use @CodingKey() on every property in the struct? Like so?
+@JSONCodable
+struct Foo {
+@CodingKey("prop_1")
+let prop1: String
+@CodingKey("prop_2")
+let prop2: String
+...
+@CodingKey("prop_n")
+let propN: String
+}
+It doesn't seem too problematic to me to just give them a convenience for that:
+@JSONCodable(fieldNaming: .snake_case)
+struct Foo {
+let prop1: String
+let prop2: String
+...
+let propN: String
+}
+Is the concern that the developer may often assume that the macro is performing a transformation in a particular way, but it actually produces something different in some unanticipated corner case?
+
+---
+
+@taylorswift · 2026-05-14T21:26:52.153Z:
+kperryua:
+To be clear, your preference is that types wanting to encode to snake_case should use @CodingKey() on every property in the struct? Like so?
+yes, it just doesn’t feel worth it to have a magical .snake_case transform because then that pushes the burden of deducing how the data is “actually” formatted onto the person reading the code. it can be ambiguous, for example, does currencyUSD get mangled to currency_Usd, currency_usd, or currency_USD?
+
+---
+
+@Jon_Shier · 2026-05-14T21:51:53.420Z:
+Idiomatic snake_case would be all lower case, so currency_usd. I see no reason not to provide a valid default implementation, especially if we can provide our own transforms alongside the provided ones, which was a big issue with the current decoders.
+
+---
+
+@kperryua · 2026-05-14T21:55:33.424Z:
+Understood. My hope was that clear documentation about the renaming algorithm would ameliorate this concern. But trusting every reader to read documentation? Maybe a bit of a stretch?
+Rust's choice of snake_case identifiers gives them the upper hand here I suppose. It's a lot less likely that someone would misconstrue the transformation algorithms from all lowercase snake_case sources.
+Definitely interested in +1s on either side of this discussion.
+
+---
+
+@kperryua · 2026-05-14T21:57:11.848Z:
+Jon_Shier:
+especially if we can provide our own transforms alongside the provided ones, which was a big issue with the current decoders.
+This would be really interesting to be able to do, but the transformations all happen within the macro expansion, which in Swift cannot execute any external code.
+
+---
+
+@taylorswift · 2026-05-14T21:59:09.462Z:
+Jon_Shier:
+Idiomatic snake_case would be all lower case, so currency_usd.
+my most annoying example is authGitHub which becomes auth_git_hub by default.
+
+---
+
+@Jon_Shier · 2026-05-14T22:11:08.997Z:
+That seems pretty bad for scaling. How does the global .snake_case setting interact with locally defined mappings? As @taylorswift pointed out, there will be annoying keys that don't work with standard mappings. If all we have to do is override that single key, rather than switch to overriding all of them, that might be okay.
+I still think not being able to set a single transform for an entire type is another major scaling issue. For large type hierarchy that's a lot of macro applications.
+
+---
+
+@kperryua · 2026-05-14T22:16:33.526Z:
+Jon_Shier:
+How does the global .snake_case setting interact with locally defined mappings?
+The case choice defined on a type's macro (I won't call it "global" because it's limited to that type's fields—"global" means an encoder/decoder-wide setting in my mind) is overridden by per-field @CodingKey annotations. So yes, you could just apply it to the exceptional cases. And even to the cases that you think could be ambiguous to uninformed readers, even if the type-level case produces the same value.
+
+---
+
+@kiel · 2026-05-15T02:00:24.665Z:
+Does/can @JSONCodable(fieldNaming: .snake_case) compose with @CodingKey("auth_GitHub"), such that the coding key overrides the inferred field naming?
+
+---
+
+@kperryua · 2026-05-15T02:26:36.478Z:
+Yes
+
+---
+
+@Morten_Bek_Ditlevsen · 2026-05-15T07:26:38.113Z:
+Awesome work!
+I would love to have the snake_case field naming.
+With a huge set of model entities already represented like that in a system, it would be quite a burden to provide keys for all properties.
+That the keys round trip (in the sense that they do not with existing snakeCaseKeyEncoding/Decoding) is just awesome, and will eliminate one of my only issues with codability today.
+Regarding the possibility for collisions, I think that is natural when mapping data, and a compiler error in the case of multiple properties mapping to the same key would be fine. I think that it would be a rare situation where you had both imageUrl and imageURL properties without some very specific reason to have them, that would also require specific handling in the serialized data.
+
+---
+
+@kiel · 2026-05-15T08:03:19.172Z:
+Great work. Was not expecting the names to be autological.
+My only thought incredibly minor thought was wondering if extensibility could be built in, so users could add their own custom key casing, e.g.:
+static var snake_case: Self {
+Self.init({ name in …code in PR… })
+}
+static var alternatingCaps: Self {
+Self.init({ name in … }) // "aLtErNaTiNg CaPs"
+}
+@JSONCodable(fieldNaming: .alternatingCaps)
+struct TestStruct {
+However, that's incredibly minor. What's in the PR covers about 99.9% of cases
+Keep up the great work.
+
+---
+
+@kperryua · 2026-05-15T19:47:58.903Z:
+kiel:
+Great work. Was not expecting the names to be autological.
+Don't necessarily count on that sticking around. It's cute, but definitely out of the norm for API styles. It was inspired by both Serde (which uses strings instead of identifiers in the macros anyway) and MetaCodable. The latter gets even more clever by using "Full Width Hyphen-Minus" for the kebab cases. I didn't go that far. .
+kiel:
+My only thought incredibly minor thought was wondering if extensibility could be built in, so users could add their own custom key casing, e.g.:
+Addressed this a bit above, but allowing custom case algorithms would necessitate a completely different design for how these work. The case conversion happens entirely in the macro and establishes a single (default) encoded string that matches to the given property. Custom code can't run in the macro, so we'd have to do runtime string conversion instead. Maybe I'm being naive, and it'd be fine, but it feels like that could open some subtle behavior differences, and would definitely have some impact on performance.
+It also exacerbates @taylorswift's point, I think. A custom algorithm could do who-knows-what with the string. It could lead to even worse confusion for a reader than something that is explicitly defined and locked in at compile time—something you could inspect directly by looking at the macro expansion.
+I think there's always opportunity to add more algorithms to the ones the macro supports though, if there's strong support for it.
+
+---
+
+@tera · 2026-05-18T19:57:40.375Z:
+If it's not possible to have this:
+struct BlogPost {
+@CodingDefault([])
+var tags: [String]
+}
+expressed more cleanly as:
+struct BlogPost {
+var tags: [String] = []
+}
+(which in itself raises a question if the tool being used – macros – is an appropriate choice to make the most ergonomic API) - I'd consider at least providing a decoding API that allows providing default "template" object to fill the absent fields:
+decoder.decode(default: value, from: data) // type is derived from default value
+which has an added benefit of an ability to provide a different default value per use case compared to hardcoding that choice in the BlogPost type.
+As for:
+struct BlogPost {
+@CodingFormat(.iso8601)
+let publishDate: Date
+}
+I wonder if we should support use cases when date formatting strategy is different for different fields (of the same structure or for different fields belonging to different types of the value tree being encoded / decoded). If not - then date formatting strategy could be supplied as a parameter of the encode/decode call, like it's now done in JsonEncoder / JSONDecoder. Ditto for floating point strategy, data encoding strategy, non conforming floating point numbers encoding strategy, pretty printing / sorting / slash formatting / JSON5 form / etc.
+
+---
+
+@kperryua · 2026-05-18T21:26:27.259Z:
+tera:
+If it's not possible to have this:
+struct BlogPost {
+@CodingDefault([])
+var tags: [String]
+}
+expressed more cleanly as:
+struct BlogPost {
+var tags: [String] = []
+}
+Not universally, no. For vars, yes this could work, but lets initialized like this cannot be changed even by an initializer. I'd like to avoid, where possible, a design that forces coding styles like vars everywhere.
+Additionally, this syntax encourages a pattern that's notoriously difficult for macros. e.g.
+var x = <arbitraryExpression>
+The macro doesn't get to operate on type-checked code—just the AST. With this kind of code, it's unfortunately impossible for the macro to universally determine the type of the expression. We could probably raise an error in the macro if we see this pattern and require an explicit type declaration, but this combined with the previous reason, I currently still prefer to sit on the CodingDefault() side of the fence here.
+tera:
+(which in itself raises a question if the tool being used – macros – is an appropriate choice to make the most ergonomic API) - I'd consider at least providing a decoding API that allows providing default "template" object to fill the absent fields:
+decoder.decode(default: value, from: data) // type is derived from default value
+I'm pretty committed to macros as the tool of choice for code generation in this project. They have some unfortunate limitations, but they're the best tool that we have. Compiler-based code synthesis is really not a sustainable practice.
+Furthermore, these macros aren't really "API" per se. Nobody's forced to them. You can also invent your own if you prefer. Or you can code manually to the API—you're just going to end up with a less straightforward time in your manual implementation compared to traditional Codable. This is due, of course, to the performance-focused API design we have as one of the main goals of this project.
+We can certainly consider an API like what you propose, but it would primarily be a convenience for the (hopefully few) of those doing manual implementations. The macros implement the same behavior, just inline. It's ultimately a pretty trivial extension anyone could add:
+extension CommonDecoder {
+func decode<T: CommonDecodable>(default: @autoclosure () -> T) throws(CodingError.Decoding) -> T {
+return try self.decode(T?.self) ?? default()
+}
+tera:
+As for:
+struct BlogPost {
+@CodingFormat(.iso8601)
+let publishDate: Date
+}
+I wonder if we should support use cases when date formatting strategy is different for different fields (of the same structure or for different fields belonging to different types of the value tree being encoded / decoded). If not - then date formatting strategy could be supplied as a parameter of the encode/decode call, like it's now done in JsonEncoder / JSONDecoder. Ditto for floating point strategy, data encoding strategy, non conforming floating point numbers encoding strategy, pretty printing / sorting / slash formatting / JSON5 form / etc.
+I'm not quite sure I'm following you in the first part. This macro does let you specify different strategies for different fields by giving each Date field its own @CodingFormat.
+Applying formats recursively through the value tree in a generic fashion is something we've discussed elsewhere. It's only possible with dynamic type casting—a bane to both performance and Embedded Swift compatibility. Traditional Codable and JSONDecoder specifically locked itself into these traps and we're trying to avoid that this go around.
+
+---
+
+@tera · 2026-05-18T22:05:14.583Z:
+kperryua:
+a design that forces coding styles like vars everywhere.
+Only for fields with default values. And even then, I don't think it's quite as significant a drawback as you make it sound.
+kperryua:
+func decode<T: CommonDecodable>(default: @autoclosure () -> T) throws(CodingError.Decoding) -> T {
+return try self.decode(T?.self) ?? default()
+}
+That's not quite what I meant. The key distinction is that the defaultValue approach I'm describing only fills in missing fields. In your version, a single missing field causes the decoder to discard the entire value and fall back to the default instance.
+kperryua:
+I'm not quite sure I'm following you in the first part. This macro does let you specify different strategies for different fields by giving each Date field its own @CodingFormat.
+My point is that this is actually an anti-feature. If I have five different Date fields — whether in the same struct or spread across multiple related types — I will almost certainly want them all to use the same date strategy (and similarly for floating-point formatting, data encoding, etc.).
+Repeating the same @CodingFormat(...) annotation on every field quickly becomes noisy and error-prone. These kinds of options are better expressed globally rather than per field. In fact, I'd argue that using different coding strategies for two fields of the same type should generally be discouraged, if not outright prohibited.
+kperryua:
+I'm pretty committed to macros as the tool of choice for code generation in this project. They have some unfortunate limitations, but they're the best tool that we have. Compiler-based code synthesis is really not a sustainable practice.
+I think that risks painting yourself into a different corner. Personally, I'd start from what "users" actually want, then work backward from there: either improve the tooling, extend the macro system if it's insufficient, or move functionality into the compiler when the abstraction fundamentally requires it.
+For example, a compiler-based implementation could potentially achieve O(1) code-size complexity while preserving runtime performance comparable to a macro-generated or manually written implementation.
+
+---
+
+@andre-tirta · 2026-05-19T02:19:16.922Z:
+in GitHub - andre-tirta/auto-key: A Swift macro that automatically generates CodingKeys enums for Codable structs, classes and actors. · GitHub
+you can use KeyAlias macro such as:
+@AutoKey
+struct Example: Codable {
+let imageTiff: String
+@KeyAlias("image_TIFF")
+let imageTIFF: String
+}
+does this answer your question?
+
+---
+
+@andre-tirta · 2026-05-19T02:24:46.952Z:
+kperryua:
+@JSONCodable
+struct Foo {
+@CodingKey("prop_1")
+let prop1: String
+@CodingKey("prop_2")
+let prop2: String
+...
+@CodingKey("prop_n")
+let propN: String
+}
+the "advantage" of having codingkey macro like this is: you can map it to entirely another field, if you ever need it.
+Such as:
+struct SomeStruct: Codable {
+@CodingKey("anotherString") let someString: String
+}
+that was the consideration I use when creating a simple package AutoKey: GitHub - andre-tirta/auto-key: A Swift macro that automatically generates CodingKeys enums for Codable structs, classes and actors. · GitHub
+
+---
+
+@kperryua · 2026-05-19T21:09:01.125Z:
+tera:
+That's not quite what I meant. The key distinction is that the defaultValue approach I'm describing only fills in missing fields. In your version, a single missing field causes the decoder to discard the entire value and fall back to the default instance.
+I'm missing the broader vision here then. Could you give a more complete example?
+tera:
+My point is that this is actually an anti-feature. If I have five different Date fields — whether in the same struct or spread across multiple related types — I will almost certainly want them all to use the same date strategy (and similarly for floating-point formatting, data encoding, etc.).
+Repeating the same @CodingFormat(...) annotation on every field quickly becomes noisy and error-prone. These kinds of options are better expressed globally rather than per field. In fact, I'd argue that using different coding strategies for two fields of the same type should generally be discouraged, if not outright prohibited.
+I will point at Rust Serde a lot—not from an angle that new Codable has to be identical to it, but as evidence its designs do work for real projects. It's very clear that it's NOT perfect, and I want to take every opportunity we have to learn from it. But it is a successful design that achieves similar goals that we have here.
+Core Serde requires these kinds of annotations on each field. I have indeed seen complaints about this requirement, yes, but I've never heard it called an "anti-feature". That said, other developers have stepped up to try to improve the core macro design, in this case with features like apply in serde_with - Rust. I can look into the possibility of mimicking the same effects with Swift macros attached to the struct. We don't have quite as much freedom as Rust macros though—I don't think we can take attached macro syntax as a direct parameter to another macro, e.g.
+@CodableApply(type: Date.self, @CodingFormat(.iso8601))
+We also currently don't have recursive application of macros, but we can probably work around this with something a bit more ad hoc like:
+@CodableApply(type: Date.self, codingFormat: .iso8601))
+tera:
+For example, a compiler-based implementation could potentially achieve O(1) code-size complexity while preserving runtime performance comparable to a macro-generated or manually written implementation.
+This sounds great, but it also seems unrealistic. Based on your previous comments, am I correct in assuming that the example you're comparing this project to is something like cpp-reflect?
+From what I understand from projects like this, compile-time-reflection-based solutions are far from a "O(1) code-size" solution. Every template instantiation for every type involved expands into code that handles each field individually. This is actually quite close to the same amount of codegen produced by macro-based solutions as it scales with the number of types and number of fields per type. Typically it's runtime-reflection-based solutions that are able to achieve O(1) code size, but at the cost of CPU throughput.
+
+---
+
+@tera · 2026-05-20T13:37:46.144Z:
+kperryua:
+I'm missing the broader vision here then. Could you give a more complete example?
+It's merely an alternative to your @CodingDefault... By way of example:
+struct BlogPost {
+var required: Int
+var items: [String] = []
+}
+decode(template: BlogPost(required: 0), from: data) // { "required" : 1 }
+// -> BlogPost(required: 1, items: [])
+decode(BlogPost.self, from: data) // { "required" : 1, "items": ["hello"] }
+// -> BlogPost(required: 1, items: ["hello"])
+decode(BlogPost.self, from: data) // { "items": ["hello"] }
+// ❌ error, missing field
+With an extra flexibility of a possibility to have different "default" values:
+// { "required" : 1 }
+decode(template: BlogPost(required: 0, items: ["world"]), from: data)
+// -> BlogPost(required: 1, items: ["world"])
+Just realized I already made similar points upthread – hiding to reduce noise
+kperryua:
+Core Serde requires these kinds of annotations on each field. I have indeed seen complaints about this requirement, yes, but I've never heard it called an "anti-feature". That said, other developers have stepped up to try to improve the core macro design, in this case with features like apply in serde_with - Rust. I can look into the possibility of mimicking the same effects with Swift macros attached to the struct.
+I don't quite understand, even if you do everything else with macros what stops you from choosing things like date coding strategy, etc more "globally" (e.g. similar to how JSONEncoder / decoder is doing that? Say JSON5 option – would be very awkward to have it varying per field...
+kperryua:
+This sounds great, but it also seems unrealistic. Based on your previous comments, am I correct in assuming that the example you're comparing this project to is something like cpp-reflect?
+I think both the current Codable and Mirror APIs required significant support from both the compiler and standard library. Do you mean that even if such an approach was possible in the early days of Swift, it is no longer realistic going forward?
+Imagine a better version of the Mirror API:
+Fast
+Not read-only, but read-write
+Either (A) available without opting in, or (B) only available with opt-in (e.g., via some Mirrorable protocol)
+The standard library's Codable implementation could be built on top of that. Compared to a macro-based or hand-tuned manual implementation, that built-in implementation would be almost as fast. It might not even require an additional marker protocol like the Codable we currently have to use.
+In terms of out-of-the-box behavior, it would not require additional generated code, so it would be O(1) space-wise. (With option (B), the types in question would need to be marked Mirrorable to be codable and Mirrorable itself would impose some O(n) space overhead in the form of extra metadata per field — similar to what the current Mirror API requires.)
+The litmus test question: if we had that ideal Mirror API with the above characteristics today, would we implement new codable infrastructure based on it, or would we prefer a different approach (like macros)? And if it's the former, perhaps we should implement the improved Mirror API first?
+
+---
+
+@jpmhouston · 2026-05-20T16:35:35.102Z:
+Apologies for the tangent, but does anyone else wish macros and other attributes could follow simple declarations instead of precede them?
+i.e. instead of this:
+@KeyAlias("image_TIFF")
+let imageTIFF: String
+this:
+let imageTIFF: String @KeyAlias("image_TIFF")
+
+---
+
+@kperryua · 2026-05-21T20:27:18.848Z:
+tera:
+struct BlogPost {
+var required: Int
+var items: [String] = []
+}
+decode(template: BlogPost(required: 0), from: data) // { "required" : 1 }
+// -> BlogPost(required: 1, items: [])
+decode(BlogPost.self, from: data) // { "required" : 1, "items": ["hello"] }
+// -> BlogPost(required: 1, items: ["hello"])
+decode(BlogPost.self, from: data) // { "items": ["hello"] }
+// ❌ error, missing field
+With an extra flexibility of a possibility to have different "default" values:
+// { "required" : 1 }
+decode(template: BlogPost(required: 0, items: ["world"]), from: data)
+// -> BlogPost(required: 1, items: ["world"])
+Ah I see! Thanks for elaborating. This is actually quite interesting.
+This "template" idea feels like it fills a very similar role to "patching". Given a base object, we update it with any present fields decoded from an archive. Fields that are absent from the JSON are left on the base object unchanged.
+In short, yes, I think we could include this kind of functionality. But there are some interesting implications here we must consider. How could we make this work recursively? (Or should we?)
+For example:
+struct Foo {
+var x: Int
+var bar: Bar
+}
+struct Bar {
+var y: Int
+var z: Int
+}
+var template = Foo(x: 1, bar: .init(y: 2, z, 3))
+//  { "bar": { "z": 42 } }
+let result = try decode(template: template, …)
+// 1. Throws an error: "Type 'Bar' missing field 'y'"
+// 2. result == Foo(x: 1, bar: .init(y: 2, z, 42)
+Looking at prior art in this area, it seems like recursive "patching" is something to be enabled on a per-field basis. (But as discussed for other attributes, could be something that's opted in to ALL fields at once.)
+Jackson
+The core functionality for "patching" in the Jackson library is ObjectReader.readerForUpdating(…):
+Foo template = new Foo(1, new Bar(2, 3));
+Foo result = mapper.readerForUpdating(template).readValue(data);
+In order for Foo's Bar property to itself be internally patchable, Jackson provides a @JsonMerge attribute:
+class Foo {
+int x;
+@JsonMerge
+Bar bar;
+}
+I believe this suppresses any missing key errors when the nested Bar is decoded and the template value updated directly with any values that are present.
+Disclaimer: mimicking Jackson's exact techniques might be difficult, because I believe its entire (de)serialization library is built on runtime reflection, which we have to avoid in Swift.
+serde + struct-patch crate
+While serde doesn't provide any built-in patching capabilities, in true Rust fashion, there's of course a crate for this.
+The struct-patch crate takes a fundamentally different approach than Jackson's. It introduces a Patch trait that gets applied to the base type. It implies "Instances of type Foo can be patched by using its generated patch type FooPatch" where FooPatch by default has all properties of Foo, just optional. You would explicitly decode a FooPatch from JSON first and then .apply() the patch to the template Foo.
+To enable recursively patchable values, you annotate the relevant field with #[patch(nesting)] after making sure the nested type itself implements Patch. This changes the base type's derived Patch implementation to use the nested type's own Patch type instead of its original type.
+This design is more modular and potentially useful even outside of serde, but it does require a more manual process, as well as more types and a bit more memory usage due to the transient XYZPatch values.
+For Swift / NewCodable
+My initial impression is that the best choice for Swift here would be to follow a path similar to Rust's. The other option is to tightly integrate it into the XYZDecodable protocols. Instead of
+public protocol JSONDecodable: ~Copyable {
+static func decode<D: JSONDecoderProtocol & ~Escapable>(from decoder: inout D) throws(CodingError.Decoding) -> Self
+}
+… we'd need to have:
+public protocol JSONDecodable: ~Copyable {
+static func decode<D: JSONDecoderProtocol & ~Escapable>(from decoder: inout D, defaultValue: Self? = nil) throws(CodingError.Decoding) -> Self
+}
+And then the macro (or compile-time reflection driven functions, if we had them) would expand to, roughly:
+static func decode<D: JSONDecoderProtocol & ~Escapable>(from decoder: inout D, defaultValue: Self? = nil) throws(CodingError.Decoding) -> Self {
+try decoder.decodeStruct { ...
+var prop1: Prop1? = defaultValue?.prop1 ?? nil
+var prop2: Prop2? = defaultValue?.prop2 ?? nil
+// etc.
+// normal field visitor loop, nil property checks, and Self initializer
+}
+}
+This is certainly not awful and we could do it. I've received many requests for patching support and this could be a nice solution. I do like that it doesn't force us to create a DOM representation or instantiate a transient XYZPatch value. But I think it's worth having a broader discussion about whether a Patchable protocol could be generally useful.
+
+---
+
+@tera · 2026-05-22T00:53:12.511Z:
+Ah, I see what you mean, and "patching" could be interesting in its own right, allowing algebraic operations on values like:
+newValue = oldValue + deltaJSON
+deltaJSON = newValue - oldValue
+That said, my suggestion was more modest: while the current Codable allows optional fields to be absent when decoding, the new Codable could support missing "defaulted" fields (fields with default values). I see a few ways to make this happen:
+A plain var field = defaultValue
+Concise
+DRY
+May require compiler support (not sure)
+Default value is baked into the type (a drawback?)
+Something like your @CodingDefault
+More verbose / noisier
+Not DRY — in many cases users would supply both a default value and @CodingDefault (the two could even differ!?)
+Default (@CodingDefault) value is baked into the type (a drawback?)
+The template value approach above
+DRY
+Somewhat wasteful in terms of CPU usage and extra code size, especially if value creation is expensive: the template might not be used at all if the JSON has every field, and any unused fields are pure overhead
+Allows supplying custom "defaulted" values for missing fields at the decode site (a feature?)
+That said, it's best not to apply template values to missing optional fields: the JSON should have the upper hand on what values to use, and a missing optional field (or, equivalently, an explicit null) may well be intentional
+
+---
+
+@kperryua · 2026-05-23T00:23:10.297Z:
+tera:
+A plain var field = defaultValue
+Something like your @CodingDefault
+I will reconsider making the macro parsing out the = defaultValue for var fields. I agree it's a more natural, DRY approach. If I do, @CodingDefault will probably remain as an out for lets.
+I may have to go back and investigate why the original Codable synthesis skipped all vars initialized like this.
+tera:
+The template value approach above
+I still view this as a limited subset of the "patch" idea and something that has use cases beyond the compile-time specified defaults that 1 & 2 provide.
+I think enabling the feature at the top-level still requires the same kind of protocol API changes that the full-fledged patch feature would, so why not do the whole thing if it doesn't add too much more complexity?
+Thanks for the seed of the idea. I'll file an Issue for this and will consider it further.
+
+---
+
+@Cyberbeni · 2026-05-23T22:43:34.263Z:
+tera:
+a missing optional field (or, equivalently, an explicit null)
+I have a project where I need to use String?? and conditionally set it to .some(.none) (to make it encode the null value instead of omitting it) because there is a difference in behavior on the other end.
+
+---
+
+@tera · 2026-05-23T23:40:28.889Z:
+You are right, null and absent value are strictly speaking not equivalent. Your example even works for the encoding out of the box with no custom encoding:
+struct S: Codable { var a: Int?? }
+print(String(data: try! JSONEncoder().encode(S(a: nil)), encoding: .utf8)!)
+// {}
+print(String(data: try! JSONEncoder().encode(S(a: .some(nil))), encoding: .utf8)!)
+// {"a":null}
+It doesn't work for the decoding out of the box without custom decoding:
+print(try! JSONDecoder().decode(S.self, from: ###"{"a":null}"###.data(using: .utf8)!))
+// S(a: nil)
+print(try! JSONDecoder().decode(S.self, from: ###"{}"###.data(using: .utf8)!))
+// S(a: nil)
+(which could be considered a bug).
+There's a concern that explicit null in JSON may not be 100% interoperable (for example, when passed through a backend), but many things fall into this category – non-conforming floating-point numbers, numbers larger than 2^53, date/time formats, and so on.
+
+---
+
+@tera · 2026-05-31T12:01:32.771Z:
+I gave this a try and built a small custom reflection-based JSON encoder/decoder (<2K lines of code) to better understand what's involved. It was a highly educational exercise! I was able to implement several features I've always wanted from Codable:
+~ 3x faster than JSONEncoder/Decoder.
+Optional distinction between encoding nil optionals as null versus omitting the field.
+Optional distinction between null and missing fields during decoding.
+Stable encoded field ordering that matches declaration order (while still allowing optional alphabetical sorting).
+Zero generated code.
+Small memory footprint (roughly 200 bytes of metadata per field for each type involved in encoding/decoding).
+Greater flexibility around missing fields; combined with a template-value-based approach, this could potentially enable the algebraic "delta" calculations mentioned above.
+Tuple support!
+Some Swift features are particularly challenging to support with this approach and are not implemented yet (for example, enums with associated values). It's also probably not suitable for Embedded Swift, as it relies heavily on reflection and existentials.
+The current implementation is roughly 3x faster than JSONEncoder/Decoder in my benchmarks, for both encoding and decoding. I'm curious what kind of performance others have achieved with macro-based implementations or other approaches.
+
+---
+
+@kperryua · 2026-06-01T19:32:35.091Z:
+@tera Feel free to share a link to your source and benchmarks, if you like.
+FWIW, the new-codable benchmarks are showing, for me, around a 10x throughput improvement (depending greatly on the particular characteristics of the data being encoded/decoded). I'd love to compare apples to apples more directly though.
+
+---
+
+@duan · 2026-07-24T04:16:37.545Z:
+On naming: perhaps the macros @Common(En|De)Codable should drop the "Common" prefix, unlike their counterpart protocols. I'd say that neither of the following behavior is more confusing than the other:
+a macro @CommonCodable adds conformance to protocol CommonCodable
+a macro @Codable adds conformance to protocol CommonCodable
+Unless we are set on a convention that all standard library macros must follow the @Foo should only add conformance to Foo?
+
+---
+
+@kperryua · 2026-07-28T22:24:13.538Z:
+TBH, this is the first pushback I've had against this pattern.
+There aren't many examples from the Apple SDKs—none from the stdlib that I know of. There's @Observable that adds Observable conformance, and same with @Animatable from SwiftUI. It seems a reasonable pattern to me, where appropriate.
+It's worth mentioning that one side goal of this effort is to eventually deprecate compiler synthesis of Codable in favor of macro-based conformance, which, presumably, would take the @Codable macro name. One of the motivations is to allow it to participate in the macro-attribute features we're planning to enable you to have one type that behaves similarly and compatibly across both CommonCodable and Codable conforming encoders/decoders.
+I'll keep this in mind though. There are several different ways to paint this bike shed.
+
+---
+
+@sliemeobn · 2026-08-25T12:12:27.532Z:
+FYI: I took @JSONCodable for a spin in an Embedded Swift WebAssembly app running in the browser.
+Works! (almost)
+I posted about it here:
+Edge of Tomorrow: Full-Stack Swift on Both Sides of fetch Community Showcase
+Hello lovely community,
+I have been cooking something I’d like to show you:
+While this web app certainly neither looks impressive nor does anything particularly useful, it packs quite a few things that have only been made possible very recently:
+builds Embedded Swift WebAssembly with 6.4.x and swift-build (quite a recent achievement)
+integrates ElementaryUI + BridgeJS in the frontend, including Fetch API networking
+uses “NewCodable” (experimental) for shared Swift data types (both on the e…
+
+=== ROW 101 | f004398 | https://github.com/bevyengine/bevy/pull/23315 | 2026-03-11 | domain-subframes ===
+Add `DespawnWhen` helper component for more complex state despawning logic
+
+---
+
+@Freyja-moth · 2026-03-11T19:01:33Z:
+# Objective
+
+Using a predicate to disable entities on state change was proposed [here](https://github.com/bevyengine/bevy/issues/19087#issuecomment-2870106800), I felt it would be nice to add it for entity despawning 
+
+## Solution
+
+Added `DespawnOnExitWith` and `DespawnOnEnterWith` which despawn an entity when the state is exited/entered and meets the predicate 
+
+## Testing
+
+Updated the state scoped example, had a run and it worked just fine
+
+---
+
+## Showcase
+
+Now stuff like this is possible
+
+```rust
+pub enum State {
+    Water,
+    Land,
+    Air,
+}
+
+commands.spawn((
+    Name::new("Fish"),
+    // Poor fish 
+    DespawnOnEnterWith(|entered_state| matches!(entered_state, State::Land | State::Air))
+));
+```
+
+---
+
+@Freyja-moth · 2026-03-11T19:19:02Z:
+I feel like it might be a good idea to add release notes since this is the sort of thing I'd want to know about, but not certain. Lmk if I should add them
+
+---
+
+@Freyja-moth · 2026-03-11T20:18:06Z:
+Been hit with a terminal case of busy. Will do suggestions when I can, but that may have to be tomorrow.
+
+---
+
+@Freyja-moth · 2026-03-12T14:10:42Z:
+Changed it to `DespawnWhen` as per @alice-i-cecile's suggestion
+
+Now looks like this
+
+```rust
+pub enum State {
+    Water,
+    Land,
+    Air,
+}
+
+commands.spawn((
+    Name::new("Fish"),
+    // Poor fish 
+    DespawnWhen::new(|transition| matches!(transition.entered, Some(State::Land) | Some(State::Air)))
+));
+```
+
+---
+
+@chescock · 2026-03-11T19:12:28Z:
+Do you want to allow stateful closures here?  It might be useful to let this be used with closures that capture values, like `GameState::Level(level_number)` instead of hard-coded `2`.  And I think `Box` won't actually need to allocate anything for closures that don't.  
+
+```suggestion
+pub struct DespawnOnExitWith<S: States>(pub Box<dyn Fn(&S) -> bool>);
+```
+
+(And similarly for `DespawnOnEnterWith`.)
+
+---
+
+@chescock · 2026-03-11T19:13:56Z:
+Might as well combine these conditions so that we don't `try_despawn()` twice if an entity has both for some reason.  
+
+```suggestion
+        if exit_with.is_some_and(|exit_with| exit_with.0(exited))
+            || exit.is_some_and(|exit| exit.0 == *exited) {
+```
+
+(And similarly for `DespawnOnEnterWith`.)
+
+---
+
+@chescock · 2026-03-11T19:14:52Z:
+```suggestion
+///         DespawnOnExitWith(|exited_state| matches!(exited_state, GameState::Level(2))),
+```
+
+---
+
+@chescock · 2026-03-11T19:16:00Z:
+As a bit of bikeshedding, `DespawnOnExitIf` might read better than `DespawnOnExitWith`, since the closure there is a condition.  
+
+---
+
+@Freyja-moth · 2026-03-11T20:24:35Z:
+I'd chosen to stay away from trait objects so that users didn't need to write `Box::new` everywhere. I'll take a look at switching them over.
+
+---
+
+@chescock · 2026-03-11T20:53:19Z:
+> I'd chosen to stay away from trait objects so that users didn't need to write `Box::new` everywhere. 
+
+Oh, yeah, that would be unpleasant.  Hmm, one way to mitigate it would be with a constructor function, like
+
+```rust
+impl<S: States> DespawnOnExitWith<S> {
+    fn new(f: impl Fn(&S) -> bool + 'static) -> Self {
+        Self(Box::new(f))
+    }
+}
+```
+
+and then it's just `DespawnOnExitWith::new(|state| true)`.
+
+---
+
+@Freyja-moth · 2026-03-12T13:41:21Z:
+Going to go with @alice-i-cecile's `DespawnWhen` suggestion as it's a lot more versatile 
+
+---
+
+@chescock · 2026-03-12T14:28:50Z:
+Huh, this check prevents despawning on same-state transitions.  Do we really want to prevent that?  Ignoring them makes sense for `Exit` since you don't want to consider same-state transition to be an "exit", but maybe there are cases where we want to despawn when they happen?  I don't know enough about the use cases here to know which is reasonable.  
+
+---
+
+@chescock · 2026-03-12T14:30:32Z:
+Looks like this comment didn't get changed back: 
+
+```suggestion
+/// Despawns entities marked with [`DespawnOnEnter<S>`] when their state
+```
+
+---
+
+@Freyja-moth · 2026-03-12T16:51:05Z:
+I don't think it really makes sense to react to changing to a state you're already in. 
+
+
+---
+
+@alice-i-cecile · 2026-03-12T19:46:57Z:
+Some folks have actually pushed for allowing same-state transitions precisely for a "reload" pattern. IMO we should use the naive behavior here.
+
+---
+
+@alice-i-cecile · 2026-03-12T19:51:53Z:
+I think this will be clearer if we make this a one-field named struct with a nice name and basic docs. Something like `state_transition_evaluator` or something? 
+
+The "stores a boxed function" is quite tricky for folks who are newer to Rust, so I want to try to optimize clarity.
+
+We're already relying on a `new` constructor to do the boxing, so the main benefit of tuple structs is lost.
+
+
+---
+
+@alice-i-cecile · 2026-03-12T19:52:29Z:
+This is a good example of where I think that working with this type will be clearer with a named field :) We could even add a little comment here.
+
+---
+
+@Freyja-moth · 2026-03-12T20:32:03Z:
+Should I also change the behavior in `DespawnOnExit` and `DespawnOnEnter`?
+
+---
+
+@alice-i-cecile · 2026-03-13T05:15:17Z:
+Ah. Hmmph. Fine, leave it as consistent with those, and we can revisit that elsewhere.
+
+=== ROW 102 | f004399 | https://github.com/yewstack/yew/pull/4069 | 2026-03-11 | domain-subframes ===
+Rewrite yew.rs with Yew
+
+---
+
+@Madoshakalaka · 2026-03-11T10:47:39Z:
+fixes #2779 
+Replace the Docusaurus-based website with a pure Rust/Yew implementation.
+
+The SSG pipeline compiles each page to WASM, runs wasm-bindgen and wasm-opt, then captures SSR output for SEO-friendly HTML. All docs (5 versions x 4 languages), blog posts, community pages, search, and 404 have standalone index.html with customized `<head/>` content.
+
+4 major bundles are produced, one for each locale. Once a bundle is loaded, all navigation are done through yew-router and doesn't require re-fetching unless the user navigates to a different locale. See [this comment below](https://github.com/yewstack/yew/pull/4069#issuecomment-4067370584) for more details. 
+
+This is a quite faithful rewrite of our old docusaurus based website.
+
+Key features:
+
+- Content model with HTML and Markdown rendering which enables a sane Table of Contents implementation and a **copy-as-markdown button** on each page (new feature)
+- Overhauled the `getting-started/examples` page to show a gallery of examples, parsed from disk at compile time. (new feature)
+- Syntax highlighting via [syntect](https://github.com/trishume/syntect) (rust solution) with light/dark themes (old site used prism.js)
+- Collapsible sidebar, table of contents, breadcrumbs, and pagination (matching old site)
+- 3-state theme toggle (light/dark/system) (matching old site)
+- Blog with date-prefixed URLs, index, sidebar, RSS and Atom feeds (matching old site)
+- Full-page Algolia search with version faceting (matching old site)
+- OpenSearch descriptor, sitemap, robots.txt, 404 page (matching old site)
+- SEO: hreflang, OG tags, JSON-LD breadcrumbs, canonical URLs (matching old site)
+- wasm bundle and javascript hashing for cache control
+- CI workflow builds with Rust toolchain instead of Node.js
+
+Some design choices and notes:
+
+- [fantoccini](https://github.com/jonhoo/fantoccini) is used for e2e testing the website. Site navigation needs to be tested because version + i18n selectors + side menu interaction can get very tricky. Alternatives to Fantoccini like `thirtyfour`, `chromiumoxide` were considered and Fantoccini has the most downloads, most stars, most recent release cadence.
+- Code snippet testing and tutorial testing preserved.
+- Data-as-code allows us to deduplicate greatly. Next, 0.23, and 0.22 docs are not diverged, which allows 0.23 docs and 0.22 docs to reuse the same data. The number of lines of code is roughly the same: 100k mdx replaced with 100k rust, as we judiciously used multi-line formatting:
+  MDX:
+  ```mdx
+  The `use_effect` hook can do many evil things.
+  ```
+  Rust:
+  ```rs
+  p![
+    "The",
+    code("use_effect"),
+    " hook can do many evil things."
+  ]
+  ```
+- We have compile-time validated doc links that go through the spa router: 
+  External Links:
+  ```rs
+  link!["https://docs.rs/web-sys/latest/web_sys/struct.Event.html", "Event"]
+  ```
+  Internal Links:
+  ```rs
+  doc_link!(crate::pages::advanced_topics::struct_components::hoc, "Higher Order Component")
+  ```
+  Internal Links with fragments (correctly working with the scrolling-to behavior):
+  ```rs
+  doc_link![
+      crate::pages::advanced_topics::server_side_rendering,
+      #"rendering-head-tags",
+      "head rendering section",
+  ],
+  ```
+- [stylist-rs](https://github.com/futursolo/stylist-rs) is used for concise styling (most styles are inlined to the component). Its SSR support renders the same styling during SSG and runtime, causing no content flickering at all.
+- the new website uses stable yew (pinned to 0.23 at the moment) for cache friendliness and ecosystem support (stylist-rs and yew-hooks won't work with Yew Next)
+- We have version and locale aware home pages now. The `Get Started` button and the `Learn More` buttons on each feature card now consume the version and locale too. (new feature)
+- Migration guides are no longer versioned. I believe the versioned migration guides were purely a docusaurus artifact. People simply didn't figure out a good place to place the migration guides. Each set of versioned migration guides were exact copies of each other.
+- Side bar on the tutorial page eliminated. Was a side bar with a single "Tutorial" item, a docusaurs artifact.
+- Categories and subcategories all had `{category}/introduction.mdx` files. Most pages (7 out of 9) had a `slug` front matter in the old mdx files so that the slug `{category}` by itself shows the introduction page, (and `{category}/introduction` gives a 404). The only two exceptions were: `https://yew.rs/docs/next/getting-started/introduction` and `https://yew.rs/docs/advanced-topics/struct-components/introduction`. The new code unifies the aliasing behaviour. It means old urls to `docs/next/getting-started/introduction` and `docs/advanced-topics/struct-components/introduction` will hit 404.
+- the url of the tutorial page was prefixed with the /docs/ slug. It doesn't make sense as the nav bar suggests "tutorial" and "docs" are on the same level, handled just like the Community pages and Blog pages with no "docs" prefix. I have removed the docs prefix from the tutorial's url. This will also cause some 404s to old references.
+
+<img width="1042" height="97" alt="image" src="https://github.com/user-attachments/assets/ac375058-f5ea-4bce-ac57-c756850b0342" />
+
+<img width="1042" height="97" alt="image" src="https://github.com/user-attachments/assets/c532f9ef-1f53-4014-abbc-21cdccae4583" />
+
+### Future Considerations
+
+- we might want to embed the playground directly into yew.rs now. We can make code blocks actually runnable.
+- use const fn or macros to groups localized strings together, further reduction of code size.
+  This is not easy because the subject-verb-object order in different languages are different.
+
+---
+
+@github-actions[bot] · 2026-03-11T10:54:02Z:
+### Size Comparison
+
+<details>
+
+| examples | master (KB) | pull request (KB) | diff (KB) | diff (%) |
+| --- | --- | --- | --- | --- |
+| async_clock | 100.818 | 100.818 | 0 | 0.000% |
+| boids | 168.448 | 168.469 | +0.021 | +0.012% |
+| communication_child_to_parent | 94.076 | 94.076 | 0 | 0.000% |
+| communication_grandchild_with_grandparent | 105.914 | 105.912 | -0.002 | -0.002% |
+| communication_grandparent_to_grandchild | 102.257 | 102.256 | -0.001 | -0.001% |
+| communication_parent_to_child | 91.486 | 91.486 | 0 | 0.000% |
+| contexts | 105.977 | 105.975 | -0.002 | -0.002% |
+| counter | 86.798 | 86.798 | 0 | 0.000% |
+| counter_functional | 88.834 | 88.833 | -0.001 | -0.001% |
+| dyn_create_destroy_apps | 90.713 | 90.715 | +0.002 | +0.002% |
+| file_upload | 99.812 | 99.811 | -0.001 | -0.001% |
+| function_delayed_input | 94.807 | 94.813 | +0.007 | +0.007% |
+| function_memory_game | 173.664 | 173.668 | +0.004 | +0.002% |
+| function_router | 395.375 | 395.708 | +0.333 | +0.084% |
+| function_todomvc | 164.955 | 164.969 | +0.014 | +0.008% |
+| futures | 235.551 | 235.548 | -0.003 | -0.001% |
+| game_of_life | 105.099 | 105.099 | 0 | 0.000% |
+| immutable | 259.314 | 259.627 | +0.312 | +0.121% |
+| inner_html | 81.341 | 81.341 | 0 | 0.000% |
+| js_callback | 109.957 | 109.963 | +0.006 | +0.005% |
+| keyed_list | 180.407 | 180.403 | -0.004 | -0.002% |
+| mount_point | 84.714 | 84.714 | 0 | 0.000% |
+| nested_list | 113.660 | 113.662 | +0.002 | +0.002% |
+| node_refs | 92.087 | 92.088 | +0.001 | +0.001% |
+| password_strength | 1719.252 | 1719.288 | +0.036 | +0.002% |
+| portals | 93.560 | 93.560 | 0 | 0.000% |
+| router | 366.017 | 366.360 | +0.344 | +0.094% |
+| suspense | 113.962 | 113.961 | -0.001 | -0.001% |
+| timer | 88.943 | 88.943 | 0 | 0.000% |
+| timer_functional | 99.368 | 99.367 | -0.001 | -0.001% |
+| todomvc | 142.661 | 142.661 | 0 | 0.000% |
+| two_apps | 86.711 | 86.711 | 0 | 0.000% |
+| web_worker_fib | 136.457 | 136.455 | -0.002 | -0.001% |
+| web_worker_prime | 187.640 | 187.637 | -0.003 | -0.002% |
+| webgl | 83.486 | 83.485 | -0.001 | -0.001% |
+
+</details>
+
+✅ None of the examples has changed their size significantly.
+
+---
+
+@github-actions[bot] · 2026-03-11T14:09:02Z:
+Visit the preview URL for this PR (updated for commit 8d46462):
+
+[https://yew-rs--pr4069-yew-docs-185gwe7t.web.app](https://yew-rs--pr4069-yew-docs-185gwe7t.web.app/docs/next)
+
+<sub>(expires Mon, 06 Apr 2026 21:19:29 GMT)</sub>
+
+<sub>🔥 via [Firebase Hosting GitHub Action](https://github.com/siku2/action-hosting-deploy) 🌎</sub>
+
+---
+
+@Madoshakalaka · 2026-03-14T14:27:27Z:
+@WorldSEnder ~~still a draft PR but~~ any opinions are welcome. you can already try the wasm website in the preview URL
+
+---
+
+@Madoshakalaka · 2026-03-16T09:38:00Z:
+Size Note:
+every doc page is ~1.7 MB of WASM (700 kB after compression). Home pages (which skip syntect) are only ~378 KB (120 kB after compression).
+
+---
+
+@Madoshakalaka · 2026-03-16T12:39:12Z:
+> SPA: we still generate all static pages. But we make it have dynamic navigation between them.
+
+This is now implemented. Each locale (en, ja, zh-Hans, zh-Hant) has one SPA binary powered by `yew-router` that covers all 5 doc versions + migration guides. Version switching is client-side (no WASM re-download), locale switching triggers a full reload. This is identical to docusaurus behavior. The rationale I think is version switching is much frequent than locale switching.
+
+Architecture:
+- 4 new SPA crates (`spa-en/`, `spa-ja/`, `spa-zh-hans/`, `spa-zh-hant/`) with `Route` enums using wildcard paths
+- SSG compiles 4 SPA binaries instead of ~1,100 per-page binaries, then hardlinks WASM/JS to each page directory
+- SSR unchanged: each page still gets unique meta tags, hreflang, JSON-LD, descriptions
+- Blog, community, and home pages are unchanged (still per-page binaries)
+
+Per-page WASM download went from ~1.7 MB (per navigation) to ~2.8 MB (once per session, then all version/page switches are instant. 930 kB after compression, seems acceptible). Full build time in CI reduces tenfold (90 minutes -> 11 minutes).
+
+
+---
+
+@Madoshakalaka · 2026-03-16T13:07:06Z:
+As previously commented, a huge bloat is syntect. We don't have codeblocks on a lot of pages like the home page and the [getting-started/examples](https://yew.rs/docs/next/getting-started/examples) page.
+
+But the SPA approach now inevitably bundles it. 
+
+after #3932 lands though, we can delay loading the CodeBlock component.
+
+This will even beat docusaurus. Note docusaurs based [getting-started/examples](https://yew.rs/docs/next/getting-started/examples) and [getting-started/editor-setup](https://yew.rs/docs/next/getting-started/editor-setup) currently load JavaScript of identical size.
+
+
+
+
+---
+
+@WorldSEnder · 2026-03-19T17:28:17Z:
+I had a quick look over it and it looks good already, visually. I haven't dug too deep into the generation process.
+
+I noticed that in dark mode, some code highlighting could have improved readability. An explicit worst case is `.sy-variable.sy-parameter` which gets the color `#323232` on `#1b1b1d` background (almost invisible).
+
+Build times being down to 12m-15m is also great, not quite at the 5 minutes from before but acceptable. Definitely an area that could be improved.
+
+Small thing: The version selection button changes width when swapping from Next to a concrete version, which shifts the rest of the header.
+
+Do we want the generated rust files to live in the repository or is the source for the page supposed to get generated on the fly each time?
+
+---
+
+@Madoshakalaka · 2026-03-23T10:49:29Z:
+@WorldSEnder 
+
+> Do we want the generated rust files
+
+Actually we don't generated rust files. I created a rust DSL to generate both Markdown and html:
+
+https://github.com/yewstack/yew/blob/28f8fe4b518f12c137e27d361ed69cbaa21687d9/yew-rs/docs-0-20/src/pages/concepts/function_components/hooks/introduction.rs
+
+note I'm still working on the DSL, the final version will be a lot cleaner without the repeating `vec!`s and the `text`s
+
+EDIT: improvements finished, see below.
+
+---
+
+@Madoshakalaka · 2026-03-23T15:03:58Z:
+> Build times being down to 12m-15m is also great, not quite at the 5 minutes from before but acceptable. Definitely an area that could be improved.
+
+Since the website workflow is a brand new workflow to the rust-cache action, and we don't save cache for PRs, each website build actually started with zero cache. It will be faster after we land this.
+
+---
+
+@Madoshakalaka · 2026-03-25T03:45:38Z:
+@WorldSEnder What do you think of adding a loading animation before the wasm loads. Like a rotating Yew logo on a full screen background.
+
+---
+
+@Madoshakalaka · 2026-03-26T06:40:45Z:
+I added variadic macros and made it possible to use raw strings in the DSL too.
+I think the DSL is larged finished.
+
+Now a regular page looks like this:
+https://github.com/yewstack/yew/blob/116b9dc4ac90a2bfa0d23d2a765725e3a0992c6e/yew-rs/docs-0-20/src/pages/concepts/function_components/hooks/introduction.rs
+
+[Comparing to e0ccf81](https://github.com/yewstack/yew/compare/e0ccf81..116b9dc), the variadic macros and the raw string texts removed (net) 5,462 lines in `.rs` files, and brought a 326 KB rust file size reduction (7.1%).
+
+---
+
+@Madoshakalaka · 2026-03-26T14:43:16Z:
+[major refactoring (116b9dc..801d27b4)](https://github.com/yewstack/yew/compare/116b9dc..801d27b4) de-duplicated a lot of code and shaked off 20k+ lines.
+
+I think the architecture mostly won't change anymore. Will focus on the handful of remaining UI bugs.
+
+---
+
+@WorldSEnder · 2026-03-25T00:15:43Z:
+```suggestion
+                    line-height: 1.5;
+                    & > code {
+                      display: inline-grid;
+                      min-width: 100%;
+                    }
+```
+Currently, on small screens, the highlighting doesn't extend to the end of the line. This should make the highlighting uniformly extend to the end of the pre block, yet allow scrollable content when the text doesn't fit.
+
+---
+
+@WorldSEnder · 2026-03-25T00:27:16Z:
+Clicking on a nav item should reset the burger menu, otherwise there is no feedback to navigating as the menu covers the screen (between Docs and Tutorial).
+
+---
+
+@WorldSEnder · 2026-03-25T00:54:12Z:
+Can this script be added with `defer` so it executes asynchronously on insert?
+
+---
+
+@WorldSEnder · 2026-03-25T01:02:10Z:
+For some reason, click this button in rapid succession leads to the first click toggling, but successive clicks flicker the nav without changing the state without actually toggling it. Not sure why that is.
+
+---
+
+@Madoshakalaka · 2026-03-27T19:36:26Z:
+thanks. Fixed. 
+It also made adjacent multi-line hightlights merge together. Really nice change. 
+
+---
+
+@Madoshakalaka · 2026-03-27T19:39:07Z:
+Successive clicks on my iPhone zooms in instead of clicking the button. I also can't produce this in chrome dev-tool's phone emulator.
+[f09af4e](https://github.com/yewstack/yew/pull/4069/commits/f09af4e8cc50920dead14fed84d706ae5f589f4e) changed a bit how the menu works. Can you still reproduce this?
+
+
+
+
+
+---
+
+@Madoshakalaka · 2026-03-28T12:22:19Z:
+This script is dynamically inserted via `createElement` + `appendChild`, so the browser already treats it as async by default. The `defer` attribute is only checked for parser-inserted scripts per the [HTML spec](https://html.spec.whatwg.org/multipage/scripting.html#prepare-the-script-element); it has no effect on dynamic scripts. The `load` event listener already handles correct sequencing.
+
+
+---
+
+@WorldSEnder · 2026-03-28T15:09:36Z:
+Oh you are right, I misremembered.
+
+---
+
+@Madoshakalaka · 2026-03-28T15:31:57Z:
+should work now
+
+---
+
+@WorldSEnder · 2026-04-09T14:02:40Z:
+I didn't realize that the plan was to fully replace the `mdx` documents with their rust source code and I don't agree with this design decision. The components look good, and the macros are also helpful. But I would not want to write a blog post in this format, I would want to write the markdown where this came from.
+
+Compare the above to [the markdown](https://github.com/yewstack/yew/blob/3650fc82a6da3d5951dd0581dd46bb4dc224f146/website/blog/2022-11-24-release-0-20.md):
+- Have to learn magic macros (`crate::blog_page!`, `h!` etc) which are btw not `use` imported into the file due to more macro magic in `blog_page!`
+- there is `BLOG_POSTS` slugs in a separate part, with a magic number index
+- my editor understands markdown more or less, it does not understand this. Even with a rust language server running on the side, which takes minutes to start and load the macro and dependencies.
+
+What's the advantage here when using rust code? All files seem to follow a strict form or were there parts that needed manual editing after the conversion?
+
+---
+
+@Madoshakalaka · 2026-04-09T14:21:28Z:
+> But I would not want to write a blog post in this format, I would want to write the markdown where this came from.
+
+I can get behind this sentiment. Valid concerns.
+
+I'll do some research on mdx parsers and see if we can achieve the same thing with minimal edits to the mdx files.
+
+---
+
+@Madoshakalaka · 2026-04-11T08:52:48Z:
+> Other than CommonMark and GFM, this project also supports common extensions to markdown such as MDX, math, and frontmatter.
+
+https://github.com/wooorm/markdown-rs
+
+I've done some research. For mdx support, `markdown-rs` is the only option out there. For plain markdown format, there is a wider selection of more performant and more actively maintained crates.
+
+Since the real addition of mdx compared to plain mardown is the support for React components. I think we should downgrade all our mdx to plain markdown files. And invent our own way to embed Yew components instead. A pair of delimeters in comment strings should work, for example:
+
+```
+normal markdown
+
+<!-- Yew Component Starts -->
+
+<ExampleGallery/>
+
+<!-- Yew Component Ends -->
+
+normal markdown
+```
+
+
+
+=== ROW 103 | f004423 | https://iroh.computer/blog/iroh-0-97-0-custom-transports-and-noq | 2026-03-16 | domain-subframes ===
+iroh 0.97.0 - Custom Transports & noq - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.97.0 - Custom Transports & noqMarch 16, 2026 by dignifiedquire
+Welcome to a new release of iroh, a modular networking stack in Rust, for building direct connections between devices.
+You can now plug your own transport implementations into iroh, opening the door to bluetooth, WebRTC, and anything else you can dream up. We've also officially switched our QUIC implementation to noq, our fork of Quinn that's now its own project. And if you've ever wanted to embed a relay server directly into your application, now you can.
+Two important callouts
+1. Changes to Endpoint::builder and Endpoint::bind
+Endpoint::builder and Endpoint::bind now take a preset argument, making the relay server configuration explicit. To get the same behaviour as before, simply replace Endpoint::bind() with Endpoint::bind(presets::N0), and similarly with Endpoint::builder() becomes Endpoint::builder(presets::N0):
+2. Changes to Endpoint closing
+Starting with this release, the Endpoint no longer attempts to close connections gracefully when dropped. To gracefully close the endpoint, always await endpoint.close() before dropping the last instance of an endpoint or terminating your application.
+Here's the rundown:
+Custom Transports: Define your own transport implementations beyond UDP/IP
+noq: Our QUIC implementation is now a standalone project
+Embeddable Relay Server: RelayService is now public for library embedding
+Preset API: Simpler endpoint configuration with presets
+Customizable TLS Trust Roots: Control certificate verification for non-iroh TLS connections
+Address Filtering: Filter and reorder addresses published by address lookup services
+Endpoint Lifecycle Improvements: Better behavior on close and drop
+Improved Incoming Connection Info: More precise information for rate limiting and access control
+Portmapper Feature Gate: Portmapper can now be disabled via feature flags
+🔌 Custom Transports
+This release includes a new experimental feature: custom transports. Any unreliable datagram transport that can support a minimum packet size of 1200 bytes can be used as a custom transport for iroh.
+Using custom transports
+To use a custom transport, you just need to add a dependency to a custom transport crate and add the custom transport while building the endpoint. You will only be able to talk via the custom transport to endpoints that also have the transport enabled.
+Endpoint::builder()
+.add_custom_transport(my_transport)
+.bind().await?
+CopyCopied!
+Implementing custom transports
+Implementing a custom transport is more involved. You need to implement a number of traits for low level packet sending and receiving, choose a custom address id, and implement serialisation of your custom address into an opaque CustomAddr.
+Currently, we have a tor transport and a nym transport implemented. We will work with the community to provide transports such as bluetooth low energy (BLE).
+The tor transport is pretty simple and is a good starting point if you want to implement your own custom transport. Check out this blog post for details.
+Current status
+The ability to represent custom addresses is included in iroh, but the traits you need to implement or use custom transports need to be enabled using the unstable-custom-transports feature flag.
+As the name suggests, the custom transport API is unstable and will remain so for some time even after iroh 1.0 is released.
+There is a limited API to configure preferences for custom transports. This is an area that we expect to refine and improve in the future.
+Checkout PR #3845 for more details.
+📦 Hello, noq
+If you've been following along, you know that iroh has been built on a fork of the Quinn QUIC implementation. Over time, our fork diverged significantly as we added multipath support, QUIC NAT traversal, and other features that iroh needs.
+With this release, our fork has graduated into its own project: noq. This isn't just a rename - it reflects the reality that our QUIC implementation has its own direction and focus. All internal references have been updated from Quinn to noq, and types are now re-exported from noq directly.
+For most users, this is a search-and-replace change: anywhere you were using iroh_quinn or iroh_quinn_proto types, you'll now find them under noq and noq_proto.
+Checkout PR #4005 for more details.
+🏠 Embeddable Relay Server
+The iroh-relay crate has always let you run a standalone relay server, but what if you want to embed relay functionality directly into your own application? Now you can.
+RelayService is now public, and the relay internals have been refactored to be generic over stream types. This means you can integrate the relay server into your own axum application, adding relay capabilities alongside your existing HTTP endpoints. All the types you need for external integration are now public and documented.
+Thanks to Nicolas Luck for contributing this feature!
+Checkout PR #3832 for more details.
+🔐 Customizable TLS Trust Roots
+By default, iroh uses embedded WebPKI roots for TLS certificate verification on non-iroh connections (relay servers, pkarr, DNS-over-HTTPS). But sometimes you need more control - maybe you're running in an environment with custom CAs, or you want to use the operating system's trust store.
+The new CaRootsConfig struct gives you that control:
+// Use OS roots with an additional custom CA
+let endpoint = Endpoint::builder()
+.ca_roots_config(CaRootsConfig::system().with_extra_roots([my_ca_cert]))
+.bind()
+.await?;
+CopyCopied!
+Options include embedded WebPKI roots (the default), the operating system's roots, a custom list of roots, or any combination with additional extra roots. The insecure_skip_verify option is still available as CaRootsConfig::insecure_skip_verify(), gated behind the test-utils feature as before.
+Checkout PR #3973 for more details.
+🔍 Address Filtering for Address Lookup Services
+With custom transports come custom addresses, and you probably don't want to publish every address type on every address lookup service. DNS-based lookups have byte-size limits, and a bluetooth address isn't useful on a global DHT.
+The new AddrFilter type lets you control exactly which addresses each lookup service publishes:
+Endpoint::builder()
+.address_lookup(PkarrPublisher::n0_dns()
+.with_addr_filter(AddrFilter::new(|addrs| {
+addrs.iter()
+.filter(|a| !matches!(a, TransportAddr::Custom(_)))
+.cloned()
+.collect()
+})))
+.address_lookup(MyBluetoothLookup::new())
+.bind()
+.await?;
+CopyCopied!
+The AddrFilter runs before the addresses are passed to the lookup service. Some services may do additional filtering internally afterwards, but the AddrFilter always runs first.
+Checkout PR #3960 and PR #3987 for more details.
+🏗️ Endpoint Lifecycle Improvements
+We've made several improvements to how Endpoint behaves when closed or dropped:
+Sensible return values after close. Methods like Endpoint::address_lookup(), Endpoint::dns_resolver(), and Endpoint::socket() now return Result<_, EndpointError> instead of potentially returning stale values or panicking after the endpoint has been closed. A new EndpointError::Closed variant makes it easy to handle this case. We also added Endpoint::last_net_report() which returns the most recent NetReport as an Option.
+Explicit close is now required. The Endpoint no longer makes any best-effort attempt to close connections gracefully when dropped. If you drop an endpoint without calling Endpoint::close, resources are cleaned up immediately but connections will not be closed gracefully. To gracefully close the endpoint, always await endpoint.close() before dropping the last instance of an endpoint or terminating your application. An error will be logged if you forget.
+Relay connection stability. The relay server no longer kills existing connections when the same endpoint ID reconnects. Instead, the new connection becomes the active target for messages while the old connection is moved to an inactive state. When the active client disconnects, the latest inactive client is promoted back. This prevents the infinite reconnect loop that could occur previously.
+Checkout PR #3924, PR #3879, and PR #3921 for more details.
+📊 Improved Incoming Connection Info
+Incoming::remote_addr (renamed from remote_address) now returns an IncomingAddr enum instead of a raw socket address. Previously, relay connections exposed a synthetic IPv6 address that wasn't useful for making decisions. Now you get all available information about the incoming connection, making it easy to implement rate limiting or access control at the connection layer.
+Checkout PR #3949 for more details.
+🎛️ Preset API
+Endpoint::builder and Endpoint::bind now take a preset argument, making the relay server configuration explicit rather than hardcoded. Instead of the builder silently defaulting to the n0 relay servers, you now pass a preset:
+// Before
+let endpoint = Endpoint::bind().await?;
+// After
+let endpoint = Endpoint::bind(presets::N0).await?;
+CopyCopied!
+Endpoint::empty_builder and EndpointBuilder::empty now assume RelayMode::Disabled and take no arguments, making it clearer what you get when starting from a blank slate.
+Checkout PR #4014 for more details.
+🔒 Portmapper Feature Gate
+The portmapper is now behind a default feature flag. If you're using no-default-features, you'll no longer get the portmapper. This doesn't change any APIs, but will change functionality for builds that opt out of default features.
+Checkout PR #4011 for more details.
+📈 Path Watcher Stats Retention
+Connection::paths and ConnectionInfo::paths now return a PathWatcher, a named struct that still implements n0_watcher::Watcher. Stats for abandoned or closed paths are retained as long as there are active watchers subscribed. This means you won't lose visibility into path statistics just because a path was closed, which is useful for monitoring and debugging multipath connections.
+Note that PathInfo::stats and PathInfo::rtt now return Option, returning None if the underlying connection has been dropped.
+Checkout PR #3899 for more details.
+⚠️ Breaking Changes
+#4014 — Preset API
+Endpoint::builder and Endpoint::bind now take a preset argument
+Endpoint::empty_builder and EndpointBuilder::empty now assume RelayMode::Disabled and take no arguments
+#4011 — Portmapper feature gate
+Builds using no-default-features will no longer have the portmapper. This does not change APIs but will change functionality.
+#4005 — noq switch
+Types are now re-exported from noq. Internal names have been updated from quinn -> noq.
+#4003 — Crypto
+trait AeadKey is no longer publicly exposed
+trait HandshakeTokenKey now implements seal and open directly
+#3973 — TLS trust roots
+Removed iroh::endpoint::Builder::insecure_skip_cert_verify, use Builder::ca_roots_config(CaRootsConfig::insecure_skip_verify()) instead
+Removed iroh_relay::client::ClientBuilder::insecure_skip_cert_verify, use ClientBuilder::tls_client_config instead
+PkarrResolverBuilder::build and PkarrPublisherBuilder::build now take a tls_config: rustls::ClientConfig argument. If building via Endpoint::add_discovery or endpoint::Builder::discovery no change is needed since the TLS config is passed from the endpoint builder.
+#3960 — Address lookup
+DhtAddressLookupBuilder::include_direct_addresses removed. Use DhtAddressLookupBuilder::set_addr_filter instead.
+Trait IntoAddressLookup renamed to AddressLookupBuilder.
+#3949 — Incoming connections
+endpoint::Incoming::remote_address renamed to remote_addr, and now returns IncomingAddr.
+endpoint::Incoming::remote_address_validated renamed to remote_addr_validated.
+#3924 — Endpoint API
+Endpoint::address_lookup() now returns Result<&ConcurrentAddressLookup, EndpointError>
+Endpoint::dns_resolver() now returns Result<&DnsResolver, EndpointError>
+Endpoint::endpoint() now returns Result<&quinn::Endpoint, EndpointError>
+Endpoint::socket() now returns Result<Handle, EndpointError>
+Added Endpoint::last_net_report() -> Option<NetReport>
+Added EndpointError enum (with variant EndpointError::Closed)
+Added ConnectWithOptsError::EndpointClosed variant
+#3921 — Relay server
+iroh_relay::server::client::RunError variants changed
+#3916 — DNS module
+iroh::dns is now a re-export of iroh_relay::dns. This should not actually be breaking if you were using the public API.
+#3899 — Path watcher
+Connection::paths and ConnectionInfo::paths now return a PathWatcher
+PathInfo::stats and PathInfo::rtt now return Option
+#3879 — Endpoint drop behavior
+Behavioral change: Endpoint no longer makes any best-effort to close connections gracefully on drop. You must call Endpoint::close explicitly.
+🎉 The Road to 1.0
+With custom transports landed and noq standing on its own, iroh continues marching toward a stable 1.0. Just need to fix a few more bugs and API inconsistencies.
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.97.0.
+If you want to know what is coming up, check out the v0.98.0 milestone, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter, Mastodon, and Bluesky.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+

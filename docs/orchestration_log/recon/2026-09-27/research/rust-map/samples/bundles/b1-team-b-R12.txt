@@ -1,0 +1,2377 @@
+=== ROW 123 | f005085 | https://github.com/tracel-ai/burn/pull/5617 | 2026-09-08 | domain-subframes ===
+perf(flex): optimize views, copies, in-place ops, and Rayon parallelism (#5613)
+
+---
+
+@Sadik00789 · 2026-09-08T17:13:11Z:
+Resolves #5613
+
+### Overview
+This PR addresses performance bottlenecks, avoidable buffer copies, serial backward passes, memory layout edge cases, and cold-path regressions identified across `crates/burn-flex`.
+
+---
+
+### Key Optimizations
+
+#### 1. Dead Code & Precision Cleanup
+* Pruned unused portable SIMD kernels (`add/sub/mul/div_shared_row_inplace_f32`) and their re-exports from `simd/mod.rs`.
+* Removed redundant `try_broadcast_cmp_f32` (subsumed by `try_zip_cmp_f32`) and dead helpers in `zip.rs`.
+* Avoided intermediate double-rounding in `cast_slice` by converting `f64 -> f16 / bf16` directly via `from_f64`.
+
+#### 2. Zero-Copy Views & Negative-Step Slicing
+* **`Layout::reshape`**: Removed `start_offset != 0` rejection check; preserved `start_offset` on contiguous reshaped views.
+* **Negative-step slicing**: Deleted the recursive copy walker in `slice.rs`; delegated negative steps directly to layout strides with an early underflow guard for empty slices (`n == 0`).
+
+#### 3. `to_contiguous` Cold Path Acceleration
+* **Size-1 dimension contiguity**: Squeezed unit dimensions in `Layout::is_contiguous` so shapes like `[1, N]` with stride `[1, N]` (transposed from `[N, 1]`) remain contiguous and zero-copy.
+* **Batched transpose tiling**: Added `copy_batched_2d_tiled` for 3D+ tensors with transposed trailing 2D dimensions to avoid falling back to `StridedIter`.
+* **Negative-stride flips**: Relaxed `all_positive` gating in `collapse_for_copy`; added `copy_2d_negative` with reverse-row `copy_from_slice` for outer flips and reverse iteration for inner flips.
+* **Tuned parallel 2D tiling**: Introduced `COPY_2D_PARALLEL_THRESHOLD` (1M elements / ~4 MB) to prevent thread pool overhead on cache-resident copies. Tasks are dynamically chunked to 1 coherent slice per thread, with stride-aware inner loop ordering (`row_stride <= col_stride`) preserving cache line locality.
+* **Allocation pruning**: Replaced heap-allocated multi-index `Vec` in `StridedIter` with a fixed stack buffer `[usize; 8]`.
+
+#### 4. Avoidable Allocations & In-Place Mutation
+* **Dense storage contract**: Consolidated contiguity and non-broadcast guarantees into `Layout::is_dense_unique_storage` across `mask.rs` and `gather_scatter.rs`.
+* **In-place masking**: Allowed in-place mutation in `mask_fill` for unique contiguous buffers with any `start_offset >= 0` (guarded against broadcast stride 0).
+* **Streaming `mask_where`**: Replaced eager `broadcast_three` with a newly implemented `Zip3Nest` (`collapse_for_zip3` / `zip3_apply_inplace` / `zip3_map`) supporting heterogeneous types `(M, T, T)`.
+* **In-place updates**: Enabled in-place mutation in `scatter_update` and `select_update` for unique contiguous targets; prevents buffer duplication in `embedding_backward`.
+* **Direct casting**: Replaced intermediate `Vec<f64>` round-trips in `float_cast` with direct `Dst::from_elem(*v)` streaming.
+
+#### 5. Parallelism, Gating & Reductions
+* Gated N-D `gather`, N-D `select`, and multi-group `conv_transpose` behind `PARALLEL_THRESHOLD` to eliminate thread dispatch overhead and multi-buffer allocations on small workloads.
+* Corrected row pitch calculation in `reduce_dim_f32` and `reduce_last_dim_f32` by computing `outer_stride` analytically, fixing incorrect reductions on swapped/permuted singleton dimensions.
+* Parallelized `col2im` over `(batch, groups)` onto disjoint memory slices with analytic `valid_in_range` bounds.
+* Parallelized backward passes for pooling (`max`, `avg`, `adaptive`) and interpolation (`bilinear`, `bicubic`) across `(batch, channel)` slices.
+* Standardized `f64`, `f16`, and `bf16` softmax row dispatch to `.par_chunks_mut(64 * last)`.
+* Parallelized outer loops in `matmul_2d_i32`, `matmul_2d_i64`, and batched integer matmuls.
+
+---
+
+### Verification
+* **Unit tests**:
+  * `cargo test -p burn-flex`: 412 passed, 0 failed.
+  * `cargo test -p burn-flex --no-default-features --features std`: 374 passed, 0 failed.
+* **Linter & Formatting**:
+  * `cargo clippy -p burn-flex --all-targets -- -D warnings` clean.
+  * `cargo clippy -p burn-flex --no-default-features --features std --all-targets -- -D warnings` clean.
+  * `cargo fmt --check -p burn-flex` clean.
+* **Integration suites**: All 1,185 integration tests in `burn-backend-tests --features flex` passing clean.
+* **Benchmark results**: Confirmed 8.1x speedup on int matmul, 7.3x on non-last axis hooks, 5.4x on conv_transpose, with 0% regression on `convnext_reshape` composite benchmarks.
+* Added regression unit tests for:
+  * Zero-sized negative-strided view copies.
+  * Stride-aware parallel 2D tiled copies across both row-major and column-major patterns.
+  * Reductions on swapped and permuted singleton dimensions (`[3, 4, 1].swap_dims(1, 2)` and `[1, 3, 4].permute([1, 0, 2])`).
+  * In-place masking, scatter updates, and pointer equality on sliced-then-reshaped zero-copy views.
+
+---
+
+@Sadik00789 · 2026-09-08T17:43:11Z:
+Addressed all three review items in the latest commit:
+
+1. **Zero-sized negative views (`tensor.rs`)**: Added an early return when `n == 0` prior to checking rank/stride logic in `copy_contiguous`, preventing buffer overruns/underflows on empty negative-strided views. Added `test_to_contiguous_zero_sized_negative_stride`.
+2. **Stride-aware tile ordering (`tensor.rs`)**: Updated `copy_2d_tiled` in both the serial and parallel Rayon chunk runners to conditionally place contiguous dimension loops innermost (`col` inner for row-major/offset views, `r` inner for column-major), keeping reads and writes aligned with cache lines. Added `test_to_contiguous_2d_row_stride_lt_col_stride`.
+3. **`conv_transpose` parallel gating (`conv_transpose.rs`)**: Gated Rayon multi-group parallelization behind `(total_groups * out_channels_per_group * out_spatial) >= PARALLEL_THRESHOLD`. Workloads beneath the threshold stay on the single-buffer serial path to eliminate task spawn latency and duplicate scratchpad allocations.
+
+All 408 crate unit tests, `burn-backend-tests` integration suites, Clippy, and formatting checks are passing clean.
+
+---
+
+@codecov[bot] · 2026-09-08T19:09:01Z:
+## [Codecov](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) Report
+:x: Patch coverage is `76.32530%` with `393 lines` in your changes missing coverage. Please review.
+:white_check_mark: Project coverage is 69.12%. Comparing base ([`b9a1563`](https://app.codecov.io/gh/tracel-ai/burn/commit/b9a1563d9f40b13758658538143ee07de287671a?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai)) to head ([`68235c1`](https://app.codecov.io/gh/tracel-ai/burn/commit/68235c1d415a8300215c112fced88cd5781bf221?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai)).
+:warning: Report is 28 commits behind head on main.
+
+| [Files with missing lines](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?dropdown=coverage&src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) | Patch % | Lines |
+|---|---|---|
+| [crates/burn-flex/src/ops/mask.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fops%2Fmask.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvb3BzL21hc2sucnM=) | 67.39% | [134 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/ops/interpolate.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fops%2Finterpolate.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvb3BzL2ludGVycG9sYXRlLnJz) | 0.00% | [79 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/ops/matmul.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fops%2Fmatmul.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvb3BzL21hdG11bC5ycw==) | 21.15% | [41 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/ops/gather\_scatter.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fops%2Fgather_scatter.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvb3BzL2dhdGhlcl9zY2F0dGVyLnJz) | 74.64% | [36 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/tensor.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Ftensor.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvdGVuc29yLnJz) | 89.50% | [32 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/ops/float.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fops%2Ffloat.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvb3BzL2Zsb2F0LnJz) | 44.82% | [16 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/zip.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fzip.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvemlwLnJz) | 94.48% | [15 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/ops/conv\_transpose.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fops%2Fconv_transpose.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvb3BzL2NvbnZfdHJhbnNwb3NlLnJz) | 89.28% | [12 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/ops/pool.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fops%2Fpool.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvb3BzL3Bvb2wucnM=) | 81.25% | [12 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-flex/src/strided\_index.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&filepath=crates%2Fburn-flex%2Fsrc%2Fstrided_index.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tZmxleC9zcmMvc3RyaWRlZF9pbmRleC5ycw==) | 60.86% | [9 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| ... and [2 more](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?src=pr&el=tree-more&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) | |
+
+<details><summary>Additional details and impacted files</summary>
+
+
+
+```diff
+@@            Coverage Diff             @@
+##             main    #5617      +/-   ##
+==========================================
++ Coverage   69.03%   69.12%   +0.09%     
+==========================================
+  Files        1279     1284       +5     
+  Lines      200676   203000    +2324     
+==========================================
++ Hits       138528   140323    +1795     
+- Misses      62148    62677     +529     
+```
+</details>
+
+[:umbrella: View full report in Codecov by Harness](https://app.codecov.io/gh/tracel-ai/burn/pull/5617?dropdown=coverage&src=pr&el=continue&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).   
+:loudspeaker: Have feedback on the report? [Share it here](https://about.codecov.io/codecov-pr-comment-feedback/?utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).
+<details><summary> :rocket: New features to boost your workflow: </summary>
+
+- :snowflake: [Test Analytics](https://docs.codecov.com/docs/test-analytics): Detect flaky tests, report on failures, and find test suite problems.
+</details>
+
+---
+
+@antimora · 2026-09-08T19:52:16Z:
+## Benchmark audit
+
+Ran a full A/B of this branch against its parent (`5ecfb3896`) using the `burn-backend-tests` benches on the flex backend (`--features flex`, so simd + rayon are both active). 408 benches across all 22 suites, 5 interleaved base -> PR passes on an M3 Max (16 cores), scored as min-of-medians.
+
+Net result is strongly positive. One reproducible regression is worth fixing before merge.
+
+### Distribution
+
+| band | benches |
+|---|---|
+| faster > 2x | 5 |
+| faster 10-50% | 31 |
+| faster 3-10% | 58 |
+| within +/-3% | 278 |
+| slower 3-10% | 31 |
+| slower > 10% | 5 |
+
+Three of the five in the bottom band are noise (bimodal benches where base happened to catch a fast outlier), and the other two are the same bug. Filtering to results where the PR's *worst* pass still loses to base's *best* pass leaves 16 strictly faster and 3 strictly slower.
+
+### Regression: the new rayon path in `copy_2d_tiled`
+
+| bench | base | PR |
+|---|---|---|
+| `convnext_reshape_layer_norm_composite/c384_30x28` | 438-477 us | 549-613 us (+25%) |
+| `convnext_reshape_layer_norm_composite/c192_61x56` | 913-992 us | 1010-1093 us (+11%) |
+
+Consistent across all 5 passes with no overlap between the two sides.
+
+Profiling both builds on `c384_30x28`: the *fastest* sample is effectively identical (409 us base, 415 us PR) while the median diverges. Base runs the entire bench on the main thread and never wakes the rayon pool. PR runs 16 workers whose stacks are dominated by `crossbeam_deque::Stealer::steal` and `WorkerThread::wait_until_cold`, underneath `burn_flex::tensor::copy_2d_tiled::{closure}`.
+
+Cause: the bench does `[1,384,30,28].permute([0,2,3,1])`, and `collapse_for_copy` folds that view to 2D `[840, 384]` with strides `[1, 840]`. That makes `n = 322_560`, just over `PARALLEL_THRESHOLD` (262_144), so the new branch at `crates/burn-flex/src/tensor.rs:802` splits a 1.3 MB copy into `TILE * cols = 6144`-element chunks: roughly 53 tasks of 24 KB each. Fork, steal and join cost more than the copy does.
+
+Verified by changing only that one condition and rebuilding:
+
+```diff
+  #[cfg(feature = "rayon")]
+- if n >= crate::ops::PARALLEL_THRESHOLD {
++ if false && n >= crate::ops::PARALLEL_THRESHOLD {
+```
+
+| build | `c384_30x28`, 3 passes |
+|---|---|
+| base (parent commit) | 451.7 / 450.8 / 453.0 us |
+| PR as submitted | 578.0 / 564.1 / 548.9 us |
+| PR, rayon branch disabled | 459.5 / 456.1 / 458.4 us |
+
+Two things to address:
+
+1. Chunk size. The threshold counts elements, but this is a bandwidth-bound shuffle where 256K elements is far too small to pay for a fork and join. Sizing chunks as `n / current_num_threads()` rounded to whole tile-rows, instead of a fixed `TILE * cols`, would keep the parallel path useful at large sizes without shredding small ones.
+2. Loop order. The serial path picks its nesting from `row_stride <= col_stride` so the inner loop always walks the smaller stride, and its doc comment explains why. The parallel branch always nests col-outer / row-inner, so whenever `row_stride > col_stride` it uses exactly the cache-hostile order the serial code exists to avoid. This bench does not hit that case, so it is latent rather than measured.
+
+### Minor: removing `try_broadcast_cmp_f32`
+
+`greater_broadcast/broadcast_256x256` moves from 3.9-4.0 us to 4.1-4.3 us, consistently across passes. Patterns 1 and 3 of the deleted function are genuinely subsumed by `try_zip_cmp_f32`, but pattern 2 is not when the broadcast operand's inner stride is not 1: the collapsed nest rejects that stride pair and the op falls through to the generic `compare_typed`. Small (4% on a 4 us op), and I did not isolate it the way I isolated the copy regression.
+
+### Wins
+
+| bench | base | PR | speedup |
+|---|---|---|---|
+| `int_square/matmul_512x512` | 17.94 ms | 2.22 ms | 8.1x |
+| `non_last_axis_f32/trait_hook_dim1_of_3` | 5.36 ms | 731.8 us | 7.3x |
+| `conv_transpose2d_8x64x14x14_to_28x28` | 3.54 ms | 657.7 us | 5.4x |
+| `int_square/matmul_256x256` | 1.85 ms | 508.3 us | 3.6x |
+| `conv_transpose1d_8x128x64_to_128` | 422.0 us | 152.3 us | 2.8x |
+| `permuted_input_drilldown/p2_mean_dim_last_on_permuted` | 1.07 ms | 604.2 us | 1.8x |
+| `conv_transpose2d_gan/dcgan_layer3_1x128x8x8_to_16x16` | 320.9 us | 201.6 us | 1.6x |
+| `conv2d_depthwise/depthwise_3x3_4x32x56x56` | 188.4 us | 119.5 us | 1.6x |
+| `conv_transpose3d_1x32x4x4x4_to_8x8x8` | 239.5 us | 152.5 us | 1.6x |
+
+### Not covered by these benches
+
+"No regression" does not extend to these, since nothing in the suite exercises them:
+
+- There is no `mask_fill` or `mask_where` bench anywhere in `burn-backend-tests`, so the new in-place mask paths and the `Zip3Nest` streaming rewrite are entirely unmeasured. Worth noting that the in-place `mask_fill_f32` path replaces a SIMD kernel with a scalar branching loop, and is gated on `is_unique()`.
+- `slice_ops` only covers positive steps, so the new zero-copy negative-stride slicing is unmeasured, along with the `copy_2d_negative` paths in `to_contiguous` that it now feeds.
+- `benches/common/mod.rs` pins the default dtypes to f32/i32, so the f64, f16 and bf16 softmax row-chunking changes never execute.
+- `StridedIter`'s heap fallback for rank above 8 is not reached by any bench.
+
+### Reproducing
+
+```bash
+# on this branch
+gh pr checkout 5617
+cargo bench -p burn-backend-tests --features flex \
+    --bench norm_ops -- convnext_reshape --min-time 0.6
+
+# on the parent commit
+git checkout HEAD^
+cargo bench -p burn-backend-tests --features flex \
+    --bench norm_ops -- convnext_reshape --min-time 0.6
+```
+
+Compare the `median` column for `c384_30x28`. Expect roughly 440-480 us on the parent and 550-615 us here.
+
+One gotcha if you run the built bench binaries directly rather than through cargo: divan defaults to test mode and prints the bench tree with no timings. Pass `--bench` explicitly.
+
+
+---
+
+@Sadik00789 · 2026-09-08T20:01:47Z:
+Thanks for the detailed benchmark and profiling breakdown @antimora! The speedups across integer matmul (8.1x), trait hooks (7.3x), and conv_transpose (5.4x) are great to see.
+
+Your diagnosis of the `convnext_reshape` regression was spot on. I've addressed all points in the latest commit:
+
+1. **Dedicated Copy Threshold (`COPY_2D_PARALLEL_THRESHOLD`)**: Raised the parallel activation floor from 256K to 1,048,576 elements (~4 MB for f32). Cache-resident shuffles like `c384_30x28` (~1.3 MB) now stay strictly on the serial path, eliminating Rayon worker wakeups and `crossbeam` work-stealing contention.
+2. **Thread-Proportional Chunking**: Replaced static `TILE * cols` chunking with dynamic task sizing:
+
+    let total_tile_rows = rows.div_ceil(TILE);
+    let tile_rows_per_task = total_tile_rows.div_ceil(num_threads).max(1);
+
+   This limits scheduling overhead to at most one coherent chunk per thread rather than partitioning the buffer into dozens of 24 KB micro-tasks.
+3. **Stride-Aware Loop Nesting**: Mirrored the serial path's `row_stride <= col_stride` check inside the parallel worker so the innermost loop consistently advances along the smaller/unit-stride dimension for both row-major and column-major sources.
+4. **Regression Unit Tests**: Added `test_to_contiguous_2d_parallel_row_stride_le_col_stride` and `test_to_contiguous_2d_parallel_row_stride_gt_col_stride` to guard both stride orderings under the parallel path.
+
+Regarding `try_broadcast_cmp_f32`: given that Pattern 2's fallback delta was ~4% on a 4 µs micro-op, consolidating onto `try_zip_cmp_f32` feels like the right maintainability trade-off, though I can restore Pattern 2 as a fast path if you prefer.
+
+All 410 crate unit tests, backend test suites, and Clippy lints are passing cleanly.
+
+---
+
+@Sadik00789 · 2026-09-08T21:34:35Z:
+Addressed all feedback items from the review in the latest commit:
+
+1. **Reduce Dim Stride Derivation (`reduce.rs`)**:
+   - In `reduce_dim_f32` and `reduce_last_dim_f32`, stopped deriving row pitch from `strides[dim - 1]`. The contiguous fast path now computes `outer_stride` directly from the tensor shape as `(dim_size * inner_size) as isize` (or `dim_size as isize` for the trailing dim), paired with `debug_assert_eq!` guards.
+   - Swapped and permuted singleton layouts (e.g. `[3, 4, 1].swap_dims(1, 2)`) now compute correct reductions without out-of-bounds reads.
+   - Added regression unit tests `test_sum_dim_swap_dims_size_one` and `test_sum_dim_permute_size_one`.
+
+2. **Deduplication & Layout Storage Contract (`layout.rs`, `gather_scatter.rs`, `mask.rs`)**:
+   - Consolidated `is_contiguous_non_broadcast` into `Layout::is_dense_unique_storage(&self) -> bool`, capturing the exact contract that the underlying buffer slice represents unique, non-broadcasted elements from `start_offset`.
+   - Replaced duplicate helper functions across `mask.rs` and `gather_scatter.rs`.
+   - Replaced shadowed `PARALLEL_THRESHOLD` in `gather_scatter.rs` with `use super::PARALLEL_THRESHOLD;`.
+
+3. **Precision & Dead Code (`float.rs`, `zip.rs`)**:
+   - Updated `cast_slice` to convert directly from `f64` using `f16::from_f64` and `bf16::from_f64`, preventing the 1 ULP shift caused by intermediate double-rounding through `f32`.
+   - Pruned unused `b_is_dense` and `c_is_dense` methods from `zip.rs`.
+
+4. **CFG Hygiene & Compiler Warnings**:
+   - Gated `batch_count`, `total_groups`, and parallel branches behind `#[cfg(feature = "rayon")]`.
+   - Gated `COPY_2D_PARALLEL_THRESHOLD` with `#[cfg(any(feature = "rayon", test))]`.
+   - Gated `out_dtype` in `mask.rs` behind `#[cfg(feature = "simd")]`.
+   - Verified that `cargo check -p burn-flex --no-default-features --features std` and `cargo clippy -p burn-flex --no-default-features --features std --all-targets -- -D warnings` compile completely clean with 0 warnings.
+
+All 412 unit tests on the default feature set and all 374 unit tests on `--no-default-features --features std` pass cleanly.
+
+---
+
+@Copilot · 2026-09-08T17:33:17Z:
+This parallelizes every transposed-convolution call with more than one `(batch, group)` plane, even for tiny workloads, and changes the reusable `columns` allocation into one `columns_len` allocation per concurrent Rayon task. That adds dispatch/allocation overhead on small calls and can multiply peak scratch memory for large calls. Gate this path on an estimated work/element threshold and retain the single-buffer serial path below that threshold.
+
+---
+
+@Copilot · 2026-09-08T17:33:17Z:
+An empty view with a negative stride can panic here. For example, narrowing a 1-D tensor at its end to length 0 and then applying a negative-step slice leaves `offset == src.len()` and `stride == -1`; this branch computes `start = offset + 1` and slices past the buffer even though there are no elements to copy. Return an empty contiguous tensor before dispatching to any stride-specific copier when `n == 0`.
+
+---
+
+@Copilot · 2026-09-08T17:33:17Z:
+The parallel path always iterates columns outside rows, unlike the serial path's stride-aware ordering. For row-major sources (`row_stride > col_stride`), including large contiguous offset views, the inner reads jump by an entire row (e.g. 1024 elements) rather than remaining contiguous, causing a major cache regression exactly when the parallel path activates. Preserve the stride-based loop ordering within each destination row chunk.
+
+---
+
+@antimora · 2026-09-08T21:11:39Z:
+This is correct in isolation. A size-1 dim always contributes index 0, so its stride never gets stepped.
+
+The problem is that `reduce_dim_f32` uses `is_contiguous()` as a proxy for "strides are canonical", and this makes that proxy wrong. `reduce.rs:864` only normalizes when `!tensor.is_contiguous()`, and `reduce.rs:1122` then derives the row pitch from `strides[dim - 1]`. When a size-1 dim sits next to the reduced dim, that stride is meaningless and rows get read as a sliding window.
+
+Verified on `1c2ee37e3` against an independently constructed contiguous reference (not `to_contiguous()`, which is a no-op here for exactly this reason):
+
+```
+[3,4,1].swap_dims(1,2) -> shape [3,1,4] strides [4,1,1], is_contiguous() == true
+  logical contents read back correctly: [0,1,2,...,11]
+  sum_dim(2)   got [6, 10, 14]       want [6, 22, 38]
+  mean_dim(2)  got [1.5, 2.5, 3.5]   want [1.5, 5.5, 9.5]
+  prod_dim(2)  got [0, 24, 120]      want [0, 840, 7920]
+
+[1,3,4].permute([1,0,2]).sum_dim(2)  panics out of bounds at reduce.rs:1144
+```
+
+The same test passes on `5ecfb3896`, so this is a regression from the PR. f32 only, since f64/f16/bf16 go through `reduce_dim_generic` which uses flat index arithmetic and is fine. But f32 is the default dtype and `swap_dims` / `permute` across a size-1 axis is everyday code, so this should not merge as is.
+
+I would fix the consumer rather than back this change out, since the new answer is the right answer. Either compute the outer stride from the shape (`shape[dim+1..].iter().product()`), or make `needs_copy` test stride canonicality instead of contiguity. A `debug_assert_eq!(outer_stride, (dim_size * inner_size) as isize)` in `reduce_last_dim_f32` would stop it recurring.
+
+---
+
+@antimora · 2026-09-08T21:11:39Z:
+This gate runs before the size-1 skip below and partly cancels it. `ops/expand.rs:107` pushes stride 0 for every prepended dim regardless of its size, so the layouts that most commonly carry a size-1 dim never reach line 114:
+
+```
+[1,2,3] strides [0,3,1]  (expand-prepended)      is_contiguous = false   <- logically contiguous
+[1,4]   strides [1,1]    (from [4,1] transpose)  is_contiguous = true
+[2,1,3] strides [3,3,1]  (plain contiguous)      is_contiguous = true
+```
+
+So the squeeze only pays off for the positive-stride transpose case you tested. Relaxing this to `s < 0` would extend it to expand-produced layouts, but I would hold off until the reduce issue on line 114 is resolved, since it widens the set of layouts that report contiguous.
+
+---
+
+@antimora · 2026-09-08T21:11:39Z:
+Confirmed this does the job. Base vs `1c2ee37e3`, 3 interleaved passes, all 22 suites, min-of-medians:
+
+| bench | 5ecfb3896 | 1c2ee37e3 |
+|---|---|---|
+| c384_30x28 | 441-453 us | 441-461 us |
+| c192_61x56 | 925-967 us | 927-948 us |
+| c96_122x112 | 1858-1901 us | 1733-1776 us |
+
+Ranges overlap now instead of separating cleanly, and `c96` came out faster. The wins all held: int matmul 8.1x, `conv_transpose2d_8x64x14x14` 5.6x, `non_last_axis_f32/trait_hook_dim1_of_3` 5.7x. Nothing new separated as slower beyond the `greater_broadcast` case already noted.
+
+---
+
+@antimora · 2026-09-08T21:11:40Z:
+`batch_count` is only read inside the `#[cfg(feature = "rayon")]` block below, so this warns under `cargo check -p burn-flex --no-default-features --features std`. Same for `n` at 649 and 807, `total_groups` at `conv_transpose.rs:301`, and `out_dtype` at `mask.rs:230` and `:564`. Six new warnings in a config that was clean on `5ecfb3896`.
+
+Worth fixing because that is the config CI actually builds. `Cargo.toml:202` declares `burn-flex` with `default-features = false`, and both the xtask path and the `test-flex` / `bench-flex` aliases pass `--no-default-features --features flex,std`. Moving each binding inside its cfg block clears the warning and skips the work when rayon is off.
+
+The same fact has a larger consequence: none of the new rayon code is compiled by the backend test suite, and `cargo bench-flex` would not have reproduced the copy regression either, since it disables rayon. Enabling `flex-rayon` in one CI job would be worth doing separately.
+
+---
+
+@antimora · 2026-09-08T21:11:40Z:
+This is duplicated verbatim at `ops/gather_scatter.rs:18`. Both copies gate `storage_mut()`, so a drift between them is a bad write rather than a compile error.
+
+It is also now equivalent to `layout.is_contiguous()` for any non-empty layout: the `s <= 0` check added at `layout.rs:108` already rejects every zero stride, so the second conjunct can only change the answer when `num_elements() == 0`, where it is vacuous either way.
+
+Reads better as a single method on `Layout` carrying the actual contract, something like "storage[start_offset..start_offset + num_elements()] is exactly this tensor, one slot per element, so it is safe to overwrite given unique ownership".
+
+---
+
+@antimora · 2026-09-08T21:11:40Z:
+This shadows `ops/mod.rs:19`, which is already `pub(crate)` with the same value and a comment explaining the choice. `ops/sort.rs:18` just does `use super::PARALLEL_THRESHOLD;`.
+
+Retuning the shared constant would silently leave gather, select and scatter on the old value with no compile error and no test failure, and the only symptom would be a benchmark drifting months later. If these paths want a different fan-out point, `reduce.rs:1768`'s `EXTREMUM_PARALLEL_THRESHOLD` is the pattern to follow: different name, different value, comment saying why.
+
+---
+
+@antimora · 2026-09-08T21:11:40Z:
+`b_is_dense` and `c_is_dense` are both `#[allow(dead_code)]` with no callers. Worth dropping until something needs them.
+
+Stepping back, `Zip3Nest` is `ZipNest` with a third stride array threaded through every line, and the two have already drifted inside this PR: `ZipNest::for_each_run` was rewritten to the `while d > 0` form while `Zip3Nest::for_each_run` kept the old `loop`, and `zip_apply_inplace` has a `debug_assert_eq!(l_st, 1, ...)` that `zip3_apply_inplace` does not. A `Nest<const N: usize>` would cover both, and `CollapsedLayout` at N=1, with identical codegen since it monomorphizes. Not blocking, but the drift is already real rather than hypothetical.
+
+---
+
+@antimora · 2026-09-08T21:11:40Z:
+For f32 and f64 targets this is equivalent to the old path, but f64 -> f16 and f64 -> bf16 now round twice. `ToElement::to_f16`'s default is `f16::from_f32(self.to_f32())` (`burn-std/src/element/cast.rs:94`) and f64 does not override it, where the old code called `f16::from_f64(v)` directly. So the change is genuinely direct for the f32/f64 pairs but not for the half targets.
+
+There is no cast test for any half target in the suite, so a 1 ULP shift would go unnoticed. Either special-case the f64 source or add a line saying the double rounding is accepted.
+
+---
+
+@antimora · 2026-09-08T21:11:40Z:
+`out_dtype` is computed from `tensor`, but the in-place path added below returns `mask_where::<u8>(...)`, which can return `value` carrying `value.dtype()`. Previously every path went through `make_bool_tensor(..., out_dtype)`. With a `Bool(Native)` tensor and a `Bool(U8)` value, the output store would follow whichever operand happened to be uniquely owned, which depends on refcounts.
+
+I did not execute this one, so it may be unreachable in practice, but the comment you removed just above used to say the input dtype was deliberately preserved. `mask_fill_bool` is unaffected since its in-place arm returns `tensor`.
+
+`out_dtype` is also unused in the `not(simd)` build, which is the one CI compiles.
+
+=== ROW 125 | f005120 | https://huggingface.co/blog/tokenizers-v1 | 2026-09-21 | domain-subframes ===
+tokenizers v1: encode, decode and scaling, measured
+Hugging Face
+Models
+Datasets
+Spaces
+Buckets new
+Docs
+Enterprise
+Pricing
+Website
+Tasks
+HuggingChat
+Collections
+Languages
+Organizations
+Community
+Blog
+Posts
+Daily Papers
+Hardware
+Learn
+Discord
+Forum
+GitHub
+Solutions
+Team & Enterprise
+Hugging Face PRO
+Enterprise Support
+Inference Providers
+Inference Endpoints
+Storage Buckets
+Log In
+Sign Up
+Back to Articles
+tokenizers v1: encode, decode and scaling, measured
+Published
+September 21, 2026  Update on GitHub
+Upvote
+76
++70
+Arthur Zucker
+ArthurZ
+Follow
+Simon Brandeis
+sbrandeis
+Follow
+Luc Georges
+mcpotato
+Follow
+Lysandre
+lysandre
+Follow
+Results
+What V1 Is
+The Split: Bitstreams Instead Of A Regex
+The Word Cache
+The Merge Loop
+Method
+What This Adds Up To
+Getting It
+Progress Towards V1
+Release Candidate: Implemented
+1.0.0
+After 1.0.0 The tokenizer has not historically been the bottleneck within ML workflows. Compute-wise, tokenization is light compared to the heavy modeling happening in the rest of the pipeline. Yet, in some cases, it has rapidly become key to accelerating (or slowing down) your machine learning work.
+As models become faster and workloads scale, that balance begins to shift. Training on massive datasets, serving many concurrent requests, or repeatedly processing long inputs can put enough pressure on the tokenizer that it starves the model of data.
+This is why we have chosen to heavily focus on performance for the upcoming version 1 of tokenizers. Tokenization should be light and should scale with your workflow. Your GPUs should never sit idle waiting for the CPU to complete its tokenization.
+In this article, we look at what makes v1 faster than v0.23, often by tens of times.
+This work was entirely possible thanks to the rest of the ecosystem. Tokenization is a very active area of open source work, and libraries such as gigatoken, tiktoken, kitoken, tokie, fastokens, wordchipper and ai-tokenizer, as well as many others, have each pushed on what a fast tokenizer can be. We read that work, and several of the ideas below reached us because another project showed they were worth trying.
+Before this refactor, tokenizers was nowhere near the performance it could have had, so contributing to it may not have seemed worth it. With this refactor, we hope to make clear that we intend tokenizers to be a library worth contributing to.
+We also thank IBM, NVIDIA, and the ExecuTorch team for contributing patches and helping us test across a wide range of hardware to broaden platform support.
+Results
+We showcase results for the release candidate of tokenizers v1 against other widely used alternatives. We go over single-threaded, multi-threaded, scaling across threads, per-model comparison, per-language comparison, latency, decoding throughput, memory heap, as well as crate size.
+We run this from the tokbench repository, and add a command to rerun the benchmarks on your hardware if you would like to do so.
+What V1 Is
+v1 will produce the same token IDs as v0.23. The goal was to preserve the output, the API, the vocabulary and the merge ranks, and improve everything that can be improved. That includes breadth. The library stays general across tokenizer families rather than specialising on BPE, so v1 loads everything v0.23 loaded.
+A tokenizer converts text into the list of integers a model reads. tokenizers runs that conversion in four stages. Normalization applies operations such as lowercasing or Unicode normalization to the raw text. Pre-tokenization splits the text into smaller pieces called pre-tokens. The model turns each pre-token into tokens and maps them to IDs in its vocabulary. Post-processing adds any special tokens the model expects.
+The model stage is where most of the work described here happens. Eight of the ten model families measured in this article use byte pair encoding, or BPE. BPE starts from the bytes of a pre-token and repeatedly joins the highest ranked adjacent pair until no ranked pair remains. The ranking is learned when the tokenizer is trained and ships with it, so the same text always produces the same IDs. A merge never crosses a pre-token boundary. The other two families use WordPiece and Unigram, the two other model types the library supports.
+The tokenization pipeline page documents the four stages. Tokenization algorithms documents BPE, WordPiece and Unigram.
+Each stage was worked on. These are the changes that mattered:
+change
+what it does
+workspace split
+one crate became a workspace: tk-encode is the required runtime, and tk-serialize, tk-convert and tk-train are linked only when an application needs them
+no-alloc model
+the merge working set lives in a caller-owned scratch buffer; the loop never touches the allocator
+bitcannon
+the split pattern becomes Boolean operations over bitstreams, using SIMD instructions to find splits instead of a regex engine
+merge-loop rewrite
+the pieces being merged form an intrusive doubly-linked list inside one preallocated buffer, so a merge updates two indices instead of moving data
+word cache
+a thread-local memo from pre-token bytes to finished ids, so a repeated word is merged once
+native parallelism
+one shared tokenizer encodes from many threads at once; each thread draws its scratch buffer and word cache from its own sub-pool, so threads no longer queue on a single lock (#2365)
+The Split: Bitstreams Instead Of A Regex
+BPE models use a regular expression to split the input text into smaller, easier to process chunks called pre-tokens. Merges happen inside a pre-token and never across the boundary between two of them, so this split decides what the rest of the pipeline sees.
+That regular expression is a fixed parameter of the model. It ships with the tokenizer and never changes at runtime, so there is no need for a general-purpose regex engine to interpret it on every encode. An equivalent splitting function can be written by hand, once, for the pattern a given model actually uses.
+A hand-written function can then use the SIMD instructions (single instruction, multiple data) of a modern CPU, which apply one operation to many bytes at once and suit UTF-8 text well. bitcannon views the input's bytes as parallel streams of bits, so boundaries fall out of boolean operations across whole registers instead of a scan that advances one character at a time. It decides 64 bytes per register operation. The same idea drives Parabix for text processing and simdjson for JSON.
+This depends on recognising the pattern. A handful of grammars cover most byte-level BPE models, and a tokenizer whose pattern is not among them keeps the regex path and none of this speed-up. That is why the gains above vary as much as they do.
+The Word Cache
+Real text contains many repeated words. Because BPE always produces the same token IDs for a given pre-token, v1 can save the result after processing it once. A thread-local cache maps each pre-token's bytes to its token IDs, allowing later occurrences to skip the merge process.
+Naturally, as the input grows, the number of unique words can grow more slowly than the total number of words. Repeated words then account for an increasing share of the input. New words still appear, which accounts for the occasional misses in the animation below.
+Reproduce the shared-prefix result with:
+tokbench measure prefix-sharing \
+--engine pipeline \
+--engine hf-tokenizers \
+--compare-to pipeline-no-cache \
+--corpus agentic_swe
+Caching works best when the input contains repeated pre-tokens. Input with few repeated pre-tokens can pay for lookups without receiving many hits.
+The Merge Loop
+The next major cost comes from the BPE merge loop. For each pre-token, the loop repeatedly finds the highest-priority adjacent pair and merges it. The previous implementation allocated new memory for every call and built a new priority queue for every pre-token.
+v1 reuses a scratch buffer owned by the caller, removing those repeated allocations. It stores symbols in a flat array and links adjacent symbols by their positions in that array, which makes updates during merging cheaper. It also processes a batch of pre-tokens in a single model call.
+Each candidate pair is also packed into a single 64-bit value, with the merge rank in the high bits. Comparing two candidates is then just comparing two integers, and "no merge here" is the largest possible value, so the loop finds its next merge without a branch.
+Method
+Small differences in benchmark design can produce large differences in tokenizer performance. We used the following rules to keep the comparison consistent across engines.
+rule
+why
+one timing loop
+every engine runs the identical loop; no per-engine fast path
+load excluded
+vocabulary load is timed separately, never inside encode
+id-hash verified
+FNV-1a over the output ids must match the baseline exactly
+common cells only
+medians are over cells every engine ran and verified
+complete sweep per process
+each repeat starts in a new process and retains every cell
+physical-core pinning
+workers are pinned to eight distinct physical cores, never sibling SMT threads
+independent Jobs
+separate Jobs measure host-to-host variation
+Repeatedly encoding one document can be faster than encoding a stream of distinct documents on the same build. The first approach measures performance when the entire document is already represented in the cache. The second measures performance on new input while allowing previously seen pre-tokens to remain cached.
+Both conditions are sometimes described as "warm," even though they measure different workloads. Our headline results use distinct documents, and the complete corpus is too large to fit in the cache. Tokenizer benchmarks should identify which workload they use because the choice can dominate the result.
+What This Adds Up To
+Across the ten model families v1's encode path covers, it encodes text 3 to 30 times faster than v0.23 with one thread on an Apple M4 Max. The low end is t5-base, the high end gpt2. It scales at 76% of linear across eight workers. Throughout these changes, v1 produces exactly the same token IDs as the released library.
+The overall improvement comes from several changes working together: a hand-written splitter in place of a regex engine, a cache that answers a repeated word without merging it again, a merge loop that never touches the allocator, and one model call per batch of pre-tokens instead of one per pre-token. Each reduces the work done at a different point in the pipeline.
+The next priority is support for more model families. We will move additional models onto the new merge loop before 1.0.0. Once the release candidates stabilize, the next step will be bringing about the improvements within the transformers library and the rest of the ecosystem which depend on the tokenizers library.
+This post is generated from tokbench results and will be updated as support expands.
+Getting It
+A release candidate for v1 is on crates.io. The API you call is the one you already call, so the only thing that changes is which build you install.
+It is the ordinary install:
+cargo add tokenizers --pre
+Training is behind a default-on feature that pulls a C++ dependency with it. If you only need to encode, turn it off to exclude the training implementation:
+cargo add tokenizers --pre --no-default-features --features http
+Encoding is unchanged: same call, same ids.
+use tokenizers::tokenizer::{Result, Tokenizer};
+fn main() -> Result<()> {
+let tokenizer = Tokenizer::from_pretrained("deepseek-ai/DeepSeek-V4-Flash", None)?;
+let encoding = tokenizer.encode("The tokenizer is no longer the bottleneck.", false)?; println!("{:?}", encoding.get_ids()); // [671, 17840, 9160, 344, 1119, 5827, 270, 111127, 16] println!("{:?}", encoding.get_tokens()); // ["The", "Ġtoken", "izer", "Ġis", "Ġno", "Ġlonger", "Ġthe", "Ġbottleneck", "."]
+Ok(()) } ```
+For a batch, `encode_batch` is what scales across cores. It is the call the scaling view above measures.
+```rust
+let encodings = tokenizer.encode_batch(documents, false)?;
+Every figure in this post was measured against this crate. The Python bindings wrap the same code and are built from bindings/python, but they add per-call overhead that none of these measurements include.
+Progress Towards V1
+The benchmarks in this post cover the completed release-candidate work listed first. The remaining sections show what is still required for 1.0.0 and what we plan to explore afterward.
+Release Candidate: Implemented
+This work is in the Rust pre-release on crates.io:
+cargo add tokenizers --pre
+workspace split: divide the single crate into tk-encode, tk-serialize, tk-convert and tk-train, so an application links only what it uses
+bitcannon: replace regex splitting on the encoding path with bitstream operations covering GPT-2, cl100k, o200k, Tekken and DeepSeek. This replaced the finite-state machines that shipped first #2201 #2317
+WordCache: reuse the token IDs of previously processed pre-tokens #2262, af5a3e3
+faster lookup and merging structures: add FlatCache, MPHF RankStore, incremental merging, and BucketVocabStore #2190 #2188
+reusable model memory: move temporary model state into scratch buffers so tokenization does not allocate on each call #2175 #2183
+pipeline post-processing: expose post-processing as the STAGE_POST pipeline stage #2182
+batched model calls: process multiple pre-token spans in one call #2304
+faster decoding: write decoded bytes directly into a reusable buffer, avoid intermediate strings and copies, accelerate token lookup, support buffered streaming, and decode batches in parallel
+role_to_token support #2343
+Node.js bindings #2281
+1.0.0
+one encoding implementation: use tk-encode during training validation so training and inference cannot produce different tokenization results
+optional offsets and masks: compute this metadata only when requested, keeping it off the token-ID-only path
+rework normalizers
+bitnorm support, building on atomnorm #2209
+spm precompiled
+simpler Python bindings: reduce locking, wrapper types, and handwritten dispatch code while preserving subclassing, serialization, custom decoders, mutation behavior, and support for free-threaded CPython
+inference-only C and C++ bindings for ExecuTorch and llama.cpp, with possible JVM, Swift, and Go bindings to follow
+After 1.0.0
+tok-devices: explore GPU encoding and batch decoding while keeping text and token IDs on the device. The decoder would upload the vocabulary once, calculate output positions in parallel, and gather the corresponding bytes on the GPU. This would be an optional component intended for large batches, subject to further prototyping and measurement.
+More Articles from our Blog
+tokenizerstransformersopen-source
+Tokenization in Transformers v5: Simpler, Clearer, and More Modular
++2
+128 December 18, 2025
+guidehuboptimization
+Learn the Hugging Face Kernel Hub in 5 Minutes
++3
+167 June 12, 2025
+Community
+not-lain       6 days ago
+nice work 🔥
+❤️
+2
+2
++
+Reply
+Devistro       5 days ago
+Will have to try it out. Data seems real good.
+See translation
+❤️
+2
+2
++
+Reply
+EditPreview
+Upload images, audio, and videos by dragging in the text input, pasting, or clicking here.
+Tap or paste here to upload images
+Comment
+· Sign up or log in to comment
+Upvote
+76
++64
+System theme
+Company TOS Privacy About Careers
+Website Models Datasets Spaces Pricing Docs
+
+=== ROW 128 | f005169 | https://ferrous-systems.com/blog/callgraph-analysis | 2026-04-08T00:00:00 | domain-subframes;twir-links ===
+Callgraph analysis  - Ferrous Systems
+Training
+Rust Experts
+Ferrocene
+Open Source
+Blog
+Get in touch
+Github
+Imprint
+Privacy policy
+Menu
+Home
+Blog
+Callgraph analysis
+coding
+Callgraph analysis
+Jynn
+April 2026
+Article
+Callgraph analysis
+Writing custom lints for fun and profit
+Published on April 01, 2026
+13 min read
+Rust
+Ferrocene
+Safety-critical
+Do you need help with coding?
+Get in touch
+Get updates
+Callgraph analysis
+Say you have a region of a program where users Want Static Verification that some function is never called. For simplicity, let's say you want to make sure you never call panic! so your program doesn't crash.
+In this post we talk about:
+Different approaches you could take to implementing this requirement
+The approach we chose for Ferrocene and what made it the right choice for us
+Special requirements of core and of certification
+How we implemented callgraph analysis as a custom compiler driver
+How you can try it out yourself.
+Now, onwards! There are a few different approaches you could take to implementing this analysis.
+The simple approach: Clippy lints
+The first thing you could try is getting clippy to catch it:
+#![deny(
+// explicit panics
+clippy::panic,
+clippy::unwrap_used,
+clippy::expect_used,
+clippy::unreachable,
+clippy::unimplemented,
+// panics on language types
+clippy::indexing_slicing,
+clippy::arithmetic_side_effects,
+// panics on library types
+clippy::string_slice,
+clippy::unchecked_time_subtraction,
+clippy::invalid_regex,
+)]
+This has a few issues:
+It doesn't apply recursively to your dependencies, which are still free to panic.
+Relatedly, it can't possibly catch all library types. Clippy has hard-coded lints for Duration and Regex, but it can't lint everything in the ecosystem.
+This doesn't apply to anything other than panics. Say that your property is "this function never makes a network call" or "this function never allocates memory". Clippy can't catch this; its lints are designed around the idea of panicking, not around actual calls to the panic runtime. It doesn't look "inside" of functions, so it's not applicable to any ideas it doesn't recognize.
+The language approach: effect (type-)systems
+In this approach, we build the idea of side-effects directly into the language. We annotate the type of each function with the possible side effects it can have, and don't allow it to call functions that could cause a side effect that wasn't annotated1. The most well-known example of this is checked exceptions in Java:
+static void createFile(String name) {
+new File(name).createNewFile();
+//~^ ERROR unreported exception IOException
+}
+In order for this program to compile, we must annotate the exception:
+static void createFile(String name) throws IOException {
+new File(name).createNewFile(); // ok
+}
+This can be extended to other things like I/O, memory allocation, etc. For an example of such a language, see Koka:
+fun hello() : () { println("hi, you!") }
+//~^ ERROR type error: effects do not match
+inferred effect: console|_e
+expected effect: total
+fun hello2() : console () { println("hi, you!") } // ok
+In Koka, "total" means "this function has no effects". Since hello prints to the console, it's inferred to have the console effect, which is a type error.
+This seems like a neat direction for further research, but retrofitting it into Rust would effectively (🥁) require creating a new language, so I won't talk too much more about it here.
+The toolchain approach: linker errors
+It's possible to give a linker error if you try to call panic:
+fn foo() {
+struct __NoPanic;
+unsafe extern "C" {
+#[link_name =
+"\n\nERROR[no-panic]: detected panic in function `main`\n"]
+fn trigger()
+-> !;
+}
+impl ::core::ops::Drop for __NoPanic {
+fn drop(&mut self) { unsafe { trigger(); } }
+}
+let __guard = __NoPanic;
+let __result = (move || -> () {})();
+::core::mem::forget(__guard);
+__result
+}
+The way this works is like so:
+Define a new __NoPanic struct that implements Drop.
+In its Drop impl, call an undefined C function whose name is the error message.
+Create an instance of __NoPanic.
+Run the main part of the function, then forget that instance. This means the Drop impl will run if—and only if—the function panics.
+Compile the program with optimizations and then link it.
+If the compiler detects that the function never panics, then it can completely optimize out the __NoPanic object, along with its Drop impl. That means it will never try to link the undefined C function, and will compile successfully. If, however, it can't confirm the function never panics (either because it really does panic, or just because the function is complicated), it will give an error while trying to link against the C function. 2
+This is a neat hack to retrofit this easily into the existing language! It doesn't require any changes to the compiler or tooling, and can be added easily with an attribute macro: #[no_panic] fn foo() {}
+It has a few downsides:
+This still only works for panics. It's very tied to the idea of unwinding; if your property is "don't allocate memory" it can't help.3 It also doesn't work when you set panic = "abort", as is required in #![no_std] embedded targets.
+It doesn't support async functions.
+It's highly dependent on implementation details. It won't work for non-optimizing compilers, or for interpreters. It would likely be hard to adapt to other languages than Rust.
+It depends on the optimization level, and how "smart" the compiler is, which means that it's prone to breakage and doesn't fall under Rust's stability guarantee.
+Checks don't happen until link time, so it's extremely ill-advised to use this in library crates; it only really works for applications.
+The hacky approach: cfgs
+You could Simply fork the standard library and slap cfg`s on all the panic machinery. I wouldn't recommend this. But you could.
+The downside of this approach is that it affects everyone using core, not just the people who care about certification. To avoid breaking changes, we actually ended up introducing a whole new aarch64-unknown-none.subset target. This had other downsides, such as build scripts failing to parse the target name. It also doesn't allow compiling with libtest on that target, since it uses parts of core that have been cfg'd out. In practice, we told people to run cargo check --target aarch64-unknown-none.subset but not to use it for full builds, which was a very poor user experience.
+The static analysis approach: a custom compiler driver
+We want an approach that "feels like" part of the Rust language, without needing massive changes to the language, compiler, standard library, or build tooling. So, what we can do is introduce a new custom lint that uses annotations that are already valid in the language today:
+#![feature(register_tool)]
+#![register_tool(verify_no_panic)]
+#![deny(verify_no_panic::panics)]
+#[verify_no_panic::no_panic]
+fn foo() { println!("xyz"); }
+//~^ ERROR `std::io::_print` calls `std::io::stdio::print_to`, which may panic
+This has several parts:
+Use the register_tool attribute to mark that we have a custom compiler driver.
+Tell our custom driver that we want to prevent panics, first at the crate-level with deny and then for the individual function with no_panic.
+Run our custom tool with something like cargo verify-no-panic.
+This is quite similar to extending clippy, except without needing to touch clippy itself.
+The reason we need to say #[no_panic] a second time is in case there are some places where panicking is ok, such as in tests or compile-time evaluated code. The extra attribute lets the tool only check the places we care about.
+core
+This post is not hypothetical. In Ferrocene, the property we wanted to verify was "no certified function in core calls an uncertified one". For some background about this, let's talk a bit about certification standards.
+Certification
+In our case, we were certifying core to IEC 61508 (SIL-2) (original text), with a special focus towards use in robotics, as requested by our customers 4. We thank Sonair and Kiteshield for their support during the early days of certification.
+IEC 61508 has many different requirements, such as documenting the testing, design, and review process, but the one that scales with the size of the codebase is Annex A.9, "Software verification". We use methods 3 and 4 ("Static analysis" and "dynamic analysis"). The spec gives us a fair bit of freedom in how we actually do our tests; the approach we document is to run our tests on every target platform with a certified core and collect code coverage that verifies that every function has been tested.
+This of course means that the more code we have, the more tests we have to write. To avoid having to do several years of work before having a product at all, we chose to verify a subset of core: we mark these functions as validated, run tests and collect coverage for each of them, and tell our customers to only use those validated functions.
+Core is special
+Now this has an issue: how can they actually tell which parts of core they're using? Core is quite strange: it's not a normal library, but actually contains extensive integrations between the compiler and language, as discussed in my 2022 Rustconf talk about bootstrapping. That means that when you write something innocuous, like do_io()?, it actually emits a call to core::ops::try_trait::Try::branch. As a result, you really do need proper compiler integration to be able to tell which functions call which.
+For the 2 previous Ferrocene releases, we had been using the cfg approach. In Ferrocene 26.05 we are switching to the compiler driver approach, which integrates much better with existing code, and also allows you to allow/deny the lint both globally and at individual call-sites.
+Here's a small example of what it looks like:
+#![crate_type = "lib"]
+#![deny(ferrocene::unvalidated)]
+fn normal_def() {
+normal_def2(); // ok
+}
+fn normal_def2() {}
+#[ferrocene::prevalidated]
+fn validated() {
+normal_def(); //~ ERROR unvalidated
+}
+and a screenshot of the diagnostic you get when running Ferrocene on this code:
+In Ferrocene, we take the liberty of injecting #![register_tool(ferrocene)] into your code so that you don't have to use nightly features. You still have the option to write it yourself if you want upstream compatibility with rustup-managed toolchains.
+Requirements
+We can rephrase the problem we're solving like so:
+The set of validated functions in core must be closed under the function call operator.
+"Closed" here is a term from mathematics that means "any operation you do to elements of this set outputs another element within the set". In other words, any time we see a function call in a validated function, the function being called must also be validated.
+Note that this doesn't say anything about unvalidated functions. It's perfectly fine for core::async_iter::from_iter (which is unvalidated) to call a validated function like usize::checked_add. We only care about keeping validated functions validated.
+We have a few baseline requirements here.
+This should work through function calls, macro expansions, and "builtin" syntax expansions, like ?.
+This should prefer false positives to false negatives. In other words, it's better to accidentally deny valid code than to allow invalid code to be certified.
+This should be backwards-compatible with all existing Rust code; it should only require validated functions to be annotated, without needing changes to unvalidated functions.
+How it works
+We wrote a callgraph analysis that verifies that our set of validated functions is closed.
+The approach we implemented has several parts.
+First, we have a "pre-mono" pass that works on THIR.
+This gives fast feedback while running cargo check, and runs late enough that it can "desugar" calls to built-in syntax:
+#![deny(ferrocene::unvalidated)]
+#![crate_type = "lib"]
+#[ferrocene::prevalidated]
+fn ops() -> Result<(), &'static str> {
+let x = Err("something went wrong");
+x?;
+Ok(())
+}
+It can even catch issues through multiple layers of indirection, such as when you pass an unvalidated function pointer to a validated function:
+#![deny(ferrocene::unvalidated)]
+use std::panic::{PanicHookInfo, set_hook};
+fn unvalidated_panic_hook(_: &PanicHookInfo) {}
+fn main() {
+set_hook(Box::new(unvalidated_panic_hook)); //~ ERROR unvalidated
+}
+This works by looking for "unsizing casts" from a function type 5 to a function pointer.
+Finally, it can catch casts to dynamic trait objects, which would allow you to call an unvalidated function behind a layer of indirection:
+#![deny(ferrocene::unvalidated)]
+#![crate_type = "lib"]
+struct Unvalidated;
+impl ToString for Unvalidated {
+fn to_string(&self) -> String {
+String::new()
+}
+}
+#[ferrocene::prevalidated]
+fn foo() {
+let stringy: &dyn ToString = &Unvalidated; //~ ERROR unvalidated
+}
+This works by looking for unsizing casts to a trait object, and has to account for things like supertraits and dyn-to-dyn coercions.
+However, the pre-mono THIR pass isn't foolproof. Consider the following code:
+#![deny(ferrocene::unvalidated)]
+#![crate_type = "lib"]
+struct Unvalidated;
+impl Clone for Unvalidated {
+fn clone(&self) -> Self { Unvalidated }
+}
+#[ferrocene::prevalidated]
+fn uninstantiated_generic<T: Clone>(x: T) {
+x.clone(); //~ ERROR unvalidated
+}
+#[ferrocene::prevalidated]
+pub fn instantiation_reachable() {
+uninstantiated_generic(Unvalidated); //~ NOTE instantiated
+}
+Here, we don't know the type of x on line 11 until we substitute (or in compiler terms, "instantiate") the generic parameter T for the concrete argument Unvalidated. Only then do we see that Unvalidated::clone hasn't been validated.
+To catch this, we implemented a "post-mono" pass that works on MIR. This is reliable and is what we depend on for our certification, but doesn't run on cargo check. You'll only see its diagnostics when you run cargo build (and sometimes even later, if you have a library with public generic functions). It works by starting at the monomorphized roots of the program, and then working its way in along the callgraph, instantiating types as it goes. This allows us to reliably catch all function calls, no matter how deeply nested they are in generic types, even across crate boundaries:
+Documentation
+Previously, we had generated documentation of which parts of core were validated by running rustdoc with special --cfg flags set. This generated two sets of documentation, one with all of core and one with only the items available in a certified core.
+Our new approach is to reuse rustdoc's doc(cfg(…)) feature to note which items are validated and which aren't. This allows us to show both in the same document:
+Future work
+The same approach we use for detecting calls to unvalidated functions should also work for detecting calls which can panic. If requested by a customer 4, we could extend this lint to catch panics within safety-critical code, or within a customer-specified region of code.
+Try it out yourself
+Install Ferrocene
+If you are a Ferrocene customer, installing Ferrocene is as simple as writing a criticalup.toml and running criticalup install:
+manifest-version = 1
+[products.ferrocene]
+release = "nightly-2026-03-20"
+packages = [
+"cargo-${rustc-host}",
+"rustc-${rustc-host}",
+"rust-std-${rustc-host}",
+"rust-src",
+]
+For more information, see the criticalup docs. To become a customer, see ferrocene.dev.
+Ferrocene is open source, so even if you aren't a customer, you can consult our public docs for how to build Ferrocene from source.
+Enable and run the lint
+Consult our public safety-docs.
+What have we learned?
+There are many existing approaches to callgraph analysis, but all of them are limited in one way or another.
+For Ferrocene, the most accurate approach was to write a custom rustc driver which uses a post-monomorphization pass to detect all resolved function calls.
+Callgraph analysis generalizes to things besides certification, such as detecting whether a given snippet of code panics.
+Effect languages also introduce the idea of an "effect handler", which is a runtime function that is called when an effect is used. You can think of this as similar to a catch block in a language with exceptions, or as Rust's global_allocator attribute. Effect handlers don't necessarily need to be paired with an effect system; for example, binding in clojure and parameterize in Racket allow achieving similar things. ↩
+Compilers try hard to be deterministic and often succeed. However, that doesn't mean they're reliable. Optimizations in particular are almost never guaranteed to occur, and will only happen if the code is "simple enough" for the compiler to figure out what's going on. As Aria puts it:
+here's your protip hack for understanding everything compilers do:
+> hey if i can prove this about your program i can do an optimization
+> that's hard but there's lots of cases where the answer is easy
+> when the answer is hard, just don't do the optimization
+↩
+You could imagine a setup where you set #[global_allocator] to a struct that always returns an error, but this only works globally, not for specific regions of the program. Maybe once the Allocator trait is stabilized it will be possible to do this for individual functions. It still won't help with preventing I/O, though. ↩
+Ferrocene has a contract-driven development model, which means that you can pay us to focus on the features that are most important to your company. For more information, reach out to sales. ↩ ↩2
+Every function in Rust has its own unique function type, which is usually displayed in diagnostics as fn() {function_name}. This is one of the reasons that closures all have a unique type and can only be referred to with impl Fn(). ↩
+You might be also interested in these.
+Announcement
+Ferrocene 26.05.0 now available!
+Ferrocene
+Ana
+July 2026
+Read more
+Announcement
+Where to Meet Us in 2026: Events & Conferences
+Events
+Marketing
+Open source
+Jessie
+June 2026
+Read more
+coding
+Query cycles: A compiler murder mystery
+Rust
+Ferrocene
+Jynn
+July 2026
+Read more
+Training
+Rust Experts
+Ferrocene
+Open Source
+Blog
+Github
+LinkedIn
+Mastodon
+Bluesky
+Get in touch
+Imprint
+Privacy policy
+
+=== ROW 129 | f005201 | https://github.com/lapce/lapce | 2023-12-28 | hn-lobsters ===
+Lightning-fast and Powerful Code Editor written in Rust
+
+<h1 align="center">
+  <a href="https://lapce.dev" target="_blank">
+  <img src="extra/images/logo.png" width=200 height=200/><br>
+  Lapce
+  </a>
+</h1>
+
+<h4 align="center">Lightning-fast And Powerful Code Editor</h4>
+
+<div align="center">
+  <a href="https://github.com/lapce/lapce/actions/workflows/ci.yml" target="_blank">
+    <img src="https://github.com/lapce/lapce/actions/workflows/ci.yml/badge.svg" />
+  </a>
+  <a href="https://discord.gg/n8tGJ6Rn6D" target="_blank">
+    <img src="https://img.shields.io/discord/946858761413328946?logo=discord" />
+  </a>
+  <a href="https://docs.lapce.dev" target="_blank">
+      <img src="https://img.shields.io/static/v1?label=Docs&message=docs.lapce.dev&color=blue" alt="Lapce Docs">
+  </a>
+</div>
+<br/>
+
+
+Lapce (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://github.com/lapce/floem). It is designed with [Rope Science](https://xi-editor.io/docs/rope_science_00.html) from the [Xi-Editor](https://github.com/xi-editor/xi-editor), enabling lightning-fast computation, and leverages [wgpu](https://github.com/gfx-rs/wgpu) for rendering. More information about the features of Lapce can be found on the [main website](https://lapce.dev) and user documentation can be found on [GitBook](https://docs.lapce.dev/).
+
+![](https://github.com/lapce/lapce/blob/master/extra/images/screenshot.png?raw=true)
+
+## Features
+
+* Built-in LSP ([Language Server Protocol](https://microsoft.github.io/language-server-protocol/)) support to give you intelligent code features such as: completion, diagnostics and code actions
+* Modal editing support as first class citizen (Vim-like, and toggleable)
+* Built-in remote development support inspired by [VSCode Remote Development](https://code.visualstudio.com/docs/remote/remote-overview). Enjoy the benefits of a "local" experience, and seamlessly gain the full power of a remote system. We also have [Lapdev](https://lap.dev/) which can help manage your remote dev environments. 
+* Plugins can be written in programming languages that can compile to the [WASI](https://wasi.dev/) format (C, Rust, [AssemblyScript](https://www.assemblyscript.org/))
+* Built-in terminal, so you can execute commands in your workspace, without leaving Lapce.
+
+## Installation
+
+You can find pre-built releases for Windows, Linux and macOS [here](https://github.com/lapce/lapce/releases), or [installing with a package manager](docs/installing-with-package-manager.md).
+If you'd like to compile from source, you can find the [guide](docs/building-from-source.md).
+
+## Contributing
+
+<a href="https://ws.lap.dev/#https://github.com/lapce/lapce" target="_blank">
+      <img src="https://lap.dev/images/open-in-lapdev.svg?version=8" alt="Open in Lapdev">
+</a>
+
+[Lapdev](https://lap.dev/), developed by the Lapce team, is a cloud dev env service similar to GitHub Codespaces. By clicking the button above, you'll be taken to a fully set up Lapce dev env where you can browse the code and start developing. All dependencies are pre-installed, so you can get straight to code.
+
+Guidelines for contributing to Lapce can be found in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Feedback & Contact
+
+The most popular place for Lapce developers and users is on the [Discord server](https://discord.gg/n8tGJ6Rn6D).
+
+Or, join the discussion on [Reddit](https://www.reddit.com/r/lapce/) where we are just getting started.
+
+There is also a [Matrix Space](https://matrix.to/#/#lapce-editor:matrix.org), which is linked to the content from the Discord server.
+
+## License
+
+Lapce is released under the Apache License Version 2, which is an open source license. You may contribute to this project, or use the code as you please as long as you adhere to its conditions. You can find a copy of the license text here: [`LICENSE`](LICENSE).
+
+
+=== ROW 131 | f005312 | https://github.com/dani-garcia/vaultwarden | 2024-08-14 | hn-lobsters ===
+Unofficial Bitwarden compatible server written in Rust, formerly known as bitwarden_rs
+
+![Vaultwarden Logo](./resources/vaultwarden-logo-auto.svg)
+
+An alternative server implementation of the Bitwarden Client API, written in Rust and compatible with [official Bitwarden clients](https://bitwarden.com/download/) [[disclaimer](#disclaimer)], perfect for self-hosted deployment where running the official resource-heavy service might not be ideal.
+
+---
+
+[![GitHub Release](https://img.shields.io/github/release/dani-garcia/vaultwarden.svg?style=for-the-badge&logo=vaultwarden&color=005AA4)](https://github.com/dani-garcia/vaultwarden/releases/latest)
+[![ghcr.io Pulls](https://img.shields.io/badge/dynamic/json?style=for-the-badge&logo=github&logoColor=fff&color=005AA4&url=https%3A%2F%2Fipitio.github.io%2Fbackage%2Fdani-garcia%2Fvaultwarden%2Fvaultwarden.json&query=%24.downloads&label=ghcr.io%20pulls&cacheSeconds=14400)](https://github.com/dani-garcia/vaultwarden/pkgs/container/vaultwarden)
+[![Docker Pulls](https://img.shields.io/docker/pulls/vaultwarden/server.svg?style=for-the-badge&logo=docker&logoColor=fff&color=005AA4&label=docker.io%20pulls)](https://hub.docker.com/r/vaultwarden/server)
+[![Quay.io](https://img.shields.io/badge/quay.io-download-005AA4?style=for-the-badge&logo=redhat&cacheSeconds=14400)](https://quay.io/repository/vaultwarden/server) <br>
+[![Contributors](https://img.shields.io/github/contributors-anon/dani-garcia/vaultwarden.svg?style=flat-square&logo=vaultwarden&color=005AA4)](https://github.com/dani-garcia/vaultwarden/graphs/contributors)
+[![Forks](https://img.shields.io/github/forks/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4)](https://github.com/dani-garcia/vaultwarden/network/members)
+[![Stars](https://img.shields.io/github/stars/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4)](https://github.com/dani-garcia/vaultwarden/stargazers)
+[![Issues Open](https://img.shields.io/github/issues/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4&cacheSeconds=300)](https://github.com/dani-garcia/vaultwarden/issues)
+[![Issues Closed](https://img.shields.io/github/issues-closed/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4&cacheSeconds=300)](https://github.com/dani-garcia/vaultwarden/issues?q=is%3Aissue+is%3Aclosed)
+[![AGPL-3.0 Licensed](https://img.shields.io/github/license/dani-garcia/vaultwarden.svg?style=flat-square&logo=vaultwarden&color=944000&cacheSeconds=14400)](https://github.com/dani-garcia/vaultwarden/blob/main/LICENSE.txt) <br>
+[![Dependency Status](https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fdeps.rs%2Frepo%2Fgithub%2Fdani-garcia%2Fvaultwarden%2Fstatus.svg&query=%2F*%5Blocal-name()%3D'svg'%5D%2F*%5Blocal-name()%3D'g'%5D%5B2%5D%2F*%5Blocal-name()%3D'text'%5D%5B4%5D&style=flat-square&logo=rust&label=dependencies&color=005AA4)](https://deps.rs/repo/github/dani-garcia/vaultwarden)
+[![GHA Release](https://img.shields.io/github/actions/workflow/status/dani-garcia/vaultwarden/release.yml?style=flat-square&logo=github&logoColor=fff&label=Release%20Workflow)](https://github.com/dani-garcia/vaultwarden/actions/workflows/release.yml)
+[![GHA Build](https://img.shields.io/github/actions/workflow/status/dani-garcia/vaultwarden/build.yml?style=flat-square&logo=github&logoColor=fff&label=Build%20Workflow)](https://github.com/dani-garcia/vaultwarden/actions/workflows/build.yml) <br>
+[![Matrix Chat](https://img.shields.io/matrix/vaultwarden:matrix.org.svg?style=flat-square&logo=matrix&logoColor=fff&color=953B00&cacheSeconds=14400)](https://matrix.to/#/#vaultwarden:matrix.org)
+[![GitHub Discussions](https://img.shields.io/github/discussions/dani-garcia/vaultwarden?style=flat-square&logo=github&logoColor=fff&color=953B00&cacheSeconds=300)](https://github.com/dani-garcia/vaultwarden/discussions)
+[![Discourse Discussions](https://img.shields.io/discourse/topics?server=https%3A%2F%2Fvaultwarden.discourse.group%2F&style=flat-square&logo=discourse&color=953B00)](https://vaultwarden.discourse.group/)
+
+> [!IMPORTANT]
+> **When using this server, please report any bugs or suggestions directly to us (see [Get in touch](#get-in-touch)), regardless of whatever clients you are using (mobile, desktop, browser...). DO NOT use the official Bitwarden support channels.**
+
+<br>
+
+## Features
+
+A nearly complete implementation of the Bitwarden Client API is provided, including:
+
+ * [Personal Vault](https://bitwarden.com/help/managing-items/)
+ * [Send](https://bitwarden.com/help/about-send/)
+ * [Attachments](https://bitwarden.com/help/attachments/)
+ * [Website icons](https://bitwarden.com/help/website-icons/)
+ * [Personal API Key](https://bitwarden.com/help/personal-api-key/)
+ * [Organizations](https://bitwarden.com/help/getting-started-organizations/)
+   - [Collections](https://bitwarden.com/help/about-collections/),
+     [Password Sharing](https://bitwarden.com/help/sharing/),
+     [Member Roles](https://bitwarden.com/help/user-types-access-control/),
+     [Groups](https://bitwarden.com/help/about-groups/),
+     [Event Logs](https://bitwarden.com/help/event-logs/),
+     [Admin Password Reset](https://bitwarden.com/help/admin-reset/),
+     [Directory Connector](https://bitwarden.com/help/directory-sync/),
+     [Policies](https://bitwarden.com/help/policies/)
+ * [Multi/Two Factor Authentication](https://bitwarden.com/help/bitwarden-field-guide-two-step-login/)
+   - [Authenticator](https://bitwarden.com/help/setup-two-step-login-authenticator/),
+     [Email](https://bitwarden.com/help/setup-two-step-login-email/),
+     [FIDO2 WebAuthn](https://bitwarden.com/help/setup-two-step-login-fido/),
+     [YubiKey](https://bitwarden.com/help/setup-two-step-login-yubikey/),
+     [Duo](https://bitwarden.com/help/setup-two-step-login-duo/)
+ * [Emergency Access](https://bitwarden.com/help/emergency-access/)
+ * [Vaultwarden Admin Backend](https://github.com/dani-garcia/vaultwarden/wiki/Enabling-admin-page)
+ * [Modified Web Vault client](https://github.com/dani-garcia/bw_web_builds) (Bundled within our containers)
+
+<br>
+
+## Usage
+
+> [!IMPORTANT]
+> The web-vault requires the use of HTTPS and a secure context for the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API). <br>
+> That means it will only work if you [enable HTTPS](https://github.com/dani-garcia/vaultwarden/wiki/Enabling-HTTPS). <br>
+> We also suggest to use a [reverse proxy](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples).
+
+The recommended way to install and use Vaultwarden is via our container images which are published to [ghcr.io](https://github.com/dani-garcia/vaultwarden/pkgs/container/vaultwarden), [docker.io](https://hub.docker.com/r/vaultwarden/server) and [quay.io](https://quay.io/repository/vaultwarden/server).
+See [which container image to use](https://github.com/dani-garcia/vaultwarden/wiki/Which-container-image-to-use) for an explanation of the provided tags.
+
+There are also [community driven packages](https://github.com/dani-garcia/vaultwarden/wiki/Third-party-packages) which can be used, but those might be lagging behind the latest version or might deviate in the way Vaultwarden is configured, as described in our [Wiki](https://github.com/dani-garcia/vaultwarden/wiki).
+
+Alternatively, you can also [build Vaultwarden](https://github.com/dani-garcia/vaultwarden/wiki/Building-binary) yourself.
+
+While Vaultwarden is based upon the [Rocket web framework](https://rocket.rs) which has built-in support for TLS our recommendation would be that you setup a reverse proxy (see [proxy examples](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples)).
+
+> [!TIP]
+>**For more detailed examples on how to install, use and configure Vaultwarden you can check our [Wiki](https://github.com/dani-garcia/vaultwarden/wiki).**
+
+### Docker/Podman CLI
+
+Pull the container image and mount a volume from the host for persistent storage.<br>
+You can replace `docker` with `podman` if you prefer to use podman.
+
+```shell
+docker pull vaultwarden/server:latest
+docker run --detach --name vaultwarden \
+  --env DOMAIN="https://vw.domain.tld" \
+  --volume /vw-data/:/data/ \
+  --restart unless-stopped \
+  --publish 127.0.0.1:8000:80 \
+  vaultwarden/server:latest
+```
+
+This will preserve any persistent data under `/vw-data/`, you can adapt the path to whatever suits you.
+
+### Docker Compose
+
+To use Docker compose you need to create a `compose.yaml` which will hold the configuration to run the Vaultwarden container.
+
+```yaml
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    environment:
+      DOMAIN: "https://vw.domain.tld"
+    volumes:
+      - ./vw-data/:/data/
+    ports:
+      - 127.0.0.1:8000:80
+```
+
+<br>
+
+## Get in touch
+
+Have a question, suggestion or need help? Join our community on [Matrix](https://matrix.to/#/#vaultwarden:matrix.org), [GitHub Discussions](https://github.com/dani-garcia/vaultwarden/discussions) or [Discourse Forums](https://vaultwarden.discourse.group/).
+
+Encountered a bug or crash? Please search our issue tracker and discussions to see if it's already been reported. If not, please [start a new discussion](https://github.com/dani-garcia/vaultwarden/discussions) or [create a new issue](https://github.com/dani-garcia/vaultwarden/issues/). Ensure you're using the latest version of Vaultwarden and there aren't any similar issues open or closed!
+
+<br>
+
+## Contributors
+
+Thanks for your contribution to the project!
+
+[![Contributors Count](https://img.shields.io/github/contributors-anon/dani-garcia/vaultwarden?style=for-the-badge&logo=vaultwarden&color=005AA4)](https://github.com/dani-garcia/vaultwarden/graphs/contributors)<br>
+[![Contributors Avatars](https://contributors-img.web.app/image?repo=dani-garcia/vaultwarden)](https://github.com/dani-garcia/vaultwarden/graphs/contributors)
+
+<br>
+
+## Disclaimer
+
+**This project is not associated with [Bitwarden](https://bitwarden.com/) or Bitwarden, Inc.**
+
+However, one of the active maintainers for Vaultwarden is employed by Bitwarden and is allowed to contribute to the project on their own time. These contributions are independent of Bitwarden and are reviewed by other maintainers.
+
+The maintainers work together to set the direction for the project, focusing on serving the self-hosting community, including individuals, families, and small organizations, while ensuring the project's sustainability.
+
+**Please note:** We cannot be held liable for any data loss that may occur while using Vaultwarden. This includes passwords, attachments, and other information handled by the application. We highly recommend performing regular backups of your files and database. However, should you experience data loss, we encourage you to contact us immediately.
+
+<br>
+
+## Bitwarden_RS
+
+This project was known as Bitwarden_RS and has been renamed to separate itself from the official Bitwarden server in the hopes of avoiding confusion and trademark/branding issues.<br>
+Please see [#1642 - v1.21.0 release and project rename to Vaultwarden](https://github.com/dani-garcia/vaultwarden/discussions/1642) for more explanation.
+
+
+=== ROW 132 | f005314 | https://github.com/spring-rs/spring-rs | 2024-08-17 | hn-lobsters ===
+🍃spring-rs is a application framework written in rust inspired by java's spring-boot
+
+<div align="center">
+    <img src="https://raw.githubusercontent.com/summer-rs/summer-rs/refs/heads/master/docs/static/logo-rust.svg" alt="Logo" width="200"/>
+    <h3>summer-rs is application framework written in Rust, inspired by Java's SpringBoot</h3>
+    <p>English ｜ <a href="https://summer-rs.github.io/zh/docs/getting-started/introduction/">中文</a></p>
+    <p>
+        <a href="https://crates.io/crates/summer"><img src="https://img.shields.io/crates/v/summer.svg" alt="crates.io"/></a> <a href="https://docs.rs/summer"><img src="https://docs.rs/summer/badge.svg" alt="Documentation"/></a> <img src="https://img.shields.io/crates/l/summer" alt="Documentation"/>
+    </p>
+</div>
+
+<b>summer-rs</b> is an application framework that emphasizes convention over configuration, inspired by Java's SpringBoot. <b>summer-rs</b> provides an easily extensible plug-in system for integrating excellent projects in the Rust community, such as axum, sqlx, sea-orm, etc.
+
+Compared with SpringBoot in java, summer-rs has higher performance and lower memory usage, allowing you to completely get rid of the bloated JVM and travel light.
+
+## Features
+
+* ⚡️ High performance: Benefiting from the awesome rust language, <b>summer-rs</b> has the ultimate performance comparable to C/C++
+* 🛡️ High security: Compared to C/C++, the Rust language used by <b>summer-rs</b> provides memory safety and thread safety.
+* 🔨 Lightweight: The core code of summer-rs does not exceed 5,000 lines, and the binary size of the release version packaged in rust is also small.
+* 🔧 Easy to use: <b>summer-rs</b> provides a clear and concise API and optional Procedural Macros to simplify development.
+* 🔌 Highly extensible: <b>summer-rs</b> uses a highly extensible plug-in model, and users can customize plug-ins to extend program capabilities.
+* ⚙️ Highly configurable: <b>summer-rs</b> uses toml to configure applications and plug-ins to improve application flexibility.
+
+## Example
+
+**web**
+
+```rust,no_run
+use summer::{auto_config, App};
+use summer_sqlx::{
+    sqlx::{self, Row},
+    ConnectPool, SqlxPlugin
+};
+use summer_web::{get, route};
+use summer_web::{
+    error::Result, extractor::{Path, Component}, handler::TypeRouter, axum::response::IntoResponse, Router,
+    WebConfigurator, WebPlugin,
+};
+use anyhow::Context;
+
+#[auto_config(WebConfigurator)]
+#[tokio::main]
+async fn main() {
+    App::new()
+        .add_plugin(SqlxPlugin)
+        .add_plugin(WebPlugin)
+        .run()
+        .await
+}
+
+#[get("/")]
+async fn hello_world() -> impl IntoResponse {
+    "hello world"
+}
+
+#[route("/hello/{name}", method = "GET", method = "POST")]
+async fn hello(Path(name): Path<String>) -> impl IntoResponse {
+    format!("hello {name}")
+}
+
+#[get("/version")]
+async fn sqlx_request_handler(Component(pool): Component<ConnectPool>) -> Result<String> {
+    let version = sqlx::query("select version() as version")
+        .fetch_one(&pool)
+        .await
+        .context("sqlx query failed")?
+        .get("version");
+    Ok(version)
+}
+```
+
+**job**
+
+```rust,ignore
+use anyhow::Context;
+use summer::{auto_config, App};
+use summer_job::{cron, fix_delay, fix_rate};
+use summer_job::{extractor::Component, JobConfigurator, JobPlugin};
+use summer_sqlx::{
+    sqlx::{self, Row},
+    ConnectPool, SqlxPlugin,
+};
+use std::time::{Duration, SystemTime};
+
+#[auto_config(JobConfigurator)]
+#[tokio::main]
+async fn main() {
+    App::new()
+        .add_plugin(JobPlugin)
+        .add_plugin(SqlxPlugin)
+        .run()
+        .await;
+
+    tokio::time::sleep(Duration::from_secs(100)).await;
+}
+
+#[cron("1/10 * * * * *")]
+async fn cron_job(Component(db): Component<ConnectPool>) {
+    let time: String = sqlx::query("select TO_CHAR(now(),'YYYY-MM-DD HH24:MI:SS') as time")
+        .fetch_one(&db)
+        .await
+        .context("query failed")
+        .unwrap()
+        .get("time");
+    println!("cron scheduled: {:?}", time)
+}
+
+#[fix_delay(5)]
+async fn fix_delay_job() {
+    let now = SystemTime::now();
+    let datetime: sqlx::types::chrono::DateTime<sqlx::types::chrono::Local> = now.into();
+    let formatted_time = datetime.format("%Y-%m-%d %H:%M:%S");
+    println!("fix delay scheduled: {}", formatted_time)
+}
+
+#[fix_rate(5)]
+async fn fix_rate_job() {
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let now = SystemTime::now();
+    let datetime: sqlx::types::chrono::DateTime<sqlx::types::chrono::Local> = now.into();
+    let formatted_time = datetime.format("%Y-%m-%d %H:%M:%S");
+    println!("fix rate scheduled: {}", formatted_time)
+}
+```
+
+## component macros
+
+Add dependencies to your `Cargo.toml`:
+
+```toml
+[dependencies]
+summer = "0.4"
+tokio = { version = "1", features = ["full"] }
+```
+
+**Simple component registration with `#[component]` macro:**
+
+```rust,no_run
+use summer::component;
+use summer::config::Configurable;
+use summer::extractor::Config;
+use summer::plugin::ComponentRegistry;
+use summer::App;
+use serde::Deserialize;
+
+// Define configuration
+#[derive(Clone, Configurable, Deserialize)]
+#[config_prefix = "app"]
+struct AppConfig {
+    name: String,
+}
+
+// Define component
+#[derive(Clone)]
+struct AppService {
+    config: AppConfig,
+}
+
+// Use #[component] macro for automatic registration
+#[component]
+fn app_service(Config(config): Config<AppConfig>) -> AppService {
+    AppService { config }
+}
+
+#[tokio::main]
+async fn main() {
+    // Components are automatically registered
+    let app = App::new().build().await.unwrap();
+    
+    // Get registered component
+    let service = app.get_component::<AppService>().unwrap();
+    println!("App name: {}", service.config.name);
+}
+```
+
+The `#[component]` macro eliminates boilerplate code - no need to manually implement the Plugin trait! [Learn more →](https://summer-rs.github.io/docs/getting-started/component/)
+
+## Supported plugins
+
+| Plugin                | Crate                                                                                                                                                                      | Integrated With                                                               | Description                                      |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------ |
+| `summer-web`            | [![summer-web](https://img.shields.io/crates/v/summer-web.svg)](https://summer-rs.github.io/docs/plugins/summer-web/)                                         | [`axum`](https://github.com/tokio-rs/axum)                                  | Web framework based on Axum                      |
+| `summer-sqlx`           | [![summer-sqlx](https://img.shields.io/crates/v/summer-sqlx.svg)](https://summer-rs.github.io/docs/plugins/summer-sqlx/)                                     | [`sqlx`](https://github.com/launchbadge/sqlx)                               | Async SQL access                                 |
+| `summer-postgres`       | [![summer-postgres](https://img.shields.io/crates/v/summer-postgres.svg)](https://summer-rs.github.io/docs/plugins/summer-postgres/)                     | [`rust-postgres`](https://github.com/sfackler/rust-postgres)                | PostgreSQL client integration                   |
+| `summer-sea-orm`        | [![summer-sea-orm](https://img.shields.io/crates/v/summer-sea-orm.svg)](https://summer-rs.github.io/docs/plugins/summer-sea-orm/)                         | [`sea-orm`](https://www.sea-ql.org/SeaORM/)                                 | ORM support                                      |
+| `summer-redis`          | [![summer-redis](https://img.shields.io/crates/v/summer-redis.svg)](https://summer-rs.github.io/docs/plugins/summer-redis/)                                 | [`redis`](https://github.com/redis-rs/redis-rs)                             | Redis integration                                |
+| `summer-mail`           | [![summer-mail](https://img.shields.io/crates/v/summer-mail.svg)](https://summer-rs.github.io/docs/plugins/summer-mail/)                                     | [`lettre`](https://github.com/lettre/lettre)                                | Email sending                                    |
+| `summer-job`            | [![summer-job](https://img.shields.io/crates/v/summer-job.svg)](https://summer-rs.github.io/docs/plugins/summer-job/)                                         | [`tokio-cron-scheduler`](https://github.com/mvniekerk/tokio-cron-scheduler) | Scheduled jobs / Cron                            |
+| `summer-xxl-job`        | [![summer-xxl-job](https://img.shields.io/crates/v/summer-xxl-job.svg)](https://summer-rs.github.io/docs/plugins/summer-xxl-job/)                           | [`xxljob-sdk-rs`](https://crates.io/crates/xxljob-sdk-rs)                   | Distributed job executor for xxl-job / [ratch-job](https://github.com/ratch-job/ratch-job) |
+| `summer-stream`         | [![summer-stream](https://img.shields.io/crates/v/summer-stream.svg)](https://summer-rs.github.io/docs/plugins/summer-stream/)                             | [`sea-streamer`](https://github.com/SeaQL/sea-streamer)                     | Stream processing (Redis Streams / Kafka)       |
+| `summer-opentelemetry`  | [![summer-opentelemetry](https://img.shields.io/crates/v/summer-opentelemetry.svg)](https://summer-rs.github.io/docs/plugins/summer-opentelemetry/) | [`opentelemetry`](https://github.com/open-telemetry/opentelemetry-rust)     | Logging, metrics, and distributed tracing        |
+| `summer-resilience`     | [![summer-resilience](https://img.shields.io/crates/v/summer-resilience.svg)](https://summer-rs.github.io/docs/plugins/summer-resilience/)             | [`backoff`](https://github.com/ihrwein/backoff)                             | Named retry policies                             |
+| `summer-grpc`           | [![summer-grpc](https://img.shields.io/crates/v/summer-grpc.svg)](https://summer-rs.github.io/docs/plugins/summer-grpc/)                                     | [`tonic`](https://github.com/hyperium/tonic)                                | gRPC services and clients                        |
+| `summer-nacos`          | [![summer-nacos](https://img.shields.io/crates/v/summer-nacos.svg)](https://summer-rs.github.io/docs/plugins/summer-nacos/)                               | [`nacos-sdk`](https://crates.io/crates/nacos-sdk)                           | Nacos / r-nacos configuration and service discovery |
+| `summer-opendal`        | [![summer-opendal](https://img.shields.io/crates/v/summer-opendal.svg)](https://summer-rs.github.io/docs/plugins/summer-opendal/)                         | [`opendal`](https://github.com/apache/opendal)                              | Unified object storage and data access           |
+| `summer-apalis`        | [![summer-apalis](https://img.shields.io/crates/v/summer-apalis.svg)](https://summer-rs.github.io/docs/plugins/summer-apalis/)                         | [`apalis`](https://github.com/apalis-dev/apalis)                              | High-performance background processing library |
+| `summer-sa-token`      | [![summer-sa-token](https://img.shields.io/crates/v/summer-sa-token.svg)](https://summer-rs.github.io/docs/plugins/summer-sa-token/)               | [`sa-token-rust`](https://github.com/click33/sa-token-rust)                   | Sa-Token authentication and authorization      |
+
+## Ecosystem
+
+* ![summer-sqlx-migration-plugin](https://img.shields.io/crates/v/summer-sqlx-migration-plugin.svg) [`summer-sqlx-migration-plugin`](https://github.com/Phosphorus-M/summer-sqlx-migration-plugin)
+* [![Version](https://img.shields.io/open-vsx/v/summer-rs/summer-rs)](https://marketplace.visualstudio.com/items?itemName=summer-rs.summer-rs)[`summer-lsp`](https://github.com/summer-rs/summer-lsp) - IDE support for VSCode / compatible editor with LSP
+* [![JetBrains Plugin](https://img.shields.io/badge/JetBrains-Plugin-orange)](https://plugins.jetbrains.com/plugin/30040-summer-rs) [`intellij-summer-rs`](https://github.com/ouywm/intellij-summer-rs) - IDE support for RustRover / IntelliJ IDEA
+
+[more>>](https://crates.io/crates/summer/reverse_dependencies)
+
+## Project showcase
+
+* [Raline](https://github.com/ralinejs/raline)
+* [AutoWDS](https://github.com/AutoWDS/autowds-backend)
+* [summerrs-admin](https://github.com/ouywm/summerrs-admin)
+
+## Contribution
+
+We also welcome community experts to contribute their own plugins. [Contributing →](https://github.com/summer-rs/summer-rs)
+
+## Help
+
+Click here to view common problems encountered when using `summer-rs` [Help →](https://summer-rs.github.io/docs/help/faq/)
+
+
+=== ROW 134 | f005421 | https://github.com/rhaiscript/rhai | 2025-01-17 | hn-lobsters ===
+Rhai - An embedded scripting language for Rust.
+
+Rhai - Embedded Scripting for Rust
+==================================
+
+![GitHub last commit](https://img.shields.io/github/last-commit/rhaiscript/rhai?logo=github)
+[![Build Status](https://github.com/rhaiscript/rhai/workflows/Build/badge.svg)](https://github.com/rhaiscript/rhai/actions)
+[![Stars](https://img.shields.io/github/stars/rhaiscript/rhai?style=flat&logo=github)](https://github.com/rhaiscript/rhai)
+[![License](https://img.shields.io/crates/l/rhai)](https://github.com/license/rhaiscript/rhai)
+[![crates.io](https://img.shields.io/crates/v/rhai?logo=rust)](https://crates.io/crates/rhai/)
+[![crates.io](https://img.shields.io/crates/d/rhai?logo=rust)](https://crates.io/crates/rhai/)
+[![API Docs](https://docs.rs/rhai/badge.svg?logo=docs-rs)](https://docs.rs/rhai/)
+[![VS Code plugin installs](https://img.shields.io/visual-studio-marketplace/i/rhaiscript.vscode-rhai?logo=visual-studio-code&label=vs%20code)](https://marketplace.visualstudio.com/items?itemName=rhaiscript.vscode-rhai)
+[![JetBrains plugin downloads](https://img.shields.io/jetbrains/plugin/d/30068-rhai-language-support?logo=jetbrains&label=jetbrains)](https://plugins.jetbrains.com/plugin/30068-rhai-language-support)
+[![Sublime Text package downloads](https://img.shields.io/packagecontrol/dt/Rhai.svg?logo=sublime-text&label=sublime%20text)](https://packagecontrol.io/packages/Rhai)
+[![Discord Chat](https://img.shields.io/discord/767611025456889857.svg?logo=discord&label=discord)](https://discord.gg/HquqbYFcZ9)
+[![Reddit Channel](https://img.shields.io/reddit/subreddit-subscribers/Rhai?logo=reddit&label=reddit)](https://www.reddit.com/r/Rhai)
+
+[![Rhai logo](https://rhai.rs/book/images/logo/rhai-banner-transparent-colour.svg)](https://rhai.rs)
+
+Rhai is an embedded scripting language and evaluation engine for Rust that gives a safe and easy way
+to add scripting to any application.
+
+
+Targets and builds
+------------------
+
+* All CPU and O/S targets supported by Rust, including:
+  * WebAssembly (WASM)
+  * `no-std`
+* Minimum Rust version 1.66.0
+
+
+Standard features
+-----------------
+
+* Simple language similar to JavaScript+Rust with [dynamic](https://rhai.rs/book/language/dynamic.html) typing.
+* Fairly efficient evaluation - 1 million iterations in 0.14 sec on a single-core 2.6 GHz Linux VM running [this script](https://github.com/rhaiscript/rhai/blob/main/scripts/speed_test.rhai) by the standard AST walker.
+* [Rhai Grain](https://rhai.rs/book/grain/index.html) bytecodes compiler and VM for even faster evaluation (around 1.8-2x). Enable with the `grain` feature.
+* Tight integration with native Rust [functions](https://rhai.rs/book/rust/functions.html) and [types](https://rhai.rs/book/rust/custom-types.html), including [getters/setters](https://rhai.rs/book/rust/getters-setters.html), [methods](https://rhai.rs/book/rust/methods.html) and [indexers](https://rhai.rs/book/rust/indexers.html).
+* Freely pass Rust values into a script as [variables](https://rhai.rs/book/language/variables.html)/[constants](https://rhai.rs/book/language/constants.html) via an external [`Scope`](https://rhai.rs/book/engine/scope.html) - all clonable Rust types are supported; no need to implement any special trait. Or tap directly into the [variable resolution process](https://rhai.rs/book/engine/var.html).
+* Built-in support for most common [data types](https://rhai.rs/book/language/values-and-types.html) including booleans, [integers](https://rhai.rs/book/language/numbers.html), [floating-point numbers](https://rhai.rs/book/language/numbers.html) (including [`Decimal`](https://crates.io/crates/rust_decimal)), [strings](https://rhai.rs/book/language/strings-chars.html), [Unicode characters](https://rhai.rs/book/language/strings-chars.html), [arrays](https://rhai.rs/book/language/arrays.html) (including packed [byte arrays](https://rhai.rs/book/language/blobs.html)) and [object maps](https://rhai.rs/book/language/object-maps.html).
+* Easily [call a script-defined function](https://rhai.rs/book/engine/call-fn.html) from Rust.
+* Relatively little `unsafe` code (yes there are some for performance reasons).
+* Few dependencies - currently only [`smallvec`](https://crates.io/crates/smallvec), [`thin-vec`](https://crates.io/crates/thin-vec), [`num-traits`](https://crates.io/crates/num-traits), [`once_cell`](https://crates.io/crates/once_cell), [`ahash`](https://crates.io/crates/ahash), [`bitflags`](https://crates.io/crates/bitflags) and [`smartstring`](https://crates.io/crates/smartstring).
+* Re-entrant scripting engine can be made `Send + Sync` (via the `sync` feature).
+* Compile once to [AST](https://rhai.rs/book/engine/compile.html) form for repeated evaluations.
+* Scripts are [optimized](https://rhai.rs/book/engine/optimize) (useful for template-based machine-generated scripts).
+* Easy custom API development via [plugins](https://rhai.rs/book/plugins) system powered by procedural macros.
+* [Function overloading](https://rhai.rs/book/language/overload.html) and [operator overloading](https://rhai.rs/book/rust/operators.html).
+* Dynamic dispatch via [function pointers](https://rhai.rs/book/language/fn-ptr.html) with additional support for [currying](https://rhai.rs/book/language/fn-curry.html).
+* [Closures](https://rhai.rs/book/language/fn-closure.html) (anonymous functions) that can capture shared values.
+* Some syntactic support for [object-oriented programming (OOP)](https://rhai.rs/book/patterns/oop.html).
+* Organize code base with dynamically-loadable [modules](https://rhai.rs/book/language/modules), optionally [overriding the resolution process](https://rhai.rs/book/rust/modules/resolvers.html).
+* Serialization/deserialization support via [serde](https://crates.io/crates/serde) (requires the `serde` feature).
+* Support for [minimal builds](https://rhai.rs/book/start/builds/minimal.html) by excluding unneeded language [features](https://rhai.rs/book/start/features.html).
+* A [debugging](https://rhai.rs/book/engine/debugging) interface.
+
+
+Protected against attacks
+-------------------------
+
+* [_Don't Panic_](https://rhai.rs/book/safety/index.html#dont-panic-guarantee--any-panic-is-a-bug) guarantee - Any panic is a bug. Rhai subscribes to the motto that a library should never panic the host system, and is coded with this in mind.
+* [Sand-boxed](https://rhai.rs/book/safety/sandbox.html) - the scripting engine, if declared immutable, cannot mutate the containing environment unless [explicitly permitted](https://rhai.rs/book/patterns/control.html).
+* Rugged - protected against malicious attacks (such as [stack-overflow](https://rhai.rs/book/safety/max-call-stack.html), [over-sized data](https://rhai.rs/book/safety/max-string-size.html), and [runaway scripts](https://rhai.rs/book/safety/max-operations.html) etc.) that may come from untrusted third-party user-land scripts.
+* Track script evaluation [progress](https://rhai.rs/book/safety/progress.html) and manually terminate a script run.
+* Passes Miri.
+
+
+For those who actually want their own language
+----------------------------------------------
+
+* Use as a [DSL](https://rhai.rs/book/engine/dsl.html).
+* Disable certain [language features](https://rhai.rs/book/engine/options.html#language-features) such as [looping](https://rhai.rs/book/engine/disable-looping.html).
+* Further restrict the language by surgically [disabling keywords and operators](https://rhai.rs/book/engine/disable-keywords.html).
+* Define [custom operators](https://rhai.rs/book/engine/custom-op.html).
+* Extend the language with [custom syntax](https://rhai.rs/book/engine/custom-syntax.html).
+
+
+Example
+-------
+
+The [`scripts`](https://github.com/rhaiscript/rhai/tree/master/scripts) subdirectory contains sample Rhai scripts.
+
+Below is the standard _Fibonacci_ example for scripting languages:
+
+```ts
+// This Rhai script calculates the n-th Fibonacci number using a
+// really dumb algorithm to test the speed of the scripting engine.
+
+const TARGET = 28;
+const REPEAT = 5;
+const ANSWER = 317_811;
+
+fn fib(n) {
+    if n < 2 {
+        n
+    } else {
+        fib(n-1) + fib(n-2)
+    }
+}
+
+print(`Running Fibonacci(${TARGET}) x ${REPEAT} times...`);
+print("Ready... Go!");
+
+let result;
+let now = timestamp();
+
+for n in 0..REPEAT {
+    result = fib(TARGET);
+}
+
+print(`Finished. Run time = ${now.elapsed} seconds.`);
+
+print(`Fibonacci number #${TARGET} = ${result}`);
+
+if result != ANSWER {
+    print(`The answer is WRONG! Should be ${ANSWER}!`);
+}
+```
+
+Project Site
+------------
+
+[`rhai.rs`](https://rhai.rs)
+
+
+Documentation
+-------------
+
+See [_The Rhai Book_](https://rhai.rs/book) for details on the Rhai scripting engine and language.
+
+
+Playground
+----------
+
+An [_Online Playground_](https://rhai.rs/playground) is available with syntax-highlighting editor,
+powered by WebAssembly.
+
+Scripts can be evaluated directly from the editor.
+
+
+License
+-------
+
+Licensed under either of the following, at your choice:
+
+* [Apache License, Version 2.0](https://github.com/rhaiscript/rhai/blob/master/LICENSE-APACHE.txt), or
+* [MIT license](https://github.com/rhaiscript/rhai/blob/master/LICENSE-MIT.txt)
+
+Unless explicitly stated otherwise, any contribution intentionally submitted
+for inclusion in this crate, as defined in the Apache-2.0 license, shall
+be dual-licensed as above, without any additional terms or conditions.
+
+
+=== ROW 135 | f005440 | https://infoworld.com/article/3815535/rust-memory-management-explained.html | 2025-02-12 | hn-lobsters ===
+Rust memory management explained | InfoWorld
+Topics
+Latest
+Newsletters
+Resources
+Buyer’s Guides
+Events
+Search
+Menu
+Topics
+Close
+Analytics
+Artificial Intelligence
+Careers
+Cloud Computing
+Contributor Content
+Data Management
+Databases
+Development Tools
+Devops
+Emerging Technology
+Enterprise Buyer’s Guides
+Generative AI
+IT Leadership
+Java
+JavaScript
+Microsoft .NET
+Open Source
+Programming Languages
+Python
+Security
+Software Development
+Technology Industry
+Back
+Close
+Search
+Topics
+Latest
+Newsletters
+Resources
+Buyer’s Guides
+More
+Features
+Blogs
+BrandPosts
+Videos
+Topics
+Topics
+Analytics
+Artificial Intelligence
+Careers
+Cloud Computing
+Contributor Content
+Data Management
+Databases
+Development Tools
+Devops
+Emerging Technology
+Enterprise Buyer’s Guides
+Generative AI
+IT Leadership
+Java
+JavaScript
+Microsoft .NET
+Open Source
+Programming Languages
+Python
+Security
+Software Development
+Technology Industry
+Home
+Software Development
+Programming Languages
+Rust
+by									Serdar Yegulalp
+Senior Writer
+Rust memory management explained
+how-to
+Feb 12, 20258 mins
+Rust’s ownership and borrowing mechanisms guarantee memory safety at run time. Here’s how to use them in your programs.
+Credit: 															Roman50 / Shutterstock
+The Rust programming language shares many concepts with other languages intended for systems programming. For instance, Rust distinguishes between memory allocated from the stack and memory allocated from the heap. It also ensures that variables declared within a scope are unavailable outside of that scope.
+But Rust implements these behaviors in its own way, with significant implications for how memory management works. Rust uses a variety of ownership metaphors to describe how resources are created, retained, and disposed of during a program’s lifetime. Learning how to work with Rust’s concept of ownership is an important rite of initiation for Rust programmers. This quick guide will help you get started.
+How Rust manages scope
+In C++ and other languages, there’s a rule called RAII: Resource acquisition is initialization. The resources for an object (like memory) are tied to how long it lives in a program. Rust also employs this rule, which prevents resources from being freed more than once, or used after being deallocated.
+In Rust, as in other languages, all objects have a scope, such as the body of a function or a manually declared scope. An object’s scope is the duration for which it’s considered valid. Outside of that scope, the object doesn’t exist—it can’t be referenced, and its memory is automatically disposed of. Anything declared inside a given scope only “lives” as long as that scope does.
+In the following example, data will live throughout main(), including in the inner scope where other_data is declared. But other_data is only available in the smaller scope:
+fn main() {
+let mut data = 1;
+{
+data = 3;
+let mut other_data = 2;
+}
+other_data=4;
+}
+Compiling this code generates the error: cannot find value `other_data` in this scope on the next-to-last line.
+When something falls out of scope, it is not only inaccessible but its memory is automatically freed. What’s more, the compiler tracks the availability of an object through the course of a program, so attempting to access something after it has fallen out of scope triggers a compiler error.
+The previous example uses stack-allocated variables for all its variables, which are fixed in size. However, we can use the Box type to get heap-allocated variables, where the size may vary and there is more flexibility of use.
+fn main() {
+let mut data = Box::new(1);
+{
+data = 3;
+let mut other_data = Box::new(2);
+}
+other_data=4;
+}
+This code also won’t compile at first, for the same reasons. But if we modify it slightly, it will:
+fn main() {
+let mut data = Box::new(1);
+{
+data = 3;
+let mut other_data = Box::new(2);
+}
+}
+When this code runs, other_data will be heap-allocated inside the scope, and then automatically deallocated when it leaves. The same goes for data: it will be created inside the scope of the main() function, and automatically disposed of when main() ends. All of this is visible to the compiler at compile time, so mistakes involving scope don’t compile.
+Ownership in Rust
+Rust adds another key idea to scoping and RAII: the notion of ownership. Objects can have only one owner, or live reference, at a time. You can move the ownership of an object between variables, but you can’t refer to an object mutably in more than one place at a time.
+fn main() {
+let a = Box::new(5);
+let _b = a;
+drop(a);
+}
+In this example, we create the value in a with a heap allocation, then assign _b to a. By doing this, we’ve moved the value out of a. So, if we try to manually deallocate the value with drop(), we get an error: use of moved value: `a`. Change the last line to drop(_b), though, and everything is fine. In this case, we’re manipulating that value by way of its current, valid owner.
+A function call can also take ownership of what is passed to it. Consider the following, adapted slightly from Rust By Example:
+fn bye(v:Box<i64>){
+println!("{} is not being returned", v);
+}
+fn main() {
+let a = Box::new(5);
+let _b = a;
+bye(_b);
+drop(_b);
+}
+If we try to compile this code, we’ll get the error use of moved value: `_b` at the line drop(_b).
+When we call bye(), the variable passed into it gets owned by bye(). And since that function never returns a value, that effectively ends the lifetime of _b and deallocates it. The drop() would have no effect even if it were called. On the other hand, this would work:
+fn bye(v:Box<i64>)-> Box<i64>{
+println!("{} is being returned", v);
+return v;
+}
+fn main() {
+let a = Box::new(5);
+let _b = a;
+let mut c = bye(_b);
+c = 32;
+drop(c);
+}
+Here, we return a value from bye(), which is received into an entirely new owner, c. We can then do whatever we like with c, including manually deallocating it.
+Something else we can do when we change owners is alter the mutability rules. An immutable object can be made mutable and vice versa:
+fn bye(v:Box<i64>)-> Box<i64>{
+println!("{} is being returned", v);
+return v;
+}
+fn main() {
+let a = Box::new(5);
+let _b = a;
+let mut c = bye(_b);
+*c = 32;
+drop(c);
+}
+In this example, a and _b are both immutable. But c is mutable, and once it takes ownership of what a and _b referred to, we can reassign it (although we need to refer to it as *c to indicate the value contained in the Box).
+It’s important to note that Rust enforces all of these rules ahead of time. If your code doesn’t honor how borrowing and scope work, it simply won’t compile. This ensures that whole classes of memory bugs will never make it to production. But it requires programmers to be scrupulous about what gets used where.
+Automatic memory management and Rust types
+I’ve mentioned using the Box type to heap-allocate memory and automatically dispose of it when it goes out of scope. Rust has a few other types that can be used to automatically manage memory in different scenarios.
+An Rc, or “reference counted” object, keeps track of how many clones are made of the object. When a new clone is made, the reference count goes up by 1; when a clone goes out of its scope, the reference count drops by 1. When the reference count reaches zero, the Rc object is dropped. Likewise, the Arc type (atomic reference count) allows for this same behavior but across threads.
+A key difference between Rc/Arc and Box is that a Box lets you take exclusive ownership of an object and make changes to it, while Rc and Arc share ownership, so the object can only be read-only.
+The Rc/Arc objects follow the same rules as Boxes: they’re bound by Rust’s larger dictates around lifetimes and borrowing. You can’t use them to perform an end-run around those checks. Do use them when the structure of a program makes it hard to tell how many readers will exist for a given piece of data.
+One more type used for mutable memory management is RefCell. This type lets you also have a single mutable reference or multiple immutable references, but the rules about such use are enforced at run time, not compile time. However, RefCell has two strong rules: it can only be used in single-threaded code, and if you break the borrowing rules of a RefCell at run time, the program will panic. Thus a RefCell works only for a narrow range of problems that are exclusively solved at run time.
+Rust memory management vs. garbage collection
+Even though Rust has types that allow reference counting, a mechanism also used in garbage-collected, memory-managed languages like Java, C#, and Python, Rust is generally not thought of as a “garbage-collected” or “memory-managed” language. Memory management in Rust is planned deterministically at compile time, rather than handled at run time. Even reference-counted types have to obey Rust’s rules for object lifetimes, scoping, and ownership—all of which must be confirmed at compile time.
+Also, languages with runtime memory management generally don’t offer direct control of when or how memory is allocated and reclaimed. They may give you some high-level knobs to tune, but you don’t get the granular control you do in Rust (or C, or C++). It’s a tradeoff: Rust requires more work ahead of time to ensure every use of memory is accounted for, but it pays off at run time with faster execution and more predictable and reliable memory management.
+RustProgramming LanguagesSoftware Development
+by
+Serdar Yegulalp
+Senior Writer
+Follow Serdar Yegulalp on X
+Serdar Yegulalp is a senior writer at InfoWorld. A veteran technology journalist, Serdar has been writing about computers, operating systems, databases, programming, and other information technology topics for 30 years. Before joining InfoWorld in 2013, Serdar wrote for Windows Magazine, InformationWeek, Byte, and a slew of other publications. At InfoWorld, Serdar has covered software development, devops, containerization, machine learning, and artificial intelligence, winning several B2B journalism awards including a 2024 Neal Award and a 2025 Azbee Award for best instructional content and best how-to article, respectively. He currently focuses on software development tools and technologies and major programming languages including Python, Rust, Go, Zig, and Wasm. Tune into his weekly Dev with Serdar videos for programming tips and techniques and close looks at programming libraries and tools.
+More from this author
+feature
+Get started with htmx 4 — dynamic web pages without JavaScript
+Sep 23, 2026 11 mins
+feature
+Supercharge your programming skills with Python superpowers
+Sep 18, 2026 3 mins
+feature
+OpenCV explained: The computer vision library for AI apps
+Sep 14, 2026 6 mins
+reviews
+Hands-on with Unsloth Desktop, for running and training LLMs locally
+Aug 31, 2026 7 mins
+feature
+Go hands-on with Python 3.15
+Aug 21, 2026 3 mins
+news
+DuckDB 2.0 coming this fall with client/server mode
+Aug 18, 2026 2 mins
+reviews
+I ran the tiny Bonsai model on my tiny GPU. Here’s how it performed
+Aug 17, 2026 7 mins
+feature
+The best new features in Python 3.15
+Aug 10, 2026 8 mins
+Show me more
+PopularArticlesVideos
+news
+OpenAI wants you to use AI — but not to train its AI
+By Maxwell Cooter
+Sep 25, 20262 mins
+Artificial IntelligenceCareersIT Training
+news
+Microsoft’s new Copilot unifies enterprise context for code and chat
+By Anirban Ghoshal
+Sep 25, 20267 mins
+Artificial IntelligenceDevelopment ToolsSoftware Development
+news
+Documentation placeholder domain used in ClickFix attacks
+By Maxwell Cooter
+Sep 25, 20262 mins
+CybercrimeMalwareSecurity
+video
+Did OpenAI STEAL Math Researchers' Work? The AI Controversy Explained
+Sep 16, 20266 mins
+Python
+video
+Why Software Developers Are “Token Maxxing” AI—and What It Means for Jobs
+Sep 11, 20267 mins
+Python
+video
+WebAssembly is getting WILD these days
+Sep 3, 20266 mins
+WebAssembly
+About
+About Us
+Advertise
+Contact Us
+Editorial Ethics Policy
+Foundry Careers
+Newsletters
+Reprints
+Add InfoWorld as a Preferred Source in Google Search
+Policies
+Terms of Service
+Privacy Policy
+Cookie Policy
+Copyright Notice
+Member Preferences
+About AdChoices
+Your California Privacy Rights
+Privacy Settings
+More
+News
+Features
+Blogs
+BrandPosts
+Events
+Videos
+Enterprise Buyer’s Guides
+Our Network
+CIO
+Computerworld
+CSO
+Network World
+Facebook
+X
+YouTube
+Google News
+LinkedIn
+© 2026  FoundryCo, Inc. All Rights Reserved.
+
+=== ROW 136 | f005504 | https://github.com/HelixDB/helix-db | 2025-05-13 | hn-lobsters ===
+HelixDB is an OLTP graph database with native vector and full-text search built in Rust on Object Storage.
+
+<div align="center">
+
+<img src="./assets/full_logo_dark.png#gh-dark-mode-only" alt="HelixDB Logo">
+<img src="./assets/full_logo_light.png#gh-light-mode-only" alt="HelixDB Logo">
+
+<b>HelixDB</b>: a graph-vector database for knowledge graphs and AI memory. Built from scratch in Rust.
+<br/><br/>
+<a href="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai" target="_blank"><img src="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai/upvote_embed.svg" alt="Launch YC: HelixDB - The Database for Intelligence" style="margin-left: 12px;"/></a>
+<h3>
+  <a href="https://helix-db.com">website</a> |
+  <a href="https://docs.helix-db.com">docs</a> |
+  <a href="https://discord.gg/2stgMPr5BD">discord</a> |
+  <a href="https://x.com/helixdb">X/twitter</a>
+</h3>
+
+[![Docs](https://img.shields.io/badge/docs-latest-blue)](https://docs.helix-db.com)
+[![Change Log](https://img.shields.io/badge/changelog-latest-blue)](https://docs.helix-db.com/change-log/helixdb)
+[![GitHub Repo stars](https://img.shields.io/github/stars/HelixDB/helix-db)](https://github.com/HelixDB/helix-db/stargazers)
+[![Discord](https://img.shields.io/discord/1354148209005559819?logo=discord)](https://discord.gg/2stgMPr5BD)
+[![LOC](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/HelixDB/helix-db/badge?filter=.rs$,.sh$&style=flat&logoColor=white&label=Lines%20of%20Code)](https://github.com/HelixDB/helix-db)
+
+
+
+</div>
+
+<hr>
+
+HelixDB is a database that makes it easy to build all the components needed for AI applications in a single platform.
+
+You don't need a separate application DB, relational DB, vector DB, graph DB, or application layers to manage the multiple storage locations. HelixDB gives your agents federated access to company data, for memory, company brains, and applications.
+
+Helix primarily operates with a graph + vector data model, but it also supports KV, documents, and relational data.
+
+## Getting Started
+
+### 1. Install the CLI
+
+The Helix CLI runs and manages local instances and talks to Helix Cloud.
+
+macOS and Linux:
+
+```bash
+curl -sSL "https://install.helix-db.com" | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex
+```
+
+Already installed? Update to the latest version with `helix update`.
+
+### 2. The quickest path — `helix chef`
+
+`helix chef` is an interactive, one-shot bootstrapper. It installs the HelixDB query skills and docs MCP, scaffolds a project, starts a local instance, seeds some example data, and writes a `HELIX_CHEF_PROMPT.md`. It detects supported agents in this order: Claude Code → OpenAI Codex → OpenCode → Cursor Agent. When one is available, it can hand off and build a working app — frontend and all — from a one-line description of what you want.
+
+```bash
+helix chef
+```
+
+That's it — no flags. Answer "what do you want to build?" and follow the prompts.
+
+### 3. Manual local setup
+
+If you would rather wire things up yourself, follow the
+[canonical local quickstart](https://docs.helix-db.com/database/helix-db/start-here/quickstart).
+It uses the exact files and `dev` instance generated by the current CLI.
+
+## Writing queries with the SDKs
+
+Queries are authored with the Rust, TypeScript, Go, or Python DSL and sent straight to a running instance through `POST /v2/query` — no build or deploy step. The SDKs produce the same JSON AST. The examples below talk to a local instance on `http://localhost:6969` (the default `helix start dev` port). See the [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview) for the full builder catalog and query wire format.
+
+| SDK | Package | Current release | Setup guide |
+|-----|---------|-----------------|-------------|
+| Rust | [`helix-db`](https://crates.io/crates/helix-db) | `3.0.0` | [Rust setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/rust-project-setup) |
+| TypeScript | [`@helix-db/helix-db`](https://www.npmjs.com/package/@helix-db/helix-db) | `3.1.0` | [TypeScript setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/typescript-project-setup) |
+| Python | [`helix-db`](https://pypi.org/project/helix-db/) | `0.3.4` | [Python setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/python-project-setup) |
+| Go | [`github.com/helixdb/helix-db/sdks/go`](https://pkg.go.dev/github.com/helixdb/helix-db/sdks/go) | `v0.3.1` | [Go setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/go-project-setup) |
+
+### Rust
+
+Install the crate (published as `helix-db`, imported as `helix_db`):
+
+```bash
+cargo init && cargo add helix-db@3.0.0 tokio sonic-rs
+```
+
+Define queries as `#[query]` functions, then run them directly through the client:
+
+```rust
+use helix_db::Client;
+use helix_db::dsl::prelude::*;
+
+#[query]
+pub fn add_user(name: String) -> WriteBatch {
+    write_batch()
+        .var_as(
+            "user",
+            g().add_n("User", vec![("name", name)])
+                .value_map(None::<Vec<String>>),
+        )
+        .returning(["user"])
+}
+
+#[query]
+pub fn get_user(name: String) -> ReadBatch {
+    read_batch()
+        .var_as(
+            "user",
+            g().n_with_label("User")
+                .where_(Predicate::eq("name", name))
+                .value_map(None::<Vec<String>>),
+        )
+        .returning(["user"])
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new(None)?; // defaults to http://localhost:6969
+
+    // add user — #[query] helpers return Result<QueryRequest, QueryError>
+    let new_user: sonic_rs::Value = client
+        .query(add_user("John Doe".to_string())?)
+        .send()
+        .await?;
+    println!("new user: {:#}", sonic_rs::to_string_pretty(&new_user)?);
+
+    // get user
+    let user: sonic_rs::Value = client
+        .query(get_user("John Doe".to_string())?)
+        .send()
+        .await?;
+    println!("user: {:#}", sonic_rs::to_string_pretty(&user)?);
+    Ok(())
+}
+```
+
+### TypeScript
+
+Install the package (Node.js 20+):
+
+```bash
+npm init -y && npm install @helix-db/helix-db@3.1.0
+```
+
+Define your queries as functions, then `POST` them to the running instance:
+
+```ts
+import {
+  Predicate, PropertyInput, PropertyProjection,
+  defineParams, g, param, readBatch, writeBatch,
+} from "@helix-db/helix-db";
+
+const addUserParams = defineParams({ name: param.string() });
+function addUser(p = addUserParams) {
+  return writeBatch()
+    .varAs("user",
+      g().addN("User", { name: PropertyInput.param("name") })
+        .project([PropertyProjection.new("name")]),
+    )
+    .returning(["user"]);
+}
+
+const getUserParams = defineParams({ name: param.string() });
+function getUser(p = getUserParams) {
+  return readBatch()
+    .varAs("user",
+      g().nWithLabel("User")
+        .where(Predicate.eqParam("name", "name"))
+        .project([PropertyProjection.new("name")]),
+    )
+    .returning(["user"]);
+}
+
+const HELIX_URL = "http://localhost:6969/v2/query";
+
+// add user
+const newUser = await fetch(HELIX_URL, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: addUser().toQueryJson(addUserParams, { name: "John Doe" }),
+}).then((r) => r.json());
+console.log("new user:", newUser);
+
+// get user
+const user = await fetch(HELIX_URL, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: getUser().toQueryJson(getUserParams, { name: "John Doe" }),
+}).then((r) => r.json());
+console.log("user:", user);
+```
+
+### Python
+
+Install the published PyPI package:
+
+```bash
+python -m pip install helix-db==0.3.4
+```
+
+Build requests with snake_case builders, then send them with the client:
+
+```python
+from helixdb import Client, Predicate, g, param, define_params, read_batch, write_batch
+
+add_user_params = define_params({"name": param.string()})
+add_user = (
+    write_batch()
+    .var_as("user", g().add_n("User", {"name": add_user_params.name}))
+    .returning(["user"])
+)
+
+get_user_params = define_params({"name": param.string()})
+get_user = (
+    read_batch()
+    .var_as(
+        "user",
+        g()
+        .n_with_label("User")
+        .where(Predicate.eq("name", get_user_params.name))
+        .value_map(["name"]),
+    )
+    .returning(["user"])
+)
+
+client = Client("http://localhost:6969")
+
+new_user = client.query(
+    add_user.to_query_request(add_user_params, {"name": "John Doe"})
+)
+print("new user:", new_user)
+
+user = client.query(
+    get_user.to_query_request(get_user_params, {"name": "John Doe"})
+)
+print("user:", user)
+```
+
+### Go
+
+Install the released Go module:
+
+```bash
+go mod init example.com/my-helix-app
+go get github.com/helixdb/helix-db/sdks/go@v0.3.1
+```
+
+Build a request with ordinary Go functions, then execute it with the client:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    helix "github.com/helixdb/helix-db/sdks/go"
+)
+
+func getUsers() helix.Request {
+    return helix.ReadQuery("get_users").
+        VarAs("users", helix.G().NWithLabel("User").ValueMap("$id", "name")).
+        Returning("users")
+}
+
+func main() {
+    client, err := helix.NewClient("http://localhost:6969")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    var response map[string]any
+    if err := client.Exec(context.Background(), getUsers(), &response); err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(response)
+}
+```
+
+## Version names
+
+- **HelixDB v3** is the current product and SDK generation.
+- **Helix CLI 3.x** is the independently released command-line client. Check its exact version with `helix --version`.
+- **`POST /v2/query`** is the current HTTP wire endpoint. Its `v2` path does not mean HelixDB v2 or CLI v2.
+
+## HelixDB Cloud
+
+HelixDB Cloud is an object-storage-backed deployment with integrated vector and full-text search, full ACID transactions, a single writer with auto-scaling reader nodes, and high availability (3+ gateways and DB nodes). The CLI uses a WorkOS session for Cloud control-plane and brokered query operations:
+
+```bash
+helix auth login
+helix workspace list
+helix project link <project-id> --workspace <workspace-id>
+helix init cloud --database tenant:<tenant-id> --project <project-id> --workspace <workspace-id>
+helix query production --file examples/request.json
+```
+
+Cloud queries go through the authenticated backend broker. Application keys returned by tenant or
+key creation are for direct gateway clients; the CLI displays them once and never stores or uses them.
+
+## Commercial Support
+
+### HelixDB Cloud
+
+HelixDB is available as a distributed, high-availability, managed service. If you're interested in using Helix's managed service, go to [our website](https://helix-db.com/login) to get started or [contact us](mailto:founders@helix-db.com) to talk with a founder.
+
+## Docs & Community
+
+- 📚 [Documentation](https://docs.helix-db.com) · [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview)
+- 💬 [Discord](https://discord.gg/2stgMPr5BD)
+- 🐦 [X / Twitter](https://x.com/helixdb)
+
+---
+
+Just Use Helix.
+
+
+=== ROW 138 | f005668 | https://nmn.sh/blog/2023-10-02-swift-is-the-more-convenient-rust | 2026-01-31 | hn-lobsters ===
+Swift is a more convenient Rust
+BlogTalksMediaProjects
+← all posts
+Swift is a more convenient Rust
+(originally published on my old blog)
+I’ve been learning Rust lately.
+Rust is one of the most loved languages out there, is fast, and has an amazing community. Rust invented the concept of ownership as a solution memory management issues without resorting to something slower like Garbage Collection or Reference Counting. But, when you don’t need to be quite as low level, it gives you utilities such as Rc, Arc and Cow to do reference counting and “clone-on-right” in your code. And, when you need to go lower-level still, you can use the unsafe system and access raw C pointers.
+Rust also has a bunch of awesome features from functional languages like tagged enums, match expressions, first class functions and a powerful type system with generics.
+Rust has an LLVM-based compiler which lets it compile to native code and WASM.
+I’ve also been doing a bit of Swift programming for a couple of years now. And the more I learn Rust, the more I see a reflection of Swift. (I know that Swift stole a lot of ideas from Rust, I’m talking about my own perspective here).
+Swift, too, has awesome features from functional languages like tagged enums, match expressions and first-class functions. It too has a very powerful type system with generics.
+Swift too gives you complete type-safety without a garbage collector. By default, everything is a value type with “copy-on-write” semantics. But when you need extra speed you can opt into an ownership system and “move” values to avoid copying. And if you need to go even lower level, you can use the unsafe system and access raw C pointers.
+Swift has an LLVM-based compiler which lets it compile to native code and WASM.
+#Deja Vu?
+You’re probably feeling like you just read the same paragraphs twice. This is no accident. Swift is extremely similar to Rust and has most of the same feature-set. But there is a very big difference is perspective. If you consider the default memory model, this will start to make a lot of sense.
+#Rust is bottom-up, Swift is top-down.
+Rust is a low-level systems language at heart, but it gives you the tools to go higher level. Swift starts at a high level and gives you the ability to go low-level.
+The most obvious example of this is the memory management model. Swift use value-types by default with copy-on-write semantics. This is the equivalent of using Cow<> for all your values in Rust. But defaults matter. Rust makes it easy to use “moved” and “borrowed” values but requires extra ceremony to use Cow<> values as you need to “unwrap” them .as_mutable() to actually use the value within. Swift makes these Copy-on-Write values easy to use and instead requires extra ceremony to use borrowing and moving instead. Rust is faster by default, Swift is simpler and easier by default.
+#Swift takes Rust’s ideas and hides them in C-like syntax.
+Swift’s syntax is a masterclass in taking awesome functional language concepts and hiding them in C-like syntax to trick the developers into accepting them.
+Consider match statements. This is what a match statement looks like in Rust:
+enum Coin {
+Penny,
+Nickel,
+Dime,
+Quarter,
+}
+fn value_in_cents(coin: Coin) -> u8 {
+match coin {
+Coin::Penny => 1,
+Coin::Nickel => 5,
+Coin::Dime => 10,
+Coin::Quarter => 25,
+}
+}
+Here’s how that same code would be written in Swift:
+enum Coin {
+case penny
+case nickel
+case dime
+case quarter
+}
+func valueInCents(coin: Coin) -> Int {
+switch coin {
+case .penny: 1
+case .nickel: 5
+case .dime: 10
+case .quarter: 25
+}
+}
+Swift doesn’t have a match statement or expression. It has a switch statement that developers are already familiar with. Except this switch statement is actually not a switch statement at all. It’s an expression. It doesn’t “fallthrough”. It does pattern matching. It’s just a match expression with a different name and syntax.
+In fact, Swift treats enums as more than just types and lets you put methods directly on it:
+enum Coin {
+case penny
+case nickel
+case dime
+case quarter
+func valueInCents() -> Int {
+switch self {
+case .penny: 1
+case .nickel: 5
+case .dime: 10
+case .quarter: 25
+}
+}
+}
+#Optional Types
+Rust doesn’t have null, but it does have None. Swift has a nil, but it’s really just a None in hiding. Instead of an Option<T>, Swift let’s you use T?, but the compiler still forces you to check that the value is not nil before you can use it.
+You get the same safety with more convenience since you can do this in Swift with an optional type:
+let val: T?
+if let val {
+// val is now of type `T`.
+}
+Also, you’re not forced to wrap every value with a Some(val) before returning it. The Swift compiler takes care of that for you. A T will transparently be converted into a T? when needed.
+#Error Handling
+Rust doesn’t have try-catch. Instead it has a Result type which contains the success and error types.
+Swift doesn’t have a try-catch either, but it does have do-catch and you have to use try before calling a function that could throw. Again, this is just deception for those developers coming from C-like languages. Swift’s error handling works exactly like Rust’s behind the scenes, but it is hidden in a clever, familiar syntax.
+func usesErrorThrowingFunction() throws {
+let x = try thisFnCanThrow()
+}
+func handlesErrors() {
+do {
+let x = try thisFnCanThrow()
+} catch err {
+// handle the `err` here.
+}
+}
+This is very similar to how Rust let’s you use ? at the end of statements to automatically forward errors, but you don’t have to wrap your success values in Ok().
+#Rust’s compiler catches problems. Swift’s compiler solves some of them
+There are many common problems that Rust’s compiler will catch at compile time and even suggest solutions for you. The example that portrays this well is self-referencing enums.
+Consider an enum that represents a tree. Since, it is a recursive type, Rust will force you to use something like Box<> for referencing a type within itself.
+enum TreeNode<T> {
+Leaf(T),
+Branch(Vec<Box<TreeNode<T>>>),
+}
+(You could also us Box<Vec<TreeNode<T>>> instead)
+This makes the problem explicit and forces you to deal with it directly. Swift is a little more, automatic.
+indirect enum TreeNode<T> {
+case leaf(T)
+case branch([TreeNode<T>])
+}
+Note: that you still have to annotate this enum with the indirect keyword to indicate that it is recursive. But once you’ve done that, Swift’s compiler takes care of the rest. You don’t have to think about Box<> or Rc<>. The values just work normally.
+#Swift is less “pure”
+Swift was designed to replace Objective-C and needed to be able to interface with existing code. So, it has made a lot of pragmatic choices that makes it a much less “pure” and “minimalist” language. Swift is a pretty big language compared to Rust and has many more features built-in. However, Swift is designed with “progressive disclosure” in mind which means that just as soon as you think you’ve learned the language a little more of the iceberg pops out of the water.
+Here are just some of the language features:
+Classes / Inhertence
+async-await
+async-sequences
+actors
+getters and setters
+lazy properties
+property wrappers
+Result Builders (for building tree-like structures. e.g. HTML / SwiftUI)
+#Convenience has its costs
+Swift is a far easier language to get started and productive with. The syntax is more familiar and a lot more is done for you automatically. But this really just makes Swift a higher-level language and it comes with the same tradeoffs.
+By default, a Rust program is much faster than a Swift program. This is because Rust is fast by default, and lets you be slow, while Swift is easy by default and lets you be fast.
+Based on this, I would say both languages have their uses. Rust is better for systems and embedded programming. It’s better for writing compilers and browser engines (Servo) and it’s better for writing entire operating systems.
+Swift is better for writing UI and servers and some parts of compilers and operating systems. Over time I expect to see the overlap get bigger.
+#The “cross-platform” problem
+There is a perception that Swift is only a good language for Apple platforms. While this was once true, this is no longer the case and Swift is becoming increasingly a good cross-platform language. Hell, Swift even compiles to wasm, and the forks made by the swift-wasm team were merged back into Swift core earlier this year.
+Swift on Windows is being used by The Browser Company to share code and bring the Arc browser to windows. Swift on Linux has long been supported by Apple themselves in order to push “Swift on Server”. Apple is directly sponsoring the Swift on Server conference.
+This year Embedded Swift was also announced which is already being used on small devices like the Panic Playdate.
+Swift website has been highlighting many of these projects:
+Swift on Windows
+Embedded Swift
+Gnome apps with Swift on Linux
+Swift on Playdate
+The browser company says that Interoperability is Swift’s super power.
+And the Swift project has been trying make working with Swift a great experience outside of XCode with projects like an open source LSP and funding the the VSCode extension.
+#Swift is not a perfect language.
+Compile times are (like Rust) quite bad. There is some amount of feature creep and the language is larger than it should be. Not all syntax feels familiar. The package ecosystem isn’t nearly as rich as Rust.
+But the “Swift is only for Apple platforms” is an old and tired cliche at this point. Swift is already a cross-platform, ABI-stable language with no GC, automatic Reference Counting and the option to opt into ownership for even more performance. Swift packages increasingly work on Linux. Foundation was ported to Swift, open sourced and made open source. It’s still early days for Swift as a good, more convenient, Rust alternative for cross-platform development, but it is here now. It’s no longer a future to wait for.
+All Rights Reserved.Links
+Swift Language
+@SwiftLang
+·Follow
+Writing Swift with VSCode just got much better.
+- Swift Testing ✅
+- Code coverage ✅
+- Refactoring improvements ✅
+- Easy version switching ✅
+- Code formatting ✅
+All the details here: forums.swift.org/t/improvements… @code
+5:31 PM · Jun 24, 2024
+450
+Reply
+Copy link
+Read 8 replies
+
+=== ROW 142 | f005802 | https://mathstodon.xyz/@andreasthom/117240535270608201 | 2026-09-10 | hn-lobsters ===
+Andreas Thom: "@tristanbuckmaster
+1/3 I wan…" - Mathstodon
+Skip to main contentHotkey 1
+Skip to main navigationHotkey 2
+Recent searches
+No recent searches
+Search options
+Only available when logged in.
+mathstodon.xyz is one of the many independent Mastodon servers you can use to participate in the fediverse.
+A Mastodon instance for maths people. We have LaTeX rendering in the web interface!
+Administered by:
+Christian Lawson-Perfect @christianp
+Server stats:5.8K
+active users
+mathstodon.xyz:
+About mathstodon.xyz
+Status
+Profiles directory
+Privacy policy
+Mastodon:
+About Mastodon
+Get the app
+Keyboard shortcuts
+View source code
+v4.7.2
+Back
+tristanbuckmaster @tristanbuckmaster@mastodon.socialSep 8 *
+Today, Levent Alpöge and I have made public three results: finite-time blowup with smooth forcing for incompressible porous media, for Boussinesq, and for 3d incompressible Euler.
+https://cims.nyu.edu/~tristanb/statement.pdf
+https://cims.nyu.edu/~tristanb/euler.pdf
+https://cims.nyu.edu/~tristanb/ipm.pdf
+https://cims.nyu.edu/~tristanb/boussinesq.pdf
+https://github.com/tristanbuckmaster/fluid_lean
+16
+Andreas Thom @andreasthom@mathstodon.xyz
+@tristanbuckmaster
+1/3 I want to record a number of points that I realized after reading up on the controversy. In fact it recalls an exchange I had with OpenAI after its non-sofic-group announcement. It exposes a serious, unanswered question about whether researchers can trust OpenAI with unpublished mathematics.
+I wrote in an email to Mark Sellke and Sebastien Bubeck shortly after the surprising finding of a non-sofic group using the methods of Kun and myself:
+“Another point is that I and a colleague in Dresden were discussing the expander matching problem and various extensions of the work with Gabor Kun actively over the last months with ChatGPT, so that we are of course curious if that was part of the training data or accessible to the reasoning process. There is a certain (frankly unacceptable) lack of transparency here; and I fear it will damage the communal process of math more than the new AI-generated results will benefit the subject.”
+Mark Sellke’s complete answer was: “Regarding your conversations with ChatGPT: that did not happen.”
+I had explicitly asked about two different things: (1) whether our conversations entered training data, and (2) whether they were accessible to the solving process. The categorical answer now looks as though it addressed only direct access under (2). No such qualification, explanation, or evidence was given. I take this as dishonesty to say the least.
+OpenAI now says in the Buckmaster-Alpöge case that no specific user data was accessed, but adds that it “cannot rule out that de-identified data derived from their usage of our products helped improve our models.”
+Sep 09, 2026, 01:09 PM··Web
+Last edited Sep 09, 01:10 PM
+74 boosts·8 quotes·97 favorites
+Zhouhang Mᴀᴏ @ohThef7ySep 9
+@andreasthom @tristanbuckmaster I would like to check whether you opted out Settings → Data Controls → "Improve the model for everyone"? It is enabled by default — a colleague just reminded me of that. If you opted that out, then it might be illegal for them to say “cannot rule out that de-identified data derived from their usage of our products helped improve our models”.
+0
+707Kat @707Kat@mastodon.artSep 12 *
+@andreasthom @tristanbuckmaster they trained on data of tons of people and their work without their consent to make their models to begin with. Of course you can’t trust them.
+0
+Dave Moskovitz ((())) @davemosk@mastodon.nzSep 10
+@andreasthom @tristanbuckmaster One lesson is do not trust Big Tech with anything you consider confidential. There are many other lessons.
+0
+Paul-Olivier Dehaye @podehayeSep 10
+@andreasthom @tristanbuckmaster
+Hi. Based on past experience, I have several ideas on things you could do, and funds to help make this an extremely impactful project.
+As indicated here, I kind of have been mapping out options for when we reached yesterday's events
+https://www.youtube.com/watch?v=zmWPObxeGT4
+https://www.mathgenealogy.org/id.php?id=100643
+YouTubeCuriosity and digital chaos | Paul-Olivier Dehaye | TEDxGenevaBy TEDx Talks
+0
+p6zem0 @P6zem0@mastodon.com.plSep 10
+@andreasthom @tristanbuckmaster #onlyLocalLLM
+0
+chickendeadfrog @chickendeadfrogSep 9
+@andreasthom @tristanbuckmaster
+I think the answer is that OpenAI doesn't know whether it benefitted from the prompts you gave it to the point where it solved the problem because of it.
+Large AI models are a big black box and interpretability (basically the field of understanding how these models think) is difficult and nowhere near the state where it can tell you these things.
+1
+Breakfastisready नाश्तातैयारहै @BreakfastisreadySep 10
+@chickendeadfrog @andreasthom @tristanbuckmaster
+It's very easy to tell whether or not something went into the training data. It has nothing to do with interpretability.
+1
+Martin Modrák @modrak_m@bayes.clubSep 12
+@Breakfastisready unless you semi-intentionally sabotage any attempt at record keeping to provide plausible deniability whenever it suits you...
+0
+Mastodon
+Live feeds
+About
+Mastodon is the best way to keep up with what's happening.
+Follow anyone across the fediverse and see it all in chronological order. No algorithms, ads, or clickbait in sight.Create accountLogin
+Create accountLogin
+Drag & drop to upload
+
+=== ROW 148 | f007125 | https://darkcoding.net/software/rust-hashmap-notes | 2025-03-30T10:50:00 | individual-blogs ===
+Rust HashMap notes · Graham King
+Graham King
+Solvitas perambulum
+Rust HashMap notes
+March 30, 2025
+software
+optimization
+hashmap
+datastructures
+Rust’s HashMap has a very efficient SIMD-friendly design based on Google’s SwissTable. There is a fantastic CppCon talk about it’s design: Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step. That video is necessary to make sense of what follows.
+I spent some time learning how the Rust implementation works, with the intention to write a deep-dive post about it. I’m ready to admit that’s not going to happen, so here are my raw research notes.
+Edited down to the core pieces Rust’s HashMap looks like this:
+std::collections::HashMap<K, V> {
+base: hashbrown::HashMap<K, V> {
+// Factory for hasher. Default to RandomState who's build_hasher(k1, k2)
+// returns a SipHasher (SipHash 1-3) initialized with two random values.
+hash_builder: impl BuildHasher
+// Key/Value become a tuple, that's what we store in the map's backing memory
+// T = (K, V)
+table: RawTable<T> {
+// non generic part
+table: RawTableInner {
+bucket_mask: usize, // num buckets - 1 (??)
+ctrl: *const T, // the memory - the exciting part!
+growth_left: usize, // inserts left until we have to grow
+items: usize, // len()
+}
+}
+}
+}
+The implementation is also available as a separate crate: hashbrown.
+A traditional compsci-101 hashtable is an array of linked lists. The key is hashed to an index in the array. That’s it’s bucket. Each bucket contains a linked-list. The element is appended to the end. That tends to result in elements spread out in memory which performs poorly on modern processors. That is a chaining table.
+hashbrown is instead a probing table. The elements are contiguous in memory. The values are stored as an array, ending with ctrl bytes. Most of the probing happens in ctrl bytes, so in L1 cache. The probing uses SSE instructions (128 bit SIMD) to compare 16 bytes at once.
+The number of buckets is always a power of 2. HashMap is made up of contiguous groups: 16 control bytes and 16 values is a Group.
+Metadata at start of allocation (ctrl):
+a byte per entry, first bit says if it’s deleted,
+then (if 0) 7 bits of hash code, bottom 7 bits of hash
+if top bit 1 is non-value: empty, deleted or sentinel (for table scan)
+Hash is u64:
+top 57 bits are h1, position in array to start looking at. We start looking in ctrl bytes, often that’s enough.
+bottom 7 bits are h2
+Find (probing):
+hash the value, treat as h1 (top 57 bits) and h2 (bottom 7 bits)
+h1 % size gives us an $index into ctrl bytes. For mod we use & lower bits because num buckets is always a power of 2, so for 4 buckets we keep only the 2 bits, for 8 bucket the lower 3 bits, etc.
+jump to that index compare bottom 7 bits - h2 - of next 16 bytes at once, noting all the matches (usually 1 maybe 2)
+initial index plus offset of byte that matches gives us the slot position (index into regular data part of group)
+compare the full key in that slot with our key (because hash collisions are possible). This is almost always true so we can tell branch predictor to predict branch taken. If we found it that was only 2 memory accesses.
+Growth:
+allocates on first insert (not on ‘new’)
+grows by allocating a new table and inserting all elements from previous table into it (hash+memcopy)
+always one spare bucket at end - a bucket is just entry in array [V] where V is value type
+always a power of 2 (but holds that -1)
+initial allocation is space for 4 entries (3 elements plus the spare)
+next allocation is space for 8 entries
+then next power of 2 above or equal to cap*8 / 7. close enough to “grows by doubling”. 9-14 -> 16, 15->28 -> 32, etc
+Memory layout:
+contiguous block
+data bytes ((size_of + size_of) * NumBuckets), then 16 ctrl bytes, then NumBuckets ctrl bytes? (why the duplication)
+data and ctrl bytes are mirrors of each other. we use positive offset for ctrl bytes, negative offset for data
+[optional padding (so that we align 16?)] d3, d2, d1, d0, c0, c1, c2, c3
+^
+|- RawTableInner.ctrl
+I hope that was useful to you.
+←
+Underrust: How does u128 work on a 64-bit processor?
+April 5, 2025
+CPU Performance Optimization notes
+March 29, 2025
+→
+©
+2026
+Graham King
+

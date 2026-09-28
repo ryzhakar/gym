@@ -1,0 +1,2364 @@
+=== ROW 96 | f003963 | https://github.com/leptos-rs/leptos/pull/4473 | 2025-12-05 | domain-subframes ===
+feat: add support for variable keyed collections in reactive_stores
+
+---
+
+@TiemenSch · 2025-12-05T21:04:20Z:
+This PR adds reworks some of the internals of the reactive_stores to better support arbitrary collections. 
+
+To achieve that I added a `KeyedAccess` trait that replaces the `IndexMut` from the standard library for arbitrary keys and values. I deliberately used different method names than `read` and `get` and friends to not confuse editors when certain trait implementations are missing (and it suggesting the wrong trait to implement).
+
+I added an implementation for common indexed types and added built-in SlotMap support under a feature flag. Sadly, I couldn't make a blanket implementation since `IndexMut` has retracted implementations for some common collection types (BTreeMap etc) which would then become unusable. 
+
+I made the assumption that requiring `Copy` on keys is good practice. This refrains users from using `Clone` keys rather than the cheaper options.
+
+There is one part in particular I think should be thoroughly reviewed, though. It seems to be where the reactive path is retraced to see if all is still well, but the previous implementation still used the resulting `Option<id>` as the final collection key, rather than the `self.key` which was there all along. I'll link it below in a sec. These functions were hard to read with little documentation.
+
+Also, working with the `stores` example was a bit frustrating. There seems to be a disconnect between the "users" in store doing effectively nothing and the actual "todo" items. Therefore, I kept the `stores` example unchanged (to see whether the reworked implementation broke anything or required any changes). I added a Spartan copy of that with some usability changes, but perhaps there could be a full rewrite at some point, where todo's are stored per user (and selected by a dropdown or something).
+
+---
+
+@TiemenSch · 2025-12-05T21:09:10Z:
+Context: https://discordapp.com/channels/1031524867910148188/1444434908490502286
+
+The `serde` support under another feature flag was a byproduct of an earlier attempt and can clearly be removed if deemed an incorrect addition.
+
+---
+
+@TiemenSch · 2025-12-08T18:02:51Z:
+Just ran all commands from CONTRIBUTING and now they are in the green.
+
+---
+
+@gbj · 2025-12-12T20:04:23Z:
+Thanks for the PR!
+
+Unfortunately I've never added any automated tests for keyed store fields, which is unhelpful. And as you note some of these implementation pieces are not very well documented, or documented at all.
+
+At the bottom of this post, I've included a test that works on git main and fails on this PR, and is specifically related to the area you called out for further review -- which should hopefully help avoid regressions and make it easier for me to review things in the future.
+
+The failing portion of the test:
+1. creates a list of 3 todos with `id` field keys 10, 11, and 12, and `AtKeyed` fields for each
+2. swaps the first and last items
+3. updates the item with key 10
+
+This then panics with the error `index out of bounds: the len is 3 but the index is 10`. 
+
+This makes it reasonably clear right away what's going wrong.
+
+The new implementation conflates two different senses of the word "key":
+1) the "key" that allows you to index into a data structure (for a `Vec<_>`, this is a `usize` index; for a `HashMap<SomeKeyType, String>` this is a `SomeKeyType`)
+2) the "key" that is a unique identifier for each entry in a keyed list like the keyed store
+
+The keyed store field implementation is built around meaning #2 of "key." If you have a keyed field that is a `Vec<_>`, the key can be *any* type, not only a `usize`: and referring to that key refers to whichever entry in the `Vec<_>` has that key, *not* the nth entry in the `Vec<_>`. 
+
+The implementation in the PR swaps from the second to the first meaning. It allows a variety of key types, but the key type *must* be the type that's used to access the underlying collection. So for example, for a `Vec<_>` the key now must be a `usize`. More importantly than that, however, it now understands "accessing the field with this key" to mean "indexing into the `Vec<_>` with this key as the index," which is not correct. If we have keys that are larger than the length of the vector, this will panic; if we have keys (like 0, 1, 2) that fit within the vector, it will read from/update the entry that happens to be at the index that has the same value as the key, whether the item with that key is at that index or not.
+
+This actually works fine for map types, where the key *is* the index, and where items can't necessarily move around. But it doesn't work for slice types, where the key is *not* the index, and where items can move to different indices while keeping the same key.
+
+That's what `let index = /* ... */;` was doing: it finds the location *in the slice* of the item with the current key, and uses that to index into the slice, rather than using the *key* to index into the slice.
+
+So then the problem that the new implementation has to deal with is specifically the fact that what is returned here is a `usize` of the location, within the set of new keys, of this particular key.
+
+I actually think this can be fixed without too much trouble, by changing `.keyed()` and `.keyed_mut()` so that they both take an `index: usize` as well. For slice-like types the implementation would use this index; for map-like types it would use the key. This should allow us to support multiple types of data structures while maintaining the correct behavior.
+
+And I would suggest allowing `Clone` key types as well: of course it's not a good idea to clone big objects around, but there are plenty of types like `Arc<str>` that would be reasonable to use as keys and are cheap to clone for this purpose.
+
+```rust
+#[cfg(test)]
+mod tests {
+    use crate::{self as reactive_stores, tests::tick, AtKeyed, Store};
+    use reactive_graph::{
+        effect::Effect,
+        traits::Track,
+        traits::{GetUntracked, ReadUntracked, Set, Write},
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[derive(Debug, Store, Default)]
+    struct Todos {
+        #[store(key: usize = |todo| todo.id)]
+        todos: Vec<Todo>,
+    }
+
+    #[derive(Debug, Store, Default, Clone, PartialEq, Eq)]
+    struct Todo {
+        id: usize,
+        label: String,
+    }
+
+    impl Todo {
+        pub fn new(id: usize, label: impl ToString) -> Self {
+            Self {
+                id,
+                label: label.to_string(),
+            }
+        }
+    }
+
+    fn data() -> Todos {
+        Todos {
+            todos: vec![
+                Todo {
+                    id: 10,
+                    label: "A".to_string(),
+                },
+                Todo {
+                    id: 11,
+                    label: "B".to_string(),
+                },
+                Todo {
+                    id: 12,
+                    label: "C".to_string(),
+                },
+            ],
+        }
+    }
+     
+    #[tokio::test]
+    async fn keyed_fields_can_be_moved() {
+        _ = any_spawner::Executor::init_tokio();
+
+        let store = Store::new(data());
+        assert_eq!(store.read_untracked().todos.len(), 3);
+
+        // create an effect to read from each keyed field
+        let a_count = Arc::new(AtomicUsize::new(0));
+        let b_count = Arc::new(AtomicUsize::new(0));
+        let c_count = Arc::new(AtomicUsize::new(0));
+
+        let a = AtKeyed::new(store.todos(), 10);
+        let b = AtKeyed::new(store.todos(), 11);
+        let c = AtKeyed::new(store.todos(), 12);
+
+        Effect::new_sync({
+            let a_count = Arc::clone(&a_count);
+            move || {
+                a.track();
+                a_count.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        Effect::new_sync({
+            let b_count = Arc::clone(&b_count);
+            move || {
+                b.track();
+                b_count.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        Effect::new_sync({
+            let c_count = Arc::clone(&c_count);
+            move || {
+                c.track();
+                c_count.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        tick().await;
+        assert_eq!(a_count.load(Ordering::Relaxed), 1);
+        assert_eq!(b_count.load(Ordering::Relaxed), 1);
+        assert_eq!(c_count.load(Ordering::Relaxed), 1);
+
+        // writing at a key doesn't notify siblings
+        *a.label().write() = "Foo".into();
+        tick().await;
+        assert_eq!(a_count.load(Ordering::Relaxed), 2);
+        assert_eq!(b_count.load(Ordering::Relaxed), 1);
+        assert_eq!(c_count.load(Ordering::Relaxed), 1);
+
+        // the keys can be reorganized
+        store.todos().write().swap(0, 2);
+        let after = store.todos().get_untracked();
+        assert_eq!(
+            after,
+            vec![Todo::new(12, "C"), Todo::new(11, "B"), Todo::new(10, "Foo")]
+        );
+
+        tick().await;
+        assert_eq!(a_count.load(Ordering::Relaxed), 2);
+        assert_eq!(b_count.load(Ordering::Relaxed), 1);
+        assert_eq!(c_count.load(Ordering::Relaxed), 1);
+
+        // and after we move the keys around, they still update the moved items
+        a.label().set("Bar".into());
+        let after = store.todos().get_untracked();
+        assert_eq!(
+            after,
+            vec![Todo::new(12, "C"), Todo::new(11, "B"), Todo::new(10, "Bar")]
+        );
+        tick().await;
+        assert_eq!(a_count.load(Ordering::Relaxed), 3);
+        assert_eq!(b_count.load(Ordering::Relaxed), 1);
+        assert_eq!(c_count.load(Ordering::Relaxed), 1);
+
+        // we can remove a key and add a new one
+        store.todos().write().pop();
+        store.todos().write().push(Todo::new(13, "New"));
+        let after = store.todos().get_untracked();
+        assert_eq!(
+            after,
+            vec![Todo::new(12, "C"), Todo::new(11, "B"), Todo::new(13, "New")]
+        );
+        tick().await;
+        assert_eq!(a_count.load(Ordering::Relaxed), 3);
+        assert_eq!(b_count.load(Ordering::Relaxed), 1);
+        assert_eq!(c_count.load(Ordering::Relaxed), 1);
+    }
+}
+```
+
+---
+
+@gbj · 2025-12-12T20:16:51Z:
+I've added my test as a regression test in #4483. It would be worth adding a similar test using the alternate key types and keyed structures in your PR: for example, if you add the same test but use a HashMap or BTreeMap it should have the same reactive characteristics.
+
+Re: the example — I would rather keep it to one example, as the slotmap addition duplicates most of the existing one, which means 2x the maintenance burden in order to show you can use keyed store fields with more than one kind of data structure. Happy to accept changes to the `stores` example that exists. To be clear, the `user` field is *intended* to be useless at the moment -- it only exists so there's an example of a sibling field, which is important because it shows that updating a field does not notify all its siblings. 
+
+Here's a diff that shows what I mean about adding an index. I can confirm this fixes this issue in the test.
+
+```diff
+diff --git a/reactive_stores/src/keyed.rs b/reactive_stores/src/keyed.rs
+index 24067e683..d212c33a4 100644
+--- a/reactive_stores/src/keyed.rs
++++ b/reactive_stores/src/keyed.rs
+@@ -29,57 +29,58 @@ pub trait KeyedAccess {
+     /// Collection values.
+     type Value;
+     /// Acquire mutable access to a value.
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value;
++    fn keyed_mut(&mut self, index: usize, key: Self::Key) -> &mut Self::Value;
+     /// Acquire read-only access to a value.
+-    fn keyed(&self, key: Self::Key) -> &Self::Value;
++    fn keyed(&self, index: usize, key: Self::Key) -> &Self::Value;
+ }
+ impl<T> KeyedAccess for VecDeque<T> {
+     type Key = usize;
+     type Value = T;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
+-        self.index(key)
++
++    fn keyed(&self, index: usize, _key: Self::Key) -> &Self::Value {
++        self.index(index)
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
+-        self.index_mut(key)
++    fn keyed_mut(&mut self, index: usize, _key: Self::Key) -> &mut Self::Value {
++        self.index_mut(index)
+     }
+ }
+ impl<T> KeyedAccess for Vec<T> {
+     type Key = usize;
+     type Value = T;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
+-        self.index(key)
++    fn keyed(&self, index: usize, _key: Self::Key) -> &Self::Value {
++        self.index(index)
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
+-        self.index_mut(key)
++    fn keyed_mut(&mut self, index: usize, _key: Self::Key) -> &mut Self::Value {
++        self.index_mut(index)
+     }
+ }
+ impl<T> KeyedAccess for [T] {
+     type Key = usize;
+     type Value = T;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
+-        self.index(key)
++    fn keyed(&self, index: usize, _key: Self::Key) -> &Self::Value {
++        self.index(index)
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
+-        self.index_mut(key)
++    fn keyed_mut(&mut self, index: usize, _key: Self::Key) -> &mut Self::Value {
++        self.index_mut(index)
+     }
+ }
+ impl<K: Ord, V> KeyedAccess for std::collections::BTreeMap<K, V> {
+     type Key = K;
+     type Value = V;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
++    fn keyed(&self, _index: usize, key: Self::Key) -> &Self::Value {
+         self.get(&key).expect("key does not exist")
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
++    fn keyed_mut(&mut self, _index: usize, key: Self::Key) -> &mut Self::Value {
+         self.get_mut(&key).expect("key does not exist")
+     }
+ }
+ impl<K: Hash + Eq, V> KeyedAccess for std::collections::HashMap<K, V> {
+     type Key = K;
+     type Value = V;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
++    fn keyed(&self, _index: usize, key: Self::Key) -> &Self::Value {
+         self.get(&key).expect("key does not exist")
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
++    fn keyed_mut(&mut self, _index: usize, key: Self::Key) -> &mut Self::Value {
+         self.get_mut(&key).expect("key does not exist")
+     }
+ }
+@@ -519,19 +520,20 @@ where
+         let inner_path = self.inner.path().into_iter().collect();
+         let keys = self.inner.keys()?;
+ 
+-        // Check whether the key path still exists.
+-        keys.with_field_keys(
+-            inner_path,
+-            |keys| (keys.get(&self.key), vec![]),
+-            || self.inner.latest_keys(),
+-        )
+-        .flatten()?;
++        let index = keys
++            .with_field_keys(
++                inner_path,
++                |keys| (keys.get(&self.key), vec![]),
++                || self.inner.latest_keys(),
++            )
++            .flatten()
++            .map(|(_, idx)| idx)?;
+ 
+         let key = self.key;
+         Some(MappedMutArc::new(
+             inner,
+-            move |n| n.keyed(key),
+-            move |n| n.keyed_mut(key),
++            move |n| n.keyed(index, key),
++            move |n| n.keyed_mut(index, key),
+         ))
+     }
+ 
+@@ -544,13 +546,14 @@ where
+             .keys()
+             .expect("using keys on a store with no keys");
+ 
+-        // Check whether the key path still exists.
+-        keys.with_field_keys(
+-            inner_path.clone(),
+-            |keys| (keys.get(&self.key), vec![]),
+-            || self.inner.latest_keys(),
+-        )
+-        .flatten()?;
++        let index = keys
++            .with_field_keys(
++                inner_path,
++                |keys| (keys.get(&self.key), vec![]),
++                || self.inner.latest_keys(),
++            )
++            .flatten()
++            .map(|(_, idx)| idx)?;
+ 
+         let triggers = self.triggers_for_current_path();
+         let key = self.key;
+@@ -558,8 +561,8 @@ where
+             triggers,
+             MappedMutArc::new(
+                 inner,
+-                move |n| n.keyed(key),
+-                move |n| n.keyed_mut(key),
++                move |n| n.keyed(index, key),
++                move |n| n.keyed_mut(index, key),
+             ),
+         ))
+     }
+diff --git a/reactive_stores/src/slotmap.rs b/reactive_stores/src/slotmap.rs
+index f8e443120..1446b2513 100644
+--- a/reactive_stores/src/slotmap.rs
++++ b/reactive_stores/src/slotmap.rs
+@@ -4,50 +4,50 @@ use crate::KeyedAccess;
+ impl<K: slotmap::Key, V> KeyedAccess for slotmap::SlotMap<K, V> {
+     type Key = K;
+     type Value = V;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
++    fn keyed(&self, _index: usize, key: Self::Key) -> &Self::Value {
+         self.get(key).expect("key does not exist.")
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
++    fn keyed_mut(&mut self, _index: usize, key: Self::Key) -> &mut Self::Value {
+         self.get_mut(key).expect("key does not exist")
+     }
+ }
+ impl<K: slotmap::Key, V> KeyedAccess for slotmap::DenseSlotMap<K, V> {
+     type Key = K;
+     type Value = V;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
++    fn keyed(&self, _index: usize, key: Self::Key) -> &Self::Value {
+         self.get(key).expect("key does not exist.")
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
++    fn keyed_mut(&mut self, _index: usize, key: Self::Key) -> &mut Self::Value {
+         self.get_mut(key).expect("key does not exist")
+     }
+ }
+ impl<K: slotmap::Key, V> KeyedAccess for slotmap::HopSlotMap<K, V> {
+     type Key = K;
+     type Value = V;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
++    fn keyed(&self, _index: usize, key: Self::Key) -> &Self::Value {
+         self.get(key).expect("key does not exist.")
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
++    fn keyed_mut(&mut self, _index: usize, key: Self::Key) -> &mut Self::Value {
+         self.get_mut(key).expect("key does not exist")
+     }
+ }
+ impl<K: slotmap::Key, V> KeyedAccess for slotmap::SecondaryMap<K, V> {
+     type Key = K;
+     type Value = V;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
++    fn keyed(&self, _index: usize, key: Self::Key) -> &Self::Value {
+         self.get(key).expect("key does not exist.")
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
++    fn keyed_mut(&mut self, _index: usize, key: Self::Key) -> &mut Self::Value {
+         self.get_mut(key).expect("key does not exist")
+     }
+ }
+ impl<K: slotmap::Key, V> KeyedAccess for slotmap::SparseSecondaryMap<K, V> {
+     type Key = K;
+     type Value = V;
+-    fn keyed(&self, key: Self::Key) -> &Self::Value {
++    fn keyed(&self, _index: usize, key: Self::Key) -> &Self::Value {
+         self.get(key).expect("key does not exist.")
+     }
+-    fn keyed_mut(&mut self, key: Self::Key) -> &mut Self::Value {
++    fn keyed_mut(&mut self, _index: usize, key: Self::Key) -> &mut Self::Value {
+         self.get_mut(key).expect("key does not exist")
+     }
+ }
+```
+
+---
+
+@TiemenSch · 2025-12-13T14:29:26Z:
+Thanks a bunch for the review, insight, test, and patch! I have some free time tomorrow to take a look at the example. 
+
+---
+
+@TiemenSch · 2025-12-15T10:52:42Z:
+edit: just saw that you moved `reactive_stores` a bit on main as well.
+
+Meanwhile I tried replicating the test for a slotmap example, but it seems the "moving keys around" doesn't really have an equivalent implementation for slotmaps or most other map types. 
+
+How would you suggest we proceed?
+
+---
+
+@gbj · 2025-12-15T13:59:33Z:
+> it seems the "moving keys around" doesn't really have an equivalent implementation for slotmaps or most other map types.
+> 
+> How would you suggest we proceed?
+
+My suggestion would be that you add an equivalent test for map-like types that removes the irrelevant parts of the test (moving things within a slice) but ensures that the behavior is correct in the relevant ways (for example, if you create a BTreeMap with items with keys 1, 3, 5, take keyed access to each of those fields, modify them, add keys 2 and 4, modify them, remove 3, does it all look the way it should? Basically come up with some scenario of a series of arbitrary changes and ensure that things notify when they should and that the state of the whole thing is correct. Whatever you think makes sense.)
+
+---
+
+@TiemenSch · 2025-12-15T16:44:54Z:
+Something like this?
+
+---
+
+@TiemenSch · 2025-12-18T12:22:26Z:
+Would you say this PR needs to update the stores example? What data should be kept as a `Vec`, and what as a `...Map`? An idea:
+
+- I could add a some map that tracks the users/emails independently of the tasks that displays something if a user is "in store".
+- I can also refrain from adding or changing any example for now, such that we cover this in a separate more well-thought out PR.
+
+Alternatively or additionally, I can add some additional paragraphs to the documentation as well. I was thinking of:
+
+- Snippet showcasing the use of arbitrarily keyed collection types.
+- Use of `AtKeyed::new(...)` for specific object access in collection fields.
+
+But those could be separate PRs.
+
+---
+
+@gbj · 2025-12-19T15:54:32Z:
+Copying thoughts on the examples from a comment above:
+
+> Re: the example — I would rather keep it to one example, as the slotmap addition duplicates most of the existing one, which means 2x the maintenance burden in order to show you can use keyed store fields with more than one kind of data structure. Happy to accept changes to the stores example that exists. To be clear, the `user` field is intended to be useless at the moment -- it only exists so there's an example of a sibling field, which is important because it shows that updating a field does not notify all its siblings.
+
+Just to expand a little: the `user` field is not intended to be a map between users and their todos, but to be "the currently logged-in user."
+
+I would be fine with adding some other map-like field to the example as a demonstration.
+
+And additions to the docs are always great, either as part of this PR or separately.
+
+Overall: This PR looks like it's in great shape. Thanks so much for your work.
+
+---
+
+@TiemenSch · 2025-12-24T12:59:12Z:
+I tried to rework the example to include some "achievements" per user, which tracks their completed tasks. 
+
+However, during some editing attempts, I found that working with `<For ...>` is somewhat unintuitive at times.
+
+I.e., the syntax gets somewhat confusing/unwieldy and feels superfluous at times:
+
+```rust
+#[derive(Debug, Store, Serialize, Deserialize)]
+struct Todos {
+    user: User,
+    #[store(key: usize = |todo| todo.id)]
+    todos: Vec<Todo>,
+    #[store(key: Arc<String> = |(name, _)| name.clone())]
+    completed: BTreeMap<Arc<String>, (Arc<String>, usize)>,  
+    // Why not `BTreeMap<Arc<String>, usize>`?
+}
+
+#[component]
+fn SomeComponent(store: Store<Todos>) -> impl IntoView {
+  view ! {
+    /// For the key fn we get the value to work with, why not the (key, value) tuple?
+    /// Or a fallback to the key function already in the KeyedSubfield?
+    <For each=move||store.completed() key=|value|value.0.clone() let:value>
+    ...
+    </For>
+  }
+}
+```
+
+With SlotMaps, it's convenient enough to use their `insert_with_key` function to insert an entry for a key type that is `Copy`. For `Clone` types it quickly becomes unwieldy, though. 
+
+---
+
+@gbj · 2025-12-26T13:18:29Z:
+> For the key fn we get the value to work with, why not the (key, value) tuple?
+
+As I understand it, this is because `AtKeyed`'s value is the `KeyedAccess::Value` type, which you've defined as the value for maps. i.e., `.into_iter()` here is the equivalent of `.values()` on most map types, not `.into_iter()` on map types. i.e., this has to do with the `KeyedAccess` implementation, not with `For`.
+
+---
+
+@TiemenSch · 2026-01-03T09:20:52Z:
+Instead of exposing the key as part of the iterator, I tried to see how far I could get by exposing the key using an accessor function on the `AtKeyed` struct itself that is passed into the `key=...`  and `let:...` statement. The idea would be that the key function of the `<For>` would then become trivial such that you can `<For each=move||store.collection() key=|entry|entry.key() let:entry>`
+
+However, I think I might be botching the example at this point, because the reactivity for the "user achievements" that I added is now broken. 
+
+The overall serde JSON works, though, which is leaving me rather puzzled for the moment.
+
+---
+
+@gbj · 2026-01-09T17:59:01Z:
+Hm no you haven't messed up the example actually. This is a question/issue that's popped up in a number of different places , which is: Should writing to a parent field notify the children?
+
+In this case, specifically, the issue is "Should writing to a `KeyedSubfield` notify its `AtKeyed` children?" Because you're tracking `store.completed().at_key(store.user().name().get().into())`, but you're writing to `store.completed()`.
+
+I don't think there's a general solution to this other than data-diffing on all writes to a store field, which we currently do via `.patch()` but not in general. There are two possible approaches:
+
+## Option 1
+Solution: Track the `KeyedSubfield` in each `AtKeyed`, which will yield lots of false positives (effects that re-run when they don't need to) but avoid false negatives (the broken reactivity you see in the example)
+
+The example can be fixed with the following patch, which borrows a `track_field` implementation used for several other types.
+```diff
+diff --git a/reactive_stores/src/keyed.rs b/reactive_stores/src/keyed.rs
+index c2f180ed5..f402a7caf 100644
+--- a/reactive_stores/src/keyed.rs
++++ b/reactive_stores/src/keyed.rs
+@@ -641,6 +641,23 @@ where
+     fn keys(&self) -> Option<KeyMap> {
+         self.inner.keys()
+     }
++
++    fn track_field(&self) {
++        let mut full_path = self.path().into_iter().collect::<StorePath>();
++        let trigger = self.get_trigger(self.path().into_iter().collect());
++        trigger.this.track();
++        trigger.children.track();
++
++        // tracks `this` for all ancestors: i.e., it will track any change that is made
++        // directly to one of its ancestors, but not a change made to a *child* of an ancestor
++        // (which would end up with every subfield tracking its own siblings, because they are
++        // children of its parent)
++        while !full_path.is_empty() {
++            full_path.pop();
++            let inner = self.get_trigger(full_path.clone());
++            inner.this.track();
++        }
++    }
+ }
+
+ impl<Inner, Prev, K, T> DefinedAt for AtKeyed<Inner, Prev, K, T>
+ ```
+
+However, this now leads to test failures:
+```
+failures:
+
+---- keyed::tests::keyed_fields_can_be_moved stdout ----
+
+thread 'keyed::tests::keyed_fields_can_be_moved' (4684942) panicked at reactive_stores/src/keyed.rs:1044:9:
+assertion `left == right` failed
+  left: 3
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+(and some other similar ones)
+
+Looking at that particular test is a good illustration of the issue:
+```rust
+        // the keys can be reorganized
+        store.todos().write().swap(0, 2);
+        let after = store.todos().get_untracked();
+        assert_eq!(
+            after,
+            vec![Todo::new(12, "C"), Todo::new(11, "B"), Todo::new(10, "Foo")]
+        );
+
+        tick().await;
+        assert_eq!(a_count.load(Ordering::Relaxed), 2);
+        assert_eq!(b_count.load(Ordering::Relaxed), 1);
+        assert_eq!(c_count.load(Ordering::Relaxed), 1);
+```
+The patch above will modify these asserts so that they now require 3, 2, 2. i.e., if tracking a keyed field means you also track changes to its parent — *independent* of whether the `.into_iter()` iterator re-runs — then doing something like "rearranging three keyed items in a slice" will now notify each of those keyed items, even though none of their values has changed.
+
+I think this is avoided in some other cases by the fact that the `.into_iter()` implementation does track the parent.
+
+## Option 2
+
+Require that if you're tracking the keyed field, you need to modify the record through that keyed field.
+
+In other words, the following patch to the *example* code *also* fixes the issue, without changing the library code:
+
+```diff
+diff --git a/examples/stores/src/lib.rs b/examples/stores/src/lib.rs
+index 9b93f2d59..c6bf7887e 100644
+--- a/examples/stores/src/lib.rs
++++ b/examples/stores/src/lib.rs
+@@ -213,9 +213,11 @@ fn TodoRow(
+                 status.write().next_step();
+                 if was_undone && status.done() {
+                     let name = store.user().name().get();
+-                    store
+-                        .completed()
+-                        .update(|completed| *completed.entry(name.into()).or_default() += 1)
++                    if store.completed().read().contains_key(&name) {
++                       *store.completed().at_key(name.into()).write() += 1;
++                    } else {
++                       *store.completed().write().entry(name.into()).or_default() += 1;
++                    }
+                 }
+             }>
+                 {move || {
+```
+
+This prevents any "false positives" when modifying the parent, but it requires you to know that you need to update the keyed field.
+
+---
+
+@TiemenSch · 2026-02-04T13:10:55Z:
+Sorry for the lack in activity on this! Do you want to continue on the other PR or what is the best course of action? I might be able to spend some evenings on this the coming week.
+
+Thanks for clarifying the reactivity mechanics. I think it's a delicate balance here. On the one hand, I would expect that fully setting a new value is allowed to trigger all children and it would be OK to have the user patch/update specific fields instead to avoid too many false positives. I think both paths (full replace and pinpoint field updates) absolutely have their merit and should have a clearly defined playbook/convention. 
+
+I took a gander at your keyed patching PR, but need to dive in some further to fully understand the goings-on. It does seem however that the key-diffing could impact performance by quite a bit for large collections? If I'm not mistaken you would have to loop over the entire collection to check whether just one key might have been changed, while the user knew (or could have known) what keys were going to change during their update/patch. 
+
+Would another option be implementing Option 1 (i.e. a parent's trigger notifies children) while making absolutely sure that there is a fine-grained alternative for users if they wish to do so such as Option 2. Option 2 looks like a good candidate to be reworked into a convenience method, though.
+
+Intead of doing a key diff, wouldn't it be more intuitive to either falling back to notifying all children (but not siblings) when doing an update and providing an option for the user to limit the update scope to specific keys of which they know they just changed values)? 
+
+For me as a user it would be intuitive that everything that is part of the mutable/replaced object will get notified, except for when the user supplied a specific key/field in a collection/store through the Leptos API. In that case, that key/those keys and their respective children should be triggered.
+
+It could be an alternative to provide an extra option that does the somewhat heavier diffing in a centralized call for all listeners and does a better (though slightly more expensive) job of triggering for changes only, but that might involve a lot of key diffs and/or PartialEq's for large and/or heavily nested data structures.
+
+---
+
+@gbj · 2026-02-06T17:19:48Z:
+> Sorry for the lack in activity on this!
+
+No worries at all! This has been a big PR and you've been very responsive and patient with me as we've worked through it.
+
+> Do you want to continue on the other PR or what is the best course of action? I might be able to spend some evenings on this the coming week.
+
+Yes, I think this is in great shape and will be happy to merge it. 
+
+> I would expect that fully setting a new value is allowed to trigger all children and it would be OK to have the user patch/update specific fields instead to avoid too many false positives.
+
+> For me as a user it would be intuitive that everything that is part of the mutable/replaced object will get notified
+
+I think your intuition is correct that "false negatives" (broken reactivity) here are worse than "false positives" (notifications that are technically unnecessary). I think going ahead with my Option 1 (making the change in that diff and modifying tests accordingly) is probably the way to go. Make sure that fixes your example and feels right and I think it's fine.
+
+Convenience methods like a keyed/fine-grained `.entry()` equivalent (so, my Option 2) would be great and can be done in separate PRs if desired.
+
+> I took a gander at your keyed patching PR, but need to dive in some further to fully understand the goings-on. It does seem however that the key-diffing could impact performance by quite a bit for large collections? If I'm not mistaken you would have to loop over the entire collection to check whether just one key might have been changed, while the user knew (or could have known) what keys were going to change during their update/patch.
+
+The important thing to know about patching is that it's primarily intended for cases where you do *not* have fine-grained control over the updates, but you want to have fine-grained notifications to the extent possible. So, think of it as "I have gotten new data from the server and am trying to patch the store with it." You don't know which fields may have changed on the server, so the two choices are 1) do no diffing and notify *every* entry in the collection that it has changed, or 2) do the keyed diff and notify *some* entries that they've changed.
+
+The assumption here is that side effects are expensive relative to computation — so that if we have new data coming from the server, we actually *want* to loop over the whole collection in order to check whether just one key has changed, because then we only notify on that one key. (Unless I'm misunderstanding what you mean.)
+
+But if, as you say, the user knew or could have known what keys were going to change, they should use the more direct update methods rather than `.patch()`.
+
+******
+
+tl:dr; let's go with Option 1; if you include that change, update the tests, and are happy with how the example feels at that point, I'll be happy to merge this.
+
+---
+
+@TiemenSch · 2026-02-06T21:40:45Z:
+Added option 1 and updated tests :)
+
+From what I can see the example works as expected now
+
+---
+
+@TiemenSch · 2026-02-12T18:45:13Z:
+Forgot to run the tests with --all-features :nerd_face: 
+
+It should now be in the green!
+
+---
+
+@gbj · 2026-02-15T14:19:51Z:
+Ok, looks like we're all set -- thanks for all your work on this!
+
+---
+
+@TiemenSch · 2025-12-05T21:07:05Z:
+Was this ever supposed return anything other than `Some(self.key)`, if it still is supposed to exist, i.e. `is_some()`?
+
+I interpreted as seeing whether the key is still supposed to exist and it seems to work (and not panic when deleting stuff from collections).
+
+=== ROW 97 | f004160 | https://github.com/probe-rs/probe-rs/pull/3789 | 2026-01-25 | domain-subframes ===
+Add call stack profiling using frame pointer
+
+---
+
+@KingCol13 · 2026-01-25T20:35:34Z:
+Closes #3788
+
+# Summary
+
+Adds the ability to record call stack performance profiles and produce flame graphs like this:
+
+<img width="1919" height="655" alt="image" src="https://github.com/user-attachments/assets/ac44f550-6d57-4d15-8c11-b4ae650b6a2a" />
+(This is a profile of some ethernet benchmark code)
+
+This was recorded and opened with:
+```bash
+probe-rs profile --duration 200 <executing-elf-file> callstack --cores 0 --rate 3 naive-frame-pointer
+samply load probe-rs-profile.json.gz
+```
+this opens the profile in [firefox profiler](https://profiler.firefox.com/) in the browser, using [`samply`](https://crates.io/crates/samply).
+
+The call stacks are found via a frame pointer unwind.
+
+# Tricky points
+
+- Breaking change: current `probe-rs profile` behaviour now behind `probe-rs profile
+  flat`, new functionality behind `probe-rs profile callstack`
+- I wrote machinery to allow halting and profiling multiple cores but then restricted it to only profiling 1 core at a time. Ideally I'd want to stop all the cores simultaneously, as if they are stopped one after the other, then the later stopped cores are likely to be found in synchronisation code, assuming the cores don't operate completely independently. This would mean the profile would be unrepresentative. If there were a method to stop all the cores reasonably simultaneously (i.e. much faster than possible with `Core::halt` called sequentially) then this restriction could be lifted. If this is just not possible then the extra machinery should probably be removed and we commit to only profiling one core at a time.
+- I kept changing my mind between having a `rate` argument and an `interval_ns` argument - I'd be interested in hearing opinions about this. I think `rate` is more human-friendly but less precise.
+- Tested unwinding with (if someone could test the others that would be great! Otherwise I can make these architectures unsupported until someone tests them):
+  - [x] arm32 / Thumb2 (on my pico2)
+  - [ ] aarch64
+  - [ ] risc-v
+  - I started reading about Xtensa with its rotating windows but got scared off from even trying
+- I copied lots of code from `samply-object` and `samply-debugid` [from the samply repo](https://github.com/mstange/samply). These are likely to be released as stand-alone crates.io libraries so the duplicated code can be removed then.
+
+# Other details
+
+I started out with the unwind using DWARF debug info but I ran into some bugs (I think when unwinding from function prologues). This is on [this branch](https://github.com/KingCol13/probe-rs/tree/callstack-profiling-dwarf-debug) (which I will probably force-push to). If I get time I'll try to look into this more, although this may be more work since `probe-rs`'s unwind does more than is needed for this purpose and hence is ~100x slower than this frame pointer unwind.
+
+---
+
+@9names · 2026-01-26T00:36:56Z:
+> I think rate is more human-friendly but less precise
+
+perf and samply both use sample rate (in Hz). I've never felt like this was inadequate when using these tools.
+
+---
+
+@bugadani · 2026-01-26T06:51:55Z:
+The results look very nice!
+
+I would still prefer using the probe-rs-debug unwind for this. FP-based profiling is a bit fragile, and you're implementing logic that already exists (unwinding without debuginfo) which already has some issues. IMHO we should make the current unwinding code faster, that would be generally more helpful for other parts of the codebase as well.
+
+You don't really need to worry about the Xtensa windowed ABI, spill registers before unwinding and everything will be on the stack or in the current register window.
+
+---
+
+@Yatekii · 2026-01-26T13:13:11Z:
+This is very very cool!
+
+---
+
+@KingCol13 · 2026-01-26T19:37:57Z:
+Thank you all for the comments!
+
+> @bugadani  I would still prefer using the probe-rs-debug unwind for this.
+
+Would you be happy with having both frame pointer stack walking and dwarf unwinding methods if there were enough documentation of the fragility of frame pointers? This is how I've designed it, aiming to merge the dwarf method in a future PR. `perf` for example has both methods and it might be good to have a second set of results to compare if the profile looks strange. While more fragile they are a lot simpler, and I think compilers have historically sometimes outputted buggy DWARF CFI entries, although I don't know if this is still a problem.
+
+> FP-based profiling is a bit fragile
+
+The problems I can think of are:
+- Won't work if program not compiled with FP
+- We might miss a frame if we're stopped in a function prologue
+- I think interrupts will show up as "hair" rather than separately
+- Code to bring up second cores might evade my 2 simple stack walk stopping conditions
+
+but are there any others I should be aware of?
+
+> you're implementing logic that already exists
+
+Looking at the existing logic it looks like I'm also doing this _incorrectly_. I'll see if I can get it working using the existing logic instead.
+
+> IMHO we should make the current unwinding code faster, that would be generally more helpful for other parts of the codebase as well.
+
+As someone writing a profiler I can only agree :laughing:. I'd prefer this to be a separate issue though, if possible.
+
+> You don't really need to worry about the Xtensa windowed ABI, spill registers before unwinding and everything will be on the stack or in the current register window.
+
+That's good news, thanks.
+
+---
+
+@bugadani · 2026-01-26T19:58:25Z:
+If you can get this working with code that already lives in probe-rs-debug (with obvious necessary refactors), I'll be one notch happier. I'd be even more happier if this PR worked across the RPC boundary, so that we can maybe even use some of its code in the future for some fun remote debugging features :) (This is a bigger task, but I would be happy if the design didn't require me to rewrite this all in the not too distant future).
+
+I don't mind having two separate methods to collect the traces, that isn't what I really meant with my comment. What I would like to prevent is the parallel implementation of the unwinding-without-debuginfo code that we already have implemented and somewhat battle-tested.
+
+---
+
+@KingCol13 · 2026-02-03T23:43:35Z:
+Sorry I was being slow, let me know if this is what you were thinking of.
+
+I'm not attached to `FrameRecord32` - maybe it's easier just to have `FrameRecord` with `u64`s.
+
+I still don't understand Xtensa enough to know whether this code would work there - I wonder if I need to recover the `a7` register instead.
+
+The RISC-V and Xtensa frame record code are now used in some automated tests, I'd like to write some tests for ARM before this gets merged.
+
+---
+
+@bugadani · 2026-02-04T06:29:11Z:
+> let me know if this is what you were thinking of.
+
+Well, not, but that's all right. What I wanted you to roughly do is to use `ExceptionInterface::unwind_without_debuginfo` and parts of `DebugInfo::unwind_impl` (namely `unwind_program_counter_register` and how it's used). I understand this would do more than you want, but it would be more correct - maybe we can parametrise `unwind_without_debuginfo` to do less?
+
+> I still don't understand Xtensa enough to know whether this code would work there
+
+It likely wouldn't, the return address also encodes the window increment in its upper 2 bits. This means that on ESP32 devices, where the instruction bus is `0x4xxx_xxxx`, and the compiler basically only generates `callx8` instructions without help, almost all return addresses are `0x8xxx_xxxx`. The way you unwind these takes architectural knowledge: you need to mask off the upper two bits, and substitute it with the upper 2 bits from the last PC.
+
+> I wonder if I need to recover the a7 register instead.
+
+a7 depends on `-C force-frame-pointers`, which we currently recommend not to be enabled, because the compiler may or may not end up failing. You can assume that a7 is not the frame pointer.
+
+> I'd like to write some tests for ARM before this gets merged.
+
+You have the option to mark the pull request as draft if you would like to signal that it's not yet ready.
+
+---
+
+@KingCol13 · 2026-02-04T08:43:19Z:
+Thanks for your reply!
+
+>  I understand this would do more than you want
+
+Indeed this is why I've tried to factor out the common functionality - reading (for example) 4 extra bytes adds 6% to the time to take a sample. This is something I'm trying to avoid as leaving the application being profiled paused can change its behaviour and invalidate profiles (I'm testing with a TCP application which is especially bad for this because of window scaling).
+
+> maybe we can parametrise `unwind_without_debuginfo` to do less?
+
+I was looking at this but there were a number of headaches:
+- arm get's the default `ExceptionInterface::unwind_without_debuginfo` implementation, which only calls `unwind_pc_without_debuginfo`, which only mutates the program counter in `unwind_registers` so no further unwinding is possible. It would need a non-default implementation similar to `RiscvExceptionHandler`'s. The doc comment for `calling_frame_registers` sounds like what we want but seems to rely on a layout of the stack specific to when exceptions occur.
+- `RiscvExceptionHandler::unwind_registers` uses the stack pointer - I don't think this is guaranteed to point to the end of a frame record if we pause execution arbitrarily - the stack pointer could be decremented after the prologue which I think would break this. My documentation for `CallstackProfileMethod::NaiveFramePointer` explains that the program must be compiled with `force-frame-pointers=yes` for this method to work so I don't feel bad depending on it.
+- `XtensaExceptionHandler::unwind_registers` uses the stack pointer to unwind - is this always guaranteed to work or could the stack pointer have moved?
+
+It also seems strange naming to have stack walking code depend on `ExceptionInterface` methods - there's no exceptions involved.
+
+I had considered factoring out something like this:
+```rust
+/// Get return address and registers necessary to continue walking stack
+/// `override_fp` allows overriding the value to use for the frame pointer in the unwind
+fn stack_walk(
+  memory: &mut dyn MemoryInterface, registers: &DebugRegisters, override_fp: Option<u64>
+) -> DebugRegisters;
+```
+but I think using this would be messy in both places.
+
+> a7 depends on `-C force-frame-pointers`, which we currently recommend not to be enabled, because the compiler may or may not end up failing. You can assume that a7 is not the frame pointer.
+
+I have told people to set `force-frame-pointers=yes`. The contract with the user I'm aiming for is "you enable frame pointers and I give you simple and reliable callstacks". If the compiler fails then users can fall back to `NaiveDwarf` from my `callstack-profiling-dwarf-debug` branch. If we can get just as reliable stack walking without the frame pointer then I'm happy to make an exception (although this is a bit confusing given the method is called `NaiveFramePointer`).
+
+If frame pointer stack walking does not make sense on Xtensa then maybe I should leave it unimplemented and work on providing debug unwind profiling for this platform instead.
+
+---
+
+@bugadani · 2026-02-04T16:29:23Z:
+> I was looking at this but there were a number of headaches:
+
+OK let's try this method, then. However, you should still work through `unwind_program_counter_register` to make sense of the return address.
+
+> XtensaExceptionHandler::unwind_registers uses the stack pointer to unwind - is this always guaranteed to work or could the stack pointer have moved?
+
+You can subtract from the stack pointer, but that's not an issue if you spill the registers before unwinding. The way this works is that the previous frame's stack pointer is saved right below the current stack pointer, so spilling registers ensures that the return address is at SP-16 and the frame pointer is at SP-12.
+
+I don't know what happens if you spill registers, unwind stack, take sample, then continue and the code decrements the stack pointer. Probably it'll crash the program, but I guess we'll have to check. 🤔
+
+---
+
+@KingCol13 · 2026-02-05T21:58:58Z:
+> you should still work through `unwind_program_counter_register` to make sense of the return address.
+
+I've done this, it also fixes the symbolication of the first 2 called functions in my flamegraph - `__cortex_m_rt_main` now resolves correctly:
+
+<img width="1916" height="656" alt="image" src="https://github.com/user-attachments/assets/bbbf65a5-75fe-4db3-982a-db061a5d4f9f" />
+(apparently firefox profiler has dark mode as of yesterday :))
+
+The code now spills the registers on Xtensa, hopefully this gives it a chance at working.
+
+> I don't know what happens if you spill registers, unwind stack, take sample, then continue and the code decrements the stack pointer. Probably it'll crash the program, but I guess we'll have to check. 🤔
+
+I'd be interested in what happens. If it does crash is there a way to reset things to how we found them?
+
+The next things I want to do are:
+- add some tests, especially for `frame_pointer_unwind`
+- revert changes to `unwind_without_debuginfo` and move functions to `frame_pointer.rs` - `XtensaExceptionHandler` reads the next bytes after the frame record anyway, `RiscvExceptionHandler` has a TODO to do something similar and I don't think the code reuse is worth bloating the crate's public API. Let me know if you disagree though.
+- try to clean up `frame_pointer.rs` a bit
+
+---
+
+@bugadani · 2026-02-05T22:07:28Z:
+> I'd be interested in what happens. If it does crash is there a way to reset things to how we found them?
+
+TBH I probably just had a brainfart :) As long as we don't modify windowstart/windowbase, spilling doesn't actually flush the register window, so it shouldn't cause an issue. Not too long ago we've been spilling registers every single time probe-rs halted the CPU, and it wasn't unstable, just sloooooow. Oh yeah, spilling registers takes ~6-8ms for some reason, which may be an issue for this feature, but let's file that under niche problems of a niche architecture.
+
+---
+
+@KingCol13 · 2026-02-08T22:07:29Z:
+This is nearly ready. There's stack walking tests using the core dumps for arm32, riscv32 and Xtensa. It'd be nice to get a core dump and test for aarch64 but I don't think this is blocking. There's two other things that I'm not sure about:
+
+- what to do for `cores` argument:
+    - try to halt all cores simultaneously (ideal but I don't know if this is possible)
+    - alternate between cores each sample
+    - change to `core` and restrict to sampling one core at a time
+- whether to add more stopping conditions for the stack walk
+
+I'm separated from my microcontrollers for the next two weeks so can't do any manual tests.
+
+---
+
+@KingCol13 · 2026-02-22T13:54:03Z:
+I'm back and did some testing so I think this is ready for review.
+
+I ended up deciding to alternate between cores to take samples.
+
+---
+
+@bugadani · 2026-02-25T08:42:28Z:
+I've given this a quick try and I'm missing two things:
+- a way to reset the target before starting the profiling
+- a message that would tell me where the result is saved to, I couldn't find the file for a good bit of time :)
+
+It might also be a good idea to not silently overwrite old profiles
+
+---
+
+@KingCol13 · 2026-02-25T23:02:31Z:
+>a way to reset the target before starting the profiling
+
+I had been using `probe-rs reset` but I've added a flag for this:
+```bash
+probe-rs profile --duration 100 <binary> --reset callstack --core 0 --rate 3 naive-frame-pointer
+```
+
+I was getting an error when I attempted to reset core 1 on my raspberry pi pico so I changed it to a warning. Let me know if there's a cleaner way to reset the whole chip.
+
+>a message that would tell me where the result is saved to, I couldn't find the file for a good bit of time :)
+
+Sorry for hiding your file :D, I've added this.
+
+> It might also be a good idea to not silently overwrite old profiles
+
+I had thought about this but couldn't decide on how to handle it - `samply` is a popular tool that also overwrites so I think it's ok without. Perhaps a good partial mitigation would be allowing people to name the file but I don't think it's critical to have.
+
+Thanks again for testing it!
+
+---
+
+@bugadani · 2026-02-26T08:51:24Z:
+> I had thought about this but couldn't decide on how to handle it 
+
+I think a passable strategy is to save the profile with the timestamp in the filename, either by default, or only for the second file and later.
+
+---
+
+@KingCol13 · 2026-02-26T18:56:23Z:
+> I think a passable strategy is to save the profile with the timestamp in the filename, either by default, or only for the second file and later.
+
+This is better then anything I had considered but I still have a preference for overwriting. Currently I don't have to edit the commands from my history to quickly display the new profile. I rename the file if I know I want to keep it. This also matches `samply`'s behaviour which I couldn't find anyone complaining about. Would you be happy to accept the current behaviour?
+
+---
+
+@bugadani · 2026-02-26T19:02:56Z:
+> Currently I don't have to edit the commands
+
+Implement saving so that the first one doesn't have the timestamp, and `rm` the old file in your command first - problem solved ;)
+
+> Would you be happy to accept the current behaviour?
+
+If you don't like any of my ideas, sure :)
+
+---
+
+@KingCol13 · 2026-02-26T19:18:47Z:
+> If you don't like any of my ideas, sure :)
+
+I'm happy to be outvoted and for this to be changed later on but for now I still prefer how it is at the moment (also saves me adding lines of code and having to `rm` profiles - I'm very lazy :) ).
+
+---
+
+@KingCol13 · 2026-02-26T19:24:47Z:
+Thank you very much for the reviews!
+
+---
+
+@d3d9 · 2026-07-31T14:46:03Z:
+I really wanted to try this feature out but I keep getting `Error: error: the following required argument was not provided: reset`, even if I add the, probably optional, argument it doesn't help. I've tried various combinations of arguments and based it all on the docs/example commands.. What could I be missing?
+
+`$ probe-rs --version`: `probe-rs 0.32.0 (git commit: crates.io)`
+
+---
+
+@KingCol13 · 2026-07-31T17:37:02Z:
+> I really wanted to try this feature out but I keep getting `Error: error: the following required argument was not provided: reset`, even if I add the, probably optional, argument it doesn't help. I've tried various combinations of arguments and based it all on the docs/example commands.. What could I be missing?
+> 
+> `$ probe-rs --version`: `probe-rs 0.32.0 (git commit: crates.io)`
+
+I can reproduce this but I do not understand the cause of this bug yet. I think it should work if you try building commit c81ce40.
+
+---
+
+@Yatekii · 2026-07-31T19:37:49Z:
+The error is misleading. It's some awkwardness with clap flattening of arguments. The culprit is https://github.com/probe-rs/probe-rs/pull/4006/changes.
+
+=== ROW 98 | f004166 | https://blog.cloudflare.com/serverless-matrix-homeserver-workers | 2026-01-27 | domain-subframes ===
+Building a serverless, post-quantum Matrix homeserver | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+This Post is Available in
+繁體中文
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+Cloudflare WorkersCloudflare Workers KVD1+9Show 9 more tags
+12 TagsShow 12 tags
+Post Tags
+Cloudflare WorkersCloudflare Workers KVD1Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+Cloudflare WorkersCloudflare Workers KVD1Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+January 27, 2026
+Building a serverless, post-quantum Matrix homeserver
+Nick Kuntz
+9 minute readCOPY URL
+This post is also available in 繁體中文 and 简体中文.
+* This post was updated at 11:45 a.m. Pacific time to clarify that the use case described here is a proof of concept and a personal project. Some sections have been updated for clarity.
+Matrix is the gold standard for decentralized, end-to-end encrypted communication. It powers government messaging systems, open-source communities, and privacy-focused organizations worldwide.
+For the individual developer, however, the appeal is often closer to home: bridging fragmented chat networks (like Discord and Slack) into a single inbox, or simply ensuring your conversation history lives on infrastructure you control. Functionally, Matrix operates as a decentralized, eventually consistent state machine. Instead of a central server pushing updates, homeservers exchange signed JSON events over HTTP, using a conflict resolution algorithm to merge these streams into a unified view of the room's history.
+But there is a "tax" to running it. Traditionally, operating a Matrix homeserver has meant accepting a heavy operational burden. You have to provision virtual private servers (VPS), tune PostgreSQL for heavy write loads, manage Redis for caching, configure reverse proxies, and handle rotation for TLS certificates. It’s a stateful, heavy beast that demands to be fed time and money, whether you’re using it a lot or a little.
+We wanted to see if we could eliminate that tax entirely.
+Spoiler: We could. In this post, we’ll explain how we ported a Matrix homeserver to Cloudflare Workers. The resulting proof of concept is a serverless architecture where operations disappear, costs scale to zero when idle, and every connection is protected by post-quantum cryptography by default. You can view the source code and deploy your own instance directly from Github.
+From Synapse to Workers
+Our starting point was Synapse, the Python-based reference Matrix homeserver designed for traditional deployments. PostgreSQL for persistence, Redis for caching, filesystem for media.
+Porting it to Workers meant questioning every storage assumption we’d taken for granted.
+The challenge was storage. Traditional homeservers assume strong consistency via a central SQL database. Cloudflare Durable Objects offers a powerful alternative. This primitive gives us the strong consistency and atomicity required for Matrix state resolution, while still allowing the application to run at the edge.
+We ported the core Matrix protocol logic — event authorization, room state resolution, cryptographic verification — in TypeScript using the Hono framework. D1 replaces PostgreSQL, KV replaces Redis, R2 replaces the filesystem, and Durable Objects handle real-time coordination.
+Here’s how the mapping worked out:
+From monolith to serverless
+Moving to Cloudflare Workers brings several advantages for a developer: simple deployment, lower costs, low latency, and built-in security.
+Easy deployment: A traditional Matrix deployment requires server provisioning, PostgreSQL administration, Redis cluster management, TLS certificate renewal, load balancer configuration, monitoring infrastructure, and on-call rotations.
+With Workers, deployment is simply: wrangler deploy. Workers handles TLS, load balancing, DDoS protection, and global distribution.
+Usage-based costs: Traditional homeservers cost money whether anyone is using them or not. Workers pricing is request-based, so you pay when you’re using it, but costs drop to near zero when everyone’s asleep.
+Lower latency globally: A traditional Matrix homeserver in us-east-1 adds 200ms+ latency for users in Asia or Europe. Workers, meanwhile, run in 300+ locations worldwide. When a user in Tokyo sends a message, the Worker executes in Tokyo.
+Built-in security: Matrix homeservers can be high-value targets: They handle encrypted communications, store message history, and authenticate users. Traditional deployments require careful hardening: firewall configuration, rate limiting, DDoS mitigation, WAF rules, IP reputation filtering.
+Workers provide all of this by default.
+Post-quantum protection
+Cloudflare deployed post-quantum hybrid key agreement across all TLS 1.3 connections in October 2022. Every connection to our Worker automatically negotiates X25519MLKEM768 — a hybrid combining classical X25519 with ML-KEM, the post-quantum algorithm standardized by NIST.
+Classical cryptography relies on mathematical problems that are hard for traditional computers but trivial for quantum computers running Shor’s algorithm. ML-KEM is based on lattice problems that remain hard even for quantum computers. The hybrid approach means both algorithms must fail for the connection to be compromised.
+Following a message through the system
+Understanding where encryption happens matters for security architecture. When someone sends a message through our homeserver, here’s the actual path:
+The sender’s client takes the plaintext message and encrypts it with Megolm — Matrix’s end-to-end encryption. This encrypted payload then gets wrapped in TLS for transport. On Cloudflare, that TLS connection uses X25519MLKEM768, making it quantum-resistant.
+The Worker terminates TLS, but what it receives is still encrypted — the Megolm ciphertext. We store that ciphertext in D1, index it by room and timestamp, and deliver it to recipients. But we never see the plaintext. The message “Hello, world” exists only on the sender’s device and the recipient’s device.
+When the recipient syncs, the process reverses. They receive the encrypted payload over another quantum-resistant TLS connection, then decrypt locally with their Megolm session keys.
+Two layers, independent protection
+This protects via two encryption layers that operate independently:
+The transport layer (TLS) protects data in transit. It’s encrypted at the client and decrypted at the Cloudflare edge. With X25519MLKEM768, this layer is now post-quantum.
+The application layer (Megolm E2EE) protects message content. It’s encrypted on the sender’s device and decrypted only on recipient devices. This uses classical Curve25519 cryptography.
+Who sees what
+Any Matrix homeserver operator — whether running Synapse on a VPS or this implementation on Workers — can see metadata: which rooms exist, who’s in them, when messages were sent. But no one in the infrastructure chain can see the message content, because the E2EE payload is encrypted on sender devices before it ever hits the network. Cloudflare terminates TLS and passes requests to your Worker, but both see only Megolm ciphertext. Media in encrypted rooms is encrypted client-side before upload, and private keys never leave user devices.
+What traditional deployments would need
+Achieving post-quantum TLS on a traditional Matrix deployment would require upgrading OpenSSL or BoringSSL to a version supporting ML-KEM, configuring cipher suite preferences correctly, testing client compatibility across all Matrix apps, monitoring for TLS negotiation failures, staying current as PQC standards evolve, and handling clients that don’t support PQC gracefully.
+With Workers, it’s automatic. Chrome, Firefox, and Edge all support X25519MLKEM768. Mobile apps using platform TLS stacks inherit this support. The security posture improves as Cloudflare’s PQC deployment expands — no action required on our part.
+The storage architecture that made it work
+The key insight from porting Tuwunel was that different data needs different consistency guarantees. We use each Cloudflare primitive for what it does best.
+D1 for the data model
+D1 stores everything that needs to survive restarts and support queries: users, rooms, events, device keys. Over 25 tables covering the full Matrix data model.
+CREATE TABLE events (
+event_id TEXT PRIMARY KEY,
+room_id TEXT NOT NULL,
+sender TEXT NOT NULL,
+event_type TEXT NOT NULL,
+state_key TEXT,
+content TEXT NOT NULL,
+origin_server_ts INTEGER NOT NULL,
+depth INTEGER NOT NULL
+);
+D1’s SQLite foundation meant we could port Tuwunel’s queries with minimal changes. Joins, indexes, and aggregations work as expected.
+We learned one hard lesson: D1’s eventual consistency breaks foreign key constraints. A write to rooms might not be visible when a subsequent write to events checks the foreign key. We removed all foreign keys and enforce referential integrity in application code.
+KV for ephemeral state
+OAuth authorization codes live for 10 minutes, while refresh tokens last for a session.
+// Store OAuth code with 10-minute TTL
+kv.put(&format!("oauth_code:{}", code), &token_data)?
+.expiration_ttl(600)
+.execute()
+.await?;
+KV’s global distribution means OAuth flows work fast regardless of where users are located.
+R2 for media
+Matrix media maps directly to R2, so you can upload an image, get back a content-addressed URL – and egress is free.
+Durable Objects for atomicity
+Some operations can’t tolerate eventual consistency. When a client claims a one-time encryption key, that key must be atomically removed. If two clients claim the same key, encrypted session establishment fails.
+Durable Objects provide single-threaded, strongly consistent storage:
+#[durable_object]
+pub struct UserKeysObject {
+state: State,
+env: Env,
+}
+impl UserKeysObject {
+async fn claim_otk(&self, algorithm: &str) -> Result<Option<Key>> {
+// Atomic within single DO - no race conditions possible
+let mut keys: Vec<Key> = self.state.storage()
+.get("one_time_keys")
+.await
+.ok()
+.flatten()
+.unwrap_or_default();
+if let Some(idx) = keys.iter().position(|k| k.algorithm == algorithm) {
+let key = keys.remove(idx);
+self.state.storage().put("one_time_keys", &keys).await?;
+return Ok(Some(key));
+}
+Ok(None)
+}
+}
+We use UserKeysObject for E2EE key management, RoomObject for real-time room events like typing indicators and read receipts, and UserSyncObject for to-device message queues. The rest flows through D1.
+Complete end-to-end encryption, complete OAuth
+Our implementation supports the full Matrix E2EE stack: device keys, cross-signing keys, one-time keys, fallback keys, key backup, and dehydrated devices.
+Modern Matrix clients use OAuth 2.0/OIDC instead of legacy password flows. We implemented a complete OAuth provider, with dynamic client registration, PKCE authorization, RS256-signed JWT tokens, token refresh with rotation, and standard OIDC discovery endpoints.
+curl https://matrix.example.com/.well-known/openid-configuration
+{
+"issuer": "https://matrix.example.com",
+"authorization_endpoint": "https://matrix.example.com/oauth/authorize",
+"token_endpoint": "https://matrix.example.com/oauth/token",
+"jwks_uri": "https://matrix.example.com/.well-known/jwks.json"
+}
+Point Element or any Matrix client at the domain, and it discovers everything automatically.
+Sliding Sync for mobile
+Traditional Matrix sync transfers megabytes of data on initial connection,  draining mobile battery and data plans.
+Sliding Sync lets clients request exactly what they need. Instead of downloading everything, clients get the 20 most recent rooms with minimal state. As users scroll, they request more ranges. The server tracks position and sends only deltas.
+Combined with edge execution, mobile clients can connect and render their room list in under 500ms, even on slow networks.
+The comparison
+For a homeserver serving a small team:
+Traditional (VPS)
+Workers
+Monthly cost (idle)
+$20-50
+<$1
+Monthly cost (active)
+$20-50
+$3-10
+Global latency
+100-300ms
+20-50ms
+Time to deploy
+Hours
+Seconds
+Maintenance
+Weekly
+None
+DDoS protection
+Additional cost
+Included
+Post-quantum TLS
+Complex setup
+Automatic
+*Based on public rates and metrics published by DigitalOcean, AWS Lightsail, and Linode as of January 15, 2026.
+The economics improve further at scale. Traditional deployments require capacity planning and over-provisioning. Workers scale automatically.
+The future of decentralized protocols
+We started this as an experiment: could Matrix run on Workers? It can—and the approach can work for other stateful protocols, too.
+By mapping traditional stateful components to Cloudflare’s primitives — Postgres to D1, Redis to KV, mutexes to Durable Objects — we can see  that complex applications don't need complex infrastructure. We stripped away the operating system, the database management, and the network configuration, leaving only the application logic and the data itself.
+Workers offers the sovereignty of owning your data, without the burden of owning the infrastructure.
+I have been experimenting with the implementation and am excited for any contributions from others interested in this kind of service.
+Ready to build powerful, real-time applications on Workers? Get started with Cloudflare Workers and explore Durable Objects for your own stateful edge applications. Join our Discord community to connect with other developers building at the edge.
+On this page
+Discuss Online
+Related tags
+Cloudflare WorkersCloudflare Workers KVD1Developer PlatformDevelopersDurable ObjectsEncryptionPost-QuantumR2RustSecurityWebAssembly
+Follow on Social Media
+Cloudflare
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+This Post is Available in
+繁體中文
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 99 | f004367 | https://github.com/yewstack/yew/pull/4046 | 2026-03-05 | domain-subframes ===
+feat: add SSR e2e hydration tests for simple_ssr and ssr_router
+
+---
+
+@Madoshakalaka · 2026-03-05T15:54:42Z:
+Adds end-to-end hydration tests for SSR examples (`simple_ssr`, `ssr_router`) using `wasm-bindgen-test` as the browser test runner. This is a pure-Rust E2E testing approach that requires no non-Rust dependencies like Playwright, Cypress, or Selenium.
+
+(There were a lot of past discussion on e2e frameworks. My impression was that maintainers generally didn't want to introduce them.  e.g. @its-the-shrimp was against introducing more javascript deps, @futursolo slightly favored playwright but was also slightly reluctant on introducing it)
+
+closes #196 (open since 2018).
+
+### New crates
+
+- `tools/ssr-e2e` -- test orchestrator that runs `trunk build`, starts the SSR server, waits for it to become healthy, runs `cargo test` (wasm-bindgen-test) against the server, and tears everything down.
+- `tools/ssr-e2e-harness` -- shared wasm32 library providing test utilities: fetching SSR HTML, injecting it into the wasm-bindgen-test output element, polling helpers, History API push.
+
+
+### Other changes
+
+- CORS headers added to `simple_ssr` (warp) and `ssr_router` (axum) servers so cross-origin fetches from the wasm-bindgen-test browser context succeed.
+- `wasm-bindgen-test` added to workspace dependencies.
+- CI job `ssr_e2e_tests` added to `main-checks.yml` with a matrix over both examples.
+
+### (Not) The only gap
+
+One gap compared to a full E2E framework is screenshot/visual regression testing, which is being addressed upstream in [wasm-bindgen#5014](https://github.com/rustwasm/wasm-bindgen/pull/5014).
+
+---
+
+@Madoshakalaka · 2026-03-05T15:56:52Z:
+@WorldSEnder 🫣
+
+---
+
+@github-actions[bot] · 2026-03-05T16:01:13Z:
+### Size Comparison
+
+<details>
+
+| examples | master (KB) | pull request (KB) | diff (KB) | diff (%) |
+| --- | --- | --- | --- | --- |
+| async_clock | 100.272 | 100.272 | 0 | 0.000% |
+| boids | 168.099 | 168.099 | 0 | 0.000% |
+| communication_child_to_parent | 93.485 | 93.485 | 0 | 0.000% |
+| communication_grandchild_with_grandparent | 105.262 | 105.262 | 0 | 0.000% |
+| communication_grandparent_to_grandchild | 101.610 | 101.610 | 0 | 0.000% |
+| communication_parent_to_child | 90.899 | 90.899 | 0 | 0.000% |
+| contexts | 105.177 | 105.177 | 0 | 0.000% |
+| counter | 86.282 | 86.282 | 0 | 0.000% |
+| counter_functional | 88.276 | 88.276 | 0 | 0.000% |
+| dyn_create_destroy_apps | 90.322 | 90.322 | 0 | 0.000% |
+| file_upload | 99.377 | 99.377 | 0 | 0.000% |
+| function_delayed_input | 94.377 | 94.377 | 0 | 0.000% |
+| function_memory_game | 172.944 | 172.944 | 0 | 0.000% |
+| function_router | 406.599 | 406.599 | 0 | 0.000% |
+| function_todomvc | 164.163 | 164.163 | 0 | 0.000% |
+| futures | 235.191 | 235.191 | 0 | 0.000% |
+| game_of_life | 104.732 | 104.732 | 0 | 0.000% |
+| immutable | 255.891 | 255.891 | 0 | 0.000% |
+| inner_html | 80.803 | 80.803 | 0 | 0.000% |
+| js_callback | 109.401 | 109.401 | 0 | 0.000% |
+| keyed_list | 179.740 | 179.740 | 0 | 0.000% |
+| mount_point | 84.174 | 84.174 | 0 | 0.000% |
+| nested_list | 113.072 | 113.072 | 0 | 0.000% |
+| node_refs | 91.523 | 91.523 | 0 | 0.000% |
+| password_strength | 1729.185 | 1729.185 | 0 | 0.000% |
+| portals | 93.034 | 93.034 | 0 | 0.000% |
+| router | 377.158 | 377.158 | 0 | 0.000% |
+| suspense | 113.502 | 113.502 | 0 | 0.000% |
+| timer | 88.641 | 88.641 | 0 | 0.000% |
+| timer_functional | 98.881 | 98.881 | 0 | 0.000% |
+| todomvc | 142.114 | 142.114 | 0 | 0.000% |
+| two_apps | 86.176 | 86.176 | 0 | 0.000% |
+| web_worker_fib | 136.155 | 136.155 | 0 | 0.000% |
+| web_worker_prime | 187.383 | 187.383 | 0 | 0.000% |
+| webgl | 83.224 | 83.224 | 0 | 0.000% |
+
+</details>
+
+✅ None of the examples has changed their size significantly.
+
+---
+
+@github-actions[bot] · 2026-03-06T04:46:21Z:
+### Benchmark - core
+#### Yew Master
+```
+vnode           fastest       │ slowest       │ median        │ mean          │ samples │ iters
+╰─ vnode_clone  2.049 ns      │ 2.141 ns      │ 2.053 ns      │ 2.056 ns      │ 100     │ 1000000000
+
+```
+#### Pull Request
+```
+vnode           fastest       │ slowest       │ median        │ mean          │ samples │ iters
+╰─ vnode_clone  2.092 ns      │ 3.341 ns      │ 2.093 ns      │ 2.134 ns      │ 100     │ 1000000000
+
+```
+
+
+---
+
+@github-actions[bot] · 2026-03-06T04:46:46Z:
+Visit the preview URL for this PR (updated for commit 3088482):
+
+[https://yew-rs-api--pr4046-e2e-ay5tps8a.web.app](https://yew-rs-api--pr4046-e2e-ay5tps8a.web.app/next/yew)
+
+<sub>(expires Fri, 13 Mar 2026 16:23:05 GMT)</sub>
+
+<sub>🔥 via [Firebase Hosting GitHub Action](https://github.com/siku2/action-hosting-deploy) 🌎</sub>
+
+---
+
+@github-actions[bot] · 2026-03-06T05:01:29Z:
+### Benchmark - SSR
+
+#### Yew Master
+
+<details>
+
+| Benchmark | Round | Min (ms) | Max (ms) | Mean (ms) | Standard Deviation |
+| --- | --- | --- | --- | --- | --- |
+| Baseline | 10 | 310.817 | 311.235 | 310.989 | 0.144 |
+| Hello World | 10 | 481.526 | 507.111 | 496.064 | 9.885 |
+| Function Router | 10 | 32246.059 | 33884.297 | 33280.110 | 490.276 |
+| Concurrent Task | 10 | 1005.986 | 1007.628 | 1006.881 | 0.594 |
+| Many Providers | 10 | 1099.546 | 1180.333 | 1129.062 | 29.792 |
+
+</details>
+
+#### Pull Request
+
+<details>
+
+| Benchmark | Round | Min (ms) | Max (ms) | Mean (ms) | Standard Deviation |
+| --- | --- | --- | --- | --- | --- |
+| Baseline | 10 | 310.796 | 311.375 | 310.947 | 0.174 |
+| Hello World | 10 | 490.376 | 511.084 | 496.255 | 5.968 |
+| Function Router | 10 | 33625.284 | 34657.394 | 34126.774 | 321.626 |
+| Concurrent Task | 10 | 1005.733 | 1007.575 | 1006.833 | 0.590 |
+| Many Providers | 10 | 1092.498 | 1133.747 | 1115.763 | 16.327 |
+
+</details>
+
+
+---
+
+@Madoshakalaka · 2026-03-06T05:19:23Z:
+I think the CI failure is caused by the stablization of the include config key with rust 1.94 today. Addressing in a different PR
+
+---
+
+@WorldSEnder · 2026-03-05T16:32:55Z:
+Is this used somewhere I don't see? Currently not quite getting the point of it. Might also be a little bit more readable as a js snippet.
+
+---
+
+@WorldSEnder · 2026-03-05T16:36:57Z:
+Is [Child.kill](https://doc.rust-lang.org/std/process/struct.Child.html#method.kill) not sufficient for some reason?
+
+---
+
+@WorldSEnder · 2026-03-05T16:38:52Z:
+Any reason for this?
+
+---
+
+@WorldSEnder · 2026-03-05T16:43:16Z:
+These are also not used by the called process. `SERVER_BASE` hard codes the value into the test binaries at the moment.
+
+---
+
+@WorldSEnder · 2026-03-05T16:48:43Z:
+Inherit is the default with `spawn` and `status`. Also below.
+
+---
+
+@WorldSEnder · 2026-03-05T16:52:22Z:
+The current idiom seems to be
+
+```
+    let body_html = fetch_ssr_html(SERVER_BASE, route).await;
+    output_element().set_inner_html(&body_html);
+    push_route(route);
+```
+
+which could just live as one method in this shared dependency
+
+---
+
+@Madoshakalaka · 2026-03-05T17:06:29Z:
+It's anticipating tests to be added in #4027 actually. I was working on 4027 and had tests there, the test has three assertions:
+
+1. Directly visiting a post by its url `post/0` receives a server-rendered page with no extra fetch requests. 
+2. vist the `posts` page first, click on the anchor of posts with the id 0, in-app navigation happens and fetch happens exactly once
+3. the post contents in 1 and 2 match
+
+---
+
+@Madoshakalaka · 2026-03-06T04:44:50Z:
+`Child::kill()` isn't sufficient here because the server command runs through `sh -c "..."`, which produces a process tree:
+
+```
+ssr-e2e
+  └─ sh -c "cargo run -p ssr_router ..."
+       └─ cargo run ...
+            └─ ssr_router_server
+```
+
+`Child::kill()` would only send SIGKILL to `sh`, orphaning `cargo` and the actual server binary (which keeps the port occupied). We use `process_group(0)` at spawn time to put the whole tree in its own process group, then `kill(-pgid, SIGTERM)` to cleanly shut down the entire group.
+
+That said, I've cleaned this up:
+I replaced the `unsafe pre_exec(setpgid)` with the `process_group(0)` API 
+and consolidated into a `shutdown_server(&mut Child)` function that falls back to `Child::start_kill()` on non-Unix and added a comment explaining the rationale
+
+
+---
+
+@Madoshakalaka · 2026-03-06T10:51:45Z:
+good catch, fixed
+
+---
+
+@Madoshakalaka · 2026-03-06T10:51:52Z:
+thanks, fixed
+
+---
+
+@Madoshakalaka · 2026-03-06T10:52:03Z:
+thanks, extracted.
+
+---
+
+@Madoshakalaka · 2026-03-06T16:22:14Z:
+I also switched to using the Performance API in 4027 
+```js
+const fetchCount = performance
+  .getEntriesByType("resource")
+  .filter(e => e.initiatorType === "fetch")
+  .length;
+```
+
+Removed these monkey patch code for this PR.
+
+---
+
+@WorldSEnder · 2026-03-06T17:10:53Z:
+Two small comments here:
+- Ignores the return value without being explicit about as below
+- Technically this races for the pid. The server could exit (crash?) and get replaced by a different process with the same process id which would get the axe. Avoidable only with [nightly API](https://doc.rust-lang.org/std/os/linux/process/trait.ChildExt.html#tymethod.pidfd) though and unlikely to happen since the server is supposed to keep running.
+
+---
+
+@Madoshakalaka · 2026-03-06T17:45:23Z:
+good point. made the first return explicit.
+

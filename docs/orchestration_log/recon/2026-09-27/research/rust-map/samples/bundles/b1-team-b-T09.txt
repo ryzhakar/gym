@@ -1,0 +1,2249 @@
+=== ROW 114 | f004905 | https://forums.swift.org/t/se-0538-disconnected/88361 | 2026-07-17 | domain-subframes ===
+SE-0538: Disconnected
+
+@hborla · 2026-07-17T23:26:09.469Z:
+Hello, Swift community!
+The review of SE-0538: Disconnected begins now and runs through July 31, 2026.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to me as the review manager by email or DM. When contacting the review manager directly, please put "SE-0538" in the subject line.
+Trying it out
+Toolchains with the latest implementation are currently available for macOS and Linux. The Windows toolchain is still building on the implementation PR.
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at:
+swift-evolution/process.md at main · swiftlang/swift-evolution · GitHub
+Thank you,
+Holly Borla
+Review Manager
+
+---
+
+@OneSadCookie · 2026-07-18T08:05:16.582Z:
++1 makes sense. I've been using this type a bit myself as a primitive for implementing higher-level constructs, and it is useful as such (though often let down in current Swift by the lack of support for noncopyable types in other parts of the language and library).
+My only nit is that I don't think take is the correct name for that API. We already have an API named take on Optional, which, importantly, leaves the container intact but empty. And I think we would consider adding e.g. takeAll() to RangeReplaceableCollection, consuming the contents but leaving an empty collection behind. This API does not do that.
+I think we do need a naming scheme for "consume a noncopyable type and return the pieces it's conceptually composed of" — it does keep coming up as a natural design pattern. But perhaps consume or similar is the correct name for it, rather than take.
+
+---
+
+@mattie · 2026-07-18T09:59:27.061Z:
+This type is going to be useful and I'm in favor of it.
+During the pitch, I brought up a concern. The naming of this type moves the mechanisms of region-based isolation into the formal terminology that programmers need to use to understand the concurrency system. Not in a particularly aggressive way. You do not have to think hard about what "disconnected" means to use this. And moreover, this is a fairly advanced tool.
+But, reading through the comment docs for the type, again, makes me wonder if there are alternative terms/concepts that could be used to model the same underlying behaviors. I want to stress that I'm concerned only about names and metaphors.
+If this new terminology begins to show up in more places, especially diagnostics, I think we need to be absolutely sure this is appropriate for all levels of Swift user. I am, in particular, very skeptical that a distinction between "domains" and "regions" will be clarifying to people with less experience. I'm not certain there is a better approach. But it feels to me like it could be worth exploring.
+
+---
+
+@aviva · 2026-07-20T23:20:29.909Z:
+Big +1 for adding a type like this, it seems very natural and useful. I can't envision RBI permitting the UniqueDeque case without a type like this.
+I agree with @OneSadCookie that take may not be the best name, I like consume.[1] The doc comment for take even describes it as consuming the wrapper, which implies it would be an intuitive choice. It is a little longer though. consume is already a contextual keyword, but it describes the same operation as this method, so maybe that's ok? Potentially confusing. We should decide what we call the "remove and destroy" method on noncopyable types and be consistent.
+I think this proposal's type name and mechanism forces us to decide how we feel about regions in the model of concurrency developers need to understand, so the rest of my review focuses on that. Maybe discussion of this should be its own thread, but I think we need to resolve it to commit to a name here.
+I'm unconvinced that Disconnected is the right name. I agree with @mattie that we may be able to avoid talking about regions to have a type like this, and also feel that it could be valuable to do so (I'll come back to this). I think it is possible, although strained, to try to explain Disconnected only in terms of isolation; a type is "disconnected" when it doesn't have any references into or out of an isolation? Disconnected would be a state, rather than a kind of region. This isn't as cohesive with our other non-region concurrency language, but there is a path here that doesn't require naming regions. I think this is rather confusing to explain though.
+I do not think that a concept being used in previous language evolution proposals is sufficient justification for it to be introduced as a developer facing type. There are lots of academic words (covariance!) we use in evolution documents that would make Swift feel unapproachable to developers. Today, we only surface 'region' in extremely narrow cases, and my understanding is that we intentionally do not name it in diagnostics and userdocs. SE-0414 did not suggest we would need to use these concepts in diagnostics or mental models:
+NOTE: While this proposal contains rigorous details that enable the compiler to prove the absence of data races, programmers will not have to reason about regions at this level of detail. The compiler will allow transfers of non-Sendable values between isolation domains where it can prove they are safe and will emit diagnostics when it cannot at potential concurrent access points so that programmers don't have to reason through the data flow themselves.
+SE-0414
+Unless we are reframing concurrency in terms of regions, I would argue for Sent.[2] I don't agree with this rationale in the proposal against Sent:
+sending describes a property of values at function boundaries (a transfer event), not a stable region state. A wrapper that simply holds a value living in a disconnected region is not mid-transfer, so naming the type after the transfer event would misrepresent what the wrapper is.
+In my opinion, this is only an argument against naming the type Sending (gerund). Sent (past participle) is certainly a stable state, a thing has been sent. Even initializing this type requires sending the initial value, such that it "has been" sent to put it into the wrapper. It is being sent to wherever you pass it! This leaves us with a very coherent, linguistically grouped set of answers for "how to send this type" that do not require making regions developer facing:
+Sendable types are always "able to be sent" and so can be sent freely!
+a sending parameter or return value is contextually able to be sent, because it was made unavailable in the isolation it came from.
+A value wrapped in Sent<T> has already been made unavailable in the isolation it came from, so it is able to be sent further.
+Sent does not reflect the internal compiler understanding as well as Disconnected, but I think including it in this family might be worth it. If we choose Sent we could rename take to receive (as in, receive the sent value). I know disconnected is seen as a term of art, but I don't think we are required to use the most theoretically correct term in developer facing types if another choice makes the language easier to learn.
+Coming back to why we should (maybe) avoid describing things in terms of regions; as @mattie says, concurrency is already really complicated! Even though regions are the internal model, we are not obligated to surface it, and if we can explain things with the terms we already have our language will be simpler to use and teach if we can show restraint here. If we can't explain things with the terms we have, then this would be very frustrating and we should reframe things in terms of regions. I see two decent futures (and a bad one) for the developer facing story here:
+Everything is defined in terms of regions
+Isolations are named regions based on annotations (global actor isolation) and types (actor instances) as well as scopes (tasks). However, there are also unnamed, flow sensitive regions that the compiler pessimistically determines to allow more code to compile. We would say Sendable allows a type to be shared between arbitrary regions (or maybe "isolation regions", but I feel this muddles everything). non-Sendable types can only be sent between regions if they are disconnected. Sometimes the compiler can prove values are disconnected and allow you to send them between regions, even though they aren't Sendable or sending. You can also wrap your value in Disconnected to ensure this is the case.
+Everything is defined in terms of regions, so Disconnected makes sense.
+We continue defining things in terms of isolation
+An isolation protects its contents. Isolation comes from annotations (global actors), types (actor instances), and scopes (tasks). Sendable allows a type to be shared between arbitrary isolations. non-Sendable types can only be sent between isolations if they have no references / dependencies to or from other values in their current isolation, which the compiler will check for you. Once a non-Sendable value has been sent, it isn't available in its old isolation. You can use the sending annotation to require this to be the case for a parameter or a return value. You can also send a non-Sendable value into Sent<T> to lose access to it in the current isolation, but store it in a Sendable wrapper that you can take it out of in another isolation later. In this world, regions don't exist as far as the developer is concerned.
+Developers don't see regions, so Disconnected is weirder than Sent in this world.
+Both!
+We could have isolation be the 'simple concurrency' and regions be the 'advanced concurrency' and not commit to a developer exposed relationship between the two of them. I'd prefer either of the above to this. It's easier to teach and understand a single, consistent story. We want a consistent way to talk about why sharing non-Sendable state is wrong, and sending it is only wrong sometimes. Whether we can talk about that in a satisfying way without regions isn't settled, but I'll try to steelman what diagnostics for that can look like below.
+How could we explain RBI errors without saying 'region'
+@Jon_Shier brought up a misleading diagnostic (ty!) in the pitch thread (where RBI pessimistically rejects code) that is roughly:
+class NS { // something non-Sendable
+var count = 0 // 🚨 ahhh! shared mutable state!
+}
+func myScope() { // block of code, many more lines in actual programs (making these relationships less obvious to the developer)
+let one = NS()
+let two = NS() // two non-Sendable values, right now in separate regions
+someOperation(one, two) // compiler must merge those regions due to lack of type level information about 'someOperation', in case these values are mutated to reference each other
+Task { one.count += 1 } // the region containing 'one' and 'two' is sent into this task
+// the region containing 'one' and 'two' is no longer accessible
+two.count += 2 // compiler must diagnose this as illegal, since the region containing 'two' is no longer accessible
+//  ^ this mutation could also mutate 'one', which would be a data race
+}
+// compiler does not know based on the signature if these parameters mix / entangle / become dependent!
+// it would prevent changing the body of functions if we inferred this quality, so we must assume the worst
+func someOperation(_ left: NS, _ right: NS) {
+// what if left was mutated to hold a reference to right?
+}
+We get here because Swift doesn't statically enforce mutable xor aliased for reference types.[3] I agree that the diagnostic we give today is actively misleading for many reasons, but the part I think is most interesting; how do we justify why this is not allowed to the developer? The argument made in the pitch was that regions are already exposed since pessimistic merging is the reason this isn't accepted, and we need to expose it more to diagnose that well. We could speculate on a (maybe unrealistically?) "good" diagnostic that describes things in terms of regions, and even gives them temporary names:
+Diagnostic that describes regions
+func myScope() {
+let one = NS()
+//  ^ note: 'one' defined here in region 'a
+let two = NS()
+//  ^ note: 'two' defined here in region 'b
+someOperation(one, two)
+// ^ note: regions 'a and 'b must be merged into 'c after 'someOperation' since values in 'a and 'b may have become connected
+Task { one.count += 1 }
+// ^ note: sending 'one' into task-isolated region sends region 'c
+two.count += 2
+// ^ error: 'two' is in 'c which is no longer accessible
+}
+func someOperation(_ left: NS, _ right: NS) {
+// ^ note: 'someOperation' could mutate parameters to reference each other
+}
+This reads somewhat like a Rust lifetime error, because RBI is a system that pessimistically determines region membership / connectivity (potential to reference) via flow analysis (which is reminiscent of lifetime relationships).[4] But I don't think we need to talk about regions, or name what region these types are stored in to justify this error:
+func myScope() {
+let one = NS()
+//  ^ note: 'one' defined here
+let two = NS()
+//  ^ note: 'two' defined here
+someOperation(one, two)
+// ^ note: 'one' and 'two' may reference each other after 'someOperation'
+Task { one.count += 1 }
+// ^ note: 'one' may reference or be referenced by 'two', and is sent into task-isolated scope here
+//   note: 'two' is sent here to prevent a data race
+two.count += 2
+// ^ error: 'two' cannot be accessed after being sent
+}
+func someOperation(_ left: NS, _ right: NS) {
+// ^ note: 'someOperation' could mutate parameters to reference each other
+}
+This diagnostic could use some new term (dependency? entangled?) to be more terse, or frame the problem differently, but my point is that we can explain the issue without reformulating the developer facing concurrency model in terms of regions. RBI is "just" the internal mechanism the compiler uses to accept additional, provably race free code. If we can explain the errors that RBI leads to (since there are cases which are simply unsafe and must be diagnosed) clearly, and in ways that help developers understand how to fix them, without invoking regions, I think we should do that and avoid naming any types in ways that only make sense in terms of regions. Such diagnostics still make sense when read with knowledge of regions (potential reference forces merging), but don't require understanding them.
+Note that this diagnostic does introduce a new idea, this concept of "potential to reference", to the concurrency system (this is part of the definition of regions from SE-0414). I'd argue the problem with developer facing regions is explaining how they are different from isolation, which is which and when. Programmers already think about references / dependencies and when they are safe (like for avoiding retain cycles). You could say this renames regions as a friendlier thing--but I think that's fine, and potentially how we can square the need to diagnose these cases clearly with a model that is easy to teach. We will need language for why "regions" are merged, but maybe it isn't regions...
+Having said all that, I'm really open to the possibility that surfacing regions is the way forward on these issues; I just want to make sure we consider that thoroughly first.
+Speculative musing about lifetimes and RBI annotations
+What if we had region annotations? I'd like to briefly highlight that, since regions and lifetimes talk about similar questions (do these values share dependency) from different perspectives, they share a deep correspondence and we may be able to express any interesting RBI annotations as lifetime dependencies (if we allow them on copyable types):
+@_lifetime(left: copy left, right: copy right) // left and right will not alias! this can't actually be expressed today, and doesn't make sense on the values we allow lifetimes on right now.
+func someOperation(_ left: NS, _ right: NS) {
+// left and right will not depend on each other, since signature promises no reference is taken
+}
+In a sentence, lifetime dependency implies RBI aliasing / referencing potential, but mutual lifetime independence requires non-aliasing / non-referencing.
+Putting the non-aliasing / non-referencing 'promise' in the type system allows RBI to avoid merging the two regions. I think it would probably be bad for progressive disclosure to tie regions and lifetimes, but my point is that even if you think we want RBI annotations, we may be able to express them as dependencies (lifetimes are just how we add dependency relation to function and data types in Swift) and avoid complicating concurrency with the concept of regions.
+I thought about connect and derivatives but I think it's more confusing than clarifying. ↩︎
+Suggested by @pyrtsa in the pitch thread, ty! ↩︎
+A very fancy RBI could determine that NS can't store a reference to another NS or any of its potential fields with reference semantics, but ignore that (or consider NS to be a library type) ↩︎
+I also just like lifetimes. ↩︎
+
+---
+
+@j-f1 · 2026-07-22T00:58:27.286Z:
++1 to everything Aviva said! To add on a couple of things:
+If the type is called Sent, then how about calling the take method send()?
+var deque = UniqueDeque<Sent<NonSendable>>()
+deque.append(Sent(NonSendable()))
+guard let element = deque.popFirst()?.send() else { return }
+Task { print(element) }
+I’m not fully convinced that this is a clearer term than consume() but it fits in a little better with the fact that the return type is sending Foo.
+And I think the error messages you proposed would be extremely helpful in debugging RBI/sendability issues — today, I am very often stumped because some random piece of code has an error with no clear justification.
+
+---
+
+@John_McCall · 2026-07-22T07:16:59.213Z:
+Speaking for myself, I like the name Disconnected. I don’t think you need to know region analysis in order to get this; disconnectedness is fundamentally just a statement about the object graph, which is both pretty intuitive and very easily visualized. (It’s also something we already expect programmers working with classes to have a handle on, e.g. because of reference cycles.
+
+---
+
+@aviva · 2026-07-22T22:45:38.388Z:
+j-f1:
+If the type is called Sent, then how about calling the take method send()?
+I think send is a little confusing, since the value is already sent (that's how it got inside the container). You could call the initializer send, but we don't really need to label this initializer. The return type being sending is (afaik) reiterating to the compiler that it's still in a disconnected region and can be sent across isolation boundaries.
+If Sent, my personal opinion is receive or consume [1] > take.
+If Disconnected, consume > take.
+John_McCall:
+Speaking for myself, I like the name Disconnected. I don’t think you need to know region analysis in order to get this; disconnectedness is fundamentally just a statement about the object graph, which is both pretty intuitive and very easily visualized.
+I agree that "disconnected is a state a value can have within the object graph" is a concept a programmer could understand without regions (my 'may reference' diagnostic example is describing the lack of that state). Right now though, the proposal has the doc comment below teaching it via regions, so it's not neutral on Disconnected (isolation region) vs Disconnected (a state in the object graph). I'm being pedantic,[2] but I think those are different things for how we teach concurrency even if we choose Disconnected.
+/// A wrapper that holds a value in a disconnected isolation region.
+///
+/// A value of `Disconnected<Value>` lives in a disconnected region: it has no
+/// references to or from any other isolation region. That guarantee lets you
+/// store such values in generic containers and later transfer them across
+/// isolation boundaries without losing the information that the value was
+/// in a disconnected region.
+///
+/// ## What is a disconnected region?
+/// ...
+The detailed design has the full doc comment at the top, with an (in my opinion) great explanation of regions and how this fits into them. The implication though is that you do need to know about region analysis to understand this type, at least as part of this proposal.
+@John_McCall, do you think the term of art value / conceptual value outweighs the linguistic grouping value? What about for a type that isn't being taught in terms of regions?
+contingent on us feeling like this is the word we want to use for this operation on noncopyable types... ↩︎
+since RBI regions are regions in the object graph ↩︎
+
+---
+
+@John_McCall · 2026-07-22T23:22:34.547Z:
+Documentation is certainly something we could just change. I would not want this to be taught using regions.
+I'm happy to acknowledge that there's value in sticking to some kind of "sending"-related name. I don't think Sent<> is a good choice, though. The statement that the value was sent in the past doesn't seem to capture either what happened to it or how it can continue to be used. If anything, the value is now in the same currently-in-transit state as sending parameters and results and ought to have the same name. Sending<> is probably the best option in this vein if we can come to terms with it just differing from the keyword by case.
+
+---
+
+@Dmitriy_Ignatyev · 2026-07-23T08:49:24.135Z:
+John_McCall:
+Sending<> is probably the best option
+Beyond being clearer, Sending<> is also shorter and more consistent with the existing sending annotation already used in function signatures. This alignment between the type and the parameter/result annotation helps build a natural and intuitive mental model: values flow through sending boundaries, and Sending<T> is simply the container that carries them across.
+I've recently needed to use Disconnected in typed throw contexts where the closure signature must be written explicitly, for example in closures passed to functions like withUnsafeMutablePointer(to:):
+func foo<Result, E>(...) throws(E) -> sending Result {
+... = bar() { argName throws(E) -> (Bool, Sending<Result>) in
+// ...
+}
+}
+Sending<Result> would be much more understandable. The naming makes the flow obvious: you receive a Sending<Result>, consume its value and return a sending Result.
+The mental mapping from Sending<Result> to sending Result is intuitive and reinforces Swift's existing concurrency vocabulary.
+
+---
+
+@jamieQ · 2026-07-23T12:12:02.268Z:
+I agree with others that a type of this general form has utility, particularly for enabling the sending annotation to be preserved through storage within containers and properties.
+I also agree that take() doesn't seem like quite the right name, given the proposed semantics and how Optional.take() works. The UniqueBox evolution proposal occurred fairly recently and chose consume() with this justification, which seemingly also applies here.
+swap(newValue:) also reads a bit oddly to me.
+The type is a "simple" wrapper that has a single stored value, so any mutating operation presumably affects that value in some way. Given that, the argument label "newValue" is arguably overly verbose. If distinguishing that the underlying "value" is the thing being "swapped" seems valuable, then perhaps that should be pulled out into the function name. These alternatives seem like improvements to me:
+var d = Disconnected(...)
+d.swap(with: x)
+d.swap(to: x)
+d.swapValue(with: x)
+d.swapValue(to: x)
+But, stepping back a bit, the naming choice of "swap" also seems a bit questionable... the prior art with which I'm familiar in Swift are the global function swap(_:_:) and the collection-based swapAt(_:_:). Both of these take two explicit arguments of the same type and exchange them (or the underlying data to which they correspond), which doesn't seem perfectly analogous to what's going on here (semantically we're replacing a stored value within a container and returning the old value). The stdlib has an exchange(_:with:) function which has a slightly closer shape. Perhaps something involving the word "exchange" or "replace" would be better (it appears Rust has a "replace")?
+var d = Disconnected(...)
+d.exchange(with: x)
+d.exchangeValue(with: x)
+d.replace(with: x)
+d.replaceValue(with: x)
+To summarize, writing all this out makes me feel there are two primary questions about the proposed naming choices for this method:
+Should the word "value" appear in the function name, or for basic "box" types such as this, is the language direction to rely on argument labels instead.
+Given precedent, should a term other than "swap" be chosen.
+Disconnected as the type's name seems okay, but I'm sympathetic to concerns that it surfaces implementation jargon that may not be particularly helpful or explained well in any extant documentation (though the proposed comments in the implementation PR do seem quite good!).
+Personally I think Swift already suffers a bit from having so many terms involving negations (non-copyable, non-escapable, non-sendable, non-isolated...). This pushes you to first understand whatever the "core" terminology is, and then negate it in some manner. In this case that's sort of more confusing than usual because the implied state of "connected-ness"[1] isn't really a formalized notion that's directly exposed in the language AFAIK. That said, I haven't yet thought of a clearly better alternative, and the fact the term arises in graph theory and sort of conveys the right general connotation is a point in its favor.
+Sent<T> seems worse to me, mostly because it does not align with my mental model of what the state of being "sent" means in region analysis. "Sent" to me implies that the one-shot ability to transfer a non-sendable value between isolation domains has already happened. But with the proposed API, placing a value within a Sent<T> wrapper does not semantically "send" it in that sense and so the value is not "sent" IMO. The property we're preserving is some latent ability to be sent at some future point. The natural-seeming name for something like that would, I think, be "sendable", but obviously that one is out of the picture. Perhaps we could retain something like "sendable" but express that it's a one-time-only sort of variation... "UniqueSendable<T>", "SendOnce<T>", or something along those lines?
+I don't entirely understand the motivation for housing the type in the synchronization module rather than in the concurrency module. Personally that's not where I would expect to find it if I hadn't read any of this discussion.
+Using a non-copyable type here seems it may be necessary, but this also means the type will suffer from some usability issues IMO. For instance, consider a variation of the motivating example – we have a deque and we want to process all its elements in parallel, in some way which requires the elements to retain their sending-ness. We wish to use structured concurrency to simplify our lives. We might try to write something like this:
+open class NS {}
+func useSending<T>(_: sending T) {}
+func drain(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+grp.addTask { useSending(next.take()) } // 🛑
+// error: noncopyable 'next' cannot be consumed when captured by an escaping closure or borrowed by a non-Escapable type
+}
+}
+}
+That doesn't work because the non-copyable types can't be consumed in an escaping closure, so we try another variant:
+// Okay, maybe we need to take the values out of the wrapper before
+// using them in the child tasks?
+func drain2(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+let val = next.take()
+grp.addTask { useSending(val) } // 🛑
+// error: sending 'val' risks causing data races
+}
+}
+}
+But that approach seems to lose the property that Disconnected is designed to preserve. With sufficient fiddling, we find that the following alternatives will work:
+// I guess a mutable binding works... but what if we can't reconstruct a new value?
+func drain3(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while var next = dq.popFirst() {
+grp.addTask { useSending(next.swap(newValue: NS())) } // ✅
+}
+}
+}
+// I suppose I could... write my own box?
+func drainCustomBox(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+final class SendOnce<T> {
+private var v: Disconnected<T>?
+init(_ t: consuming sending T) { self.v = .init(t) }
+func consume() -> sending T { v.take()!.take() }
+}
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+let myBox = SendOnce(next.take())
+grp.addTask { useSending(myBox.consume()) } // ✅
+}
+}
+}
+But at that point... will people have just given up and opted out instead?
+// That seems pretty convoluted... I guess I could just opt-out.
+func resignedDrain(_ dq: inout UniqueDeque<Disconnected<NS>>) async {
+await withTaskGroup { grp in
+while let next = dq.popFirst() {
+nonisolated(unsafe) let val = next.take()
+grp.addTask { useSending(val) } // ✅
+}
+}
+}
+I'm not sure if there's actionable design feedback to be drawn from this, but I am curious if there are ways to make things work more nicely when escaping closures are involved.
+Or should we say "non-disconnected-ness"  ↩︎
+
+---
+
+@NotTheNHK · 2026-07-23T13:19:26.367Z:
+jamieQ:
+That doesn't work because the non-copyable types can't be consumed in an escaping closure
+This is the primary motivation behind the swap method. As things stand, we can't use a consuming method in such cases yet. I do wonder whether, if we renamed take to consume(), for instance, we could make take available only when Value is optional (or should take always be available?) and make it a mutating method that replaces the value with nil. For example, we did something similar here.
+
+---
+
+@rayx · 2026-07-23T15:21:25.615Z:
+I like the Sending<> name John suggested. I found Sent a bit confusing,  for a similar reason to what John mentioned.
+aviva:
+If we choose Sent we could rename take to receive (as in, receive the sent value).
+I think receive works great with the metaphor.
+PS: I like the original Disconnected name too. Is it really a goal to not expose isolation region to users? I'm quite sure that the term "task isolated" appears in some diagnostics.
+
+---
+
+@NotTheNHK · 2026-07-23T15:36:20.675Z:
+rayx:
+I'm quite sure that the term "task isolated" appears in some diagnostics.
+Not anymore: [rbi] Replace "task-isolated" with "code in the current task" in diagnostics by gottesmm · Pull Request #89552 · swiftlang/swift · GitHub. I guess this is another reason for Sending<Value>.
+
+---
+
+@QuinceyMorris · 2026-07-23T17:49:24.847Z:
+In natural language, "sending" is an attribute of the thing that's doing the sending, rather than of the thing being sent, unlike "disconnected" which could reasonably applied to either, though perhaps with a slight change in connotation.
+The sending keyword works, barely, in function parameters because it's the function call — or perhaps the caller's region — that's doing the sending. It's not creating a "sending" value, and IIUC it's not even creating a Sending<> value, if SE-0538 were accepted with that terminology, is it?
+IIUC, the "disconnected" concept presented in SE-0538 is more like transiting than sending. However, I don't think anyone would be happy about choosing a spelling-unrelated word such as "transiting", or anything else I could think of. (That would put this back in inout vs borrowing territory.)
+Given that disconnected values and disconnected regions could co-exist in the Swift Conceptual Universe without contradiction, but "sending" values embody a sort of self-contradiction, I'd advocate sticking with Disconnected<>, FWIW.
+Incidentally, although "disconnected" is very much the computer science/graph theory word for this sort of thing, "unconnected" is perhaps the better English word for the idea of not-being-connected. If my Mac gets disconnected from a network, it's generally a different thing than my Mac being unconnected.
+
+---
+
+@j-f1 · 2026-07-23T18:11:09.698Z:
+Sending<> also has the benefit of matching Inout<>, which already differs from its corresponding keyword by case. as discussed below it was renamed MutableRef
+
+---
+
+@grynspan · 2026-07-23T18:19:21.222Z:
+I like Sending or Sent. Disconnected feels… disconnected from the existing terminology.
++1 to the overall feature.
+Edit:
+John_McCall:
+Sending<> is probably the best option in this vein if we can come to terms with it just differing from the keyword by case.
+@Sendable and sending differ in case already, as do actor and Actor, class and AnyObject… I think there's plenty other prior art there.
+
+---
+
+@John_McCall · 2026-07-23T18:28:10.613Z:
+j-f1:
+Sending<> also has the benefit of matching Inout<>, which already differs from its corresponding keyword by case.
+We did not accept Inout<>; it's MutableRef<>.
+
+---
+
+@nkbelov · 2026-07-23T19:56:37.440Z:
+I could also envision this being called SendingCell because the take/swap semantics are precisely the same as offered by Rust's Cell — and there's a _Cell in the stdlib already underpinning the Mutex implementation, which I could imagine becomes de-underscored at some point with similar semantics as well.
+
+---
+
+@glessard · 2026-07-23T20:12:11.231Z:
+Good addition! I have no particular opinion about the type name, but I do about swap and take.
+UniqueBox has established consume() as the name for exactly that operation, and it applies better that take(), a name we already use for a mutating operation of Optional, rather than a consuming one.
+As for swap, the shape of other functions of that name in the standard library is swap(&a, &b) -> Void; the better analog is the top-level exchange<T>(_: inout T, with: consuming T) -> T. We didn't need such a function for UniqueBox because it can provide a mutable accessor to its stored value (usable with the top-level function). exchange could also be called replace, but we already have exchange.
+
+---
+
+@rayx · 2026-07-24T03:02:52.604Z:
+I find a corner case where Sending is more accurate than Disconnected. First, let's see SE-0430 (sending parameter and result values). It chose sending rather disconnected. That makes sense to me because a Sendable value can be passed to a sending parameter and the value doesn't need to be in disconnected region. I think the same applies in this case. While the proposed type isn't intended to wrap a Sendable value, there is nothing in its implementation preventing user from doing that. Since the type's init takes a consuming sending parameter, it's fine to pass a Sendable class instance to it and continue to access that instance in the original isolation. In this specific scenario Disconnected is an inacurrate name.
+EDIT: I should add that while many APIs changes their parameters from Sendable to sending after SE-0430, it's unlikely to happen in this case. So the two cases are similar but not exactly the same.
+
+---
+
+@ibex · 2026-07-24T08:41:00.270Z:
+Sorry about the learner question
+I am reading the proposal, and I couldn't resist trying the example in the Motivation section.
+Why does this code compile, despite the example in the Motivation section says otherwise?
+@main
+enum Driver {
+static func main() async {
+await test ()
+}
+}
+struct UniqueDeque<Element: ~Copyable>: ~Copyable {
+func append(_ element: consuming Element) {  }
+func popFirst() -> Element? { nil }
+}
+final class NS {
+var fubar: Int = 1024
+}
+@concurrent
+func test () async {
+var deque = UniqueDeque<NS>()
+deque.append(NS())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) // Error: Element is assumed to be in the same isolation region as uniqueDeque
+}
+}
+I have these Xcode settings:
+Strict Concurrency Checking: Complete
+Region Based Isolation: Yes
+Motivation
+Region-based isolation enables transferring non-Sendable values across isolation boundaries when the value is in a disconnected region. The sending parameter and result annotation from SE-0430 allows functions to explicitly require disconnected values at function boundaries. However, sending cannot be preserved through stored properties, collection types, or generic containers.
+Consider a queue implementation that stores elements to be processed across isolation boundaries. As an example, let's look at a hypothetical UniqueDeque:
+struct UniqueDeque<Element: ~Copyable>: ~Copyable {
+func append(_ element: consuming Element) { ... }
+func popFirst() -> Element? { ... }
+}
+One use-case might be to use UniqueDeque to append non-Sendable disconnected values and when popping an element send it to a different isolation region.
+var deque = UniqueDeque<NonSendable>()
+deque.append(NonSendable())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) // Error: Element is assumed to be in the same isolation region as uniqueDeque
+}
+To make this work we would need to consume the element in append and return it from popFirst as sending; however, this would significantly limit this type for other important use-cases where users want to store non-Sendable but not disconnected elements.
+
+---
+
+@FranzBusch · 2026-07-24T13:42:48.915Z:
+Thanks everyone for the support so far and the healthy discussion around the naming of the type and the methods.
+I agree that the proposed consume() instead of take() and exchange() instead of swap() follow existing precedence and I'm happy to change those.
+On the type name, I personally still think that Disconnected is best name for this type and can be understood without region isolation. As John put it above this is about a wrapper around a value that is disconnected from any other value. Having helped many people through compiler diagnostics I also feel like disconnected is the more natural way to describe what is happening.
+Think about explaining the problem of the code in the motivation:
+var deque = UniqueDeque<NonSendable>()
+deque.append(NonSendable())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) // Error: Element is assumed to be in the same isolation region as uniqueDeque
+}
+When explaining this to someone I normally describe like this: The Task closure is marked as sending since a task defines its own isolation region so all values passed to it must be disconnected from any other value to send it to the task's region. Since element is returned from the deque.popFirst() method the compiler connects both of them together.
+I find it very hard to use any of the names of the send-family of words to describe the above. Having said that I would love to see more discussion around the type name.
+jamieQ:
+Using a non-copyable type here seems it may be necessary, but this also means the type will suffer from some usability issues IMO. For instance, consider a variation of the motivating example – we have a deque and we want to process all its elements in parallel, in some way which requires the elements to retain their sending-ness. We wish to use structured concurrency to simplify our lives. We might try to write something like this:
+Without using ~Copyable here the type would not be sound. The problems around task group usage you illustrate are unrelated to this type and a general language limitation due to the lack of "call-once" closures. Today the compiler must assume that any closure can be called multiple times which means that nested closures such as the withTaskGroup { group.addTask {} } requires you to first transfer the disconnected value into the first closure so that it can be send into the child task's closure. Hopefully, we will gain the concept of "call-once" closures at some point which will make the use of Disconnected in these cases unnecessary. Until then Disconnected provides a manual yet unergonomic solution in these cases. Importantly, even if we get "call-once" closures there are still many important cases for a Disconnected type.
+ibex:
+Why does this code compile, despite the example in the Motivation section says otherwise?
+@concurrent
+func test () async {
+var deque = UniqueDeque<NS>()
+deque.append(NS())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) *// Error: Element is assumed to be in the same isolation region as uniqueDeque*
+}
+}
+This compiles because the deque and the element are in local scope and neither of those are used after the Task {}. So the compiler can reason that the entire region is send into the task's closure. If you add a simple deque.append(NS()) after the Task {} you will get an error since the element was send to the task but wasn't disconnected.
+
+---
+
+@rayx · 2026-07-24T15:56:02.385Z:
+FranzBusch:
+The Task closure is marked as sending since a task defines its own isolation region so all values passed to it must be disconnected from any other value to send it to the task's region.
+Nitpick: "be disconnected from any other value" isn't accurate because it's OK that a value is referenced by other values but all values are moved together. You are certainly aware of that. You chose a simple way to describe it because it's quite verbose to describe it accurately without introducing isolation region concept to the user. IMO isolation region is a nice abstraction and I really doubt one can explain disconnected in a concise way without using the term.
+
+---
+
+@mattie · 2026-07-24T16:12:53.285Z:
+While I am really starting to come around to the name "Disconnected" again, I also think it really isn't too bad to describe what's going on without "region". Here's how @aviva did it:
+non-Sendable types can only be sent between isolations if they have no references / dependencies to or from other values in their current isolation, which the compiler will check for you.
+
+---
+
+@rayx · 2026-07-24T17:05:08.732Z:
+Yes, that's a nice definition. Does it mean we'll introduce a new term "disconnected" and use it in user-facing documents (for example, when explaining what kind of values can be passed to sending parameter)?
+
+---
+
+@John_McCall · 2026-07-24T17:45:01.471Z:
+rayx:
+Nitpick: "be disconnected from any other value" isn't accurate because it's OK that a value is referenced by other values but all values are moved together.
+In graph-theoretic terms, it’s an (otherwise-) disconnected subgraph of the graph of non-copyable non-sendable values.
+Note that isolated storage (in the sense of being directly declared as actor-isolated, like by being an isolated property of an actor or having a global actor attribute) has a special role in this graph: we consider isolated edges to a value to prevent disconnectedness, but isolated edges from a value do not connect the subgraphs.
+
+---
+
+@jamieQ · 2026-07-24T18:40:48.874Z:
+John_McCall:
+it’s an (otherwise-) disconnected subgraph of the graph of non-copyable values.
+Do you mean "non-sendable" values?
+
+---
+
+@John_McCall · 2026-07-24T18:42:26.494Z:
+Oops, yes, fixed.
+
+---
+
+@rauhul · 2026-07-24T20:06:45.501Z:
+would this pattern:
+var deque = UniqueDeque<NS>()
+deque.append(NS())
+guard let element = deque.popFirst() else { return }
+Task {
+print(element) *// Error: Element is assumed to be in the same isolation region as uniqueDeque*
+}
+be better served with an explicit sending(unchecked) keyword for the particular value the developer wants to send across regions?
+e.g.
+Task { [sending(unchecked) element] in
+print(element)
+}
+later if the compiler learns about @once closures then it could flag this particular sending(unchecked) as redundant
+
+---
+
+@mlemoine · 2026-07-25T02:32:20.157Z:
+What about SendableRef<T>? Both MutableRef<T> and SendableRef<T> would describe a slightly different level of "exclusive access".
+
+---
+
+@rayx · 2026-07-25T04:16:03.948Z:
+John_McCall:
+we consider isolated edges to a value to prevent disconnectedness, but isolated edges from a value do not connect the subgraphs.
+Thanks for the explanation! I for one didn't think of this scenario at all.
+rauhul:
+Task { [sending(unchecked) element] in
+print(element)
+}
+IMO the issue with this approach is that it doesn't prevent the user from doing this:
+Task { [sending(unchecked) element] in
+print(element)
+}
+Task { [sending(unchecked) element] in
+print(element)
+}
+In this sense Disconnected is a safe way to use nonisolated(unchecked).
+
+---
+
+@Dmitriy_Ignatyev · 2026-07-25T09:52:52.437Z:
+mlemoine:
+What about SendableRef<T>? Both MutableRef<T> and SendableRef<T> would describe a slightly different level of "exclusive access".
+Term Ref describe a reference to a region of memory, which is not the case here. Something likeSendableCell or SendingBox can be used as alternatives.
+
+---
+
+@ibex · 2026-07-26T00:07:07.360Z:
+After reading the proposal and the related ones, I do think that Disconnected is a fitting name: it hints at what the type achieves. Besides, it is short and sounds sweet.
+
+---
+
+@hborla · 2026-08-25T15:47:46.618Z:
+Thanks everyone for the insightful review discussion! I enjoyed reading through how everyone thinks about disconnected regions and values, the relationship between region isolation and the object graph of non-Sendable values, etc.
+The LSG decided that the proposal is accepted with modifications:
+[Accepted with modifications] SE-0538: Disconnected Announcements
+Hello, Swift Evolution!
+The review of SE-0538: Disconnected has concluded, and the Language Steering Group decided that the proposal is accepted with modifications.
+The review discussion was generally positive on the need to guarantee that non-Sendable values are disconnected when storing them, e.g. in collections or as stored properties. The critical feedback focused on the naming of the Disconnected type and whether programmers should need to understand the concepts behind region-based isola…
+Holly Borla
+Review Manager
+
+=== ROW 129 | f005201 | https://github.com/lapce/lapce | 2023-12-28 | hn-lobsters ===
+Lightning-fast and Powerful Code Editor written in Rust
+
+<h1 align="center">
+  <a href="https://lapce.dev" target="_blank">
+  <img src="extra/images/logo.png" width=200 height=200/><br>
+  Lapce
+  </a>
+</h1>
+
+<h4 align="center">Lightning-fast And Powerful Code Editor</h4>
+
+<div align="center">
+  <a href="https://github.com/lapce/lapce/actions/workflows/ci.yml" target="_blank">
+    <img src="https://github.com/lapce/lapce/actions/workflows/ci.yml/badge.svg" />
+  </a>
+  <a href="https://discord.gg/n8tGJ6Rn6D" target="_blank">
+    <img src="https://img.shields.io/discord/946858761413328946?logo=discord" />
+  </a>
+  <a href="https://docs.lapce.dev" target="_blank">
+      <img src="https://img.shields.io/static/v1?label=Docs&message=docs.lapce.dev&color=blue" alt="Lapce Docs">
+  </a>
+</div>
+<br/>
+
+
+Lapce (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://github.com/lapce/floem). It is designed with [Rope Science](https://xi-editor.io/docs/rope_science_00.html) from the [Xi-Editor](https://github.com/xi-editor/xi-editor), enabling lightning-fast computation, and leverages [wgpu](https://github.com/gfx-rs/wgpu) for rendering. More information about the features of Lapce can be found on the [main website](https://lapce.dev) and user documentation can be found on [GitBook](https://docs.lapce.dev/).
+
+![](https://github.com/lapce/lapce/blob/master/extra/images/screenshot.png?raw=true)
+
+## Features
+
+* Built-in LSP ([Language Server Protocol](https://microsoft.github.io/language-server-protocol/)) support to give you intelligent code features such as: completion, diagnostics and code actions
+* Modal editing support as first class citizen (Vim-like, and toggleable)
+* Built-in remote development support inspired by [VSCode Remote Development](https://code.visualstudio.com/docs/remote/remote-overview). Enjoy the benefits of a "local" experience, and seamlessly gain the full power of a remote system. We also have [Lapdev](https://lap.dev/) which can help manage your remote dev environments. 
+* Plugins can be written in programming languages that can compile to the [WASI](https://wasi.dev/) format (C, Rust, [AssemblyScript](https://www.assemblyscript.org/))
+* Built-in terminal, so you can execute commands in your workspace, without leaving Lapce.
+
+## Installation
+
+You can find pre-built releases for Windows, Linux and macOS [here](https://github.com/lapce/lapce/releases), or [installing with a package manager](docs/installing-with-package-manager.md).
+If you'd like to compile from source, you can find the [guide](docs/building-from-source.md).
+
+## Contributing
+
+<a href="https://ws.lap.dev/#https://github.com/lapce/lapce" target="_blank">
+      <img src="https://lap.dev/images/open-in-lapdev.svg?version=8" alt="Open in Lapdev">
+</a>
+
+[Lapdev](https://lap.dev/), developed by the Lapce team, is a cloud dev env service similar to GitHub Codespaces. By clicking the button above, you'll be taken to a fully set up Lapce dev env where you can browse the code and start developing. All dependencies are pre-installed, so you can get straight to code.
+
+Guidelines for contributing to Lapce can be found in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Feedback & Contact
+
+The most popular place for Lapce developers and users is on the [Discord server](https://discord.gg/n8tGJ6Rn6D).
+
+Or, join the discussion on [Reddit](https://www.reddit.com/r/lapce/) where we are just getting started.
+
+There is also a [Matrix Space](https://matrix.to/#/#lapce-editor:matrix.org), which is linked to the content from the Discord server.
+
+## License
+
+Lapce is released under the Apache License Version 2, which is an open source license. You may contribute to this project, or use the code as you please as long as you adhere to its conditions. You can find a copy of the license text here: [`LICENSE`](LICENSE).
+
+
+=== ROW 131 | f005312 | https://github.com/dani-garcia/vaultwarden | 2024-08-14 | hn-lobsters ===
+Unofficial Bitwarden compatible server written in Rust, formerly known as bitwarden_rs
+
+![Vaultwarden Logo](./resources/vaultwarden-logo-auto.svg)
+
+An alternative server implementation of the Bitwarden Client API, written in Rust and compatible with [official Bitwarden clients](https://bitwarden.com/download/) [[disclaimer](#disclaimer)], perfect for self-hosted deployment where running the official resource-heavy service might not be ideal.
+
+---
+
+[![GitHub Release](https://img.shields.io/github/release/dani-garcia/vaultwarden.svg?style=for-the-badge&logo=vaultwarden&color=005AA4)](https://github.com/dani-garcia/vaultwarden/releases/latest)
+[![ghcr.io Pulls](https://img.shields.io/badge/dynamic/json?style=for-the-badge&logo=github&logoColor=fff&color=005AA4&url=https%3A%2F%2Fipitio.github.io%2Fbackage%2Fdani-garcia%2Fvaultwarden%2Fvaultwarden.json&query=%24.downloads&label=ghcr.io%20pulls&cacheSeconds=14400)](https://github.com/dani-garcia/vaultwarden/pkgs/container/vaultwarden)
+[![Docker Pulls](https://img.shields.io/docker/pulls/vaultwarden/server.svg?style=for-the-badge&logo=docker&logoColor=fff&color=005AA4&label=docker.io%20pulls)](https://hub.docker.com/r/vaultwarden/server)
+[![Quay.io](https://img.shields.io/badge/quay.io-download-005AA4?style=for-the-badge&logo=redhat&cacheSeconds=14400)](https://quay.io/repository/vaultwarden/server) <br>
+[![Contributors](https://img.shields.io/github/contributors-anon/dani-garcia/vaultwarden.svg?style=flat-square&logo=vaultwarden&color=005AA4)](https://github.com/dani-garcia/vaultwarden/graphs/contributors)
+[![Forks](https://img.shields.io/github/forks/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4)](https://github.com/dani-garcia/vaultwarden/network/members)
+[![Stars](https://img.shields.io/github/stars/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4)](https://github.com/dani-garcia/vaultwarden/stargazers)
+[![Issues Open](https://img.shields.io/github/issues/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4&cacheSeconds=300)](https://github.com/dani-garcia/vaultwarden/issues)
+[![Issues Closed](https://img.shields.io/github/issues-closed/dani-garcia/vaultwarden.svg?style=flat-square&logo=github&logoColor=fff&color=005AA4&cacheSeconds=300)](https://github.com/dani-garcia/vaultwarden/issues?q=is%3Aissue+is%3Aclosed)
+[![AGPL-3.0 Licensed](https://img.shields.io/github/license/dani-garcia/vaultwarden.svg?style=flat-square&logo=vaultwarden&color=944000&cacheSeconds=14400)](https://github.com/dani-garcia/vaultwarden/blob/main/LICENSE.txt) <br>
+[![Dependency Status](https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fdeps.rs%2Frepo%2Fgithub%2Fdani-garcia%2Fvaultwarden%2Fstatus.svg&query=%2F*%5Blocal-name()%3D'svg'%5D%2F*%5Blocal-name()%3D'g'%5D%5B2%5D%2F*%5Blocal-name()%3D'text'%5D%5B4%5D&style=flat-square&logo=rust&label=dependencies&color=005AA4)](https://deps.rs/repo/github/dani-garcia/vaultwarden)
+[![GHA Release](https://img.shields.io/github/actions/workflow/status/dani-garcia/vaultwarden/release.yml?style=flat-square&logo=github&logoColor=fff&label=Release%20Workflow)](https://github.com/dani-garcia/vaultwarden/actions/workflows/release.yml)
+[![GHA Build](https://img.shields.io/github/actions/workflow/status/dani-garcia/vaultwarden/build.yml?style=flat-square&logo=github&logoColor=fff&label=Build%20Workflow)](https://github.com/dani-garcia/vaultwarden/actions/workflows/build.yml) <br>
+[![Matrix Chat](https://img.shields.io/matrix/vaultwarden:matrix.org.svg?style=flat-square&logo=matrix&logoColor=fff&color=953B00&cacheSeconds=14400)](https://matrix.to/#/#vaultwarden:matrix.org)
+[![GitHub Discussions](https://img.shields.io/github/discussions/dani-garcia/vaultwarden?style=flat-square&logo=github&logoColor=fff&color=953B00&cacheSeconds=300)](https://github.com/dani-garcia/vaultwarden/discussions)
+[![Discourse Discussions](https://img.shields.io/discourse/topics?server=https%3A%2F%2Fvaultwarden.discourse.group%2F&style=flat-square&logo=discourse&color=953B00)](https://vaultwarden.discourse.group/)
+
+> [!IMPORTANT]
+> **When using this server, please report any bugs or suggestions directly to us (see [Get in touch](#get-in-touch)), regardless of whatever clients you are using (mobile, desktop, browser...). DO NOT use the official Bitwarden support channels.**
+
+<br>
+
+## Features
+
+A nearly complete implementation of the Bitwarden Client API is provided, including:
+
+ * [Personal Vault](https://bitwarden.com/help/managing-items/)
+ * [Send](https://bitwarden.com/help/about-send/)
+ * [Attachments](https://bitwarden.com/help/attachments/)
+ * [Website icons](https://bitwarden.com/help/website-icons/)
+ * [Personal API Key](https://bitwarden.com/help/personal-api-key/)
+ * [Organizations](https://bitwarden.com/help/getting-started-organizations/)
+   - [Collections](https://bitwarden.com/help/about-collections/),
+     [Password Sharing](https://bitwarden.com/help/sharing/),
+     [Member Roles](https://bitwarden.com/help/user-types-access-control/),
+     [Groups](https://bitwarden.com/help/about-groups/),
+     [Event Logs](https://bitwarden.com/help/event-logs/),
+     [Admin Password Reset](https://bitwarden.com/help/admin-reset/),
+     [Directory Connector](https://bitwarden.com/help/directory-sync/),
+     [Policies](https://bitwarden.com/help/policies/)
+ * [Multi/Two Factor Authentication](https://bitwarden.com/help/bitwarden-field-guide-two-step-login/)
+   - [Authenticator](https://bitwarden.com/help/setup-two-step-login-authenticator/),
+     [Email](https://bitwarden.com/help/setup-two-step-login-email/),
+     [FIDO2 WebAuthn](https://bitwarden.com/help/setup-two-step-login-fido/),
+     [YubiKey](https://bitwarden.com/help/setup-two-step-login-yubikey/),
+     [Duo](https://bitwarden.com/help/setup-two-step-login-duo/)
+ * [Emergency Access](https://bitwarden.com/help/emergency-access/)
+ * [Vaultwarden Admin Backend](https://github.com/dani-garcia/vaultwarden/wiki/Enabling-admin-page)
+ * [Modified Web Vault client](https://github.com/dani-garcia/bw_web_builds) (Bundled within our containers)
+
+<br>
+
+## Usage
+
+> [!IMPORTANT]
+> The web-vault requires the use of HTTPS and a secure context for the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API). <br>
+> That means it will only work if you [enable HTTPS](https://github.com/dani-garcia/vaultwarden/wiki/Enabling-HTTPS). <br>
+> We also suggest to use a [reverse proxy](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples).
+
+The recommended way to install and use Vaultwarden is via our container images which are published to [ghcr.io](https://github.com/dani-garcia/vaultwarden/pkgs/container/vaultwarden), [docker.io](https://hub.docker.com/r/vaultwarden/server) and [quay.io](https://quay.io/repository/vaultwarden/server).
+See [which container image to use](https://github.com/dani-garcia/vaultwarden/wiki/Which-container-image-to-use) for an explanation of the provided tags.
+
+There are also [community driven packages](https://github.com/dani-garcia/vaultwarden/wiki/Third-party-packages) which can be used, but those might be lagging behind the latest version or might deviate in the way Vaultwarden is configured, as described in our [Wiki](https://github.com/dani-garcia/vaultwarden/wiki).
+
+Alternatively, you can also [build Vaultwarden](https://github.com/dani-garcia/vaultwarden/wiki/Building-binary) yourself.
+
+While Vaultwarden is based upon the [Rocket web framework](https://rocket.rs) which has built-in support for TLS our recommendation would be that you setup a reverse proxy (see [proxy examples](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples)).
+
+> [!TIP]
+>**For more detailed examples on how to install, use and configure Vaultwarden you can check our [Wiki](https://github.com/dani-garcia/vaultwarden/wiki).**
+
+### Docker/Podman CLI
+
+Pull the container image and mount a volume from the host for persistent storage.<br>
+You can replace `docker` with `podman` if you prefer to use podman.
+
+```shell
+docker pull vaultwarden/server:latest
+docker run --detach --name vaultwarden \
+  --env DOMAIN="https://vw.domain.tld" \
+  --volume /vw-data/:/data/ \
+  --restart unless-stopped \
+  --publish 127.0.0.1:8000:80 \
+  vaultwarden/server:latest
+```
+
+This will preserve any persistent data under `/vw-data/`, you can adapt the path to whatever suits you.
+
+### Docker Compose
+
+To use Docker compose you need to create a `compose.yaml` which will hold the configuration to run the Vaultwarden container.
+
+```yaml
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    environment:
+      DOMAIN: "https://vw.domain.tld"
+    volumes:
+      - ./vw-data/:/data/
+    ports:
+      - 127.0.0.1:8000:80
+```
+
+<br>
+
+## Get in touch
+
+Have a question, suggestion or need help? Join our community on [Matrix](https://matrix.to/#/#vaultwarden:matrix.org), [GitHub Discussions](https://github.com/dani-garcia/vaultwarden/discussions) or [Discourse Forums](https://vaultwarden.discourse.group/).
+
+Encountered a bug or crash? Please search our issue tracker and discussions to see if it's already been reported. If not, please [start a new discussion](https://github.com/dani-garcia/vaultwarden/discussions) or [create a new issue](https://github.com/dani-garcia/vaultwarden/issues/). Ensure you're using the latest version of Vaultwarden and there aren't any similar issues open or closed!
+
+<br>
+
+## Contributors
+
+Thanks for your contribution to the project!
+
+[![Contributors Count](https://img.shields.io/github/contributors-anon/dani-garcia/vaultwarden?style=for-the-badge&logo=vaultwarden&color=005AA4)](https://github.com/dani-garcia/vaultwarden/graphs/contributors)<br>
+[![Contributors Avatars](https://contributors-img.web.app/image?repo=dani-garcia/vaultwarden)](https://github.com/dani-garcia/vaultwarden/graphs/contributors)
+
+<br>
+
+## Disclaimer
+
+**This project is not associated with [Bitwarden](https://bitwarden.com/) or Bitwarden, Inc.**
+
+However, one of the active maintainers for Vaultwarden is employed by Bitwarden and is allowed to contribute to the project on their own time. These contributions are independent of Bitwarden and are reviewed by other maintainers.
+
+The maintainers work together to set the direction for the project, focusing on serving the self-hosting community, including individuals, families, and small organizations, while ensuring the project's sustainability.
+
+**Please note:** We cannot be held liable for any data loss that may occur while using Vaultwarden. This includes passwords, attachments, and other information handled by the application. We highly recommend performing regular backups of your files and database. However, should you experience data loss, we encourage you to contact us immediately.
+
+<br>
+
+## Bitwarden_RS
+
+This project was known as Bitwarden_RS and has been renamed to separate itself from the official Bitwarden server in the hopes of avoiding confusion and trademark/branding issues.<br>
+Please see [#1642 - v1.21.0 release and project rename to Vaultwarden](https://github.com/dani-garcia/vaultwarden/discussions/1642) for more explanation.
+
+
+=== ROW 132 | f005314 | https://github.com/spring-rs/spring-rs | 2024-08-17 | hn-lobsters ===
+🍃spring-rs is a application framework written in rust inspired by java's spring-boot
+
+<div align="center">
+    <img src="https://raw.githubusercontent.com/summer-rs/summer-rs/refs/heads/master/docs/static/logo-rust.svg" alt="Logo" width="200"/>
+    <h3>summer-rs is application framework written in Rust, inspired by Java's SpringBoot</h3>
+    <p>English ｜ <a href="https://summer-rs.github.io/zh/docs/getting-started/introduction/">中文</a></p>
+    <p>
+        <a href="https://crates.io/crates/summer"><img src="https://img.shields.io/crates/v/summer.svg" alt="crates.io"/></a> <a href="https://docs.rs/summer"><img src="https://docs.rs/summer/badge.svg" alt="Documentation"/></a> <img src="https://img.shields.io/crates/l/summer" alt="Documentation"/>
+    </p>
+</div>
+
+<b>summer-rs</b> is an application framework that emphasizes convention over configuration, inspired by Java's SpringBoot. <b>summer-rs</b> provides an easily extensible plug-in system for integrating excellent projects in the Rust community, such as axum, sqlx, sea-orm, etc.
+
+Compared with SpringBoot in java, summer-rs has higher performance and lower memory usage, allowing you to completely get rid of the bloated JVM and travel light.
+
+## Features
+
+* ⚡️ High performance: Benefiting from the awesome rust language, <b>summer-rs</b> has the ultimate performance comparable to C/C++
+* 🛡️ High security: Compared to C/C++, the Rust language used by <b>summer-rs</b> provides memory safety and thread safety.
+* 🔨 Lightweight: The core code of summer-rs does not exceed 5,000 lines, and the binary size of the release version packaged in rust is also small.
+* 🔧 Easy to use: <b>summer-rs</b> provides a clear and concise API and optional Procedural Macros to simplify development.
+* 🔌 Highly extensible: <b>summer-rs</b> uses a highly extensible plug-in model, and users can customize plug-ins to extend program capabilities.
+* ⚙️ Highly configurable: <b>summer-rs</b> uses toml to configure applications and plug-ins to improve application flexibility.
+
+## Example
+
+**web**
+
+```rust,no_run
+use summer::{auto_config, App};
+use summer_sqlx::{
+    sqlx::{self, Row},
+    ConnectPool, SqlxPlugin
+};
+use summer_web::{get, route};
+use summer_web::{
+    error::Result, extractor::{Path, Component}, handler::TypeRouter, axum::response::IntoResponse, Router,
+    WebConfigurator, WebPlugin,
+};
+use anyhow::Context;
+
+#[auto_config(WebConfigurator)]
+#[tokio::main]
+async fn main() {
+    App::new()
+        .add_plugin(SqlxPlugin)
+        .add_plugin(WebPlugin)
+        .run()
+        .await
+}
+
+#[get("/")]
+async fn hello_world() -> impl IntoResponse {
+    "hello world"
+}
+
+#[route("/hello/{name}", method = "GET", method = "POST")]
+async fn hello(Path(name): Path<String>) -> impl IntoResponse {
+    format!("hello {name}")
+}
+
+#[get("/version")]
+async fn sqlx_request_handler(Component(pool): Component<ConnectPool>) -> Result<String> {
+    let version = sqlx::query("select version() as version")
+        .fetch_one(&pool)
+        .await
+        .context("sqlx query failed")?
+        .get("version");
+    Ok(version)
+}
+```
+
+**job**
+
+```rust,ignore
+use anyhow::Context;
+use summer::{auto_config, App};
+use summer_job::{cron, fix_delay, fix_rate};
+use summer_job::{extractor::Component, JobConfigurator, JobPlugin};
+use summer_sqlx::{
+    sqlx::{self, Row},
+    ConnectPool, SqlxPlugin,
+};
+use std::time::{Duration, SystemTime};
+
+#[auto_config(JobConfigurator)]
+#[tokio::main]
+async fn main() {
+    App::new()
+        .add_plugin(JobPlugin)
+        .add_plugin(SqlxPlugin)
+        .run()
+        .await;
+
+    tokio::time::sleep(Duration::from_secs(100)).await;
+}
+
+#[cron("1/10 * * * * *")]
+async fn cron_job(Component(db): Component<ConnectPool>) {
+    let time: String = sqlx::query("select TO_CHAR(now(),'YYYY-MM-DD HH24:MI:SS') as time")
+        .fetch_one(&db)
+        .await
+        .context("query failed")
+        .unwrap()
+        .get("time");
+    println!("cron scheduled: {:?}", time)
+}
+
+#[fix_delay(5)]
+async fn fix_delay_job() {
+    let now = SystemTime::now();
+    let datetime: sqlx::types::chrono::DateTime<sqlx::types::chrono::Local> = now.into();
+    let formatted_time = datetime.format("%Y-%m-%d %H:%M:%S");
+    println!("fix delay scheduled: {}", formatted_time)
+}
+
+#[fix_rate(5)]
+async fn fix_rate_job() {
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let now = SystemTime::now();
+    let datetime: sqlx::types::chrono::DateTime<sqlx::types::chrono::Local> = now.into();
+    let formatted_time = datetime.format("%Y-%m-%d %H:%M:%S");
+    println!("fix rate scheduled: {}", formatted_time)
+}
+```
+
+## component macros
+
+Add dependencies to your `Cargo.toml`:
+
+```toml
+[dependencies]
+summer = "0.4"
+tokio = { version = "1", features = ["full"] }
+```
+
+**Simple component registration with `#[component]` macro:**
+
+```rust,no_run
+use summer::component;
+use summer::config::Configurable;
+use summer::extractor::Config;
+use summer::plugin::ComponentRegistry;
+use summer::App;
+use serde::Deserialize;
+
+// Define configuration
+#[derive(Clone, Configurable, Deserialize)]
+#[config_prefix = "app"]
+struct AppConfig {
+    name: String,
+}
+
+// Define component
+#[derive(Clone)]
+struct AppService {
+    config: AppConfig,
+}
+
+// Use #[component] macro for automatic registration
+#[component]
+fn app_service(Config(config): Config<AppConfig>) -> AppService {
+    AppService { config }
+}
+
+#[tokio::main]
+async fn main() {
+    // Components are automatically registered
+    let app = App::new().build().await.unwrap();
+    
+    // Get registered component
+    let service = app.get_component::<AppService>().unwrap();
+    println!("App name: {}", service.config.name);
+}
+```
+
+The `#[component]` macro eliminates boilerplate code - no need to manually implement the Plugin trait! [Learn more →](https://summer-rs.github.io/docs/getting-started/component/)
+
+## Supported plugins
+
+| Plugin                | Crate                                                                                                                                                                      | Integrated With                                                               | Description                                      |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------ |
+| `summer-web`            | [![summer-web](https://img.shields.io/crates/v/summer-web.svg)](https://summer-rs.github.io/docs/plugins/summer-web/)                                         | [`axum`](https://github.com/tokio-rs/axum)                                  | Web framework based on Axum                      |
+| `summer-sqlx`           | [![summer-sqlx](https://img.shields.io/crates/v/summer-sqlx.svg)](https://summer-rs.github.io/docs/plugins/summer-sqlx/)                                     | [`sqlx`](https://github.com/launchbadge/sqlx)                               | Async SQL access                                 |
+| `summer-postgres`       | [![summer-postgres](https://img.shields.io/crates/v/summer-postgres.svg)](https://summer-rs.github.io/docs/plugins/summer-postgres/)                     | [`rust-postgres`](https://github.com/sfackler/rust-postgres)                | PostgreSQL client integration                   |
+| `summer-sea-orm`        | [![summer-sea-orm](https://img.shields.io/crates/v/summer-sea-orm.svg)](https://summer-rs.github.io/docs/plugins/summer-sea-orm/)                         | [`sea-orm`](https://www.sea-ql.org/SeaORM/)                                 | ORM support                                      |
+| `summer-redis`          | [![summer-redis](https://img.shields.io/crates/v/summer-redis.svg)](https://summer-rs.github.io/docs/plugins/summer-redis/)                                 | [`redis`](https://github.com/redis-rs/redis-rs)                             | Redis integration                                |
+| `summer-mail`           | [![summer-mail](https://img.shields.io/crates/v/summer-mail.svg)](https://summer-rs.github.io/docs/plugins/summer-mail/)                                     | [`lettre`](https://github.com/lettre/lettre)                                | Email sending                                    |
+| `summer-job`            | [![summer-job](https://img.shields.io/crates/v/summer-job.svg)](https://summer-rs.github.io/docs/plugins/summer-job/)                                         | [`tokio-cron-scheduler`](https://github.com/mvniekerk/tokio-cron-scheduler) | Scheduled jobs / Cron                            |
+| `summer-xxl-job`        | [![summer-xxl-job](https://img.shields.io/crates/v/summer-xxl-job.svg)](https://summer-rs.github.io/docs/plugins/summer-xxl-job/)                           | [`xxljob-sdk-rs`](https://crates.io/crates/xxljob-sdk-rs)                   | Distributed job executor for xxl-job / [ratch-job](https://github.com/ratch-job/ratch-job) |
+| `summer-stream`         | [![summer-stream](https://img.shields.io/crates/v/summer-stream.svg)](https://summer-rs.github.io/docs/plugins/summer-stream/)                             | [`sea-streamer`](https://github.com/SeaQL/sea-streamer)                     | Stream processing (Redis Streams / Kafka)       |
+| `summer-opentelemetry`  | [![summer-opentelemetry](https://img.shields.io/crates/v/summer-opentelemetry.svg)](https://summer-rs.github.io/docs/plugins/summer-opentelemetry/) | [`opentelemetry`](https://github.com/open-telemetry/opentelemetry-rust)     | Logging, metrics, and distributed tracing        |
+| `summer-resilience`     | [![summer-resilience](https://img.shields.io/crates/v/summer-resilience.svg)](https://summer-rs.github.io/docs/plugins/summer-resilience/)             | [`backoff`](https://github.com/ihrwein/backoff)                             | Named retry policies                             |
+| `summer-grpc`           | [![summer-grpc](https://img.shields.io/crates/v/summer-grpc.svg)](https://summer-rs.github.io/docs/plugins/summer-grpc/)                                     | [`tonic`](https://github.com/hyperium/tonic)                                | gRPC services and clients                        |
+| `summer-nacos`          | [![summer-nacos](https://img.shields.io/crates/v/summer-nacos.svg)](https://summer-rs.github.io/docs/plugins/summer-nacos/)                               | [`nacos-sdk`](https://crates.io/crates/nacos-sdk)                           | Nacos / r-nacos configuration and service discovery |
+| `summer-opendal`        | [![summer-opendal](https://img.shields.io/crates/v/summer-opendal.svg)](https://summer-rs.github.io/docs/plugins/summer-opendal/)                         | [`opendal`](https://github.com/apache/opendal)                              | Unified object storage and data access           |
+| `summer-apalis`        | [![summer-apalis](https://img.shields.io/crates/v/summer-apalis.svg)](https://summer-rs.github.io/docs/plugins/summer-apalis/)                         | [`apalis`](https://github.com/apalis-dev/apalis)                              | High-performance background processing library |
+| `summer-sa-token`      | [![summer-sa-token](https://img.shields.io/crates/v/summer-sa-token.svg)](https://summer-rs.github.io/docs/plugins/summer-sa-token/)               | [`sa-token-rust`](https://github.com/click33/sa-token-rust)                   | Sa-Token authentication and authorization      |
+
+## Ecosystem
+
+* ![summer-sqlx-migration-plugin](https://img.shields.io/crates/v/summer-sqlx-migration-plugin.svg) [`summer-sqlx-migration-plugin`](https://github.com/Phosphorus-M/summer-sqlx-migration-plugin)
+* [![Version](https://img.shields.io/open-vsx/v/summer-rs/summer-rs)](https://marketplace.visualstudio.com/items?itemName=summer-rs.summer-rs)[`summer-lsp`](https://github.com/summer-rs/summer-lsp) - IDE support for VSCode / compatible editor with LSP
+* [![JetBrains Plugin](https://img.shields.io/badge/JetBrains-Plugin-orange)](https://plugins.jetbrains.com/plugin/30040-summer-rs) [`intellij-summer-rs`](https://github.com/ouywm/intellij-summer-rs) - IDE support for RustRover / IntelliJ IDEA
+
+[more>>](https://crates.io/crates/summer/reverse_dependencies)
+
+## Project showcase
+
+* [Raline](https://github.com/ralinejs/raline)
+* [AutoWDS](https://github.com/AutoWDS/autowds-backend)
+* [summerrs-admin](https://github.com/ouywm/summerrs-admin)
+
+## Contribution
+
+We also welcome community experts to contribute their own plugins. [Contributing →](https://github.com/summer-rs/summer-rs)
+
+## Help
+
+Click here to view common problems encountered when using `summer-rs` [Help →](https://summer-rs.github.io/docs/help/faq/)
+
+
+=== ROW 135 | f005440 | https://infoworld.com/article/3815535/rust-memory-management-explained.html | 2025-02-12 | hn-lobsters ===
+Rust memory management explained | InfoWorld
+Topics
+Latest
+Newsletters
+Resources
+Buyer’s Guides
+Events
+Search
+Menu
+Topics
+Close
+Analytics
+Artificial Intelligence
+Careers
+Cloud Computing
+Contributor Content
+Data Management
+Databases
+Development Tools
+Devops
+Emerging Technology
+Enterprise Buyer’s Guides
+Generative AI
+IT Leadership
+Java
+JavaScript
+Microsoft .NET
+Open Source
+Programming Languages
+Python
+Security
+Software Development
+Technology Industry
+Back
+Close
+Search
+Topics
+Latest
+Newsletters
+Resources
+Buyer’s Guides
+More
+Features
+Blogs
+BrandPosts
+Videos
+Topics
+Topics
+Analytics
+Artificial Intelligence
+Careers
+Cloud Computing
+Contributor Content
+Data Management
+Databases
+Development Tools
+Devops
+Emerging Technology
+Enterprise Buyer’s Guides
+Generative AI
+IT Leadership
+Java
+JavaScript
+Microsoft .NET
+Open Source
+Programming Languages
+Python
+Security
+Software Development
+Technology Industry
+Home
+Software Development
+Programming Languages
+Rust
+by									Serdar Yegulalp
+Senior Writer
+Rust memory management explained
+how-to
+Feb 12, 20258 mins
+Rust’s ownership and borrowing mechanisms guarantee memory safety at run time. Here’s how to use them in your programs.
+Credit: 															Roman50 / Shutterstock
+The Rust programming language shares many concepts with other languages intended for systems programming. For instance, Rust distinguishes between memory allocated from the stack and memory allocated from the heap. It also ensures that variables declared within a scope are unavailable outside of that scope.
+But Rust implements these behaviors in its own way, with significant implications for how memory management works. Rust uses a variety of ownership metaphors to describe how resources are created, retained, and disposed of during a program’s lifetime. Learning how to work with Rust’s concept of ownership is an important rite of initiation for Rust programmers. This quick guide will help you get started.
+How Rust manages scope
+In C++ and other languages, there’s a rule called RAII: Resource acquisition is initialization. The resources for an object (like memory) are tied to how long it lives in a program. Rust also employs this rule, which prevents resources from being freed more than once, or used after being deallocated.
+In Rust, as in other languages, all objects have a scope, such as the body of a function or a manually declared scope. An object’s scope is the duration for which it’s considered valid. Outside of that scope, the object doesn’t exist—it can’t be referenced, and its memory is automatically disposed of. Anything declared inside a given scope only “lives” as long as that scope does.
+In the following example, data will live throughout main(), including in the inner scope where other_data is declared. But other_data is only available in the smaller scope:
+fn main() {
+let mut data = 1;
+{
+data = 3;
+let mut other_data = 2;
+}
+other_data=4;
+}
+Compiling this code generates the error: cannot find value `other_data` in this scope on the next-to-last line.
+When something falls out of scope, it is not only inaccessible but its memory is automatically freed. What’s more, the compiler tracks the availability of an object through the course of a program, so attempting to access something after it has fallen out of scope triggers a compiler error.
+The previous example uses stack-allocated variables for all its variables, which are fixed in size. However, we can use the Box type to get heap-allocated variables, where the size may vary and there is more flexibility of use.
+fn main() {
+let mut data = Box::new(1);
+{
+data = 3;
+let mut other_data = Box::new(2);
+}
+other_data=4;
+}
+This code also won’t compile at first, for the same reasons. But if we modify it slightly, it will:
+fn main() {
+let mut data = Box::new(1);
+{
+data = 3;
+let mut other_data = Box::new(2);
+}
+}
+When this code runs, other_data will be heap-allocated inside the scope, and then automatically deallocated when it leaves. The same goes for data: it will be created inside the scope of the main() function, and automatically disposed of when main() ends. All of this is visible to the compiler at compile time, so mistakes involving scope don’t compile.
+Ownership in Rust
+Rust adds another key idea to scoping and RAII: the notion of ownership. Objects can have only one owner, or live reference, at a time. You can move the ownership of an object between variables, but you can’t refer to an object mutably in more than one place at a time.
+fn main() {
+let a = Box::new(5);
+let _b = a;
+drop(a);
+}
+In this example, we create the value in a with a heap allocation, then assign _b to a. By doing this, we’ve moved the value out of a. So, if we try to manually deallocate the value with drop(), we get an error: use of moved value: `a`. Change the last line to drop(_b), though, and everything is fine. In this case, we’re manipulating that value by way of its current, valid owner.
+A function call can also take ownership of what is passed to it. Consider the following, adapted slightly from Rust By Example:
+fn bye(v:Box<i64>){
+println!("{} is not being returned", v);
+}
+fn main() {
+let a = Box::new(5);
+let _b = a;
+bye(_b);
+drop(_b);
+}
+If we try to compile this code, we’ll get the error use of moved value: `_b` at the line drop(_b).
+When we call bye(), the variable passed into it gets owned by bye(). And since that function never returns a value, that effectively ends the lifetime of _b and deallocates it. The drop() would have no effect even if it were called. On the other hand, this would work:
+fn bye(v:Box<i64>)-> Box<i64>{
+println!("{} is being returned", v);
+return v;
+}
+fn main() {
+let a = Box::new(5);
+let _b = a;
+let mut c = bye(_b);
+c = 32;
+drop(c);
+}
+Here, we return a value from bye(), which is received into an entirely new owner, c. We can then do whatever we like with c, including manually deallocating it.
+Something else we can do when we change owners is alter the mutability rules. An immutable object can be made mutable and vice versa:
+fn bye(v:Box<i64>)-> Box<i64>{
+println!("{} is being returned", v);
+return v;
+}
+fn main() {
+let a = Box::new(5);
+let _b = a;
+let mut c = bye(_b);
+*c = 32;
+drop(c);
+}
+In this example, a and _b are both immutable. But c is mutable, and once it takes ownership of what a and _b referred to, we can reassign it (although we need to refer to it as *c to indicate the value contained in the Box).
+It’s important to note that Rust enforces all of these rules ahead of time. If your code doesn’t honor how borrowing and scope work, it simply won’t compile. This ensures that whole classes of memory bugs will never make it to production. But it requires programmers to be scrupulous about what gets used where.
+Automatic memory management and Rust types
+I’ve mentioned using the Box type to heap-allocate memory and automatically dispose of it when it goes out of scope. Rust has a few other types that can be used to automatically manage memory in different scenarios.
+An Rc, or “reference counted” object, keeps track of how many clones are made of the object. When a new clone is made, the reference count goes up by 1; when a clone goes out of its scope, the reference count drops by 1. When the reference count reaches zero, the Rc object is dropped. Likewise, the Arc type (atomic reference count) allows for this same behavior but across threads.
+A key difference between Rc/Arc and Box is that a Box lets you take exclusive ownership of an object and make changes to it, while Rc and Arc share ownership, so the object can only be read-only.
+The Rc/Arc objects follow the same rules as Boxes: they’re bound by Rust’s larger dictates around lifetimes and borrowing. You can’t use them to perform an end-run around those checks. Do use them when the structure of a program makes it hard to tell how many readers will exist for a given piece of data.
+One more type used for mutable memory management is RefCell. This type lets you also have a single mutable reference or multiple immutable references, but the rules about such use are enforced at run time, not compile time. However, RefCell has two strong rules: it can only be used in single-threaded code, and if you break the borrowing rules of a RefCell at run time, the program will panic. Thus a RefCell works only for a narrow range of problems that are exclusively solved at run time.
+Rust memory management vs. garbage collection
+Even though Rust has types that allow reference counting, a mechanism also used in garbage-collected, memory-managed languages like Java, C#, and Python, Rust is generally not thought of as a “garbage-collected” or “memory-managed” language. Memory management in Rust is planned deterministically at compile time, rather than handled at run time. Even reference-counted types have to obey Rust’s rules for object lifetimes, scoping, and ownership—all of which must be confirmed at compile time.
+Also, languages with runtime memory management generally don’t offer direct control of when or how memory is allocated and reclaimed. They may give you some high-level knobs to tune, but you don’t get the granular control you do in Rust (or C, or C++). It’s a tradeoff: Rust requires more work ahead of time to ensure every use of memory is accounted for, but it pays off at run time with faster execution and more predictable and reliable memory management.
+RustProgramming LanguagesSoftware Development
+by
+Serdar Yegulalp
+Senior Writer
+Follow Serdar Yegulalp on X
+Serdar Yegulalp is a senior writer at InfoWorld. A veteran technology journalist, Serdar has been writing about computers, operating systems, databases, programming, and other information technology topics for 30 years. Before joining InfoWorld in 2013, Serdar wrote for Windows Magazine, InformationWeek, Byte, and a slew of other publications. At InfoWorld, Serdar has covered software development, devops, containerization, machine learning, and artificial intelligence, winning several B2B journalism awards including a 2024 Neal Award and a 2025 Azbee Award for best instructional content and best how-to article, respectively. He currently focuses on software development tools and technologies and major programming languages including Python, Rust, Go, Zig, and Wasm. Tune into his weekly Dev with Serdar videos for programming tips and techniques and close looks at programming libraries and tools.
+More from this author
+feature
+Get started with htmx 4 — dynamic web pages without JavaScript
+Sep 23, 2026 11 mins
+feature
+Supercharge your programming skills with Python superpowers
+Sep 18, 2026 3 mins
+feature
+OpenCV explained: The computer vision library for AI apps
+Sep 14, 2026 6 mins
+reviews
+Hands-on with Unsloth Desktop, for running and training LLMs locally
+Aug 31, 2026 7 mins
+feature
+Go hands-on with Python 3.15
+Aug 21, 2026 3 mins
+news
+DuckDB 2.0 coming this fall with client/server mode
+Aug 18, 2026 2 mins
+reviews
+I ran the tiny Bonsai model on my tiny GPU. Here’s how it performed
+Aug 17, 2026 7 mins
+feature
+The best new features in Python 3.15
+Aug 10, 2026 8 mins
+Show me more
+PopularArticlesVideos
+news
+OpenAI wants you to use AI — but not to train its AI
+By Maxwell Cooter
+Sep 25, 20262 mins
+Artificial IntelligenceCareersIT Training
+news
+Microsoft’s new Copilot unifies enterprise context for code and chat
+By Anirban Ghoshal
+Sep 25, 20267 mins
+Artificial IntelligenceDevelopment ToolsSoftware Development
+news
+Documentation placeholder domain used in ClickFix attacks
+By Maxwell Cooter
+Sep 25, 20262 mins
+CybercrimeMalwareSecurity
+video
+Did OpenAI STEAL Math Researchers' Work? The AI Controversy Explained
+Sep 16, 20266 mins
+Python
+video
+Why Software Developers Are “Token Maxxing” AI—and What It Means for Jobs
+Sep 11, 20267 mins
+Python
+video
+WebAssembly is getting WILD these days
+Sep 3, 20266 mins
+WebAssembly
+About
+About Us
+Advertise
+Contact Us
+Editorial Ethics Policy
+Foundry Careers
+Newsletters
+Reprints
+Add InfoWorld as a Preferred Source in Google Search
+Policies
+Terms of Service
+Privacy Policy
+Cookie Policy
+Copyright Notice
+Member Preferences
+About AdChoices
+Your California Privacy Rights
+Privacy Settings
+More
+News
+Features
+Blogs
+BrandPosts
+Events
+Videos
+Enterprise Buyer’s Guides
+Our Network
+CIO
+Computerworld
+CSO
+Network World
+Facebook
+X
+YouTube
+Google News
+LinkedIn
+© 2026  FoundryCo, Inc. All Rights Reserved.
+
+=== ROW 136 | f005504 | https://github.com/HelixDB/helix-db | 2025-05-13 | hn-lobsters ===
+HelixDB is an OLTP graph database with native vector and full-text search built in Rust on Object Storage.
+
+<div align="center">
+
+<img src="./assets/full_logo_dark.png#gh-dark-mode-only" alt="HelixDB Logo">
+<img src="./assets/full_logo_light.png#gh-light-mode-only" alt="HelixDB Logo">
+
+<b>HelixDB</b>: a graph-vector database for knowledge graphs and AI memory. Built from scratch in Rust.
+<br/><br/>
+<a href="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai" target="_blank"><img src="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai/upvote_embed.svg" alt="Launch YC: HelixDB - The Database for Intelligence" style="margin-left: 12px;"/></a>
+<h3>
+  <a href="https://helix-db.com">website</a> |
+  <a href="https://docs.helix-db.com">docs</a> |
+  <a href="https://discord.gg/2stgMPr5BD">discord</a> |
+  <a href="https://x.com/helixdb">X/twitter</a>
+</h3>
+
+[![Docs](https://img.shields.io/badge/docs-latest-blue)](https://docs.helix-db.com)
+[![Change Log](https://img.shields.io/badge/changelog-latest-blue)](https://docs.helix-db.com/change-log/helixdb)
+[![GitHub Repo stars](https://img.shields.io/github/stars/HelixDB/helix-db)](https://github.com/HelixDB/helix-db/stargazers)
+[![Discord](https://img.shields.io/discord/1354148209005559819?logo=discord)](https://discord.gg/2stgMPr5BD)
+[![LOC](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/HelixDB/helix-db/badge?filter=.rs$,.sh$&style=flat&logoColor=white&label=Lines%20of%20Code)](https://github.com/HelixDB/helix-db)
+
+
+
+</div>
+
+<hr>
+
+HelixDB is a database that makes it easy to build all the components needed for AI applications in a single platform.
+
+You don't need a separate application DB, relational DB, vector DB, graph DB, or application layers to manage the multiple storage locations. HelixDB gives your agents federated access to company data, for memory, company brains, and applications.
+
+Helix primarily operates with a graph + vector data model, but it also supports KV, documents, and relational data.
+
+## Getting Started
+
+### 1. Install the CLI
+
+The Helix CLI runs and manages local instances and talks to Helix Cloud.
+
+macOS and Linux:
+
+```bash
+curl -sSL "https://install.helix-db.com" | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex
+```
+
+Already installed? Update to the latest version with `helix update`.
+
+### 2. The quickest path — `helix chef`
+
+`helix chef` is an interactive, one-shot bootstrapper. It installs the HelixDB query skills and docs MCP, scaffolds a project, starts a local instance, seeds some example data, and writes a `HELIX_CHEF_PROMPT.md`. It detects supported agents in this order: Claude Code → OpenAI Codex → OpenCode → Cursor Agent. When one is available, it can hand off and build a working app — frontend and all — from a one-line description of what you want.
+
+```bash
+helix chef
+```
+
+That's it — no flags. Answer "what do you want to build?" and follow the prompts.
+
+### 3. Manual local setup
+
+If you would rather wire things up yourself, follow the
+[canonical local quickstart](https://docs.helix-db.com/database/helix-db/start-here/quickstart).
+It uses the exact files and `dev` instance generated by the current CLI.
+
+## Writing queries with the SDKs
+
+Queries are authored with the Rust, TypeScript, Go, or Python DSL and sent straight to a running instance through `POST /v2/query` — no build or deploy step. The SDKs produce the same JSON AST. The examples below talk to a local instance on `http://localhost:6969` (the default `helix start dev` port). See the [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview) for the full builder catalog and query wire format.
+
+| SDK | Package | Current release | Setup guide |
+|-----|---------|-----------------|-------------|
+| Rust | [`helix-db`](https://crates.io/crates/helix-db) | `3.0.0` | [Rust setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/rust-project-setup) |
+| TypeScript | [`@helix-db/helix-db`](https://www.npmjs.com/package/@helix-db/helix-db) | `3.1.0` | [TypeScript setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/typescript-project-setup) |
+| Python | [`helix-db`](https://pypi.org/project/helix-db/) | `0.3.4` | [Python setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/python-project-setup) |
+| Go | [`github.com/helixdb/helix-db/sdks/go`](https://pkg.go.dev/github.com/helixdb/helix-db/sdks/go) | `v0.3.1` | [Go setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/go-project-setup) |
+
+### Rust
+
+Install the crate (published as `helix-db`, imported as `helix_db`):
+
+```bash
+cargo init && cargo add helix-db@3.0.0 tokio sonic-rs
+```
+
+Define queries as `#[query]` functions, then run them directly through the client:
+
+```rust
+use helix_db::Client;
+use helix_db::dsl::prelude::*;
+
+#[query]
+pub fn add_user(name: String) -> WriteBatch {
+    write_batch()
+        .var_as(
+            "user",
+            g().add_n("User", vec![("name", name)])
+                .value_map(None::<Vec<String>>),
+        )
+        .returning(["user"])
+}
+
+#[query]
+pub fn get_user(name: String) -> ReadBatch {
+    read_batch()
+        .var_as(
+            "user",
+            g().n_with_label("User")
+                .where_(Predicate::eq("name", name))
+                .value_map(None::<Vec<String>>),
+        )
+        .returning(["user"])
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new(None)?; // defaults to http://localhost:6969
+
+    // add user — #[query] helpers return Result<QueryRequest, QueryError>
+    let new_user: sonic_rs::Value = client
+        .query(add_user("John Doe".to_string())?)
+        .send()
+        .await?;
+    println!("new user: {:#}", sonic_rs::to_string_pretty(&new_user)?);
+
+    // get user
+    let user: sonic_rs::Value = client
+        .query(get_user("John Doe".to_string())?)
+        .send()
+        .await?;
+    println!("user: {:#}", sonic_rs::to_string_pretty(&user)?);
+    Ok(())
+}
+```
+
+### TypeScript
+
+Install the package (Node.js 20+):
+
+```bash
+npm init -y && npm install @helix-db/helix-db@3.1.0
+```
+
+Define your queries as functions, then `POST` them to the running instance:
+
+```ts
+import {
+  Predicate, PropertyInput, PropertyProjection,
+  defineParams, g, param, readBatch, writeBatch,
+} from "@helix-db/helix-db";
+
+const addUserParams = defineParams({ name: param.string() });
+function addUser(p = addUserParams) {
+  return writeBatch()
+    .varAs("user",
+      g().addN("User", { name: PropertyInput.param("name") })
+        .project([PropertyProjection.new("name")]),
+    )
+    .returning(["user"]);
+}
+
+const getUserParams = defineParams({ name: param.string() });
+function getUser(p = getUserParams) {
+  return readBatch()
+    .varAs("user",
+      g().nWithLabel("User")
+        .where(Predicate.eqParam("name", "name"))
+        .project([PropertyProjection.new("name")]),
+    )
+    .returning(["user"]);
+}
+
+const HELIX_URL = "http://localhost:6969/v2/query";
+
+// add user
+const newUser = await fetch(HELIX_URL, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: addUser().toQueryJson(addUserParams, { name: "John Doe" }),
+}).then((r) => r.json());
+console.log("new user:", newUser);
+
+// get user
+const user = await fetch(HELIX_URL, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: getUser().toQueryJson(getUserParams, { name: "John Doe" }),
+}).then((r) => r.json());
+console.log("user:", user);
+```
+
+### Python
+
+Install the published PyPI package:
+
+```bash
+python -m pip install helix-db==0.3.4
+```
+
+Build requests with snake_case builders, then send them with the client:
+
+```python
+from helixdb import Client, Predicate, g, param, define_params, read_batch, write_batch
+
+add_user_params = define_params({"name": param.string()})
+add_user = (
+    write_batch()
+    .var_as("user", g().add_n("User", {"name": add_user_params.name}))
+    .returning(["user"])
+)
+
+get_user_params = define_params({"name": param.string()})
+get_user = (
+    read_batch()
+    .var_as(
+        "user",
+        g()
+        .n_with_label("User")
+        .where(Predicate.eq("name", get_user_params.name))
+        .value_map(["name"]),
+    )
+    .returning(["user"])
+)
+
+client = Client("http://localhost:6969")
+
+new_user = client.query(
+    add_user.to_query_request(add_user_params, {"name": "John Doe"})
+)
+print("new user:", new_user)
+
+user = client.query(
+    get_user.to_query_request(get_user_params, {"name": "John Doe"})
+)
+print("user:", user)
+```
+
+### Go
+
+Install the released Go module:
+
+```bash
+go mod init example.com/my-helix-app
+go get github.com/helixdb/helix-db/sdks/go@v0.3.1
+```
+
+Build a request with ordinary Go functions, then execute it with the client:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    helix "github.com/helixdb/helix-db/sdks/go"
+)
+
+func getUsers() helix.Request {
+    return helix.ReadQuery("get_users").
+        VarAs("users", helix.G().NWithLabel("User").ValueMap("$id", "name")).
+        Returning("users")
+}
+
+func main() {
+    client, err := helix.NewClient("http://localhost:6969")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    var response map[string]any
+    if err := client.Exec(context.Background(), getUsers(), &response); err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(response)
+}
+```
+
+## Version names
+
+- **HelixDB v3** is the current product and SDK generation.
+- **Helix CLI 3.x** is the independently released command-line client. Check its exact version with `helix --version`.
+- **`POST /v2/query`** is the current HTTP wire endpoint. Its `v2` path does not mean HelixDB v2 or CLI v2.
+
+## HelixDB Cloud
+
+HelixDB Cloud is an object-storage-backed deployment with integrated vector and full-text search, full ACID transactions, a single writer with auto-scaling reader nodes, and high availability (3+ gateways and DB nodes). The CLI uses a WorkOS session for Cloud control-plane and brokered query operations:
+
+```bash
+helix auth login
+helix workspace list
+helix project link <project-id> --workspace <workspace-id>
+helix init cloud --database tenant:<tenant-id> --project <project-id> --workspace <workspace-id>
+helix query production --file examples/request.json
+```
+
+Cloud queries go through the authenticated backend broker. Application keys returned by tenant or
+key creation are for direct gateway clients; the CLI displays them once and never stores or uses them.
+
+## Commercial Support
+
+### HelixDB Cloud
+
+HelixDB is available as a distributed, high-availability, managed service. If you're interested in using Helix's managed service, go to [our website](https://helix-db.com/login) to get started or [contact us](mailto:founders@helix-db.com) to talk with a founder.
+
+## Docs & Community
+
+- 📚 [Documentation](https://docs.helix-db.com) · [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview)
+- 💬 [Discord](https://discord.gg/2stgMPr5BD)
+- 🐦 [X / Twitter](https://x.com/helixdb)
+
+---
+
+Just Use Helix.
+
+
+=== ROW 142 | f005802 | https://mathstodon.xyz/@andreasthom/117240535270608201 | 2026-09-10 | hn-lobsters ===
+Andreas Thom: "@tristanbuckmaster
+1/3 I wan…" - Mathstodon
+Skip to main contentHotkey 1
+Skip to main navigationHotkey 2
+Recent searches
+No recent searches
+Search options
+Only available when logged in.
+mathstodon.xyz is one of the many independent Mastodon servers you can use to participate in the fediverse.
+A Mastodon instance for maths people. We have LaTeX rendering in the web interface!
+Administered by:
+Christian Lawson-Perfect @christianp
+Server stats:5.8K
+active users
+mathstodon.xyz:
+About mathstodon.xyz
+Status
+Profiles directory
+Privacy policy
+Mastodon:
+About Mastodon
+Get the app
+Keyboard shortcuts
+View source code
+v4.7.2
+Back
+tristanbuckmaster @tristanbuckmaster@mastodon.socialSep 8 *
+Today, Levent Alpöge and I have made public three results: finite-time blowup with smooth forcing for incompressible porous media, for Boussinesq, and for 3d incompressible Euler.
+https://cims.nyu.edu/~tristanb/statement.pdf
+https://cims.nyu.edu/~tristanb/euler.pdf
+https://cims.nyu.edu/~tristanb/ipm.pdf
+https://cims.nyu.edu/~tristanb/boussinesq.pdf
+https://github.com/tristanbuckmaster/fluid_lean
+16
+Andreas Thom @andreasthom@mathstodon.xyz
+@tristanbuckmaster
+1/3 I want to record a number of points that I realized after reading up on the controversy. In fact it recalls an exchange I had with OpenAI after its non-sofic-group announcement. It exposes a serious, unanswered question about whether researchers can trust OpenAI with unpublished mathematics.
+I wrote in an email to Mark Sellke and Sebastien Bubeck shortly after the surprising finding of a non-sofic group using the methods of Kun and myself:
+“Another point is that I and a colleague in Dresden were discussing the expander matching problem and various extensions of the work with Gabor Kun actively over the last months with ChatGPT, so that we are of course curious if that was part of the training data or accessible to the reasoning process. There is a certain (frankly unacceptable) lack of transparency here; and I fear it will damage the communal process of math more than the new AI-generated results will benefit the subject.”
+Mark Sellke’s complete answer was: “Regarding your conversations with ChatGPT: that did not happen.”
+I had explicitly asked about two different things: (1) whether our conversations entered training data, and (2) whether they were accessible to the solving process. The categorical answer now looks as though it addressed only direct access under (2). No such qualification, explanation, or evidence was given. I take this as dishonesty to say the least.
+OpenAI now says in the Buckmaster-Alpöge case that no specific user data was accessed, but adds that it “cannot rule out that de-identified data derived from their usage of our products helped improve our models.”
+Sep 09, 2026, 01:09 PM··Web
+Last edited Sep 09, 01:10 PM
+74 boosts·8 quotes·97 favorites
+Zhouhang Mᴀᴏ @ohThef7ySep 9
+@andreasthom @tristanbuckmaster I would like to check whether you opted out Settings → Data Controls → "Improve the model for everyone"? It is enabled by default — a colleague just reminded me of that. If you opted that out, then it might be illegal for them to say “cannot rule out that de-identified data derived from their usage of our products helped improve our models”.
+0
+707Kat @707Kat@mastodon.artSep 12 *
+@andreasthom @tristanbuckmaster they trained on data of tons of people and their work without their consent to make their models to begin with. Of course you can’t trust them.
+0
+Dave Moskovitz ((())) @davemosk@mastodon.nzSep 10
+@andreasthom @tristanbuckmaster One lesson is do not trust Big Tech with anything you consider confidential. There are many other lessons.
+0
+Paul-Olivier Dehaye @podehayeSep 10
+@andreasthom @tristanbuckmaster
+Hi. Based on past experience, I have several ideas on things you could do, and funds to help make this an extremely impactful project.
+As indicated here, I kind of have been mapping out options for when we reached yesterday's events
+https://www.youtube.com/watch?v=zmWPObxeGT4
+https://www.mathgenealogy.org/id.php?id=100643
+YouTubeCuriosity and digital chaos | Paul-Olivier Dehaye | TEDxGenevaBy TEDx Talks
+0
+p6zem0 @P6zem0@mastodon.com.plSep 10
+@andreasthom @tristanbuckmaster #onlyLocalLLM
+0
+chickendeadfrog @chickendeadfrogSep 9
+@andreasthom @tristanbuckmaster
+I think the answer is that OpenAI doesn't know whether it benefitted from the prompts you gave it to the point where it solved the problem because of it.
+Large AI models are a big black box and interpretability (basically the field of understanding how these models think) is difficult and nowhere near the state where it can tell you these things.
+1
+Breakfastisready नाश्तातैयारहै @BreakfastisreadySep 10
+@chickendeadfrog @andreasthom @tristanbuckmaster
+It's very easy to tell whether or not something went into the training data. It has nothing to do with interpretability.
+1
+Martin Modrák @modrak_m@bayes.clubSep 12
+@Breakfastisready unless you semi-intentionally sabotage any attempt at record keeping to provide plausible deniability whenever it suits you...
+0
+Mastodon
+Live feeds
+About
+Mastodon is the best way to keep up with what's happening.
+Follow anyone across the fediverse and see it all in chronological order. No algorithms, ads, or clickbait in sight.Create accountLogin
+Create accountLogin
+Drag & drop to upload
+
+=== ROW 148 | f007125 | https://darkcoding.net/software/rust-hashmap-notes | 2025-03-30T10:50:00 | individual-blogs ===
+Rust HashMap notes · Graham King
+Graham King
+Solvitas perambulum
+Rust HashMap notes
+March 30, 2025
+software
+optimization
+hashmap
+datastructures
+Rust’s HashMap has a very efficient SIMD-friendly design based on Google’s SwissTable. There is a fantastic CppCon talk about it’s design: Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step. That video is necessary to make sense of what follows.
+I spent some time learning how the Rust implementation works, with the intention to write a deep-dive post about it. I’m ready to admit that’s not going to happen, so here are my raw research notes.
+Edited down to the core pieces Rust’s HashMap looks like this:
+std::collections::HashMap<K, V> {
+base: hashbrown::HashMap<K, V> {
+// Factory for hasher. Default to RandomState who's build_hasher(k1, k2)
+// returns a SipHasher (SipHash 1-3) initialized with two random values.
+hash_builder: impl BuildHasher
+// Key/Value become a tuple, that's what we store in the map's backing memory
+// T = (K, V)
+table: RawTable<T> {
+// non generic part
+table: RawTableInner {
+bucket_mask: usize, // num buckets - 1 (??)
+ctrl: *const T, // the memory - the exciting part!
+growth_left: usize, // inserts left until we have to grow
+items: usize, // len()
+}
+}
+}
+}
+The implementation is also available as a separate crate: hashbrown.
+A traditional compsci-101 hashtable is an array of linked lists. The key is hashed to an index in the array. That’s it’s bucket. Each bucket contains a linked-list. The element is appended to the end. That tends to result in elements spread out in memory which performs poorly on modern processors. That is a chaining table.
+hashbrown is instead a probing table. The elements are contiguous in memory. The values are stored as an array, ending with ctrl bytes. Most of the probing happens in ctrl bytes, so in L1 cache. The probing uses SSE instructions (128 bit SIMD) to compare 16 bytes at once.
+The number of buckets is always a power of 2. HashMap is made up of contiguous groups: 16 control bytes and 16 values is a Group.
+Metadata at start of allocation (ctrl):
+a byte per entry, first bit says if it’s deleted,
+then (if 0) 7 bits of hash code, bottom 7 bits of hash
+if top bit 1 is non-value: empty, deleted or sentinel (for table scan)
+Hash is u64:
+top 57 bits are h1, position in array to start looking at. We start looking in ctrl bytes, often that’s enough.
+bottom 7 bits are h2
+Find (probing):
+hash the value, treat as h1 (top 57 bits) and h2 (bottom 7 bits)
+h1 % size gives us an $index into ctrl bytes. For mod we use & lower bits because num buckets is always a power of 2, so for 4 buckets we keep only the 2 bits, for 8 bucket the lower 3 bits, etc.
+jump to that index compare bottom 7 bits - h2 - of next 16 bytes at once, noting all the matches (usually 1 maybe 2)
+initial index plus offset of byte that matches gives us the slot position (index into regular data part of group)
+compare the full key in that slot with our key (because hash collisions are possible). This is almost always true so we can tell branch predictor to predict branch taken. If we found it that was only 2 memory accesses.
+Growth:
+allocates on first insert (not on ‘new’)
+grows by allocating a new table and inserting all elements from previous table into it (hash+memcopy)
+always one spare bucket at end - a bucket is just entry in array [V] where V is value type
+always a power of 2 (but holds that -1)
+initial allocation is space for 4 entries (3 elements plus the spare)
+next allocation is space for 8 entries
+then next power of 2 above or equal to cap*8 / 7. close enough to “grows by doubling”. 9-14 -> 16, 15->28 -> 32, etc
+Memory layout:
+contiguous block
+data bytes ((size_of + size_of) * NumBuckets), then 16 ctrl bytes, then NumBuckets ctrl bytes? (why the duplication)
+data and ctrl bytes are mirrors of each other. we use positive offset for ctrl bytes, negative offset for data
+[optional padding (so that we align 16?)] d3, d2, d1, d0, c0, c1, c2, c3
+^
+|- RawTableInner.ctrl
+I hope that was useful to you.
+←
+Underrust: How does u128 work on a 64-bit processor?
+April 5, 2025
+CPU Performance Optimization notes
+March 29, 2025
+→
+©
+2026
+Graham King
+
+=== ROW 164 | f008692 | https://theembeddedrustacean.com/p/the-embedded-rustacean-issue-58 | 2025-11-12T00:00:00 | individual-blogs;twir-links ===
+The Embedded Rustacean Issue #58
+Learn
+Learn
+books
+Books
+Simplified Embedded Rust: ESP Standard Library Edition
+Simplified Embedded Rust: ESP Core Library Edition
+Simplified Embedded Rust: STM32 Blog Collection Edition
+Wired World: A Beginner’s Guide to Embedded Electronic Interfaces
+toolbox
+Hardware
+uFerris Learner Board
+compass
+Guides & Overviews
+A 5-Step Guide for Learning Embedded Rust
+Embedded Rust Contribution Guide
+Embedded Rust Adoption Tracking
+Embedded Rust Ecosystem Overview
+Explore
+Explore
+chat-circle-text
+Blog
+The Embedded Rustacean Blog
+newspaper-clipping
+Newsletter
+Newsletter Archive
+Store
+Ads
+Sign Up
+Home
+Posts
+The Embedded Rustacean Issue #58
+The Embedded Rustacean Issue #58
+Nov 7, 2025
+In partnership with
+Hello and welcome to the Embedded Rustacean! This newsletter is a bi-monthly curation of resources and a summary of everything happening around embedded Rust 🦀. This newsletter was started because of the belief in Rust as a programming language with all the traits 🧬 (pun intended) that prime it to become the future of software in embedded systems. We’re another issue closer to that vision.
+Want something mentioned? Tag us on LinkedIn or email us.
+Are you getting started with embedded Rust? Check out Simplified Embedded Rust also click here for a suggested step-by-step guide.
+Want to get involved or think about contributing? Click here for a contribution guide.
+Prefer an RSS feed? 📡 Click here for access.
+For sponsorship and advertising opportunities 🤝 Click here or email us.
+Get a free graphical overview of the embedded Rust ecosystem here.
+Like newsletters? Here are some other awesome (and completely free!) newsletters our readers also enjoy. Explore
+We are {{active_subscriber_count}} Rustaceans 🦀
+🚨
+Issue Highlights
+🦀 Rust 1.91 Released
+📢 esp-hal 1.0.0  Announced
+🍓 Pico VSCode extension now supports Rust
+🐧 apt Package Manager to require Rust soon
+💰 Rust Foundation Announces Maintainer Fund
+💬
+Quote of the Issue
+❝
+Software is a gas; it expands to fill its container.
+Nathan Myhrvold
+📰
+News & Article Roundup
+A curation of embedded Rust-related news, articles, and posts
+Embedded Rust News 📰
+esp-hal 1.0.0 release announcement ⭐
+Develop embedded firmware for Pico using Rust or Zephyr with pico-vscode ⭐
+probe-rs 0.30.0 release
+TrustInSoft Extends Formal Verification to Rust and Real-Time Systems
+Ferrocene 25.08.0 now available
+Rust News 🗞🦀
+Announcing the Rust Foundation Maintainers Fund ⭐
+Announcing Rust 1.91.0 ⭐
+Announcing seven new members of the compiler team
+Debian's APT Will Soon Begin Requiring Rust ⭐
+Ubuntu Will Use Rust For Dozens of Core Linux Utilities
+Hard Rust requirements from May onward
+Rust 1.91 promotes Windows on Arm64 to Tier 1 target
+Announcing the rust foundation maintainers fund
+Project goals for 2025H2
+Burn 0.19.0 Release: Quantization, Distributed Training, and LLVM Back End
+OpenTelemetry Adoption Update: Rust, Prometheus and Other Speed Bumps
+General Embedded News/Trends 📈
+RFC: Collecting Community Input on Qualification of LLVM Tools & Libraries
+Announcing the Edge Impulse Zephyr Module
+NXP Accelerates Edge AI with Kinara Acquisition
+NVIDIA Open Sources Aerial Software to Accelerate AI-Native 6G
+SOAFEE Roundtable Introduces Blueprints for Automotive Innovation
+ARM Education announces “AI at the Edge on Arm“ course
+NXP Rolls Out AI-Enabled Applications Processor Targeting Automotive
+Alif Semiconductor ’s releases framework extension for embedded systems
+OpenBMC ported to Zephyr and other news
+Grinn SBC shortens go-to-market for sophisticated AI-ready embedded systems
+NXP Intros Battery Management Tech Aims To Boost Performance
+Polyn delivers silicon-implementation of its NASP chip
+Collaborative Learning on the Edge
+Comparisons with Other Languages 🔍
+A Case Study in Rewriting a Critical Service in Rust
+Cloudflare Raves About Performance Gains After Rust Rewrite
+Automatically Translating C to Rust
+What’s the Go language really good for?
+Hardware 🛠
+ESP32JTAG – An open-source wireless JTAG and logic analyzer
+State of Embedded (SBCs): Q4 2025 Overview
+The Arduino Uno Q is a weird hybrid SBC
+HackBEE is a Raspberry Pi RP2350 USB-C dongle for developers
+The Arduino Uno Q: Hands On
+📚
+Educational Resources
+A curation of embedded & Rust educational resources and tutorials
+Tutorials & Walkthroughs 📫
+impl Rust for ESP32: Ratatui on ESP32
+Async Rust explained without Tokio or Smol
+Insights, Tools, & Case Studies 📑
+Building Up And Sanding Down
+Turn ESP32 devices into through-wall motion sensors
+SafeFFI: Efficient Sanitization at the Boundary Between Safe and Unsafe Code in Rust and Mixed-Language Applications
+Futurelock: A subtle risk in async Rust
+Jack Huey, Niko Matsakis Interview, Rust Vision Doc Team
+Rust Hobby OS projects worth exploring
+Cross-platform applications with Rust 1: Durable and flexible
+SAFEXPLAIN: Building Trustworthy AI for Critical Embedded Systems
+Building cargo-sane: A Better Way to Manage Rust Dependencies
+The state of the Rust dependency ecosystem
+Recent Rust Changes
+Building a Coding Agent in Rust: Implementing Chat Feature
+Linking and shrinking Rust static libraries: a tale of fire
+Pixi: Modern package management for Robotics
+Patterns for Defensive Programming in Rust
+TECS/Rust-OE: Optimizing Exclusive Control in Rust-based Component Systems for Embedded Devices
+Complex, AI-Enabled Small Processors and Cybersecurity Will Dominate Embedded System Designs Going Forward
+deepSURF: Detecting Memory Safety Vulnerabilities in Rust Through Fuzzing LLM-Augmented Harnesses
+The Rust Revolution in Engineering Systems: Real-World Examples from the Lab to the Factory Floor
+HORUS: Production-grade robotics framework achieving sub-microsecond IPC with lock-free shared memory
+A hard rain's a-gonna fall: decoding JSON in Rust
+General Embedded 📟
+Debugging Embedded Graphics with Wokwi and AI: Solving a Raylib Color Mapping on ESP32
+Integrating Embedded Swift and SDL3 on ESP32
+Deep Learning on Microcontrollers: The State of Embedded ML in 2025
+TinyML is the most impressive piece of software you can run on any ESP32
+Grayskull: A tiny computer vision library in C for embedded systems, etc.
+NanoHydra: Energy-Efficient Time-Series Classification at the Edge
+RockNet: Distributed Learning on Ultra-Low-Power Devices
+Deploying MobileNetV3 on NXP i.MX8MP: A Complete Edge AI Workflow for Handwritten Digit Recognition
+Insights and Challenges for Securing Microcontroller Systems
+⭐
+Noteworthy Mentions
+Useful resources worth mentioning
+Noteworthy Course 🧑‍🏫
+🏫 Harvard CS249 Introduction to Machine Learning Systems
+Noteworthy Book 📚
+📕 Async Rust
+Noteworthy Newsletter 📰
+📰 tl;dr sec - Keep up with Cybersecurity in 7 min/week
+📢
+Updates, Events, & Announcements
+Updates & announcements from the community
+Notable Device and/or Framework Crate Updates 🚨
+burn v0.19.1
+stm32-hal2 v2.1.9
+embedded-test v0.7.0
+probe-rs v0.30.0
+esp-radio v0.17.0
+esp-hal v1.0.0
+ravedude v0.2.2
+Upcoming Events & Deadlines 🎭
+TokioConf 2026 - April 20th, 2026 - CFP Open, Deadline: December 8th, 2025 - Portland, Oregon, USA
+Rust Nation UK - February 18th & 19th, 2026 - London, UK
+Rust In Paris - March, 2026 (Projected) - Paris, France
+RustMeet - March, 2026 (Projected) - Gliwice, Poland
+Rustikon - 19 & 20 March, 2026 - Warsaw, Poland
+Rust Asia - March, 2026 (Projected) - Hong Kong
+RustWeek - May 18-23, 2026 - Utrecht, Netherlands
+RustForge - August, 2026 (Projected) - Wellington, New Zealand
+RustConf - September 8-11, 2026 - Montreal, Canada
+Oxidize - September 14-16, 2026 - Berlin, Germany
+EuroRust - October 14-17, 2026 - Barcelona, Spain
+RustLab - November, 2026 (Projected) - Florence, Italy
+💼
+Jobs & Adoption
+Keeping track of companies involved with embedded Rust
+The Embedded Rust Adoption Tracker 🧭
+The number of entities that believe in a future involving Rust in embedded is continuously growing. Any new additions will be mentioned here. Meanwhile, click here to access the full list of entities known to adopt/use embedded Rust.
+Jobs Postings 🏭
+Contrary to common belief, many embedded job posts nowadays prefer some knowledge of Rust. Additionally, there is a good amount that requires Rust. The list captures some of the interesting opportunities out there but is not comprehensive by any means. Listings that appear in the newsletter will remain as long as they’re posted/open online.
+Want to share a job post?
+Click Here to Email a Listing
+Europe-Based Jobs 🌍
+🦀 Internship: Firmware Rust Developer - NXP, Gratkorn, Austria
+🦀 Middle/Senior Rust Developer with C experience (IoT) - Sigma Software, Mutliple Locations, Europe
+🦀 Software Development Engineer - Embedded Development - Amazon, London, Cambridge, UK
+🦀 Firmware Engineer - IoT Biodiversity Sensors - Hula, Munich, Germany
+🦀 Embedded Rust (Medical) - Freelance, Munich, Germany
+🦀 Rust Developer/Promoter - Collabora, Remote
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+North America-Based Jobs 🌎
+🦀 Embedded Software Engineer, Senior Software Engineer, Staff Software Engineer, OTA, and Senior Software Engineer, OTA - Rivian/VW,  Palo Alto, CA and Vancouver, Canada
+🦀 Spacecraft Embedded Software Engineer (Rust) & Senior Spacecraft Embedded Software Engineer (Rust) - Spire, Multiple Locations, CA & USA
+🦀 Rust Software Developer - Ford, Hybrid, Palo Alto, CA
+🦀 Senior Embedded Developer (Hardware in the Loop) - Geotab, Oakville, ON
+🦀 Software Engineer II - Embedded Cybersecurity - Collins Aerospace, Cedar Rapids, IA
+🦀 Staff Software Engineer - OTA - Rivian-VW - Palo Alto, CA, Vancouver, Toronto, Canada
+🦀 Software Engineer, Platform - Impulse, San Fransisco, CA
+🦀 Embedded Firmware Engineer, Embedded Firmware Developer, and Embedded Rust/C++ Firmware Developer - Chemelex, Edmonton, Canada
+🦀 Principal Embedded Systems Engineer – Avionics / GNC - Orb Aerospace, Lowell, MI
+🦀 Embedded Systems Software Consultant (Rust / RTOS) - Seamgen, Remote
+🦀 Firmware Engineer - Mach Industries, Huntington Beach, CA
+🦀 Sr. Embedded Firmware Engineer (Rust and C) - Nanobiosym, Cambridge, MA
+🦀 Rust Software Engineer - K2Space, Los Angeles, CA
+🦀 Embedded Software Engineer (Bare Metal), Intelligence Systems - Anduril, Reston, VA
+🦀 Rust Engineering Lead - Linux and Open Source - Canonical, Global, Hybrid
+🔃
+Reader Feedback
+Help us know how we are doing
+Which Newsletter Section is Your Favorite?
+News & Article Roundup 📰
+Educational Resources 📚
+Updates, Events, & Announcements 🔈
+Noteworthy Mentions ⭐️
+Jobs & Adoption 💼
+Login or Subscribe to participate
+Have More Detailed Feedback?
+Click Here to Email Us
+That’s a wrap!
+Rust Regards and Binary Blessings, 🦀
+- Omar
+Free, private email that puts your privacy first
+A private inbox doesn’t have to come with a price tag—or a catch. Proton Mail’s free plan gives you the privacy and security you expect, without selling your data or showing you ads.
+Built by scientists and privacy advocates, Proton Mail uses end-to-end encryption to keep your conversations secure. No scanning. No targeting. No creepy promotions.
+With Proton, you’re not the product — you’re in control.
+Start for free. Upgrade anytime. Stay private always.
+Get free private email
+Reply
+Login or Subscribe to participate
+Keep ReadingRead all
+arrow-right
+Subscribe
+The Resource for Everything Embedded Rust. Every other Friday. Twice a Month.
+For any questions or thoughts, please reach out to [email protected]
+© 2026 The Embedded Rustacean.
+beehiivPowered by beehiiv
+0
+
+=== ROW 175 | f009654 | https://blog.rust-lang.org/2025/04/11/crates-io-security-session-cookies | 2025-04-11 | project-blog ===
+crates.io security incident: improperly stored session cookies | Rust Blog
+Rust Blog
+Rust
+Install
+Learn
+Tools
+Governance
+Community
+🖌
+Light
+Dark
+System
+crates.io security incident: improperly stored session cookies
+Apr. 11, 2025 · Adam Harvey
+on behalf of the crates.io team
+Today the crates.io team discovered that the contents of the cargo_session
+cookie were being persisted to our error monitoring service,
+Sentry, as part of event payloads sent when an
+error occurs in the crates.io backend. The value of this cookie is a signed
+value that identifies the currently logged in user, and therefore these cookie
+values could be used to impersonate any logged in user.
+Sentry access is limited to a trusted subset of the crates.io team, Rust
+infrastructure team, and the crates.io on-call rotation team, who already have
+access to the production environment of crates.io. There is no evidence that
+these values were ever accessed or used.
+Nevertheless, out of an abundance of caution, we have taken these actions
+today:
+We have merged and deployed a change to redact all cookie values from all
+Sentry events.
+We have invalidated all logged in sessions, thus making the cookies stored
+in Sentry useless. In effect, this means that every crates.io user has been
+logged out of their browser session(s).
+Note that API tokens are not affected by this: they are transmitted using
+the Authorization HTTP header, and were already properly redacted before
+events were stored in Sentry. All existing API tokens will continue to work.
+We apologise for the inconvenience. If you have any further questions, please
+contact us on
+Zulip or
+GitHub.
+Get help!
+Documentation
+Contact the Rust Team
+Terms and policies
+Code of Conduct
+Licenses
+Logo Policy and Media Guide
+Security Disclosures
+All Policies
+Social
+RSS
+Main Blog
+"Inside Rust" Blog
+Maintained by the Rust Team. See a typo?
+Send a fix here!
+
+=== ROW 190 | f011688 | https://shuttle.rs/blog/2024/01/24/writing-cronjobs-rust | 2024-01-31T00:00:00 | twir-links ===
+Writing Cronjobs in Rust | Shuttle
+⭐️ If you like Shuttle,give it a star on GitHuborfollow us on Twitter
+Blog
+Docs
+Customers
+Writing Cronjobs in Rust
+Joshua Mo  • 23 January 2024
+Stay updated
+Get the latest news about Shuttle features and Rust tips
+Subscribe
+In this article we're going to talk about how you can write your own cron jobs as a web service using Shuttle!
+Cron jobs (or "scheduled tasks") are useful for many things. They allow you to automatically do things like:
+Automate data back-ups.
+Adding daily reminders (for example to customers who are signed up to a service you own but haven't started using it yet).
+Creating/writing reports.
+If you're interested in the final code and want to deploy quickly, you can find the repo here. You can deploy it with two simple steps:
+Run shuttle init --from shuttle-hq/shuttle-examples --subfolder shuttle-cron and follow the prompt (requires cargo-shuttle installed)
+Run shuttle deploy. That's it!
+Getting Started#
+If you don't have cargo-shuttle installed, you can install it by running the command below (requires Rust + Cargo installed):
+cargo install cargo-shuttle
+To get started, you'll want to initialise a project with cargo-shuttle:
+shuttle init
+You'll want to make sure to follow the prompt and choose None when the framework options come up. This will spawn a custom service that you can use with Shuttle. For this article, we will be using the project name shuttle-example-cron.
+Once done, we'll want to install the following dependencies:
+serde - Allows us to de/serialize tasks
+chrono - Allows us to use timestamps
+apalis - The task queue framework we'll be using
+sqlx - Allows you to interact with your provisioned database
+shuttle-shared-db - Provisions database for you from Shuttle (locally via Docker, via the runtime in deployment)
+tower - Used with apalis so that the cron job can be hosted.
+We can install all of these with the following shell snippet:
+cargo add apalis -F cron,postgres,extensions,retry
+cargo add chrono -F serde,clock
+cargo add serde -F derive
+cargo add shuttle-shared-db -F postgres
+cargo add sqlx -F runtime-tokio-native-tls,postgres
+cargo add tower
+Now that everything is installed, it's time to get coding!
+Writing our first cron job#
+Adding a database#
+Before we do anything else, let's provision a database using the Shuttle runtime. You'll want to add the shuttle-shared-db annotation to your main function like so and set up our Postgres connection pool:
+use sqlx::{PgPool, postgres::PgPoolOptions};
+pub struct MyService {
+db: PgPool,
+}
+#[shuttle_runtime::main]
+async fn shuttle_main(
+#[shuttle_shared_db::Postgres] conn_string: String,
+) -> Result<MyService, shuttle_runtime::Error> {
+let db = PgPoolOptions::new()
+.min_connections(5)
+.max_connections(5)
+.connect(&conn_string)
+.await
+.unwrap();
+Ok(MyService { db })
+}
+As you can see, pretty simple! You would otherwise need to run a Docker command to spin this up. In production, you would also need to manually instantiate and manage your Postgres instance or rely on an IaC (infrastructure as code) tool like Terraform.
+Then we need to implement a few new things:
+A struct that implements apalis::prelude::Job
+A struct that can be added as a shared data extension to our cron service with a function that will do the actual work we want
+A function that gets called by apalis when work is required to be done (according to the cronjob schedule)
+Let's start with implementing our job struct. Note that when using apalis jobs in a cronjob context, they must also implement From<chrono::DateTime<chrono::Utc>> (essentially this means they can't hold any other fields):
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use apalis::prelude::Job;
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+struct Reminder(DateTime<Utc>);
+impl From<DateTime<Utc>> for Reminder {
+fn from(t: DateTime<Utc>) -> Self {
+Reminder(t)
+}
+}
+// set up an identifier for apalis
+impl Job for Reminder {
+const NAME: &'static str = "reminder::DailyReminder";
+}
+Now we want to implement the function that will do the actual work when called by apalis. We can set this up so that it just says "Hello world from say_hello_world()!":
+use apalis::prelude::JobContext;
+async fn say_hello_world(job: Reminder, ctx: JobContext) {
+println!("Hello world from `say_hello_world()`!");
+}
+However, if you want to add extra variables (for example, a database connection pool) you need to add an extension layer in your service to be able to access them. Let's have a look at what this struct might look like:
+#[derive(Clone)]
+struct CronjobData {
+message: String
+}
+impl CronjobData {
+fn execute(&self, item: Reminder) {
+println!("{} from CronjobData::execute()!", &self.message);
+}
+}
+You can then feed this struct back into the say_hello_world function, which uses the execute() function:
+async fn say_hello_world(job: Reminder, ctx: JobContext) {
+println!("Hello world from send_reminder()!");
+// this lets you use variables stored in the CronjobData struct
+let svc = ctx.data_opt::<CronjobData>().unwrap();
+// this executes CronjobData::execute()
+svc.execute(job);
+}
+The variables for the CronjobData struct come from instantiating the struct and then adding it as a shared data extension to the Tower service that we use. This allows apalis to be able to use the data by using .data_opt() from the JobContext struct.
+Hooking it all up#
+Now we're going to hook the structs we made previously into our main app!
+To start with, we need to set up the PostgresStorage type so that we can use Postgres for durable job queues. Without durable job queues, our jobs would disappear if our web service has any outages! We can convert this directly from the PgPool type stored in our main struct and run the migrations for it like so:
+#[shuttle_runtime::async_trait]
+impl shuttle_runtime::Service for MyService {
+async fn bind(
+self,
+_addr: std::net::SocketAddr
+) -> Result<(), shuttle_runtime::Error> {
+// set up Postgres-backed storage
+let storage = PostgresStorage::new(self.db);
+// set up storage
+storage.setup().await.expect("Unable to run migrations :(");
+Ok(())
+}
+}
+The shuttle_runtime::Service trait is what allows your custom service to be packaged into a project that the Shuttle runtime can use. It also provides a HTTP address that you can optionally bind a HTTP-bound service to (for example, a web server).
+Now we can create a tower service that holds our job that we want to run. We can use the DefaultRetryPolicy provided to us by apalis to be able to add automatic re-tries, as well as layering the shared data as an Extension:
+use tower::ServiceBuilder;
+use apalis::layers::{DefaultRetryLayer, Extension, RetryLayer};
+use apalis::prelude::job_fn;
+// .. your previous code
+let cron_service_ext = CronjobData {
+message: "Hello world".to_string(),
+};
+// create a servicebuilder for the cronjob
+let service = ServiceBuilder::new()
+.layer(RetryLayer::new(DefaultRetryPolicy))
+.layer(Extension(cron_service_ext))
+.service(job_fn(say_hello_world));
+Now that we've built the service, we need to build the worker and then finally create an apalis::Monitor process that will carry the work out:
+use apalis::prelude::timer::TokioTimer;
+use apalis::cron::{Schedule, CronStream};
+use apalis::prelude::{WorkerBuilder, Monitor};
+// .. your previous code
+let schedule = Schedule::from_str("* * * * * *").expect("Couldn't start the scheduler!");
+// create a worker that uses the service created from the cronjob
+let worker = WorkerBuilder::new("morning-cereal")
+.with_storage(storage.clone())
+.stream(
+CronStream::new(schedule)
+.timer(TokioTimer)
+.to_stream()
+)
+.build(service);
+// start your worker up
+Monitor::new().register(worker).run().await.expect("Unable to start worker");
+Here is the full code for our main application:
+#[shuttle_runtime::async_trait]
+impl shuttle_runtime::Service for MyService {
+async fn bind(
+self,
+_addr: std::net::SocketAddr
+) -> Result<(), shuttle_runtime::Error> {
+let storage = PostgresStorage::new(self.db.clone());
+// set up storage
+storage.setup().await.expect("Unable to run migrations :(");
+let cron_service_ext = CronjobData {
+message: "Hello world".to_string()
+};
+// create a servicebuilder for the cronjob
+let service = ServiceBuilder::new()
+.layer(RetryLayer::new(DefaultRetryPolicy))
+.layer(Extension(cron_service_ext))
+.service(job_fn(say_hello_world));
+let schedule = Schedule::from_str("* * * * * *")
+.expect("Couldn't start the scheduler!");
+// create a worker that uses the service created from the cronjob
+let worker = WorkerBuilder::new("morning-cereal")
+.with_storage(storage.clone())
+.stream(CronStream::new(schedule).timer(TokioTimer).to_stream())
+.build(service);
+// start your worker up
+Monitor::new()
+.register(worker)
+.run()
+.await
+.expect("Unable to start worker");
+Ok(())
+}
+}
+Deploying#
+Now that we've written everything, all you need to do is shuttle deploy (with the --allow-dirty flag if working on a dirty Git branch). When the deployment is finished, you'll get the deployment information as well as the deployment database URL string.
+Extending#
+Now that we've finished our new cron service, here's a few ideas you can use to extend it:
+Add more cron jobs! You can also abstract creating the scheduler, worker, etc into a new struct (or enum) so that you don't need to manually instantiate everything as you may want to use the same defaults over many if not all of your jobs.
+Augment the service to use Axum (or another web framework!) instead of purely tower. You can find out more about this from this GitHub example.
+Finishing Up#
+Thanks for reading! I hope this cron job template helps you.
+Further reading:
+Find out more about the Axum framework here.
+Find out more about using a database with SQLx here.
+Stay updated
+Get the latest news about Shuttle features and Rust tips
+Subscribe
+Share article
+Introducing ShuttleLabs: Cutting-Edge Rust Talks
+30 January 2024 •
+Using Serde in Rust
+23 January 2024 •
+On this page
+-
+Getting Started
+Writing our first cron job
+-
+Deploying
+-
+Extending
+-
+Finishing Up
+Ship Faster
+Deploy Rust in seconds, not hours
+Zero config. No Dockerfiles. Just write Rust and ship.Start Building
+Build the Future of Backend Development with us
+Join the movement and help revolutionize the world of backend development. Together, we can create the future!
+Github
+Discord
+Twitter
+ShuttleFeaturesReleases
+CompanyAboutContactTerms of ServicePrivacy PolicyAcceptable Use PolicyCookie PolicyData Processing Addendum
+DevelopersDocsGuidesExamplesShuttle HeroesCustomersLaunchpadCode Hunt
+CommunityGitHubDiscordTwitterLinkedIn
+© 2025 Shuttle
+Backed by
+

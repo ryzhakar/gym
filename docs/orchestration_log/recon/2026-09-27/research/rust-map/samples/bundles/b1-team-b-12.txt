@@ -1,0 +1,3495 @@
+=== ROW 84 | f003587 | https://github.com/tracel-ai/burn/pull/3792 | 2025-09-26 | domain-subframes ===
+BurnpackStore 
+
+---
+
+@antimora · 2025-09-26T04:31:40Z:
+This PR improves Burn's DefaultFileRecorder by replacing the inefficient NamedMpkFileRecorder with BurnpackStore and new Burnpack format that addresses critical performance and compatibility issues.
+
+Problems with current `NamedMpkFileRecorder`:
+  - Memory Inefficient: Deserializes the entire file and loads all weights into memory at once
+  - No Lazy Loading: Cannot selectively load individual tensors
+  - No-std Incompatible: Uses rmp-serde which doesn't support no-std environments
+  - Poor Performance: Unnecessary memory overhead for large models
+
+## Pull Request Template
+
+### Checklist
+
+- [x] Confirmed that `cargo run-checks` command has been executed.
+- [x] Made sure the book is up to date with changes in this PR.
+
+### Related Issues/PRs
+
+Depends on #3741 (PyTorch store changes)
+
+### Changes
+
+A new native storage format (Burnpack Format) that serves as Burn's improved DefaultFileRecorder (`NamedMpkFileRecorder`):
+
+Key Improvements:
+  - Lazy Tensor Loading: Look up and load individual tensor weights on-demand without deserializing the entire file
+  - Memory Efficient: Only loads requested tensors into memory, critical for large models
+  - True No-std Support: Replaced rmp-serde with ciborium ([CBOR](https://en.wikipedia.org/wiki/CBOR) ETF [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) for proper embedded system compatibility
+  - Zero-Copy Operations: Memory-mapped I/O support for efficient data access
+  - Reader/Writer are ready for user provided buffers and Bytes. Once we have a backend allocated buffer (pinned GPU memory), we can update easily. 
+  - Ready for production use with untrusted input. Denial of Service (DOS) vulnerabilities related to resource exhaustion fixes. 
+  - Thoroughly benchmarked and audited. 
+  - All panics are handled and returned as errors (except on regex format related). 
+  
+
+Technical Changes:
+  - Implemented efficient tensor lookup via metadata index without full deserialization
+  - Three storage backends: in-memory, memory-mapped files, and buffered I/O
+  - CBOR metadata serialization works in no-std environments (tested on thumbv7m-none-eabi)
+  - Modified ModuleMapper to work with a Param instead of Tensor to work with uninitialized params, load/save param hooks. 
+  - Modified ModuleVisitor to work with a Param to keep param.
+ 
+
+### Testing
+  -  Embedded Target: Successfully builds and runs on thumbv7m-none-eabi
+  -  Memory Efficiency: Verified lazy loading with large tensor files (1MB+ tensors)
+  -  Backward Compatible: All existing recorder tests pass
+  -  Comprehensive Test Suite: Added 18 test modules covering all edge cases
+  -  Round-trip Testing: Ensures data integrity through save/load cycles
+
+----
+### Benchmarks
+#### LOADING Benchmarks (Median Values)
+
+##### Maximum Memory Allocation During Load
+
+| Loading Method | LibTorch | NdArray (CPU) | WGPU (GPU) |
+|---|---|---|---|
+| **Burnpack Store** (new) | **16.82 MB** | 344.1 MB | 243.4 MB |
+| **NamedMpk Recorder** (old) | 344.1 MB | 344.1 MB | 344.1 MB |
+| **SafeTensors Recorder** (old) | 654.6 MB | 654.6 MB | 654.6 MB |
+| **SafeTensors Store** (new) | 33.58 MB | 344.1 MB | 243.4 MB |
+| **PyTorch Recorder** (old) | 344.1 MB | 360.9 MB | 344.2 MB |
+| **PyTorch Store** (new) | 33.59 MB | 344.1 MB | 176.2 MB |
+
+##### Load Time vs Memory Trade-off
+
+| Loading Method | LibTorch | NdArray (CPU) | WGPU (GPU) |
+|---|---|---|---|
+| **Burnpack Store** | **36.72 ms / 16.82 MB** | **34.21 ms / 344.1 MB** | 60.31 ms / 243.4 MB |
+| **NamedMpk Recorder** | 38.43 ms / 344.1 MB | 34.77 ms / 344.1 MB | 80.69 ms / 344.1 MB |
+| **SafeTensors Recorder** | 125.8 ms / 654.6 MB | 932.8 ms / 654.6 MB | 166 ms / 654.6 MB |
+| **SafeTensors Store** | 722.1 ms / 33.58 MB | 602.5 ms / 344.1 MB | 648.9 ms / 243.4 MB |
+| **PyTorch Recorder** | 229.6 ms / 344.1 MB | 1,026 ms / 360.9 MB | 261.3 ms / 344.2 MB |
+| **PyTorch Store** | 858.9 ms / 33.59 MB | 741.1 ms / 344.1 MB | 798.5 ms / 176.2 MB |
+
+---
+
+#### SAVING Benchmarks (Median Values)
+
+##### Maximum Memory Allocation During Save
+
+| Saving Method | LibTorch | NdArray (CPU) | WGPU (GPU) |
+|---|---|---|---|
+| **Burnpack Store** (new) | **16.81 MB** | 360.9 MB | 17.09 MB |
+| **NamedMpk Recorder** (old) | 327.3 MB | 327.3 MB | 327.6 MB |
+| **SafeTensors Store** (new) | 33.59 MB | 360.9 MB | 33.85 MB |
+
+##### Save Time vs Memory Trade-off
+
+| Saving Method | LibTorch | NdArray (CPU) | WGPU (GPU) |
+|---|---|---|---|
+| **Burnpack Store** | 214.1 ms / **16.81 MB** | 1,406 ms / 360.9 MB | 66.94 ms / 17.09 MB |
+| **NamedMpk Recorder** | **217.3 ms / 327.3 MB** | **539.2 ms / 327.3 MB**  | **58.63 ms / 327.6 MB**  |
+| **SafeTensors Store** | 219 ms / 33.59 MB | 1,396 ms / 360.9 MB | 66.9 ms / 33.85 MB |
+
+Benchmark details 
+[load_report.txt](https://github.com/user-attachments/files/22815514/load_report.txt)
+[save_report.txt](https://github.com/user-attachments/files/22815517/save_report.txt)
+
+
+---
+
+@codecov[bot] · 2025-09-26T22:06:33Z:
+## [Codecov](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) Report
+:x: Patch coverage is `87.68487%` with `433 lines` in your changes missing coverage. Please review.
+:white_check_mark: Project coverage is 65.09%. Comparing base ([`6f61d6c`](https://app.codecov.io/gh/tracel-ai/burn/commit/6f61d6c709115fc7a8437795304c0e21aff53e1a?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai)) to head ([`3e00be3`](https://app.codecov.io/gh/tracel-ai/burn/commit/3e00be3415439b4e9fbc877ae399b123e22046e9?dropdown=coverage&el=desc&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai)).
+:warning: Report is 12 commits behind head on main.
+
+| [Files with missing lines](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?dropdown=coverage&src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) | Patch % | Lines |
+|---|---|---|
+| [crates/burn-store/src/burnpack/reader.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-store%2Fsrc%2Fburnpack%2Freader.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tc3RvcmUvc3JjL2J1cm5wYWNrL3JlYWRlci5ycw==) | 63.91% | [162 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-store/examples/burnpack\_inspect.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-store%2Fexamples%2Fburnpack_inspect.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tc3RvcmUvZXhhbXBsZXMvYnVybnBhY2tfaW5zcGVjdC5ycw==) | 0.00% | [95 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-store/src/burnpack/writer.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-store%2Fsrc%2Fburnpack%2Fwriter.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tc3RvcmUvc3JjL2J1cm5wYWNrL3dyaXRlci5ycw==) | 75.55% | [33 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-core/src/module/reinit.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-core%2Fsrc%2Fmodule%2Freinit.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tY29yZS9zcmMvbW9kdWxlL3JlaW5pdC5ycw==) | 0.00% | [16 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-core/src/module/param/tensor.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-core%2Fsrc%2Fmodule%2Fparam%2Ftensor.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tY29yZS9zcmMvbW9kdWxlL3BhcmFtL3RlbnNvci5ycw==) | 85.00% | [15 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-core/src/module/base.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-core%2Fsrc%2Fmodule%2Fbase.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tY29yZS9zcmMvbW9kdWxlL2Jhc2UucnM=) | 33.33% | [14 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-store/src/burnpack/tests/store.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-store%2Fsrc%2Fburnpack%2Ftests%2Fstore.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tc3RvcmUvc3JjL2J1cm5wYWNrL3Rlc3RzL3N0b3JlLnJz) | 97.18% | [14 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-store/src/burnpack/store.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-store%2Fsrc%2Fburnpack%2Fstore.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tc3RvcmUvc3JjL2J1cm5wYWNrL3N0b3JlLnJz) | 93.40% | [12 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-store/src/burnpack/tests/helpers.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-store%2Fsrc%2Fburnpack%2Ftests%2Fhelpers.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tc3RvcmUvc3JjL2J1cm5wYWNrL3Rlc3RzL2hlbHBlcnMucnM=) | 0.00% | [12 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| [crates/burn-store/src/burnpack/base.rs](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&filepath=crates%2Fburn-store%2Fsrc%2Fburnpack%2Fbase.rs&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai#diff-Y3JhdGVzL2J1cm4tc3RvcmUvc3JjL2J1cm5wYWNrL2Jhc2UucnM=) | 83.33% | [10 Missing :warning: ](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) |
+| ... and [14 more](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?src=pr&el=tree-more&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai) | |
+
+<details><summary>Additional details and impacted files</summary>
+
+
+
+```diff
+@@            Coverage Diff             @@
+##             main    #3792      +/-   ##
+==========================================
++ Coverage   64.51%   65.09%   +0.58%     
+==========================================
+  Files        1158     1172      +14     
+  Lines      135083   138351    +3268     
+==========================================
++ Hits        87147    90058    +2911     
+- Misses      47936    48293     +357     
+```
+</details>
+
+[:umbrella: View full report in Codecov by Sentry](https://app.codecov.io/gh/tracel-ai/burn/pull/3792?dropdown=coverage&src=pr&el=continue&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).   
+:loudspeaker: Have feedback on the report? [Share it here](https://about.codecov.io/codecov-pr-comment-feedback/?utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=tracel-ai).
+<details><summary> :rocket: New features to boost your workflow: </summary>
+
+- :snowflake: [Test Analytics](https://docs.codecov.com/docs/test-analytics): Detect flaky tests, report on failures, and find test suite problems.
+</details>
+
+---
+
+@antimora · 2025-09-30T19:23:23Z:
+Added `burn-store/examples/burnpack_inspect.rs` to generate a sample burnpack file to examine. Here is some output:
+
+```
+[burn-store]% hexdump -C /tmp/sample.burnpack | head -50
+00000000  4e 52 55 42 01 00 d2 01  00 00 a2 67 74 65 6e 73  |NRUB.......gtens|
+00000010  6f 72 73 a6 6c 6c 69 6e  65 61 72 31 2e 62 69 61  |ors.llinear1.bia|
+00000020  73 a3 65 64 74 79 70 65  63 46 33 32 65 73 68 61  |s.edtypecF32esha|
+00000030  70 65 81 18 40 6c 64 61  74 61 5f 6f 66 66 73 65  |pe..@ldata_offse|
+00000040  74 73 82 19 80 00 19 81  00 6e 6c 69 6e 65 61 72  |ts.......nlinear|
+00000050  31 2e 77 65 69 67 68 74  a3 65 64 74 79 70 65 63  |1.weight.edtypec|
+00000060  46 33 32 65 73 68 61 70  65 82 18 80 18 40 6c 64  |F32eshape....@ld|
+00000070  61 74 61 5f 6f 66 66 73  65 74 73 82 00 19 80 00  |ata_offsets.....|
+00000080  6c 6c 69 6e 65 61 72 32  2e 62 69 61 73 a3 65 64  |llinear2.bias.ed|
+00000090  74 79 70 65 63 46 33 32  65 73 68 61 70 65 81 18  |typecF32eshape..|
+000000a0  20 6c 64 61 74 61 5f 6f  66 66 73 65 74 73 82 19  | ldata_offsets..|
+000000b0  a1 00 19 a1 80 6e 6c 69  6e 65 61 72 32 2e 77 65  |.....nlinear2.we|
+000000c0  69 67 68 74 a3 65 64 74  79 70 65 63 46 33 32 65  |ight.edtypecF32e|
+000000d0  73 68 61 70 65 82 18 40  18 20 6c 64 61 74 61 5f  |shape..@. ldata_|
+000000e0  6f 66 66 73 65 74 73 82  19 81 00 19 a1 00 6c 6c  |offsets.......ll|
+000000f0  69 6e 65 61 72 33 2e 62  69 61 73 a3 65 64 74 79  |inear3.bias.edty|
+00000100  70 65 63 46 33 32 65 73  68 61 70 65 81 0a 6c 64  |pecF32eshape..ld|
+00000110  61 74 61 5f 6f 66 66 73  65 74 73 82 19 a6 80 19  |ata_offsets.....|
+00000120  a6 a8 6e 6c 69 6e 65 61  72 33 2e 77 65 69 67 68  |..nlinear3.weigh|
+00000130  74 a3 65 64 74 79 70 65  63 46 33 32 65 73 68 61  |t.edtypecF32esha|
+00000140  70 65 82 18 20 0a 6c 64  61 74 61 5f 6f 66 66 73  |pe.. .ldata_offs|
+00000150  65 74 73 82 19 a1 80 19  a6 80 68 6d 65 74 61 64  |ets.......hmetad|
+00000160  61 74 61 a5 66 61 75 74  68 6f 72 6c 42 75 72 6e  |ata.fauthorlBurn|
+00000170  20 45 78 61 6d 70 6c 65  6b 64 65 73 63 72 69 70  | Examplekdescrip|
+00000180  74 69 6f 6e 78 29 53 61  6d 70 6c 65 20 66 69 6c  |tionx)Sample fil|
+00000190  65 20 66 6f 72 20 65 78  61 6d 69 6e 69 6e 67 20  |e for examining |
+000001a0  42 75 72 6e 70 61 63 6b  20 66 6f 72 6d 61 74 66  |Burnpack formatf|
+000001b0  66 6f 72 6d 61 74 68 62  75 72 6e 70 61 63 6b 68  |formathburnpackh|
+000001c0  70 72 6f 64 75 63 65 72  64 62 75 72 6e 67 76 65  |producerdburngve|
+000001d0  72 73 69 6f 6e 66 30 2e  31 39 2e 30 5a 7e 3e 3d  |rsionf0.19.0Z~>=|
+000001e0  e6 00 93 bd 14 7a 89 bc  d2 91 57 3d fa c4 4a 3d  |.....z....W=..J=|
+000001f0  20 05 6d 3b d6 de 7e 3d  42 5c 73 3d 70 9b da bc  | .m;..~=B\s=p...|
+00000200  61 e6 83 3d c0 d3 d7 3b  62 5a 44 3d 2c 44 b9 3c  |a..=...;bZD=,D.<|
+00000210  a5 8c 1c bd 11 83 a7 3d  93 a1 0b bd bd 06 a2 3d  |.......=.......=|
+00000220  00 30 af b9 47 7e b4 bd  64 e9 02 bd 20 eb fb bb  |.0..G~..d... ...|
+00000230  48 38 b9 3c 35 0c 8d 3d  3a c1 1b 3d 30 26 ee bb  |H8.<5..=:..=0&..|
+00000240  b0 be e4 3c d8 fd d4 3c  3c 48 18 bd 40 99 f4 3a  |...<...<<H..@..:|
+00000250  9b b1 4c bd 5e 39 27 3d  f1 fa a3 3d e8 db c7 3c  |..L.^9'=...=...<|
+00000260  88 91 ef 3c 6b f4 7c bd  a2 38 a9 bd ab cf 89 bd  |...<k.|..8......|
+00000270  f5 1f 8a bd 33 3e a9 3d  30 95 29 3c 4b 99 8a 3d  |....3>.=0.)<K..=|
+00000280  5e 4b a5 bd 68 d2 20 bc  d0 ed 00 3c 8a e7 28 3d  |^K..h. ....<..(=|
+00000290  b0 30 0b 3c c2 b8 17 3d  6d 41 8a 3d 69 ad ae bd  |.0.<...=mA.=i...|
+000002a0  e8 fe 0c 3d b1 50 b4 bd  57 2a ac 3d ce d8 1a 3d  |...=.P..W*.=...=|
+000002b0  3a a3 64 3d b4 be 34 bd  80 2f a4 3b 6c 61 92 bd  |:.d=..4../.;la..|
+000002c0  38 e0 e3 bc a0 f4 89 bb  73 4e 4d bd 43 8b 9f bd  |8.......sNM.C...|
+000002d0  e0 7e 14 3d d1 e7 4b bd  50 9b 3e 3c c1 7b b3 bd  |.~.=..K.P.><.{..|
+000002e0  48 d8 b5 bc c7 c3 a2 3d  c0 5f 53 bb eb 0d a5 bd  |H......=._S.....|
+000002f0  30 a3 f8 bc f7 04 a5 3d  90 dd a9 bd fb e0 9a 3d  |0......=.......=|
+00000300  a0 1d 83 3b 24 f3 aa bc  b0 09 d2 bc 54 34 aa bd  |...;$.......T4..|
+00000310  4e 0e 27 bd 00 91 a8 3c  75 be b1 3d 6c 99 85 3c  |N.'....<u..=l..<|
+[burn-store]%
+``` 
+
+---
+
+@antimora · 2025-10-02T21:06:38Z:
+Rebased with the main; @laggui @nathanielsimard  Ready for review.
+
+---
+
+@antimora · 2025-10-03T18:46:56Z:
+@laggui I will investigate issue. 
+
+Looking at the benchmark results, BurnpackStore definitely calls more alloc than NamedMpk, even though it uses less memory overall.
+
+<img width="1528" height="770" alt="image" src="https://github.com/user-attachments/assets/bca817be-4f9b-420e-bc12-4fdf68ab540b" />
+
+NamedMpk reads a file and loads all its content into memory. Then it transfers vec ownership to Data without copying again. 
+
+BurnpackStore uses `TensorData::from_bytes_vec()`; I need to see if there is more efficient API.
+
+---
+
+@antimora · 2025-10-03T22:28:26Z:
+@laggui UPDATE:
+
+ The 10x slowdown is caused by:
+
+  1. LargeModel::new(&device) creates Params with random weights (but lazy via OnceCell)
+  2. apply_from() → module.map() → Param::map() → .consume() → .val() forces 360MB of random weights to materialize!
+  3. Then TensorSnapshots create another 327MB of loaded weights
+  4. Total waste: 360MB + overhead
+
+
+---
+
+@antimora · 2025-10-06T01:54:04Z:
+@laggui 
+> Also, the memory usage of the CPU backend seems to point to some additional allocations overhead that we should try to minimze. The detailed benchmarks seem to point in that direction as well.
+
+I have figured out the root cause and additional issues:
+
+1. ModuleMapper was initializing params instead of replacing uninitialized params. I have fixed this. Additionally partially loaded model keeps skipped params intact. 
+2. Params also had on_save/on_load hooks that Nathaniel added recently for record saving which we totally forgot. Now Store's applier/collector properly execute those hooks - take the same execution path as the recorder. 
+
+I updated the benchmark table in the PR description. BurnpackStore performs the best of all now. PytorchStore and SafetensorsStore also benefit from these fixes. 
+
+
+---
+
+@antimora · 2025-10-06T19:09:58Z:
+Came across a safetensors issue (https://github.com/huggingface/safetensors/issues/649#issuecomment-3248786583) regarding whether it's possible to identify a safetensors file. Apparently, there is no magic number, which requires structure matching instead. In contrast, the Burnpack file format has a magic number now.
+
+
+
+---
+
+@antimora · 2025-10-10T15:13:24Z:
+@laggui, I have addressed all @nathanielsimard feedback. It's more robust. Additionally, I have fixed potential data corruption issues (made more robust and strict). 
+
+One of the biggest improvements is Bytes/[u8] usage. I added todos for to have a better control over byte allocation, as we transition to Backends allocator. So it should be easier now to transition to that model.
+
+---
+
+@antimora · 2025-10-10T17:57:01Z:
+Addressed Denial of Service (DOS) vulnerabilities related to resource exhaustion. This is for a production use with untrusted input.
+
+---
+
+@laggui · 2025-10-03T18:01:20Z:
+Clever 😄 
+
+---
+
+@laggui · 2025-10-03T18:01:22Z:
+No longer messagepack
+
+---
+
+@laggui · 2025-10-03T18:01:24Z:
+No longer messagepack
+
+---
+
+@laggui · 2025-10-03T18:01:31Z:
+No longer messagepack
+
+---
+
+@nathanielsimard · 2025-10-09T12:25:11Z:
+I don't think the doc is correct, and imo not necessary, I would remove it.
+
+---
+
+@nathanielsimard · 2025-10-09T12:25:54Z:
+Same here
+
+---
+
+@nathanielsimard · 2025-10-09T12:27:08Z:
+When there is no unsafe, I wouldn't add safety comments, it's verbose and may be wrong.
+
+---
+
+@nathanielsimard · 2025-10-09T12:30:19Z:
+I would remove that doc
+
+---
+
+@nathanielsimard · 2025-10-09T12:31:37Z:
+That part is unecessary
+
+---
+
+@nathanielsimard · 2025-10-09T12:33:22Z:
+The naming isn't correct here, into should consume a self. Maybe `from_mapped_value`
+
+---
+
+@nathanielsimard · 2025-10-09T12:34:49Z:
+I would remove the Returns part
+
+---
+
+@nathanielsimard · 2025-10-09T12:34:59Z:
+Same here
+
+---
+
+@nathanielsimard · 2025-10-09T12:36:32Z:
+I would remove that.
+
+---
+
+@nathanielsimard · 2025-10-09T12:37:28Z:
+Remove
+
+---
+
+@nathanielsimard · 2025-10-09T12:39:58Z:
+This is strange, `save` doesn't save and returns itself (the same type).
+
+---
+
+@nathanielsimard · 2025-10-09T12:49:16Z:
+The naming could be improved.
+
+```rust
+BurnpackStore::empty();
+model.save_into(&mut store);
+store.into_bytes().unwrap();
+BurnpackStore::from_bytes(bytes);
+loaded_model.load_from(&mut store);
+```
+`collect` and `apply` are not really intuitive and I woud not have discovered them using autocompletion.
+
+---
+
+@nathanielsimard · 2025-10-09T12:57:19Z:
+The old recorder with ndarray simply gives away the vector of bytes as storage for the ndarray tensor, so it's essentially a no-copy loading. We should be able to reproduce the same behavior with burnpack, maybe it already is and the problems comes from the benchmark tests
+
+---
+
+@nathanielsimard · 2025-10-09T13:24:49Z:
+Is it the correct way of using the data offsets?
+
+```rust
+let file = std::fs::File::open("file.bpk").offset(data_offsets[0]).size(data_offsets[1]);
+let tensor_data = file.to_bytes();
+```
+Something like that?
+
+---
+
+@nathanielsimard · 2025-10-09T13:27:11Z:
+this would be `into_bytes` since it takes ownership of the header.
+
+---
+
+@nathanielsimard · 2025-10-09T13:27:38Z:
+what is CBOR
+
+---
+
+@nathanielsimard · 2025-10-09T13:29:06Z:
+Does the backend contain all the data of the store or simply for a tensor.
+
+---
+
+@nathanielsimard · 2025-10-09T13:31:25Z:
+I would change that function signature to the following:
+
+```rust
+fn read_into(&self, bytes: &mut [u8], offset: usize)
+```
+
+Since in the future the `Vec<u8>` could be allocated by the backend as pinned memory managed in a memory pool.
+
+---
+
+@nathanielsimard · 2025-10-09T13:32:53Z:
+We should replace all instances of `Vec<u8>` by `burn_common::Bytes`, `&[u8]` and `&mut [u8]` are OK
+
+---
+
+@nathanielsimard · 2025-10-09T13:36:16Z:
+`burnpack` extension could become `bpk` 🤩 3 letters extensions are the best and `bpk` follows the same schema as `mpk`
+
+---
+
+@antimora · 2025-10-09T16:26:01Z:
+Yeah, I will remove this. This is module level document and users complain about lack of documentation. This was to explain how it works. But i'll remove it.
+
+---
+
+@antimora · 2025-10-09T17:25:15Z:
+Sorry, I forgot to update the README file. This has been fixed with the latest code. It was related to the fact that Recorder was simply updated uninitialized Params whereas BurnpackStore was initializing because ModuleMapper was initializing values right before being replaced. The latest benchmark report is in the PR description:
+
+##### Load Time (Median) vs Memory Trade-off
+
+| Loading Method | LibTorch | NdArray (CPU) | WGPU (GPU) |
+|---|---|---|---|
+| **Burnpack Store** | **36.72 ms / 16.82 MB** | **34.21 ms / 344.1 MB** | 60.31 ms / 243.4 MB |
+| **NamedMpk Recorder** | 38.43 ms / 344.1 MB | 34.77 ms / 344.1 MB | 80.69 ms / 344.1 MB |
+| **SafeTensors Recorder** | 125.8 ms / 654.6 MB | 932.8 ms / 654.6 MB | 166 ms / 654.6 MB |
+| **SafeTensors Store** | 722.1 ms / 33.58 MB | 602.5 ms / 344.1 MB | 648.9 ms / 243.4 MB |
+| **PyTorch Recorder** | 229.6 ms / 344.1 MB | 1,026 ms / 360.9 MB | 261.3 ms / 344.2 MB |
+| **PyTorch Store** | 858.9 ms / 33.59 MB | 741.1 ms / 344.1 MB | 798.5 ms / 176.2 MB |
+
+
+---
+
+@antimora · 2025-10-09T22:31:20Z:
+Reader (burnpack/reader.rs:260-261):
+```rust
+// Calculate absolute positions from relative offsets
+let start = self.data_offset + descriptor.data_offsets.0 as usize;
+let end = self.data_offset + descriptor.data_offsets.1 as usize;
+
+// Then read the slice [start..end]
+storage.get_slice(start, end)
+```
+
+Key points:
+1. Both values are byte offsets, not offset+size
+2. **Both are relative to the data section start, not the file start**
+3. Length must be calculated as: `data_offsets.1 - data_offsets.0``
+4. Absolute file position is: `data_section_start + data_offsets.0`
+
+The first tensor_data starts with `(0..`. I purposefully made the offsets independent of the header size in case we add a new tensor to the existing burnpack file. Header and Metadata are independent. In theory, it'd be possible to store them separately. 
+
+---
+
+@antimora · 2025-10-10T00:19:17Z:
+Wanted to share ciborium/CBOR fileformat. It is possible to have a fixed file (lets say 10MB) filed with zeros and override a part of the file, lets say 3 MB that's only for serialized metadata, and the reader will be able to parse with no issue. This is in case if we need to preallocate some section in the beginning and override with metadata. The file spec allows for this. 
+
+----
+
+Based on the CBOR specification and how ciborium implements it, here are the answers to your questions:
+
+Can you write CBOR at the beginning of a zero-filled file?
+
+**Yes, absolutely!** If you write a CBOR-serialized object at the beginning of your 10MB zero-filled file, the deserializer will:
+
+1. Read exactly the bytes needed for the complete CBOR data item
+2. Stop after successfully deserializing that one item
+3. Leave the remaining zeros (or any other trailing data) unread
+
+In streaming applications, the decoder immediately begins decoding a new data item if data is found after the end of a previous data item, and decoders by definition only return contents from well-formed data items, not including following extraneous data.
+
+Practical implications with ciborium:
+
+When you use `ciborium::from_reader()`, it will:
+- Read your CBOR data from the beginning
+- Deserialize exactly one complete data item
+- Stop reading once that item is complete
+- The remaining zeros in your file won't cause any issues
+
+This makes CBOR excellent for scenarios where you want to reserve file space upfront or append data later without rewriting the entire file.
+
+---
+
+@antimora · 2025-10-10T00:24:41Z:
+All data, this is so it's easy to work with bytes, mmap and file handler (abstraction). 
+
+---
+
+@antimora · 2025-10-10T00:58:23Z:
+OK. I updated the reader APIs and also commented for the future:
+
+```rust
+  // Create lazy TensorSnapshot
+  let snapshot = TensorSnapshot::from_closure(
+      Rc::new(move || {
+          // This closure is only called when data is actually needed
+          let len = end - start;
+          // TODO Should be allocated by the backend in the future
+          // See https://github.com/tracel-ai/burn/pull/3792#discussion_r2416812091
+          let mut data_bytes = vec![0u8; len];
+          storage.read_into(&mut data_bytes, start).map_err(|e| {
+              crate::TensorSnapshotError::IoError(format!(
+                  "Failed to read tensor data: {}",
+                  e
+              ))
+          })?;
+          Ok(TensorData::from_bytes_vec(
+              data_bytes,
+              shape_for_closure.clone(),
+              dtype,
+          ))
+      }),
+```
+
+---
+
+@antimora · 2025-10-10T14:21:49Z:
+I switched from MessagePack to CBOR for metadata serialization due to rmp-serde's limitations:
+
+Why the change:
+- rmp-serde is not no-std compatible
+- The project has been inactive for over a year, so submitting a PR didn't seem worthwhile
+
+Why CBOR:
+- True no-std support: Using ciborium, which implements CBOR (IETF RFC 8949) for proper embedded system compatibility
+- Recommended by Serde as a preferred serialization format
+- MessagePack-inspired: CBOR is an IETF standardized format inspired by MessagePack
+- Preserves enum variant information in file output
+
+References:
+- https://cbor.io/
+- https://en.wikipedia.org/wiki/CBOR
+
+
+=== ROW 85 | f003634 | https://neon.com/blog/the-invisible-database-running-postgres-at-runtime | 2025-10-02 | domain-subframes ===
+The Invisible Database: Running Postgres at Runtime - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Product
+The Invisible Database: Running Postgres at Runtime
+What we’re learning about infra for agents
+Carlota Soto–Product Marketing LeadAug 04, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+More and more software will be created by agents, not just code snippets but full-stack apps with interfaces, backends, persistence, auth. This means a big change in the shape of the devtools and software infrastructure supporting these apps. Many systems are now created at runtime, per app, per request, and often discarded minutes later.
+Postgres Usage Is Changing
+In agentic systems, infrastructure is created and discarded dynamically as the agent builds, tests, or explores applications. This has direct implications for databases.
+A Postgres database is no longer a long-lived, hand-provisioned asset tied to a user or project. Instead, it’s often provisioned per app, session, or exploration path. A few user prompts might result in multiple distinct applications being generated in sequence, and each one may need its own isolated, persistent data layer – but only temporarily.
+Agents are also starting to implement versioning or time-travel features that capture the full application state at multiple moments of time. A single app might result in multiple underlying database states being preserved or previewed.
+The result is high churn and unpredictable timing for Postgres creation. This is a new pattern of usage.
+Postgres databases are created on demand, often within sub-second latency requirements
+They must be ready to use immediately, without configuration.
+They may exist for minutes or hours, then be discarded or idled
+But they’re also must be ready to scale
+And they may be “duplicated” somehow ( in the case of Neon, branched) during a single agent session to capture the app state at a particular moment in time – supporting previews, comparisons, rollbacks
+What We’re Learning from Supporting Agent Platforms
+In Neon, we’ve worked with agent platforms from the beginning. When Replit launched its coding agent, we were there from day one powering the Postgres layer. Since then, we’ve partnered with many others – from open-source agents to vertical app builders. Across all of them, the pattern is clear – agents need a database that behaves like part of the runtime vs a separate system.
+Over and over, agent platforms come to us with the same core needs. Some of these, Neon had already built into its architecture. Others (like a feature-complete API for quota control) we had to design and build refine in collaboration with early partners.
+The pattern is now clear. Here’s what agent builders consistently require when choosing a database:
+Scale without management
+The platform must be able to handle many thousands of new databases created per day, with minimal manual oversight, no bottlenecks.
+Provisioning must be instant and invisible to the end user
+When a user prompts the agent to build an app, a working database needs to appear behind the scenes in under a second. Third-party login flows add friction and break the user experience.
+Usage must be trackable and enforceable at platform scale
+Agent platforms operate at high volume, serving thousands of apps per day. They need fine-grained metrics per database to monitor usage patterns, and crucially, they also need programmatic controls to enforce hard limits – e.g. to align with their pricing plans.
+Databases must pause / resume
+Compute must shut off when idle and come back without cold-start delays. It’s not realistic to afford thousands of dormant databases running, but they also can’t accept big lags on resume.
+A path for supporting version control and previews
+To build an experience where the user can travel across versions, agents need to capture and restore full database state (schema and data) at specific points in time. Each snapshot must be queryable and safely isolated from production.
+Additional runtime components should follow the same model
+As platforms mature, they ask for more integrated building blocks with the same “invisible by default” behavior . Agents being able to invisibly add auth to their apps is a perfect example.
+Building Infrastructure That Matches How Agents Work
+Supporting agents isn’t just about serving a lot of databases: it’s about aligning the database with the way agent platforms actually work. Postgres has always been a powerful tool for application backends, but in an agentic context, it needs to evolve to become part of the runtime – something created, branched, queried, and shut down on the fly.
+That’s the shift we’ve made at Neon, and it’s what makes it possible for platforms like Replit to deliver production-grade experiences through AI agents. If you’re building an agent, explore how Neon can help deliver invisible Postgres to your users.
+Requirement: infra for agentsHow Neon supports it
+Scale to thousands of databases per dayServerless architecture with fast control plane, autoscaling, and stateless API
+Instant, invisible provisioningAPI-driven project creation with sub-second response and usable connection URI
+Usage tracking and quota enforcementPer-project and per-branch metrics; programmatic quota management via API
+Pause/resume computeAutomatic scale-to-zero with subsecond cold starts
+Preview and rollback supportCopy-on-on-write branching engine with instant time travel
+Integrated building blocksNeon Auth, Neon Data API
+High compatibility100% Postgres with extensions, standard SQL
+On this page
+Postgres Usage Is Changing
+What We’re Learning from Supporting Agent Platforms
+Building Infrastructure That Matches How Agents Work
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 86 | f003685 | https://neon.com/blog/neon-developer-days-mark-your-calendars-for-march-29th-2023 | 2025-10-14 | domain-subframes ===
+Neon Developer Days: Mark Your Calendars for March 29th, 2023 - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Company
+Neon Developer Days: Mark Your Calendars for March 29th, 2023
+Join our engineers and team for a day of technical sessions and product announcements
+Nikita Shamgunov–Co-founder of NeonMar 09, 2023
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+We are thrilled to announce the second edition of the Neon Developer Days, which will take place on March 29th, 2023, at 9:00 AM PT. Join us for a full day of product updates and sessions with our engineers and team.
+Register now, get your ticket, and make it unique!
+What to expect during the event
+A deep dive into the Neon storage Engine with Co-Founder Heikki Linnakangas
+Building an AI-powered chatbot using Vercel, OpenAI, and Postgres
+Scaling serverless Postgres: How we implement autoscaling
+Optimizing performance in a serverless Postgres database
+Understanding your storage costs
+Quicker serverless Postgres connections
+Neon Developer workflows with Vercel and GitHub Actions
+Join us to learn about the world of serverless Postgres and how to build better with Neon. Register now and stay tuned for more updates.
+We can’t wait to see you there!
+On this page
+What to expect during the event
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 87 | f003702 | https://iroh.computer/blog/hashing-multiple-blobs-with-BLAKE3 | 2025-10-15 | domain-subframes ===
+Hashing multiple blobs with BLAKE3 - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Hashing multiple blobs with BLAKE3October 15, 2025 by Rüdiger Klaehn
+The BLAKE3 hash function is extremely fast for hashing large blobs. This is mainly1 due to the fact that as a tree hash function, BLAKE3 splits the data into chunks and can hash multiple chunks at the same time using both instruction level parallelism (SIMD instructions) and thread-level parallelism (multiple cores).
+But what if you have a situation where you don't have enough chunks to work with? You have a large number of small blobs you want to compute the BLAKE3 hash for, so in principle you have enough data. But every individual blob is less than one 1 KiB chunk in length, so there is no room whatsoever to use any per-blob parallelism.
+For this exploration, we are going to assume that all blobs have the same size, and that this size is known at compile time.
+TLDR: This post demonstrates BLAKE3 can be silly fast, even for small blobs
+The signature of the function we want to implement is
+fn hash_many<const N: usize>(slices: &[[u8;N]]) -> Vec<Hash>
+CopyCopied!
+Test parameters
+For the tests we want to hash a large number of small blobs of identical size. So let's write a fn to generate test data.
+fn test_data<const N: usize>(n: usize) -> Vec<[u8; N]> {
+(0..n as u64)
+.map(|i| {
+let mut res = [0u8; N];
+res[..8].copy_from_slice(&i.to_le_bytes());
+res
+})
+.collect()
+}
+CopyCopied!
+Establishing a baseline
+To establish a baseline, let's do the hashing fully sequentially.
+fn hash_many_baseline<const N: usize>(slices: &[&[u8;N]]) -> Vec<Hash> {
+slices.iter().map(|slice| blake3::hash(*slice)).collect()
+}
+CopyCopied!
+And try it out with a large number of blobs.
+let test_data = test_data::<1024>(n);
+let slices = test_data.iter().collect::<Vec<_>>();
+let hashes = hash_many_baseline(slices.as_slice());
+CopyCopied!
+This is what we get on a M1 macbook pro:
+hash_many_baseline 1024 bytes, 1048576 blobs: 1.282111833s
+CopyCopied!
+Let's see how far we can improve on this!
+Thread level parallelism
+The first way to speed this up is to use thread level parallelism to make use of multiple cores.
+In rust there is a fantastic library for thread level parallelism for compute bound tasks called rayon, which is also used within the BLAKE3 crate itself. So let's use that in the most straightforward way possible and see how much it improves things:
+fn hash_many_rayon<const N: usize>(slices: &[&[u8;N]]) -> Vec<Hash> {
+return slices
+.par_iter()
+.map(|s| blake3::hash(*s))
+.collect();
+}
+CopyCopied!
+The result is a very respectable improvement. This is a 10 core machine, and we are getting a factor ~8.5 improvement. The hash computations are of course completely independent, but they all need to read from memory, and of course there is some coordination overhead. So 8.5 is pretty decent.
+hash_many_rayon 1024 bytes, 1048576 blobs: 151.543208ms
+CopyCopied!
+Instruction level parallelism
+We can use thread level parallelism for any hash function. But one of the strengths of BLAKE3, and also the source of complexity of the code base, is the ability to use instruction level parallelism. The BLAKE3 crate comes with hand-optimized SIMD implementations for all major architectures and even WASM SIMD instructions.
+We can expect a modest improvement for relatively narrow SIMD instruction sets like NEON (apple silicon) with a width of 4, and bigger improvements for wide SIMD instruction sets such as AVX512 (16) in modern x64 CPUs.
+Here is the parallelism level (simd degree) for different SIMD instruction sets:
+fn simd_degree
+Using the BLAKE3 crate out of the box
+Unfortunately, the use case of hashing multiple blobs has not yet been considered in the public API. The public API for hashing has a fn to compute a hash, and a more advanced API that provides a Hasher that can be updated, for incrementally hashing or for hashing giant blobs that don't fit in memory.
+But there is nothing to work with multiple hashes at the same time.
+Hazmat API to the rescue?
+There is a hazmat API for advanced users, that we at n0 use in iroh-blobs to hash subtrees. When computing a chunk hash, the offset of the chunk in the file is an input parameter. So hashing [0u8;1024] at offset 0 will have a different intermediate result than hashing the exact same data at a different offset.
+The hazmat API gives you the ability to use the Hasher to compute the intermediate results for a subtree that does not start at offset 0. It does this by providing a way to set the input offset and to get the result as an intermediate ChainingValue.
+But the API still focuses around the Hasher, so it still works only for computing data for individual blobs.
+We have written about the new hazmat API previously
+Using the internal platform API
+So it looks like we have no choice but to dig deeper and see if we can implement this using existing internals.
+What we definitely don't want to touch for this small exploration is the hand-optimized SIMD code. So let's look at the entry point to the SIMD code and check if we can repurpose it to work with multiple blobs.
+The per-platform SIMD implementations are exposed via a Platform enum. Whenever you want to use the SIMD implementations, you use Platform::detect, which uses a mixture of compile time flags and runtime detection to detect the most efficient SIMD instruction set. Then you use platform methods to perform the actual computations.
+There are various methods on Platform, the two that are relevant for simple hashing are hash_many and compress_in_place. The other methods are only relevant for extendable-output functions (xof).
+Hash_many is the most important SIMD optimized operation. In normal usage, this is used to compute intermediate results for multiple 1 KiB chunks of the same blob. What we want to do is to use this to compute multiple root hashes (not intermediate results!) for multiple blobs.
+Here is the signature of hash_many:
+pub fn hash_many<const N: usize>(
+&self,
+inputs: &[&[u8; N]],
+key: &CVWords,
+counter: u64,
+increment_counter: IncrementCounter,
+flags: u8,
+flags_start: u8,
+flags_end: u8,
+out: &mut [u8],
+)
+CopyCopied!
+We want to implement fn hash_many<const N: usize>(slices: &[&[u8;N]]) -> Vec<Hash>, so at least the input parameter looks useful. We need to figure out what parameters to set on the key, counter, various flags and figure out what the output format is.
+Counter
+The counter is just the chunk counter, starting with 0. Since we want to hash multiple independent blobs, we want this to be 0 for not just the initial input but for all inputs. IncrementCounter is an enum that has cases Yes or No, so we will go with No here.
+Key
+The next parameter we need to figure out is key. It is of type CVWords. Looking at the top level fn hash, this is just initialized to a constant IV. So we can just use that and see if it works.
+Flags
+To figure out what to pass to the various flags, we can infer a few things just from the signature.
+Hashing an individual chunk is a multi step process, where there can be different flags in different steps. Here are the available flags in the code. The ones that are relevant for normal hashing of small blobs are CHUNK_START, CHUNK_END and ROOT.
+A BLAKE3 chunk (1024 bytes) is hashed incrementally in 64 byte blocks. As a normal user of the hash function, you don't ever have to think about this. But since we want to repurpose the SIMD code, we have to.
+The slices we are passing in are full chunks, so flag_start needs to be CHUNK_START and flag_end needs to be CHUNK_END. In addition, we want to use hash_many to compute a root hash, not an intermediate value. So for the last block in the chunk we also need to set the ROOT flag.
+Output
+Now that we have hopefully figured out the right values for all input parameters, we need to figure out what the output is and how to convert it to our desired output, a Hash.
+The output, just like the key, is a 32 byte continuation value. This comes in two different representations - a 32 byte slice CVBytes, or 8 32 bit words CVWords.
+hash_many produces multiple continuation values, so the output is just a buffer that needs to be at least 32*inputs.len() and will contain the continuation value for each chunk.
+To go from a continuation value to a hash, we can just use Hash::from_bytes.
+We will only get a correct root hash if we have set the ROOT flag on the last block of the computation.
+Putting it all together
+let mut buf = vec![0u8; chunks.len() * OUT_LEN];
+platform.hash_many(
+chunks,
+IV, // use the intitial continuation value for normal hashing
+0, // counter 0
+IncrementCounter::No, // keep counter 0 for all chunks
+0, // no flags for blocks in the middle, if any
+CHUNK_START, // use CHUNK_START for the first block in the chunk
+CHUNK_END | ROOT, // use CHUNK_END for the last block in the chunk, and set ROOT so we get a root hash
+&mut buf, // output buffer must be 32 * chunks.len
+);
+let hashes = buf.chunks_exact(OUT_LEN).map(Hash::from_slice).collect::<Vec<_>>();
+CopyCopied!
+This call produces correct hashes, but only works with the following constraints:
+chunks.len() must be platform::MAX_SIMD_DEGREE
+the length of each chunk must be a multiple of the block size (64 bytes)
+For testing, you can just set Platform to Platform::Portable. Some functions will panic when using Platform::Portable but silently produce wrong results when using a SIMD platform.
+This is to be expected since we are using an internal API and preconditions are checked further outside.
+To relax these constraints we must split our blobs to be hashed into groups of MAX_SIMD_DEGREE, process the last chunk sequentially if it is < MAX_SIMD_DEGREE, and make sure to only process whole blocks using hash_many.
+This adds some modest complexity, but nothing really annoying. Here is my implementation.
+For benchmarking, we can just make sure that the constraints are met and use a simplified version.
+fn hash_many_simd<const N: usize>(slices: &[&[u8; N]]) -> Vec<Hash> {
+assert!(!slices.is_empty());
+assert!(slices.len() % MAX_SIMD_DEGREE == 0);
+assert!(N % BLOCK_LEN == 0);
+let platform = Platform::detect();
+slices
+.chunks(MAX_SIMD_DEGREE)
+.flat_map(|batch| {
+let mut buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
+platform.hash_many(
+batch,
+IV,
+0,
+IncrementCounter::No,
+0,
+CHUNK_START,
+CHUNK_END | ROOT,
+&mut buf,
+);
+std::array::from_fn::<Hash, MAX_SIMD_DEGREE, _>(|i| {
+Hash::from_slice(&buf[i * OUT_LEN..(i + 1) * OUT_LEN]).unwrap()
+})
+})
+.collect()
+}
+CopyCopied!
+hash_many_simd 1024 bytes, 1048576 blobs: 547.307667ms
+CopyCopied!
+We get a pretty decent speed up on apple silicon (NEON) compared to the reference implementation. From 1.282111833s to 547.307667ms, so a factor of 2.34 improvement. On CPUs with a wider SIMD instruction set you would expect even further improvements.
+Combining instruction level parallelism and thread level parallelism
+Instruction level parallelism alone is frequently a good choice if you have a small batch of blobs to hash. You get a decent speed up but only use one CPU, and don't affect other parts of your program. But what if you have a big batch of blobs to hash and have the entire box for yourself? For peak performance we can combine instruction level parallelism and thread level parallelism.
+Here is the above, but with additional rayon thread level parallelism:
+fn hash_many_simd_rayon<const N: usize>(slices: &[&[u8; N]]) -> Vec<Hash> {
+assert!(!slices.is_empty());
+assert!(slices.len() % MAX_SIMD_DEGREE == 0);
+assert!(N % BLOCK_LEN == 0);
+let platform = Platform::detect();
+slices.par_chunks(MAX_SIMD_DEGREE)
+.flat_map_iter(|batch| {
+let mut buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
+platform.hash_many(
+batch,
+IV,
+0,
+IncrementCounter::No,
+0,
+CHUNK_START,
+CHUNK_END | ROOT,
+&mut buf,
+);
+std::array::from_fn::<Hash, MAX_SIMD_DEGREE, _>(|i| {
+Hash::from_slice(&buf[i * OUT_LEN..(i + 1) * OUT_LEN]).unwrap()
+})
+})
+.collect()
+}
+CopyCopied!
+hash_many_simd_rayon 1024 bytes, 1048576 blobs: 75.162083ms
+CopyCopied!
+The result is pretty good. We get a factor 17 speed up over the reference implementation, and still a factor 2.1 speedup over just using rayon.
+Comparing with SHA2-256, we get an improvement of ~2.5 when hashing both sequentially, an improvement of 2.6 if we hash both using rayon, and an improvement of 5.4 if we use SIMD+rayon for BLAKE3 and just rayon for SHA2.
+Speedups over SHA2-256:
+sequential: 2.5049265097570244
+rayon:      2.6302891590885866
+rayon+simd: 5.3943491646477755
+CopyCopied!
+The improvement will vary a lot between architectures and depending on the chosen small blob size.
+What would a public API look like?
+The fn we have implemented for the bechmarks is very limited. The number of blobs to hash must be a multiple of the platform specific MAX_SIMD_DEGREE, the blobs to be hashed must be all the same size, and the size must be a multiple of the BLOCK_LEN of 64 bytes.
+We can relax most of these constraints with some extra effort.
+But having different sized small blobs would be a can of worms. It would require changes to the SIMD implementation itself, such as the ability to set the offset per block instead of just having the option to increment or not.
+In addition, at present the API only supports hashing an array of slices in memory. There might be situations where you have an iterator of slices but don't want to collect them into a vec for hashing.
+Also, if you have blobs that are more than 1 chunk but less than simd_degree chunks in size, currently there is no way to hash those using Platform::hash_many, so you would have to fall back to sequential hashing.
+Last but not least, requiring the blob size to be known at compile time is limiting.
+So I am not sure how a public API for hashing multiple blobs would look like.
+Try it out
+> git clone https://github.com/rklaehn/BLAKE3
+> cd BLAKE3
+> RUSTFLAGS="-C target-cpu=native" cargo run --release --example hash_many
+Platform: NEON
+rayon threads: 10
+hash_many_baseline 1024 bytes, 1048576 blobs: 1.254154625s
+hash_many_rayon_simple 1024 bytes, 1048576 blobs: 152.511417ms
+hash_many_simd 1024 bytes, 1048576 blobs: 563.662083ms
+hash_many_simd_rayon 1024 bytes, 1048576 blobs: 79.925208ms
+sha2_hash_many_baseline 1024 bytes, 1048576 blobs: 3.270222791s
+sha2_hash_many_rayon 1024 bytes, 1048576 blobs: 403.399834ms
+Speedups over baseline:
+rayon:      8.223349108349048
+simd:       2.2250115145673193
+simd+rayon: 15.691602892043772
+Speedups over rayon:
+simd+rayon: 1.908176666865853
+Speedups over SHA2-256:
+sequential: 2.6075116463410564
+rayon:      2.6450467901691583
+rayon+simd: 5.047216567769207
+CopyCopied!
+I would be curious what the ratio is on different architectures. Try it out and let me know on X (@klaehnr) or bluesky (@rklaehn.bsky.social).
+Footnotes
+Another reason for the speed of BLAKE3 is that it is frugal with cryptographic operations. See too much crypto for details. ↩
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 88 | f003719 | https://neon.com/blog/handling-time-variant-dags-with-constraints-in-postgres | 2025-10-20 | domain-subframes ===
+Handling Time-Variant DAGs with Constraints in Postgres - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Postgres
+Handling Time-Variant DAGs with Constraints in Postgres
+Using Postgres to manage fleet relationships in real-time
+Thorsten Rieß–Sr. Software Engineer at traconiqOct 20, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Managing dynamically changing directed acyclic graphs (DAGs) with constraints in Postgres enables robust tracking of relationships that evolve over time. At traconiq, this pattern is central to how we manage our vehicle fleet, where trucks and trailers attach and detach constantly, and where data can come from multiple systems with different levels of authority.
+We use Neon serverless Postgres as our operational database layer. Over time, we developed a schema and logic pattern that allows us to:
+Enforce DAG integrity (no cycles, single incoming edges)
+Handle time-variant relationships
+Resolve conflicting data from multiple sources automatically
+In this post, we’ll share how we implemented this in Postgres. The full code is available open source at traconiq/dags-neon.
+The Use Case: Tracking Fleet Attachments
+traconiq and Neon
+traconiq manages large-scale fleet operations and real-time logistics data on Neon. Learn more about their use case (and why they picked Neon) here.
+In our fleet-management platform, every vehicle acts as a node in a graph, and each attachment (where one vehicle pulls another) is represented as a directed edge from the pulling vehicle to the pulled vehicle. This setup enables us to analyze chains of vehicles, resolve conflicting attachment data, and maintain a time-aware history of all fleet configurations.
+Our requirements are simple to describe but complex to enforce:
+Multiple outgoing edges per vehicle: a truck can pull several trailers at once.
+Only one incoming edge per vehicle per time interval: each trailer can only be attached to one pulling vehicle at a time.
+No cycles anywhere in the graph: a vehicle cannot (directly or indirectly) end up pulling itself.
+Conflicting information must be resolved by priority: data comes from different systems: manual input, GPS, or automated sensors. Each has a defined authority level.
+Here’s how we model this in Postgres.
+Implementing Time-Variant DAGs in Postgres
+Schema design
+To represent vehicle attachment history precisely, each edge in the graph stores not only its source and target nodes, but also its validity interval and a priority level used for conflict resolution.
+The resulting table, dags.temporal_edges, captures the time-varying structure of the fleet and enforces basic data integrity directly at the database layer:
+CREATE TABLE dags.temporal_edges (
+id          serial      PRIMARY KEY,
+source      text        NOT NULL,   -- pulling vehicle id
+target      text        NOT NULL,   -- pulled vehicle id
+valid_from  timestamptz NOT NULL,   -- start of attachment
+valid_to    timestamptz,            -- end of attachment, null = ongoing
+priority    int         NOT NULL,   -- source authority for conflict resolution
+constraint vehicle2vehicle_ck
+check (source <> target),
+constraint vehicle2vehicle_valid_ck
+check ((valid_from < valid_to) OR (valid_to IS NULL))
+);
+This schema leverages Postgres’s native temporal types and constraint system, allowing us to define evolving DAGs with minimal application-level logic.
+The basic constraints prevent impossible states:
+a vehicle cannot attach to itself (source <> target), and
+validity intervals must make sense (valid_from must precede valid_to, or valid_to can be NULL for ongoing connections).
+These guarantees ensure that every edge always represents a valid and logically consistent attachment.
+For background reading on data types and constraints, see the Postgres documentation on temporal types and constraints.
+Enforcing graph constraints with deferred triggers
+To maintain consistency across the entire graph, two key conditions must always hold true:
+No cycles: inserting or updating edges must never create circular dependencies.
+Only one incoming edge per node at any time: a vehicle can only be pulled by one other vehicle during any overlapping time interval.
+Both constraints are enforced using deferred constraint triggers. These triggers run automatically after each insert or update, but only at transaction commit, allowing multi-step updates or batch inserts to proceed safely before validation.
+-- Trigger to detect and prevent cycles in the graph
+CREATE CONSTRAINT TRIGGER trigger_detect_cycle
+AFTER INSERT OR UPDATE ON temporal_edges
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE PROCEDURE detect_cycle();
+-- Trigger to enforce the single incoming edge per node constraint
+CREATE CONSTRAINT TRIGGER trigger_check_single_incoming
+AFTER INSERT OR UPDATE ON temporal_edges
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE PROCEDURE check_single_incoming_edge();
+These triggers call the corresponding PL/pgSQL functions, detect_cycle() and check_single_incoming_edge(), which raise exceptions if violations are detected. The deferred execution model ensures that even complex transactions involving multiple inserts or updates will only commit if all constraints remain valid.
+This approach provides both data integrity and transactional flexibility. This is essential for managing evolving DAGs in a live fleet system, where many updates may happen in parallel or from different sources.
+To simplify the process of adding new edges while respecting priorities and validity intervals, we provide a helper function:
+add_edge(source varchar, target varchar, valid_from timestamptz, valid_to timestamptz, priority integer)
+This function automatically adjusts existing intervals when overlaps occur, either truncating, splitting, or deleting edges as needed, depending on their assigned priorities.
+The full function implementations are available in the repo.
+Adding edges and resolving conflicts
+Once the constraints and triggers are in place, we can safely insert new edges while relying on Postgres to enforce data consistency and authority rules. Let’s look at concrete examples of how the system resolves overlapping or conflicting attachments.
+Example 1: Adding a higher-priority edge
+Suppose our table currently contains one confirmed attachment:
+sourcetargetvalid_fromvalid_topriority
+V001V0022025-10-06 08:00:002025-10-06 12:00:0050
+Now, we attempt to add a new edge with higher authority:
+sourcetargetvalid_fromvalid_topriority
+V003V0022025-10-06 10:00:002025-10-06 13:00:0070
+Conflict window: Between 10:00 and 12:00, both edges claim V002 as a target.
+Resolution: The new edge (priority 70) overrides the previous one (priority 50) for the overlapping period.
+And the system adjusts the existing records automatically:
+sourcetargetvalid_fromvalid_topriority
+V001V0022025-10-06 08:00:002025-10-06 10:00:0050
+V003V0022025-10-06 10:00:002025-10-06 13:00:0070
+The add_edge() function truncated the earlier record, ensuring no overlap while preserving full temporal history.
+Example 2: Adding a lower-priority edge
+Now suppose a new edge arrives with lower authority:
+sourcetargetvalid_fromvalid_topriority
+V004V0022025-10-06 11:00:002025-10-06 14:00:0030
+Conflict window: Between 11:00 and 13:00, this overlaps with the higher-priority edge (V003 → V002)
+Resolution: The lower-priority edge is truncated, only taking effect after 13:00.
+The final state ensures that the “one incoming edge per node” rule is always respected, with higher-priority data taking precedence:
+sourcetargetvalid_fromvalid_topriority
+V001V0022025-10-06 08:00:002025-10-06 10:00:0050
+V003V0022025-10-06 10:00:002025-10-06 13:00:0070
+V004V0022025-10-06 13:00:002025-10-06 14:00:0030
+Querying and traversing the graph
+Once data integrity and conflict resolution are handled, querying the DAG becomes straightforward. Postgres’ SQL syntax and recursive CTEs make it possible to explore both current and historical attachment states directly within the database.
+Below are a few example queries from our implementation:
+Find current attachments at a given time
+This query returns all active edges for the specified time window, giving a snapshot of the fleet’s structure at that moment:
+SELECT source, target
+FROM dags.temporal_edges
+WHERE valid_from <= '2025-10-06 11:00:00+00'
+AND (valid_to IS NULL OR valid_to > '2025-10-06 11:00:00+00');
+Find what a vehicle is pulling
+To list all vehicles being pulled by a specific truck at a given time (e.g. for monitoring live operations):
+SELECT target
+FROM dags.temporal_edges
+WHERE source = 'V004'
+AND valid_from <= '2025-10-06 11:30:00+00'
+AND (valid_to IS NULL OR valid_to > '2025-10-06 11:30:00+00');
+Detect illegal multiple attachments
+As a safety check, this query identifies any vehicles that erroneously have more than one incoming edge (which should never happen if the triggers are active):
+SELECT target, COUNT(*)
+FROM dags.temporal_edges
+WHERE valid_from <= '2025-10-07 12:00:00+00'
+AND (valid_to IS NULL OR valid_to > '2025-10-07 12:00:00+00')
+GROUP BY target
+HAVING COUNT(*) > 1;
+Recursively explore the fleet DAG
+A recursive CTE can be used to traverse the entire DAG starting from a pulling vehicle. This query collects all downstream attachments, direct and indirect, active at a given time. It’s a great example of how SQL recursion and temporal filtering can combine to represent dynamic graphs in Postgres:
+WITH RECURSIVE fleet_dag AS (
+-- Start with the given pulling vehicle at the reference time
+SELECT source, target
+FROM dags.temporal_edges
+WHERE source = 'V001'
+AND valid_from <= '2025-10-08 12:00:00+00'
+AND (valid_to IS NULL OR valid_to > '2025-10-08 12:00:00+00')
+UNION ALL
+-- Recursively find children attached to each target vehicle in the chain
+SELECT e.source, e.target
+FROM dags.temporal_edges e
+JOIN fleet_dag fd ON e.source = fd.target
+WHERE e.valid_from <= '2025-10-08 12:00:00+00'
+AND (e.valid_to IS NULL OR e.valid_to > '2025-10-08 12:00:00+00')
+)
+SELECT * FROM fleet_dag;
+Why This Works in Postgres (and Neon)
+Modeling time-variant DAGs directly in Postgres provides a number of advantages for systems like ours:
+Temporal tracking allows complete historical and real-time visibility into vehicle relationships, enabling both live monitoring and retrospective analysis
+PL/pgSQL logic inside functions like add_edge() automates conflict resolution and interval updates while maintaining full transactional integrity
+Postgres’ built-in features like range types, recursive queries, and deferred constraints offer the tools needed to manage acyclic, time-varying graphs efficiently at scale
+Neon’s architecture makes this practical in production: serverless compute scales down during idle periods and back up during bursts, while branching supports safe testing of constraint logic or schema evolution without impacting production data
+This combination of Postgres features and Neon’s infra provides a clean, reliable pattern for modeling evolving relationships, enforcing data consistency, and maintaining performance as datasets grow. If you have a similar use case want to explore or adapt this implementation, the complete code example is available here: https://github.com/traconiq/dags-neon
+On this page
+The Use Case: Tracking Fleet Attachments
+Implementing Time-Variant DAGs in Postgres
+Why This Works in Postgres (and Neon)
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 89 | f003731 | https://iroh.computer/blog/iroh-0-94-0-the-endpoint-takeover | 2025-10-22 | domain-subframes ===
+iroh 0.94.0 - The Endpoint Takeover - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+iroh 0.94.0 - The Endpoint TakeoverOctober 22, 2025 by ramfox
+Welcome to a new release of iroh, a library for building direct connections between devices, putting more control in the hands of your users.
+We have a bunch of API changes and features for you in this one, all of which are part of the push toward a 1.0 API:
+We've completed the transition away from iroh node, now referring to everything as endpoints.
+You can now add and remove Relays to and from your endpoint dynamically, even after the endpoint has already been spawned.
+A new Presets API for endpoint construction.
+New defaults for Discovery
+Updated EndpointAddr (Previously NodeAddr) to support additional transports
+iroh-base::ticket has moved to its own iroh-tickets crate!
+Public Relay Versions & Lifecycle:
+The current canary relays are on version 0.94. These are compatible with iroh 0.93. However, we are still running relays that are compatible with 0.91 and 0.92, and the default relays for these versions are still valid. 0.90 is no longer supported. We will continue to run 0.35 nodes until 3 months after 1.0 comes out.
+Finally, we have some updates about the 1.0 roadmap at the end of this post.
+➡️ Changing from Node to Endpoint everywhere
+We’ve officially made the decision to remove the word “node” from our vocabulary. It’s a hold over, from when iroh was trying to be more than just a networking library. iroh doesn’t have “nodes” anymore, iroh is represented by endpoints!
+This shouldn’t be too big a shift if you think about the way you are currently using iroh; the main entry point into the codebase is iroh::Endpoint. However, although we changed from thinking about iroh in terms of endpoints rather than nodes a while back, we never changed much of our internal language to reflect that.
+In preparation for 1.0, that has been rectified.
+For the most part, this is a search-and-replace change in our structs from using the word Node to using the word Endpoint, (eg, NodeAddr → EndpointAddr), and changing from node_id to endpoint_id.
+There are a few exceptions worth noting:
+RelayNode is now RelayConfig, which honestly makes more sense anyway.
+Endpoint::node_id is now Endpoint::id .
+Endpoint::node_addr is now Endpoint::addr .
+For specific changes, check out the breaking changes section below.
+🌉 Dynamic RelayMaps!
+Previously, you could only add custom relays once, while building the Endpoint. Also, once they were set, they couldn’t be removed.
+Now we have Endpoint::insert_relay  and Endpoint::remove_relay  that allow you to dynamically adjust your relay map. This will trigger another net-report to allow your endpoint to gather new latency information from this relay.
+This prepares us for later features where relays are created or destroyed while an endpoint is running. Now that endpoints can modify their set of relays, we can build relay networks that dynamically scale.
+🕵️ Discovery defaults and Presets
+Previously, the Endpoint::builder was a blank canvas, and if you wanted to add a discovery service you needed to do it through one of our helper functions on the builder.
+A few things have changed since then. It is now WAY easier to add custom or n0-written discovery services, you can add them to the builder using EndpointBuilder::discovery or add them to the endpoint after it has been created using Endpoint::discovery().add (you can also remove all service using Endpoint::discovery().empty and add back the ones you want afterwards).
+So now, the Endpoint::builder will, by default, set you up with what was previously set when running discovery_n0 (PkarrDiscovery and DnsDiscovery).
+But what if you don’t want the default? Easy! You have two options. You can build from the Endpoint::empty_builder or use the new EndpointBuilder::presets method and Preset trait.
+// build your custom discovery service
+let cool_discovery = CoolDiscovery::new();
+let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
+.discovery(cool_discovery)
+.bind()
+.await?;
+CopyCopied!
+The empty_builder method requires a RelayMode. By default, Endpoint::builder sets the relay mode to RelayMode::Default, which uses the n0 public relays. You can also disable any relaying (RelayMode::Disabled), or add a set of custom relays (RelayMode::Custom(_) ).
+Let’s say you create a lot of endpoints, or you have a few different categories of the types of endpoints that you create (the most basic would be production vs testing, for example).
+You can use presets to write blanket configuration for a type of endpoint. You do this by implementing the Preset trait on a custom struct. Here is a simplified version of the NO preset that we use in our defaults:
+use crate::discovery::pkarr::PkarrPublisher;
+use crate::discovery::dns::DnsDiscovery;
+#[derive(Debug, Copy, Clone, Default)]
+pub struct N0;
+impl Preset for N0 {
+fn apply(self, mut builder: Builder) -> Builder {
+// `Preset::apply` is additive, so any other presets added before
+// will still exist, unless overridden.
+builder = builder.clear_discovery();
+// Publish using HTTPS requests to our DNS server's /pkarr path
+builder = builder.discovery(PkarrPublisher::n0_dns());
+// Resolve using DNS queries outside browsers.
+builder = builder.discovery(DnsDiscovery::n0_dns());
+builder = builder.relay_mode(RelayMode::Default);
+builder
+}
+}
+CopyCopied!
+Then, when you go to build the endpoint:
+use iroh::presets::N0;
+let endpoint = Endpoint::builder().preset(NO).bind().await?;
+CopyCopied!
+And now you have an endpoint with all the endpoint configuration you want.
+Presets are used for more than just Discovery, any config you normally add to the builder can be added in a preset!
+🤖 Future proofing: Introducing TransportAddr
+Let’s talk about the future for a second, a future even beyond iroh 1.0. We want to be able to add more transports than just UDP/IP traffic. WebRTC would be incredibly useful, for example. We will be able to develop this once we switch to QUIC multipath.
+But in order to pave the way for that future, we need to get our internals set up well now. One of those internals is how we represent addresses in our EndpointAddr (formerly NodeAddr). Before, we only had two hardcoded possibilities for transports. Your connection could be going over a relay, which we identify using RelayUrls, or over UDP on IPv4 or Ipv6, which we identify using SocketAddrs. These were represented on the EndpointAddr as EndpointAddr::relay_url: Option<RelayUrl> and EndpointAddr::direct_addresses: BTreeSet<SocketAddr> .
+To combine them, and to allow for additions in the future, they are now represented as variants on a TransportAddr:
+#[non_exhaustive]
+pub enum TransportAddr {
+Relay(RelayUrl),
+Ip(SocketAddr),
+}
+CopyCopied!
+This effects the EndpointAddr, which now only has two fields:
+pub struct EndpointAddr {
+pub id: PublicKey,
+pub addrs: BTreeSet<TransportAddr>,
+}
+CopyCopied!
+To help ease the transition, we have two additional methods on EndpointAddr:
+pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr>
+pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl>
+CopyCopied!
+This replaces NodeAddr::direct_addresses almost directly and NodeAddr::relay_url pretty directly as well.
+Currently, your endpoint will only ever have one RelayUrl. This may change in the future (post 1.0) if we add relays with different transports or protocols. But, for now, any instance of NodeAddr::relay_url() -> Option<RelayUrl> , can be directly replaced with EndpointAddr::relay_urls().next(), which will return an Option<RelayUrl>.
+🎫 iroh-tickets - removing Ticket from iroh-base
+Ahhh, tickets. So convenient! We love using tickets in our iroh-examples and iroh-experiments, as well as in our protocols. We encourage folks to use them when needing to serialize the information your protocol or project needs to make sure you can get connections happening between your endpoints.
+However, they were not at the right level in our codebase, and are really something that builds on top of iroh, rather than something that belongs in iroh-base. They now have their own crate iroh-tickets!
+⚠️ Breaking Changes
+iroh
+renamed
+iroh_relay::RelayNode -> RelayConfig
+iroh_base::NodeAddr -> EndpointAddr
+iroh_base::NodeAddr.node_id -> endpoint_id
+iroh_base::NodeId -> EndpointId
+iroh_base::NodeTicket -> EndpointTicket
+iroh::Endpoint::node_addr -> iroh::Endpoint::addr
+iroh::Endpoint::watch_node_addr -> iroh::Endpoint::watchaddr
+iroh::Endpoint::node_id -> iroh::Endpoint::id
+iroh_relay::RelayMap::urls
+iroh_relay::RelayMap::nodes
+iroh_relay::RelayMap::get_node
+direct_addresses are now called ip_addresses
+EndpointAddr type is completely changed
+Use EndpointAddr::ip_addrs to get a list of ip addresses for this endpoint
+Use EndpointAddr::relay_urls to get a list of relay urls for this endpoint
+currently, there will only be one relay url per endpoint, but in the future, beyond 1.0, we will potentially have multiple
+APIs with addresse(s) are now normalized to addr(s) to be consistent in the code base
+removed
+iroh::Endpoint::add_node_addr_with_source is removed. Use a discovery service instead.
+added
+iroh_base::Signature which replaces ed25519_dalek::Signature in the public API of iroh_base
+iroh::Endpoint::insert_relay
+iroh::Endpoint::remove_relay
+iroh::Endpoint::RelayMap::insert
+iroh::Endpoint::RelayMap::remove
+iroh-relay
+wire-level breaking change
+iroh-relay servers can no longer issue captive portal challenges to pre 0.93 iroh nodes
+iroh-base
+changed
+iroh_base error types have changed
+removed
+Into and From conversions for PublicKey - ed25519_dalek::VerifyingKey
+Into and From conversions for SecretKey - ed25519_dalek::SigningKey
+removed ticket s from iroh-base , they are now in their own iroh-ticket crate
+🎉 The end of the (0.)90s is coming
+We are almost at the finish line folks and are excited to let you know that we expect only two more releases in the 9Xs canary series. 0.95 to round our our API changes and 0.96 to bring you multipath. Once all criticial issues are fixed, we expect to publish our first release candidate 1.0.0-rc.0 later this year
+All the nitty-gritty details can be found in the updated roadmap, and in our milestones on github, which we will keep updating as we go.
+But wait, there's more!
+Many bugs were squashed, and smaller features were added. For all those details, check out the full changelog: https://github.com/n0-computer/iroh/releases/tag/v0.94.0.
+If you want to know what is coming up, check out the v0.95.0 milestone, and if you have any wishes, let us know about the issues! If you need help using iroh or just want to chat, please join us on discord! And to keep up with all things iroh, check out our Twitter, Mastodon, and Bluesky.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 90 | f003756 | https://blog.cloudflare.com/bootstrap-mtc | 2025-10-28 | domain-subframes ===
+Keeping the Internet fast and secure- introducing Merkle Tree Certificates | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+This Post is Available in
+日本語
+한국어
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+ChromeCloudflare WorkersCryptography+9Show 9 more tags
+12 TagsShow 12 tags
+Post Tags
+ChromeCloudflare WorkersCryptographyGoogleIETFOpen SourcePost-QuantumResearchRustSecurityTLSTransparency
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+GoogleIETFOpen SourcePost-QuantumResearchRustSecurityTLSTransparency
+ChromeCloudflare WorkersCryptographyGoogleIETFOpen SourcePost-QuantumResearchRustSecurityTLSTransparency
+October 28, 2025
+Keeping the Internet fast and secure: introducing Merkle Tree Certificates
+Luke Valenta, Christopher Patton, Vânia Gonçalves, and Bas Westerbaan
+17 minute readCOPY URL
+This post is also available in 日本語 and 한국어.
+The world is in a race to build its first quantum computer capable of solving practical problems not feasible on even the largest conventional supercomputers. While the quantum computing paradigm promises many benefits, it also threatens the security of the Internet by breaking much of the cryptography we have come to rely on.
+To mitigate this threat, Cloudflare is helping to migrate the Internet to Post-Quantum (PQ) cryptography. Today, about 50% of traffic to Cloudflare's edge network is protected against the most urgent threat: an attacker who can intercept and store encrypted traffic today and then decrypt it in the future with the help of a quantum computer. This is referred to as the harvest now, decrypt later threat.
+However, this is just one of the threats we need to address. A quantum computer can also be used to crack a server's TLS certificate, allowing an attacker to impersonate the server to unsuspecting clients. The good news is that we already have PQ algorithms we can use for quantum-safe authentication. The bad news is that adoption of these algorithms in TLS will require significant changes to one of the most complex and security-critical systems on the Internet: the Web Public-Key Infrastructure (WebPKI).
+The central problem is the sheer size of these new algorithms: signatures for ML-DSA-44, one of the most performant PQ algorithms standardized by NIST, are 2,420 bytes long, compared to just 64 bytes for ECDSA-P256, the most popular non-PQ signature in use today; and its public keys are 1,312 bytes long, compared to just 64 bytes for ECDSA. That's a roughly 20-fold increase in size. Worse yet, the average TLS handshake includes a number of public keys and signatures, adding up to 10s of kilobytes of overhead per handshake. This is enough to have a noticeable impact on the performance of TLS.
+That makes drop-in PQ certificates a tough sell to enable today: they don’t bring any security benefit before Q-day — the day a cryptographically relevant quantum computer arrives — but they do degrade performance. We could sit and wait until Q-day is a year away, but that’s playing with fire. Migrations always take longer than expected, and by waiting we risk the security and privacy of the Internet, which is dear to us.
+It's clear that we must find a way to make post-quantum certificates cheap enough to deploy today by default for everyone — not just those that can afford it. In this post, we'll introduce you to the plan we’ve brought together with industry partners to the IETF to redesign the WebPKI in order to allow a smooth transition to PQ authentication with no performance impact (and perhaps a performance improvement!). We'll provide an overview of one concrete proposal, called Merkle Tree Certificates (MTCs), whose goal is to whittle down the number of public keys and signatures in the TLS handshake to the bare minimum required.
+But talk is cheap. We know from experience that, as with any change to the Internet, it's crucial to test early and often. Today we're announcing our intent to deploy MTCs on an experimental basis in collaboration with Chrome Security. In this post, we'll describe the scope of this experiment, what we hope to learn from it, and how we'll make sure it's done safely.
+The WebPKI today — an old system with many patches
+Why does the TLS handshake have so many public keys and signatures?
+Let's start with Cryptography 101. When your browser connects to a website, it asks the server to authenticate itself to make sure it's talking to the real server and not an impersonator. This is usually achieved with a cryptographic primitive known as a digital signature scheme (e.g., ECDSA or ML-DSA). In TLS, the server signs the messages exchanged between the client and server using its secret key, and the client verifies the signature using the server's public key. In this way, the server confirms to the client that they've had the same conversation, since only the server could have produced a valid signature.
+If the client already knows the server's public key, then only 1 signature is required to authenticate the server. In practice, however, this is not really an option. The web today is made up of around a billion TLS servers, so it would be unrealistic to provision every client with the public key of every server. What's more, the set of public keys will change over time as new servers come online and existing ones rotate their keys, so we would need some way of pushing these changes to clients.
+This scaling problem is at the heart of the design of all PKIs.
+Trust is transitive
+Instead of expecting the client to know the server's public key in advance, the server might just send its public key during the TLS handshake. But how does the client know that the public key actually belongs to the server? This is the job of a certificate.
+A certificate binds a public key to the identity of the server — usually its DNS name, e.g., cloudflareresearch.com. The certificate is signed by a Certification Authority (CA) whose public key is known to the client. In addition to verifying the server's handshake signature, the client verifies the signature of this certificate. This establishes a chain of trust: by accepting the certificate, the client is trusting that the CA verified that the public key actually belongs to the server with that identity.
+Clients are typically configured to trust many CAs and must be provisioned with a public key for each. Things are much easier however, since there are only 100s of CAs instead of billions. In addition, new certificates can be created without having to update clients.
+These efficiencies come at a relatively low cost: for those counting at home, that's +1 signature and +1 public key, for a total of 2 signatures and 1 public key per TLS handshake.
+That's not the end of the story, however. As the WebPKI has evolved, so have these chains of trust grown a bit longer. These days it's common for a chain to consist of two or more certificates rather than just one. This is because CAs sometimes need to rotate their keys, just as servers do. But before they can start using the new key, they must distribute the corresponding public key to clients. This takes time, since it requires billions of clients to update their trust stores. To bridge the gap, the CA will sometimes use the old key to issue a certificate for the new one and append this certificate to the end of the chain.
+That's +1 signature and +1 public key, which brings us to 3 signatures and 2 public keys. And we still have a little ways to go.
+Trust but verify
+The main job of a CA is to verify that a server has control over the domain for which it’s requesting a certificate. This process has evolved over the years from a high-touch, CA-specific process to a standardized, mostly automated process used for issuing most certificates on the web. (Not all CAs fully support automation, however.) This evolution is marked by a number of security incidents in which a certificate was mis-issued to a party other than the server, allowing that party to impersonate the server to any client that trusts the CA.
+Automation helps, but attacks are still possible, and mistakes are almost inevitable. Earlier this year, several certificates for Cloudflare's encrypted 1.1.1.1 resolver were issued without our involvement or authorization. This apparently occurred by accident, but it nonetheless put users of 1.1.1.1 at risk. (The mis-issued certificates have since been revoked.)
+Ensuring mis-issuance is detectable is the job of the Certificate Transparency (CT) ecosystem. The basic idea is that each certificate issued by a CA gets added to a public log. Servers can audit these logs for certificates issued in their name. If ever a certificate is issued that they didn't request itself, the server operator can prove the issuance happened, and the PKI ecosystem can take action to prevent the certificate from being trusted by clients.
+Major browsers, including Firefox and Chrome and its derivatives, require certificates to be logged before they can be trusted. For example, Chrome, Safari, and Firefox will only accept the server's certificate if it appears in at least two logs the browser is configured to trust. This policy is easy to state, but tricky to implement in practice:
+Operating a CT log has historically been fairly expensive. Logs ingest billions of certificates over their lifetimes: when an incident happens, or even just under high load, it can take some time for a log to make a new entry available for auditors.
+Clients can't really audit logs themselves, since this would expose their browsing history (i.e., the servers they wanted to connect to) to the log operators.
+The solution to both problems is to include a signature from the CT log along with the certificate. The signature is produced immediately in response to a request to log a certificate, and attests to the log's intent to include the certificate in the log within 24 hours.
+Per browser policy, certificate transparency adds +2 signatures to the TLS handshake, one for each log. This brings us to a total of 5 signatures and 2 public keys in a typical handshake on the public web.
+The future WebPKI
+The WebPKI is a living, breathing, and highly distributed system. We've had to patch it a number of times over the years to keep it going, but on balance it has served our needs quite well — until now.
+Previously, whenever we needed to update something in the WebPKI, we would tack on another signature. This strategy has worked because conventional cryptography is so cheap. But 5 signatures and 2 public keys on average for each TLS handshake is simply too much to cope with for the larger PQ signatures that are coming.
+The good news is that by moving what we already have around in clever ways, we can drastically reduce the number of signatures we need.
+Crash course on Merkle Tree Certificates
+Merkle Tree Certificates (MTCs) is a proposal for the next generation of the WebPKI that we are implementing and plan to deploy on an experimental basis. Its key features are as follows:
+All the information a client needs to validate a Merkle Tree Certificate can be disseminated out-of-band. If the client is sufficiently up-to-date, then the TLS handshake needs just 1 signature, 1 public key, and 1 Merkle tree inclusion proof. This is quite small, even if we use post-quantum algorithms.
+The MTC specification makes certificate transparency a first class feature of the PKI by having each CA run its own log of exactly the certificates they issue.
+Let's poke our head under the hood a little. Below we have an MTC generated by one of our internal tests. This would be transmitted from the server to the client in the TLS handshake:
+-----BEGIN CERTIFICATE-----
+MIICSzCCAUGgAwIBAgICAhMwDAYKKwYBBAGC2ksvADAcMRowGAYKKwYBBAGC2ksv
+AQwKNDQzNjMuNDguMzAeFw0yNTEwMjExNTMzMjZaFw0yNTEwMjgxNTMzMjZaMCEx
+HzAdBgNVBAMTFmNsb3VkZmxhcmVyZXNlYXJjaC5jb20wWTATBgcqhkjOPQIBBggq
+hkjOPQMBBwNCAARw7eGWh7Qi7/vcqc2cXO8enqsbbdcRdHt2yDyhX5Q3RZnYgONc
+JE8oRrW/hGDY/OuCWsROM5DHszZRDJJtv4gno2wwajAOBgNVHQ8BAf8EBAMCB4Aw
+EwYDVR0lBAwwCgYIKwYBBQUHAwEwQwYDVR0RBDwwOoIWY2xvdWRmbGFyZXJlc2Vh
+cmNoLmNvbYIgc3RhdGljLWN0LmNsb3VkZmxhcmVyZXNlYXJjaC5jb20wDAYKKwYB
+BAGC2ksvAAOB9QAAAAAAAAACAAAAAAAAAAJYAOBEvgOlvWq38p45d0wWTPgG5eFV
+wJMhxnmDPN1b5leJwHWzTOx1igtToMocBwwakt3HfKIjXYMO5CNDOK9DIKhmRDSV
+h+or8A8WUrvqZ2ceiTZPkNQFVYlG8be2aITTVzGuK8N5MYaFnSTtzyWkXP2P9nYU
+Vd1nLt/WjCUNUkjI4/75fOalMFKltcc6iaXB9ktble9wuJH8YQ9tFt456aBZSSs0
+cXwqFtrHr973AZQQxGLR9QCHveii9N87NXknDvzMQ+dgWt/fBujTfuuzv3slQw80
+mibA021dDCi8h1hYFQAA
+-----END CERTIFICATE-----
+Looks like your average PEM encoded certificate. Let's decode it and look at the parameters:
+$ openssl x509 -in merkle-tree-cert.pem -noout -text
+Certificate:
+Data:
+Version: 3 (0x2)
+Serial Number: 531 (0x213)
+Signature Algorithm: 1.3.6.1.4.1.44363.47.0
+Issuer: 1.3.6.1.4.1.44363.47.1=44363.48.3
+Validity
+Not Before: Oct 21 15:33:26 2025 GMT
+Not After : Oct 28 15:33:26 2025 GMT
+Subject: CN=cloudflareresearch.com
+Subject Public Key Info:
+Public Key Algorithm: id-ecPublicKey
+Public-Key: (256 bit)
+pub:
+04:70:ed:e1:96:87:b4:22:ef:fb:dc:a9:cd:9c:5c:
+ef:1e:9e:ab:1b:6d:d7:11:74:7b:76:c8:3c:a1:5f:
+94:37:45:99:d8:80:e3:5c:24:4f:28:46:b5:bf:84:
+60:d8:fc:eb:82:5a:c4:4e:33:90:c7:b3:36:51:0c:
+92:6d:bf:88:27
+ASN1 OID: prime256v1
+NIST CURVE: P-256
+X509v3 extensions:
+X509v3 Key Usage: critical
+Digital Signature
+X509v3 Extended Key Usage:
+TLS Web Server Authentication
+X509v3 Subject Alternative Name:
+DNS:cloudflareresearch.com, DNS:static-ct.cloudflareresearch.com
+Signature Algorithm: 1.3.6.1.4.1.44363.47.0
+Signature Value:
+00:00:00:00:00:00:02:00:00:00:00:00:00:00:02:58:00:e0:
+44:be:03:a5:bd:6a:b7:f2:9e:39:77:4c:16:4c:f8:06:e5:e1:
+55:c0:93:21:c6:79:83:3c:dd:5b:e6:57:89:c0:75:b3:4c:ec:
+75:8a:0b:53:a0:ca:1c:07:0c:1a:92:dd:c7:7c:a2:23:5d:83:
+0e:e4:23:43:38:af:43:20:a8:66:44:34:95:87:ea:2b:f0:0f:
+16:52:bb:ea:67:67:1e:89:36:4f:90:d4:05:55:89:46:f1:b7:
+b6:68:84:d3:57:31:ae:2b:c3:79:31:86:85:9d:24:ed:cf:25:
+a4:5c:fd:8f:f6:76:14:55:dd:67:2e:df:d6:8c:25:0d:52:48:
+c8:e3:fe:f9:7c:e6:a5:30:52:a5:b5:c7:3a:89:a5:c1:f6:4b:
+5b:95:ef:70:b8:91:fc:61:0f:6d:16:de:39:e9:a0:59:49:2b:
+34:71:7c:2a:16:da:c7:af:de:f7:01:94:10:c4:62:d1:f5:00:
+87:bd:e8:a2:f4:df:3b:35:79:27:0e:fc:cc:43:e7:60:5a:df:
+df:06:e8:d3:7e:eb:b3:bf:7b:25:43:0f:34:9a:26:c0:d3:6d:
+5d:0c:28:bc:87:58:58:15:00:00
+While some of the parameters probably look familiar, others will look unusual. On the familiar side, the subject and public key are exactly what we might expect: the DNS name is cloudflareresearch.com and the public key is for a familiar signature algorithm, ECDSA-P256. This algorithm is not PQ, of course — in the future we would put ML-DSA-44 there instead.
+On the unusual side, OpenSSL appears to not recognize the signature algorithm of the issuer and just prints the raw OID and bytes of the signature. There's a good reason for this: the MTC does not have a signature in it at all! So what exactly are we looking at?
+The trick to leave out signatures is that a Merkle Tree Certification Authority (MTCA) produces its signatureless certificates in batches rather than individually. In place of a signature, the certificate has an inclusion proof of the certificate in a batch of certificates signed by the MTCA.
+To understand how inclusion proofs work, let's think about a slightly simplified version of the MTC specification. To issue a batch, the MTCA arranges the unsigned certificates into a data structure called a Merkle tree that looks like this:
+Each leaf of the tree corresponds to a certificate, and each inner node is equal to the hash of its children. To sign the batch, the MTCA uses its secret key to sign the head of the tree. The structure of the tree guarantees that each certificate in the batch was signed by the MTCA: if we tried to tweak the bits of any one of the certificates, the treehead would end up having a different value, which would cause the signature to fail.
+An inclusion proof for a certificate consists of the hash of each sibling node along the path from the certificate to the treehead:
+Given a validated treehead, this sequence of hashes is sufficient to prove inclusion of the certificate in the tree. This means that, in order to validate an MTC, the client also needs to obtain the signed treehead from the MTCA.
+This is the key to MTC's efficiency:
+Signed treeheads can be disseminated to clients out-of-band and validated offline. Each validated treehead can then be used to validate any certificate in the corresponding batch, eliminating the need to obtain a signature for each server certificate.
+During the TLS handshake, the client tells the server which treeheads it has. If the server has a signatureless certificate covered by one of those treeheads, then it can use that certificate to authenticate itself. That's 1 signature,1 public key and 1 inclusion proof per handshake, both for the server being authenticated.
+Now, that's the simplified version. MTC proper has some more bells and whistles. To start, it doesn’t create a separate Merkle tree for each batch, but it grows a single large tree, which is used for better transparency. As this tree grows, periodically (sub)tree heads are selected to be shipped to browsers, which we call landmarks. In the common case browsers will be able to fetch the most recent landmarks, and servers can wait for batch issuance, but we need a fallback: MTC also supports certificates that can be issued immediately and don’t require landmarks to be validated, but these are not as small. A server would provision both types of Merkle tree certificates, so that the common case is fast, and the exceptional case is slow, but at least it’ll work.
+Experimental deployment
+Ever since early designs for MTCs emerged, we’ve been eager to experiment with the idea. In line with the IETF principle of “running code”, it often takes implementing a protocol to work out kinks in the design. At the same time, we cannot risk the security of users. In this section, we describe our approach to experimenting with aspects of the Merkle Tree Certificates design without changing any trust relationships.
+Let’s start with what we hope to learn. We have lots of questions whose answers can help to either validate the approach, or uncover pitfalls that require reshaping the protocol — in fact, an implementation of an early MTC draft by Maximilian Pohl and Mia Celeste did exactly this. We’d like to know:
+What breaks? Protocol ossification (the tendency of implementation bugs to make it harder to change a protocol) is an ever-present issue with deploying protocol changes. For TLS in particular, despite having built-in flexibility, time after time we’ve found that if that flexibility is not regularly used, there will be buggy implementations and middleboxes that break when they see things they don’t recognize. TLS 1.3 deployment took years longer than we hoped for this very reason. And more recently, the rollout of PQ key exchange in TLS caused the Client Hello to be split over multiple TCP packets, something that many middleboxes weren't ready for.
+What is the performance impact? In fact, we expect MTCs to reduce the size of the handshake, even compared to today's non-PQ certificates. They will also reduce CPU cost: ML-DSA signature verification is about as fast as ECDSA, and there will be far fewer signatures to verify. We therefore expect to see a reduction in latency. We would like to see if there is a measurable performance improvement.
+What fraction of clients will stay up to date? Getting the performance benefit of MTCs requires the clients and servers to be roughly in sync with one another. We expect MTCs to have fairly short lifetimes, a week or so. This means that if the client's latest landmark is older than a week, the server would have to fallback to a larger certificate. Knowing how often this fallback happens will help us tune the parameters of the protocol to make fallbacks less likely.
+In order to answer these questions, we are implementing MTC support in our TLS stack and in our certificate issuance infrastructure. For their part, Chrome is implementing MTC support in their own TLS stack and will stand up infrastructure to disseminate landmarks to their users.
+As we've done in past experiments, we plan to enable MTCs for a subset of our free customers with enough traffic that we will be able to get useful measurements. Chrome will control the experimental rollout: they can ramp up slowly, measuring as they go and rolling back if and when bugs are found.
+Which leaves us with one last question: who will run the Merkle Tree CA?
+Bootstrapping trust from the existing WebPKI
+Standing up a proper CA is no small task: it takes years to be trusted by major browsers. That’s why Cloudflare isn’t going to become a “real” CA for this experiment, and Chrome isn’t going to trust us directly.
+Instead, to make progress on a reasonable timeframe, without sacrificing due diligence, we plan to "mock" the role of the MTCA. We will run an MTCA (on Workers based on our StaticCT logs), but for each MTC we issue, we also publish an existing certificate from a trusted CA that agrees with it. We call this the bootstrap certificate. When Chrome’s infrastructure pulls updates from our MTCA log, they will also pull these bootstrap certificates, and check whether they agree. Only if they do, they’ll proceed to push the corresponding landmarks to Chrome clients. In other words, Cloudflare is effectively just “re-encoding” an existing certificate (with domain validation performed by a trusted CA) as an MTC, and Chrome is using certificate transparency to keep us honest.
+Conclusion
+With almost 50% of our traffic already protected by post-quantum encryption, we’re halfway to a fully post-quantum secure Internet. The second part of our journey, post-quantum certificates, is the hardest yet though. A simple drop-in upgrade has a noticeable performance impact and no security benefit before Q-day. This means it’s a hard sell to enable today by default. But here we are playing with fire: migrations always take longer than expected. If we want to keep an ubiquitously private and secure Internet, we need a post-quantum solution that’s performant enough to be enabled by default today.
+Merkle Tree Certificates (MTCs) solves this problem by reducing the number of signatures and public keys to the bare minimum while maintaining the WebPKI's essential properties. We plan to roll out MTCs to a fraction of free accounts by early next year. This does not affect any visitors that are not part of the Chrome experiment. For those that are, thanks to the bootstrap certificates, there is no impact on security.
+We’re excited to keep the Internet fast and secure, and will report back soon on the results of this experiment: watch this space! MTC is evolving as we speak, if you want to get involved, please join the IETF PLANTS mailing list.
+On this page
+Discuss Online
+Related tags
+ChromeCloudflare WorkersCryptographyGoogleIETFOpen SourcePost-QuantumResearchRustSecurityTLSTransparency
+Follow on Social Media
+Cloudflare
+Luke Valenta
+Vânia Gonçalves
+Bas Westerbaan
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+This Post is Available in
+日本語
+한국어
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 91 | f003809 | https://github.com/apache/datafusion/issues/18566 | 2025-11-09 | domain-subframes ===
+Release DataFusion `52.0.0` (Dec 2025 / Jan 2026)
+
+---
+
+@alamb · 2025-11-09T11:08:08Z:
+### Is your feature request related to a problem or challenge?
+
+Tracking ticket for next release, also a place to track desired inclusions
+
+Previous release will be https://github.com/apache/datafusion/issues/17558 (Nov, 2025) so next major release would be approximately late Dec  2025 / early Jan 2026
+
+Steps:
+- [x] Create a `branch-52` branch: 
+- [x]  Update version and changelog: 
+- [x] Test with DataFusion Python
+- [ ] Test with DataFusion Comet https://github.com/apache/datafusion-comet/issues/3046
+- [x] Test with DataFusion Ballista
+- [ ] Test with delta.rs:
+- [x] Test vortex: 
+- [x] Test with iceberg-rust: 
+- [x] Test with LakeSail:
+- [ ] Test with parquet viewer
+- [x] Test with datafusion-materialized-views
+- [ ] Voting Thread: 
+- [x] Publish to crates.io
+- [x] Create ticket for next release: https://github.com/apache/datafusion/issues/19692
+- [ ] Create blog post: https://github.com/apache/datafusion/issues/19691
+
+
+# Features to mention in the blog (if they make it)
+- [x] https://github.com/apache/datafusion/pull/18457
+- [x] https://github.com/apache/datafusion/issues/18075
+- [x] https://github.com/apache/datafusion/issues/17824 from the @theirix / https://github.com/apache/datafusion/pull/17843 from @geoffreyclaude 
+- [x] https://github.com/apache/datafusion/issues/17214
+- [x] https://github.com/apache/datafusion/issues/19051
+- [x] https://github.com/apache/datafusion/pull/16771
+- [x] https://github.com/apache/datafusion/issues/14993 / https://github.com/apache/datafusion/issues/16800 from @adriangb 
+- [x] https://github.com/apache/datafusion/issues/17171#issuecomment-3649690521
+- [x] https://github.com/apache/datafusion/issues/10433 / https://github.com/apache/datafusion/pull/19064 from @zhuqi-lucas 
+- [x] https://github.com/apache/datafusion/pull/19142
+- [x] https://github.com/apache/datafusion/issues/18779
+- [ ] Reworked examples from @cj-zhukov  (highlight their existence)
+
+
+
+## Bugs that should be fixed
+- [x] https://github.com/apache/datafusion/issues/17801
+- [x] https://github.com/apache/datafusion/issues/19029
+- [x] https://github.com/apache/datafusion/pull/19003#pullrequestreview-3522518765
+- [x] https://github.com/apache/datafusion/issues/18824
+- [x] https://github.com/apache/datafusion/issues/19114
+- [x] https://github.com/apache/datafusion/issues/19250
+- [x] https://github.com/apache/datafusion/issues/19573
+- [x] https://github.com/apache/datafusion/issues/19641
+
+
+# Community Wishlist
+- [ ] https://github.com/apache/datafusion/issues/16919
+- [x] https://github.com/apache/datafusion/issues/13323
+- [ ] https://github.com/apache/arrow-rs/pull/8496
+- [ ] https://github.com/apache/datafusion/pull/18025
+- [ ] https://github.com/apache/datafusion/pull/18868
+- [x] #19681
+
+---
+
+@milenkovicm · 2025-11-10T16:07:52Z:
+@alamb is it ok if I add "test with ballista" checkbox to the list ?
+
+---
+
+@alamb · 2025-11-10T16:37:51Z:
+> [@alamb](https://github.com/alamb) is it ok if I add "test with ballista" checkbox to the list ?
+
+of course -- please do!
+
+---
+
+@alamb · 2025-12-10T16:25:28Z:
+## TLDR / Ask
+
+If you have things you would like to include in the 52 release (including issues that are already completed) please add them to the "Community Wishlist" item above.
+
+## Background
+
+@brancz  asked about the status of this release this morning in discord ([link](https://discord.com/channels/885562378132000778/1166447479609376850/1448202121307492493)) and it came up on the sync meeting this mrining too
+
+One thing @brancz referenced as a motivation for the release are the changes for schema evolution of structs, for example
+- https://github.com/apache/datafusion/pull/18998
+
+In my mind there is also some follow on work in this area we probably should include in 52: 
+- https://github.com/apache/datafusion/pull/19111
+
+@timsaucer mentioned he would like to try and get in some FFI things. Perhaps these (but I don't know)
+- https://github.com/apache/datafusion/issues/18671
+- https://github.com/apache/datafusion/issues/17942
+- https://github.com/apache/datafusion/issues/17374
+
+I think @milenkovicm @timsaucer also may have some thought / ideas as well
+
+p.s. Note we  have been talking about a 51.1.0 patch release too: 
+- https://github.com/apache/datafusion/issues/18843
+
+
+---
+
+@xudong963 · 2025-12-30T08:50:38Z:
+I think we're very close to the release. How about starting testing next early week?
+
+Also, let us know the PRs you're looking forward to including in the release!
+
+---
+
+@shehabgamin · 2025-12-30T12:07:52Z:
+> I think we're very close to the release. How about starting testing next early week?
+> 
+Works with me!
+
+---
+
+@alamb · 2025-12-30T12:45:22Z:
+I think many people are on reduced time / vacation this week due to the holidays at this time of year. Not sure if that effects the release schedule. Given how much we have queued up in the 52 release we should probably start stabalizing things sooner rather than later
+
+any thoughts @adriangb or @zhuqi-lucas ?
+
+---
+
+@xudong963 · 2025-12-30T12:52:53Z:
+> I think many people are on reduced time / vacation this week
+
+Yeah, the Chinese holiday is also this week (From Thu). And I'm here next week, so I can take this release
+
+---
+
+@adriangb · 2025-12-30T12:54:29Z:
+I'll be around as normal from now on
+
+---
+
+@zhuqi-lucas · 2025-12-30T13:47:45Z:
+I'm available for next week as normal.
+
+---
+
+@milenkovicm · 2026-01-02T12:39:50Z:
+Ballista tested with 9a9ff8d61 looks ok 
+
+---
+
+@lonless9 · 2026-01-05T09:51:15Z:
+Tested with sail and looks good! 
+
+- https://github.com/lakehq/sail/pull/1174
+
+---
+
+@AdamGS · 2026-01-05T20:30:58Z:
+Tested with vortex and it looks good - https://github.com/vortex-data/vortex/pull/5863
+
+---
+
+@xudong963 · 2026-01-06T06:48:41Z:
+You're so fast, I just cut the branch-52 https://github.com/apache/datafusion/tree/branch-52
+
+---
+
+@xudong963 · 2026-01-06T07:27:40Z:
+Tested with mv repo, https://github.com/datafusion-contrib/datafusion-materialized-views/pull/111 looks good.
+
+---
+
+@alamb · 2026-01-06T13:21:24Z:
+The only things I know of that we need to fix are these issues (as they are basically regressions). I'll work on getting their PRs merged and ready today
+- [x] https://github.com/apache/datafusion/issues/19250
+- [ ] https://github.com/apache/datafusion/issues/19573
+
+---
+
+@ethan-tyler · 2026-01-06T15:29:16Z:
+Tested with iceberg-rust and compatible with one API change.
+
+PR: https://github.com/apache/iceberg-rust/pull/1997
+
+All Rust tests pass (iceberg-datafusion, core, sqllogictests). Python binding tests skipped as datafusion-python 52 isn't on PyPI yet.
+
+**Breaking change:** `FFI_TableProvider::new` in datafusion-ffi now requires two additional args (task context provider and optional codec). 
+
+---
+
+@brancz · 2026-01-06T15:32:51Z:
+Any chance that arrow 58 could be released first, and then updated in df, and then df is released? No worries if not, it would just allow us not to have to carry some patches and actually use upstream once df 52 is out.
+
+---
+
+@alamb · 2026-01-06T15:41:44Z:
+> Any chance that arrow 58 could be released first, and then updated in df, and then df is released? No worries if not, it would just allow us not to have to carry some patches and actually use upstream once df 52 is out.
+
+The next planned arrow release is 57.2.0 which I hope to do later this week. Since it is a minor version I think you should be able to update to use it with DataFusion 52
+- https://github.com/apache/arrow-rs/issues/8465
+
+---
+
+@comphead · 2026-01-06T17:13:01Z:
+For Comet it might be longer this time because of `SchemaAdapter` trait dropped https://github.com/apache/datafusion/pull/19345
+
+
+
+---
+
+@adriangb · 2026-01-06T17:17:48Z:
+> For Comet it might be longer this time because of `SchemaAdapter` trait dropped [#19345](https://github.com/apache/datafusion/pull/19345)
+
+Any issues we can work through w.r.t. to that?
+
+We (Pydantic) have kind of been bit by the same thing, but it's basically because our super hacky use of dynamically generated columns that got filled in by SchemaAdapter is going to need rework, but that's mostly on us for doing *horrifying* things in the first place.
+
+---
+
+@comphead · 2026-01-06T17:30:28Z:
+> > For Comet it might be longer this time because of `SchemaAdapter` trait dropped [#19345](https://github.com/apache/datafusion/pull/19345)
+> 
+> Any issues we can work through w.r.t. to that?
+> 
+> We (Pydantic) have kind of been bit by the same thing, but it's basically because our super hacky use of dynamically generated columns that got filled in by SchemaAdapter is going to need rework, but that's mostly on us for doing _horrifying_ things in the first place.
+
+Thanks @adriangb in Comet we just started experiments, plan B is to replicate SchemaAdapter in Comet codebase. 
+
+---
+
+@milenkovicm · 2026-01-06T21:20:10Z:
+It would be great if we could add #19664 as well. Will create patch tomorrow morning if not too late
+
+---
+
+@alamb · 2026-01-07T20:15:21Z:
+> The only things I know of that we need to fix are these issues (as they are basically regressions). I'll work on getting their PRs merged and ready today
+> 
+> * [x]  [Allow log/pow on negative scale decimals #19250](https://github.com/apache/datafusion/issues/19250)
+> * [ ]  [Confusing behavior now required to to refresh the files of a listing table #19573](https://github.com/apache/datafusion/issues/19573)
+
+Update: @Jefffrey  has closed the negative scale issue, and @BlakeOrth and I have reviewed the PR for the confusing behavior
+- https://github.com/apache/datafusion/pull/19616
+
+So the remaining items before making a release candidate that I know of are:
+- [x] merge https://github.com/apache/datafusion/pull/19681
+- [x] merge https://github.com/apache/datafusion/pull/19686
+- [x] merge https://github.com/apache/datafusion/pull/19616
+- [ ] backport (and merge the backport) of https://github.com/apache/datafusion/pull/19616
+- [ ] merge https://github.com/apache/datafusion/pull/19661
+
+I am going to try and test with delta.rs later today as well
+
+---
+
+@alamb · 2026-01-07T20:21:04Z:
+I also made a ticket for writing a blog entry:
+- https://github.com/apache/datafusion/issues/19691
+
+---
+
+@ethan-tyler · 2026-01-07T20:22:20Z:
+@alamb - I started working on testing w/ delta-rs this morning and can take that one off your plate. Just lmk. 
+
+---
+
+@alamb · 2026-01-07T20:25:25Z:
+> [@alamb](https://github.com/alamb) - I started working on testing w/ delta-rs this morning and can take that one off your plate. Just lmk.
+
+that would be amazing -- thank you @ethan-tyler  🙏 
+
+Let me know if you hit issues -- I believe delta.rs also uses the schema adapter so it may be a bit tricky -- I am happy to help
+
+---
+
+@BlakeOrth · 2026-01-07T21:52:56Z:
+@alamb please feel free to tag me if there are additional issues or PRs related to our work in 
+ - https://github.com/apache/datafusion/issues/17214
+
+I can provide help with looking into issues or providing initial reviews on PRs if something comes up.
+
+---
+
+@alamb · 2026-01-07T21:54:43Z:
+> [@alamb](https://github.com/alamb) please feel free to tag me if there are additional issues or PRs related to our work in
+> 
+> * [[EPIC] ListingTable object store usage improvements #17214](https://github.com/apache/datafusion/issues/17214)
+> 
+> I can provide help with looking into issues or providing initial reviews on PRs if something comes up.
+
+Thank you 🙏  from my perspective, once https://github.com/apache/datafusion/pull/19616 is done, we should close up those epics and claim success
+
+---
+
+@alamb · 2026-01-08T14:57:33Z:
+I made the final backport PR. That means I think this is all I know of that is needed prior to a 52 release candidate
+- [x] review / merge https://github.com/apache/datafusion/pull/19704
+- [x] https://github.com/apache/datafusion/pull/19661
+
+Does anyone else have anything else we should be waiting on?
+
+
+
+---
+
+@alamb · 2026-01-08T22:36:51Z:
+Here is another proposed inclusion:
+- https://github.com/apache/datafusion/pull/19705
+
+---
+
+@xudong963 · 2026-01-09T10:35:08Z:
+Are you ready? I plan to start the vote process five hours later (Before I go to bed)
+
+---
+
+@tschwarzinger · 2026-01-09T12:21:00Z:
+Also looks good from our side (RDF Fusion): https://github.com/tobixdev/rdf-fusion/pull/166
+
+The only thing I stumbled upon was that we had issues with the "lazy dynamic filter pushdown" in `HashJoin`. 
+
+For context, the `DynamicFilterPhysicalExpr` has an outer `Arc` (`Arc<dyn PhysicalExpr>`) and an inner `Arc` that holds the inner state `DynamicFilterPhysicalExpr::inner`. The check whether the dynamic filter is "used", I believe, is based on the inner `Arc` as this is important when rewriting the expression.
+
+We cloned the "outer Arc" such that the "inner Arc" was still marked as "unused" which caused that the `HashJoin` was not computing the dynamic filters.
+
+Could also be that our implementation does something weird with the filter. Basically we want to keep it around until our query operator starts running. This is where we snapshot it. Maybe we should include this change as a note in the upgrade guide? I think this is related to https://github.com/apache/datafusion/issues/17527 . Any thoughts @adriangb @LiaCastaneda . 
+
+**I am not sure whether this is a problems** as I am not sure whether this is expected behavior and I am doing something stupid. I'd appreciate if someone has further information on that. Thanks!!
+
+Our earlier code:
+
+```rust
+impl MyPredicateExpr {
+    pub fn try_from(expr: &Arc<dyn PhysicalExpr>) -> Option<Self> {
+        let any_expr = Arc::clone(expr) as Arc<dyn Any + Send + Sync>; // <=== Directly clone the outer Arc. Inner Arc remains at one ref count.
+        if let Ok(expr) = any_expr.downcast::<DynamicFilterPhysicalExpr>() {
+            return Some(MyPredicateExpr::Dynamic(expr));
+        }
+   // ...
+   }
+}
+```
+
+Now we have a workaround that copied the inner `Arc` but I am not sure whether this is the best way.
+
+```rust
+impl MyPredicateExpr {
+    pub fn try_from(expr: &Arc<dyn PhysicalExpr>) -> Option<Self> {
+        // We explicitly do not copy the `Arc` as the filter might be considered as unused.
+        if let Some(_) = expr.as_any().downcast_ref::<DynamicFilterPhysicalExpr>() {
+            let cloned = expr
+                .clone()
+                .with_new_children(expr.children().iter().map(|c| (*c).clone()).collect()) // <=== Causes cloning of the inner Arc
+                .expect("Old children are valid");
+            let cast = (cloned as Arc<dyn Any + Send + Sync>)
+                .downcast::<DynamicFilterPhysicalExpr>()
+                .expect("Type checked above");
+
+            return Some(MyPredicateExpr::Dynamic(cast));
+        }
+   // ...
+   }
+}
+```
+
+
+A bit off topic (I don't know if this was introduced in this release):
+
+Also is there a reason why `DynamicFilterPhysicalExpr` does not implement `Clone`? This would avoid the  `with_new_children` call above.
+
+---
+
+@xudong963 · 2026-01-09T14:37:15Z:
+The vote process is [here](https://lists.apache.org/thread/xcl9921jz27lfnxhyvwjlokhb0hmng0d)!
+
+---
+
+@adriangb · 2026-01-09T16:00:03Z:
+@tobixdev it looks like Lia is already looking into this. I'd guess you're not doing anything wrong, we probably have a bug that we'll have to patch in 52.1.0.
+
+---
+
+@LiaCastaneda · 2026-01-09T16:33:41Z:
+I might have some ideas on why the inner struct ref count is not getting updated, @tobixdev i will move the discussion to https://github.com/apache/datafusion/issues/19715
+
+---
+
+@ethan-tyler · 2026-01-10T03:01:34Z:
+delta-rs DF52 upgrade is stable and in verification.
+
+PR: delta-io/delta-rs#4054
+
+**Changes:**
+
+- Migrated scan planning to TableSchema API
+- Added PhysicalExprAdapterFactory to honor schema_force_view_types in next scan path
+- Fixed predicate normalization for Utf8/Utf8View literal mismatches
+
+**Local tests pass:**
+
+- cargo test -p deltalake-core --features datafusion --test integration_datafusion
+- cargo test -p deltalake-core --features datafusion --test datafusion_table_provider
+
+---
+
+@alamb · 2026-01-10T19:52:21Z:
+amazing
+
+---
+
+@xudong963 · 2026-01-12T15:18:35Z:
+52.0.0 is released, and I've updated the crate.io
+
+---
+
+@adriangb · 2026-01-12T15:23:37Z:
+Amazing thank you!
+
+---
+
+@alamb · 2026-01-12T18:45:07Z:
+Thank you so much @xudong963 and everyone who helped with this release (120 contributors this time 🤯 )
+
+---
+
+@milenkovicm · 2026-01-12T18:48:50Z:
+I'm not 100% sure (too lazy to check archives) but number of users verifying release was probably record breaking 
+
+---
+
+@bert-beyondloops · 2026-01-13T09:53:24Z:
+"@alamb This appears to be a significant issue for this release?  https://github.com/apache/datafusion/issues/19781"
+
+---
+
+@alamb · 2026-01-13T10:41:14Z:
+> "[@alamb](https://github.com/alamb) This appears to be a significant issue for this release? [#19781](https://github.com/apache/datafusion/issues/19781)"
+
+I filed a ticket to start tracking a patch release
+- https://github.com/apache/datafusion/issues/19784
+
+=== ROW 92 | f003815 | https://github.com/wasm-bindgen/wasm-bindgen/pull/4795 | 2025-11-10 | domain-subframes ===
+fix: revert deno wasm loading template
+
+---
+
+@kallebysantos · 2025-11-10T20:54:56Z:
+### Description
+Reverts the Deno wasm loading template
+
+- closes #4794  
+- external closes https://github.com/supabase/edge-runtime/issues/640
+
+
+### Checklist
+<!-- Please complete these checks before submitting the PR. -->
+
+<!-- **REQUIRED** for user-facing changes (new features, bug fixes, breaking changes). -->
+<!-- **NOT required** for internal refactoring or minor improvements. -->
+- [x] Verified changelog requirement
+
+
+---
+
+@kallebysantos · 2025-11-10T20:59:56Z:
+Hi @guybedford 💚
+> please add a changelog entry for this as well.
+
+Is my first time here 😅 
+Should I manually update the `CHANGELOG.md` file?
+
+---
+
+@guybedford · 2025-11-10T21:06:15Z:
+Yes, just manually add a new line noting the change.
+
+The tests also need to be updated here via `just test-ui-overwrite`. There also seems to be an issue with the one test in the examples exposed by this change although it seems like it is a test suite issue and not the change itself although I'm not 100% sure.
+
+---
+
+@guybedford · 2025-11-10T21:25:18Z:
+Seems there is also `just test-ui-overwrite` to run here as well.
+
+---
+
+@kallebysantos · 2025-11-10T21:35:44Z:
+> Seems there is also just test-ui-overwrite to run here as well.
+
+I already did this one [ada1037](https://github.com/wasm-bindgen/wasm-bindgen/pull/4795/commits/ada10376611c161ba1cbef6893988e64129b06bc), not really sure if its correctly. Perhaps I need to do some playwright setup?
+
+<details>
+<summary>My `just test` did fail at this point:</summary>
+
+```
+Running `/Users/kallebysantos/projects/community/wasm-bindgen/wasm-bindgen/target/debug/wasm-bindgen-test-runner /Users/kallebysantos/projects/community/wasm-bindgen/wasm-bindgen/target/wasm32-unknown-unknown/debug/deps/tests-298ca02a98050a29.wasm`
+Running headless tests in Safari on `http://127.0.0.1:52467/`
+Try find `webdriver.json` for configure browser's capabilities:
+Not found
+driver status: signal: 9 (SIGKILL)
+Error: http status: 500
+```
+
+</details>
+
+---
+
+@guybedford · 2025-11-10T22:24:50Z:
+> I already did this one [ada1037](https://github.com/wasm-bindgen/wasm-bindgen/pull/4795/commits/ada10376611c161ba1cbef6893988e64129b06bc), not really sure if its correctly.
+
+This is MacOs / Linux / toolchain differences, I think down to spacing.
+
+We likely have a genuine issue with the example, perhaps it's running Deno code in the browser or Node.js. If you're unable to look into it I can try and track it down on Friday.
+
+
+
+---
+
+@kallebysantos · 2025-11-10T22:40:40Z:
+Sure! I'm macos based, so its a different environment from the gh test runner
+
+> We likely have a genuine issue with the example, perhaps it's running Deno code in the browser
+
+I though the same, I was expecting to `Deno.readFile()` only be available while generating for deno environment. But seems that is being called from playwright example.
+
+>  If you're unable to look into it I can try and track it down on Friday.
+
+Please 💚 It will make simpler for both of us, I tried to spent some time installing playwright but got no success 😅 
+I could run tests inside `/examples` folder but not the `just test-wasm-bindgen-futures`
+
+---
+
+@RReverser · 2025-11-11T00:26:26Z:
+Ah I see what you mean re:CI, that log does look weird as if coming from the browser, which is pretty weird as Playwright should just invoke the Deno CLI for these tests.
+
+I'll look into this more tomorrow.
+
+---
+
+@RReverser · 2025-11-14T13:11:39Z:
+Sorry for the delay. I looked at it, and looks like this test was just declared with `--target deno` even though it's not Deno-specific (presumably, it's from time when Symbol.dispose wasn't available in browsers). It passed quietly until this PR because Deno output used standard Web APIs so it was accidentally compatible with browser too.
+
+You should be able to just change this line to `--target web`:
+
+https://github.com/wasm-bindgen/wasm-bindgen/blob/018641b4dd6752d6d27910661f80e6646f776ce2/examples/explicit-resource-management/package.json#L3
+
+---
+
+That aside, the earlier question still stands:
+
+> Sounds good as a hotfix, but would love to understand why it fails in your scenario but works eg on our CI as well for me locally.
+> 
+> Are you using older Deno version before it added support for fetching local files?
+
+Proper Node.js and Deno tests are in https://github.com/wasm-bindgen/wasm-bindgen/tree/main/examples/nodejs_and_deno and the current Deno output still works fine both locally and on CI, both the one that uses `fetch` / Web APIs (which is what `--target deno` produces) and via Wasm ESM integration (`--target bundler`). You can try those yourself in that folder.
+
+Here's my Deno version just in case:
+
+> deno --version
+deno 2.4.5 (stable, release, x86_64-pc-windows-msvc)
+v8 13.7.152.14-rusty
+typescript 5.8.3
+
+---
+
+@RReverser · 2025-11-14T13:33:25Z:
+Ah, looking through the linked issues, sounds like this is a workaround for a Deno bug https://github.com/denoland/deno/issues/28129 where it can't `fetch` files specifically _bundled into a compiled executable_, even though it works fine for real files on the filesystem?
+
+If so, adding a workaround sounds good for now if unfortunate, but we should add a regression test specifically for that scenario.
+
+---
+
+@kallebysantos · 2025-11-14T13:38:09Z:
+Hi @RReverser 💚
+Yes! this PR is to revert the `fetch()` change, that causes this error on Deno.
+
+I'm not really sure how to add theses tests 😕 
+I can't even run everything on my machine cause I'm missing some playwright setup
+
+Would be happy If may you guys could help with it?
+
+---
+
+@RReverser · 2025-11-14T13:48:10Z:
+> I can't even run everything on my machine cause I'm missing some playwright setup
+
+You can run those without playwright by just doing `pnpm test` in said directory.
+
+> I'm not really sure how to add theses tests 😕
+
+I never used Deno's compiled executables, so not sure either, at least not right away. Maybe someone else can help.
+
+---
+
+@kallebysantos · 2025-11-14T13:56:50Z:
+Guys 😕
+I don't really sure if theses CI errors could be related with my PR changes, I did already add the `web` parameter suggested here https://github.com/wasm-bindgen/wasm-bindgen/pull/4795#issuecomment-3532672672
+
+```
+1) playwright.spec.ts:84:3 › explicit-resource-management ────────────────────────────────────────
+
+    TypeError: Cannot read properties of undefined (reading 'current_allocation')
+        at current_allocation (http://localhost/explicit-resource-management/explicit_resource_management.js:36:22)
+        at http://localhost/explicit-resource-management/index.html:4:27
+
+    Error: page.goto: Test ended.
+```
+
+---
+
+@kallebysantos · 2026-01-16T17:59:05Z:
+Hey guys any update of this?
+Users are still facing issues related with this bad template.
+
+---
+
+@guybedford · 2026-01-16T18:07:58Z:
+@kallebysantos it has approvals and just needs a clean rebase and green CI run to land, just let us know if you need assistance with the commands.
+
+---
+
+@kallebysantos · 2026-01-16T18:36:07Z:
+Sure! I'll rebase and prepare everything
+
+---
+
+@kallebysantos · 2026-01-16T19:55:19Z:
+Hey @guybedford 💚 
+I did already rebased everything!!
+
+Is possible to you guys fix the test pipeline? it doesn't make sense to get blocked due `playwright` trying to access `Deno` specific code.
+
+The new template is working for `Deno` contexts
+<details>
+
+<img width="860" height="382" alt="image" src="https://github.com/user-attachments/assets/f1121ae7-d14e-41c5-82cc-a7871d9e73b4" />
+
+</details>
+
+---
+
+@kallebysantos · 2026-01-16T20:23:50Z:
+Hey @guybedford 🚨
+Looks like the upstream/deno has [merged a fix](https://github.com/denoland/deno/pull/31814) 5d ago, that solves https://github.com/denoland/deno/issues/28129.
+
+Perhaps we **don't need** to revert the Deno template!
+
+
+---
+
+@RReverser · 2026-01-16T21:20:03Z:
+~~FWIW looks like the motivating bug in Deno has been fixed a few days ago: https://github.com/denoland/deno/issues/28129~~
+
+Nvm, I posted a comment without reading the latest ones.
+
+---
+
+@RReverser · 2025-11-14T13:35:08Z:
+There's no need for the complex wrapping into a `Response` - `instantiateStreaming` doesn't have any benefits when we already loaded the whole file as a blob.
+
+Let's just revert to the regular `instantiate` which can take the bytes directly.
+
+---
+
+@kallebysantos · 2025-11-14T13:51:54Z:
+Done here https://github.com/wasm-bindgen/wasm-bindgen/pull/4795/commits/e3b4307997f9ae3e2ac2af2dfaf80fb81638f73d
+
+=== ROW 94 | f003938 | https://yew.rs/blog/2025/11/29/release-0-22 | 2025-11-29 | domain-subframes ===
+Yew 0.22 - For Real This Time | Yew
+Skip to main content
+Yew
+0.23
+Next
+0.23
+0.22
+0.21
+0.20
+English
+English
+日本語
+简体中文
+繁體中文DocsTutorial
+CommunityBlogPlaygroundAPIGitHub
+Search
+Recent posts
+2025
+Yew 0.22 - For Real This Time
+2024
+Announcing Yew 0.22
+2023
+Announcing Yew 0.21
+2022
+Releasing Yew 0.20
+Hello Yew
+Yew 0.22 - For Real This Time
+November 29, 2025 · 3 min read
+MattuwuMaintainer of Yew
+The Yew team is thrilled to announce the release of Yew 0.22! After a longer-than-expected journey, this release brings significant improvements to ergonomics, performance, and developer experience.
+Highlights​
+New #[component] Attribute​
+The #[function_component] attribute has been renamed to #[component] for brevity:
+// Before
+#[function_component]
+fn MyComponent() -> Html {
+html! { <div>{"Hello!"}</div> }
+}
+// After (0.22+)
+#[component]
+fn MyComponent() -> Html {
+html! { <div>{"Hello!"}</div> }
+}
+The old #[function_component] attribute is deprecated but still works, giving you time to migrate.
+For-Loops in html!​
+You can now use for-loops directly in the html! macro, making iteration more natural:
+// Before - using iterator adapters
+html! {
+<ul>
+{ for items.iter().map(|item| html! { <li>{ item }</li> }) }
+</ul>
+}
+// After (0.22+) - native for-loop syntax
+html! {
+<ul>
+for item in items {
+<li>{ item }</li>
+}
+</ul>
+}
+MSRV Raised to 1.84.0​
+The minimum supported Rust version is now 1.84.0. This allows us to use newer language features and provide better error messages.
+WASI Support for SSR​
+Server-side rendering now works on WASI targets. See the original 0.22 announcement for details.
+Better Cloning Ergonomics​
+ImplicitClone is implemented for more yew types. This means less & and * and .clone() clutter in the html macro.
+yew-agent: Vendored gloo-workers​
+The yew-agent crate now includes its own web worker implementation, removing the external dependency on gloo-worker. This also adds support for module-type web workers:
+let spawner = WorkerSpawner::<MyWorker>::new()
+.as_module(true)  // Use ES module workers
+.spawn();
+yew-router: Query Parameter Traits​
+The FromQuery and ToQuery traits from gloo are now re-exported via yew_router::query for more flexible query parameter handling, along with dynamic basename support.
+Migration Guide​
+See the migration guide for detailed instructions on upgrading from 0.21.
+Contributors​
+Many thanks to everyone who contributed to this release! Special thanks to:
+@WorldSEnder for hydration fixes
+@its-the-shrimp for html macro enhancements
+@Kirill Semyonkin for implicit clone library improvements
+@langyo for WASI SSR support
+@cecton for implicit clone improvements and ergonomics
+@ranile for property improvements
+And all the other contributors who helped make this release possible!
+What's Next​
+We're continuing to work on improving Yew's performance, developer experience, and documentation. Join us on Discord to get involved!
+See the full changelog for all changes.
+Edit this page
+Older post
+Announcing Yew 0.22
+Highlights
+New #[component] Attribute
+For-Loops in html!
+MSRV Raised to 1.84.0
+WASI Support for SSR
+Better Cloning Ergonomics
+yew-agent: Vendored gloo-workers
+yew-router: Query Parameter Traits
+Migration Guide
+Contributors
+What's Next
+Support
+Sponsor Project
+Participate
+GitHub
+Discord
+Twitter
+More
+Yew Awesome
+
+=== ROW 95 | f003955 | https://github.com/embassy-rs/embassy/pull/4989 | 2025-12-04 | domain-subframes ===
+Upstream `embassy-mcxa`
+
+---
+
+@jamesmunns · 2025-12-04T17:50:33Z:
+This PR imports the embassy-mcxa repo, as of commit https://github.com/OpenDevicePartnership/embassy-mcxa/tree/22bae2d80153003af4637c4b0cc26d52858f5228, with a few fixup commits at the top of the stack. This is an unrelated-history merge, and should not be squashed.
+
+I've not removed the previous CI or things like cargo-vet yet. I can remove these in subsequent PRs if they cause problems. I can also wire the new project up to existing CI, or we can do that in a follow-up PR.
+
+---
+
+@jamesmunns · 2025-12-04T17:58:45Z:
+(hunting down CI failures...)
+
+---
+
+@Dirbaio · 2025-12-04T18:04:11Z:
+for the MSRV we can upgrade ci to 1.91 no problem if needed
+
+---
+
+@jamesmunns · 2025-12-04T18:05:10Z:
+Moving it down in https://github.com/OpenDevicePartnership/mcxa-pac/pull/9, I don't think it needed to be 1.91 anyway
+
+---
+
+@i509VCB · 2025-12-04T18:09:01Z:
+As much as I do want to see this, it is a little sad that it lives as a side thing and not as part of embassy-nxp. 
+
+Also MCX devices (including C, N E) are similar enough even if we had to do seperate HALs. 
+
+---
+
+@Dirbaio · 2025-12-04T18:20:19Z:
+ci doesn't honor `.cargo/config.toml` in subdirs, you'll have to add `[package.metadata.embassy]` metadata like the other crates have to set the target.
+
+---
+
+@jamesmunns · 2025-12-04T18:32:46Z:
+@i509VCB I'll let @felipebalbi make a more official statement, but IMO we're very open to a unified pac and hal.
+
+I wanted to get our previously private work upstreamed ASAP (so we can basically deprecate/archive odp/embassy-mcxa). If there's a path to moving mcxa into embassy-nxp, we can do it now that the code is in the same repo, and before there are more than a couple of early devs using it :)
+
+---
+
+@felipebalbi · 2025-12-04T18:35:15Z:
+> As much as I do want to see this, it is a little sad that it lives as a side thing and not as part of embassy-nxp.
+
+yup, it's still a goal, for sure. The thing is that we have users waiting to start. The idea is that we can get this merged as is, once the metapac is ready, we can switch to it. Then once the combined HAL is ready, it shouldn't be a big deal to deprecate this and have users switch.
+
+> Also MCX devices (including C, N E) are similar enough even if we had to do seperate HALs.
+
+I agree and I think this will help gauge the similarities.
+
+---
+
+@Dirbaio · 2025-12-04T18:37:54Z:
+there's still a lot of scaffolding from the previous repo that should be removed:
+- .github
+- Cargo.lock
+- CODE_OF_CONDUCT.md
+- CODEOWNERS
+- CONTRIBUTING.md
+- defmt.x
+- deny.toml
+- Embed.toml
+- LICENSE
+- ram.ld
+- run.sh
+- rustfmt.toml
+- SECURITY.md
+- supply-chain
+- SW-Content-Register.txt
+- tools
+
+README has some badges with the old repo url.
+
+
+
+---
+
+@Dirbaio · 2025-12-04T18:40:35Z:
+Also, the README says "MIT or apache", but LICENSE and CONTRIBUTING.md said "MIT" only. This repo is "MIT or Apache". Do we have the OK from all the authors of this code to publish it under "MIT or Apache"?
+
+---
+
+@felipebalbi · 2025-12-04T18:43:54Z:
+> Also, the README says "MIT or apache", but LICENSE and CONTRIBUTING.md said "MIT" only. This repo is "MIT or Apache". Do we have the OK from all the authors of this code to publish it under "MIT or Apache"?
+
+fine by me. @MathisDeroo , @bogdan-petru , @JanKomarekNXP, @jamesmunns ?
+
+UPDATE: if there are no responses for a reasonable amount of time, we will take that to mean consent and proceed with the change, thanks.
+
+---
+
+@jamesmunns · 2025-12-05T11:59:48Z:
+Force pushed and notched out the changelog commit to avoid the merge conflict and avoid an annoying rebase.
+
+---
+
+@jamesmunns · 2025-12-05T12:02:50Z:
+It looks like we're good to go, I'm going to merge this to avoid running into any more merge conflicts. Thanks all!
+
+---
+
+@inferiorhumanorgans · 2025-12-09T22:50:49Z:
+Are there plans to expand this to include support for older MCX-A models e.g. A144/45/46/54/55/56?  If not, would it make sense to rename this from `embassy-mcxa` to `embassy-mcxa256`?
+
+---
+
+@felipebalbi · 2025-12-09T22:54:40Z:
+> Are there plans to expand this to include support for older MCX-A models e.g. A144/45/46/54/55/56? If not, would it make sense to rename this from `embassy-mcxa` to `embassy-mcxa256`?
+
+PRs are definitely welcome. I don't have access to the platforms you listed and, for now at least, they're not in the plans. If have those platforms available, by all means, please send a PR. The real end goal is to get all platforms combined as part of `embassy-nxp`, though. You could decide to send your PR there instead.
+
+---
+
+@inferiorhumanorgans · 2025-12-09T22:57:35Z:
+I'm a bit confused how you don't have access.  The A2xx series is currently marked as preproduction, the A156 is an active product with a $15 dev board.
+
+---
+
+@felipebalbi · 2025-12-09T22:59:51Z:
+> I'm a bit confused how you don't have access. The A2xx series is currently marked as preproduction, the A156 is an active product with a $15 dev board.
+
+I didn't order any of them and not planning to at the moment.
+
+---
+
+@inferiorhumanorgans · 2025-12-09T23:19:26Z:
+I was mostly curious to see if there are plans to support chips obtainable by mere mortals.  I'd be happy to open relevant merge requests if you guys ever move away from Microsoft's AI monster.
+
+Cheers.
+
+---
+
+@felipebalbi · 2025-12-04T18:36:23Z:
+maybe delete this file? Or maybe the entire `.github` should go?
+
+---
+
+@felipebalbi · 2025-12-04T18:38:49Z:
+supply-chain should go too?
+
+---
+
+@felipebalbi · 2025-12-04T18:39:04Z:
+and tools
+
+---
+
+@felipebalbi · 2025-12-04T18:41:04Z:
+Should we use the project's rules?
+
+---
+
+@felipebalbi · 2025-12-04T18:41:38Z:
+should this go too?
+
+---
+
+@felipebalbi · 2025-12-04T18:41:49Z:
+and this
+
+---
+
+@felipebalbi · 2025-12-04T18:41:58Z:
+this
+
+---
+
+@felipebalbi · 2025-12-04T18:42:08Z:
+this one as well?
+
+---
+
+@felipebalbi · 2025-12-04T18:42:41Z:
+we're using `cargo run` on the examples. Should this be deleted?
+
+---
+
+@felipebalbi · 2025-12-04T18:42:56Z:
+maybe this can go too
+
+---
+
+@felipebalbi · 2025-12-04T18:49:01Z:
+this is provided by `embassy-hal-internal`, we can nuke it now or as a follow up PR.
+
+---
+
+@jamesmunns · 2025-12-04T18:51:05Z:
+Lets save cleanups for follow-up PRs
+

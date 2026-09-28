@@ -1,0 +1,2102 @@
+=== ROW 192 | f012642 | https://greptime.com/blogs/2025-07-30-greptimedb-rust-guide-bulk-stream-insert | 2025-08-27T00:00:00 | twir-links ===
+GreptimeDB Rust Client - A Comprehensive Guide to High-Throughput Bulk Stream Inserts | Greptime
+Skip to content
+Main Navigation
+Product
+GreptimeDB OSS
+Open-source observability database — one engine for metrics, logs, and traces.
+GreptimeDB Enterprise
+Scale observability on your infrastructure.
+Solution
+Edge-Cloud Integrated Solution
+A finely tailored solution that aligns closely with the specific business scenarios of automotive companies.
+EMQX Real-Time Data Solution
+Built for EMQX and MQTT workloads with scalable ingestion, efficient storage, and real-time analytics.
+Ecosystem
+Integrations, tools, and partner solutions that work with GreptimeDB.
+Resources
+Documentation
+Benchmarks
+Download
+EventsCompareBlogPricingMain NavigationContact us
+Tutorial•
+July 30, 2025
+SearchK
+GreptimeDB Rust Client - A Comprehensive Guide to High-Throughput Bulk Stream Inserts
+GreptimeDB offers two distinct write APIs tailored to diverse observability scenarios, a low-latency write API for real-time ingestion and a high-throughput Bulk Stream Insert API for batch workloads. This article focuses on the latter, exploring its architecture, usage patterns, performance tuning strategies, and best practices. Whether you're building a log pipeline, an ETL system, or migrating historical data, this guide aims to help you maximize ingestion efficiency.
+guidemigration
+On this pageTable of Contents for current page
+Jiachun FengCo-Founder, Greptime
+Introduction ​
+GreptimeDB is an open-source, cloud-native observability database built for metrics, logs, and traces. It delivers real-time insights at any scale, from edge to cloud. To support diverse ingestion needs, the GreptimeDB Rust client offers two different modes:
+Low-latency Write API: Ideal for real-time or interactive workloads.
+High-throughput Bulk Stream Insert API: Designed for batch processing and data ingestion pipelines.
+This guide walks through the high-throughput Bulk Stream Insert API—covering its internal design, usage patterns, optimization knobs, and real-world benchmarks.
+Write Modes Overview ​
+Low-latency Write API ​
+Best for: Real-time applications, IoT sensors, interactive systems
+Characteristics:
+Latency: Sub-millisecond
+Throughput: 1K–10K rows/sec
+Memory: Low under moderate load; may accumulate under high concurrency
+Networking: Request-response model
+Example Code ​
+rustuse greptimedb_ingester::api::v1::*;
+use greptimedb_ingester::client::Client;
+use greptimedb_ingester::helpers::schema::*;
+use greptimedb_ingester::helpers::values::*;
+use greptimedb_ingester::{database::Database, Result, ColumnDataType};
+#[tokio::main]
+async fn main() -> Result<()> {
+// Connected to GreptimeDB
+let client = Client::with_urls(["localhost:4001"]);
+let database = Database::new_with_dbname("public", client);
+// Definited sensor's data schema
+let sensor_schema = vec![
+tag("device_id", ColumnDataType::String),        // Tag column
+timestamp("ts", ColumnDataType::TimestampMillisecond), // timestamp
+field("temperature", ColumnDataType::Float64),   // Field
+field("humidity", ColumnDataType::Float64),      // Field
+];
+// Created real-time data
+let sensor_data = vec![Row {
+values: vec![
+string_value("sensor_001".to_string()),
+timestamp_millisecond_value(1234567890000),
+f64_value(23.5),
+f64_value(65.2),
+],
+}];
+// Real-time data writing
+let insert_request = RowInsertRequests {
+inserts: vec![RowInsertRequest {
+table_name: "sensor_readings".to_string(),
+rows: Some(Rows { schema: sensor_schema, rows: sensor_data }),
+}],
+};
+let start_time = std::time::Instant::now();
+let affected_rows = database.insert(insert_request).await?;
+let latency = start_time.elapsed();
+println!("Real-time write successful: {} lines of data，delay: {:.1}ms",
+affected_rows, latency.as_millis());
+Ok(())
+}
+Bulk Stream Insert API ​
+Best for: ETL pipelines, historical imports, bulk log ingestion
+Characteristics:
+Latency: 100–10,000 ms (batch-based)
+Throughput: >10K rows/sec
+Memory: Stable with backpressure
+Networking: Streamed writes over dedicated connections per table
+Key Features:
+Parallel requests.
+Streamed Arrow Flight protocol.
+Zstd/LZ4 compression.
+Asynchronous, backpressure-aware submission.
+Getting Started with Bulk Stream Insert ​
+Core Concepts ​
+BulkInserter: Factory for table-specific stream writers.
+BulkStreamWriter: Dedicated writer tied to a specific table schema.
+Schema Binding: Each writer handles only one table.
+Async Submission: Multiple batches can be submitted in parallel.
+Workflow ​
+Pre-create table using SQL DDL.
+Initialize BulkInserter and BulkStreamWriter.
+Prepare batch data and submit asynchronously.
+Flush responses and manage resources. Workflow diagram（Figure 1: Workflow Diagram）
+Key Components ​
+BulkInserter & BulkStreamWriter ​
+BulkInserter: Manages BulkStreamWriter creation
+BulkStreamWriter: Handles batching, compression, async writes over persistent connections
+BulkWriteOptions ​
+Configure options, control compression, concurrency, and timeout settings:
+rustpub struct BulkWriteOptions {
+pub compression: CompressionType,  // LZ4 or Zstd
+pub timeout: Duration,
+pub parallelism: usize,
+}
+Practical Usage ​
+Basic workflow ​
+1. Table Creation ​
+Note: Unlike the regular write API, Bulk Stream Insert does not automatically create tables. Users must first create the table structure using SQL DDL, and automatic schema changes are not supported. It is also important to note that the Bulk API does not currently support primary key columns (Tags), and each row of data written must contain all columns. These limitations are expected to be gradually resolved in future versions, as the Bulk API is still in its early stages:
+sqlCREATE TABLE sensor_data (
+ts TIMESTAMP TIME INDEX,
+sensor_id STRING,
+temperature DOUBLE
+)
+ENGINE=mito
+WITH(
+append_mode = 'true',
+skip_wal = 'true'
+);
+2. Schema Binding ​
+Note that it must match the table structure in the database exactly.
+rustlet table_template = TableSchema::builder()
+.name("sensor_data")
+.add_timestamp("ts", ColumnDataType::TimestampMillisecond)
+.add_field("sensor_id", ColumnDataType::String)
+.add_field("temperature", ColumnDataType::Float64)
+.build()
+.unwrap();
+3. Creating Bulk Stream Writer ​
+rustlet mut bulk_writer = bulk_inserter
+.create_bulk_stream_writer(
+&table_template,
+Some(BulkWriteOptions::default()
+.with_parallelism(8)
+.with_compression(CompressionType::Zstd)
+.with_timeout(Duration::from_secs(60))),
+)
+.await?;
+Three Insert Approaches ​
+Fast API: Best performance, positional values
+Safe API: Validates field names
+Indexed API: Uses index for balance of safety and speed
+The following code shows three different implementations of the same data writing scenario:
+rustuse greptimedb_ingester::{Row, Value, Result, BulkStreamWriter};
+async fn demonstrate_three_approaches(bulk_writer: &mut BulkStreamWriter) -> Result<()> {
+// Prepare sample data
+let timestamp = 1234567890000i64;
+let sensor_id = "sensor_001".to_string();
+let temperature = 25.5f64;
+// Create a buffer
+let mut rows = bulk_writer.alloc_rows_buffer(10000, 1024)?;
+// Option 1: Fast API - Optimal performance, requires ensuring that the field order is correct.
+let row1 = Row::new().add_values(vec![
+Value::TimestampMillisecond(timestamp),
+Value::String(sensor_id.clone()),
+Value::Float64(temperature),
+]);
+rows.add_row(row1)?;
+// Option 2: Safe API - Field name verification to avoid incorrect field order
+let row2 = bulk_writer.new_row()
+.set("ts", Value::TimestampMillisecond(timestamp))?
+.set("sensor_id", Value::String(sensor_id.clone()))?
+.set("temperature", Value::Float64(temperature))?
+.build()?;
+rows.add_row(row2)?;
+// Option 3: Index API - Balancing performance and safety by setting fields through indexes
+let row3 = bulk_writer.new_row()
+.set_by_index(0, Value::TimestampMillisecond(timestamp))?  // index 0: ts
+.set_by_index(1, Value::String(sensor_id))?                // index 1: sensor_id
+.set_by_index(2, Value::Float64(temperature))?             // index 2: temperature
+.build()?;
+rows.add_row(row3)?;
+let response = bulk_writer.write_rows(rows).await?;
+println!("Wrote successfully: {} lines of data", response.affected_rows());
+Ok(())
+}
+Synchronous vs Asynchronous Writes ​
+MethodCalling MethodUsage ScenarioProsCons
+write_rows()Submit and wait for completionSimple low-frequencySimple, immediate feedbackBlocking, lower throughput
+write_rows_async() + flush_completed_responses()Batch submission + regular refreshHigh-frequency bulkTrue parallelism, backpressure-safeRequires response handling
+rust// Synchronous submission - Simple scenario
+let response = bulk_writer.write_rows(rows).await?;
+println!("Synchronous writing: {} lines", response.affected_rows());
+// Asynchronous submission - batch submission + periodic refresh
+let mut batch_count = 0;
+let batches: Vec<greptimedb_ingester::Rows> = vec![]; // Example: Pre-prepared batch data
+for batch in batches {
+bulk_writer.write_rows_async(batch).await?;
+batch_count += 1;
+Flush the completed response once every 100 batches submitted.
+if batch_count % 100 == 0 {
+let completed = bulk_writer.flush_completed_responses();
+println!("Completed {} batches", completed.len());
+}
+}
+Buffering Strategy ​
+The two parameters of alloc_rows_buffer(capacity, row_buffer_size) serve the following purposes:
+capacity: The pre-allocated number of rows per column to avoid performance overhead caused by dynamic resizing.
+Recommended value: Set based on the batch size, e.g., 1000–50000.
+Too small: Frequent resizing impacts performance.
+Too large: Occupies excessive memory.
+row_buffer_size: Acts as a buffer during row-to-column transformation, optimizing the efficiency of this process.
+Empirical value: 1024.
+Too small: Results in frequent row-to-column conversions.
+Too large: Wastes memory space.
+Async Batch Submission Pattern ​
+Bulk Stream Insert Asynchronous Commit ​
+rustuse greptimedb_ingester::{Row, Value, Result};
+async fn batch_async_submit(mut bulk_writer: greptimedb_ingester::BulkStreamWriter) -> Result<()> {
+let batch_count = 1000;
+let rows_per_batch = 1000;
+let mut total_flushed_rows = 0usize;
+// Phase 1: Rapid submission of all batches
+for batch_id in 0..batch_count {
+let mut rows = bulk_writer.alloc_rows_buffer(rows_per_batch, 1024)?;
+// Fill data...
+for i in 0..rows_per_batch {
+let timestamp = 1234567890000 + ((batch_id * rows_per_batch + i) as i64 * 1000);
+let sensor_id = format!("sensor_{:06}", (batch_id * rows_per_batch + i) % 1000);
+let temperature = 18.0 + ((batch_id * rows_per_batch + i) as f64 * 0.03) % 25.0;
+let row = Row::new().add_values(vec![
+Value::TimestampMillisecond(timestamp),
+Value::String(sensor_id),
+Value::Float64(temperature),
+]);
+rows.add_row(row)?;
+}
+// Asynchronous submission, no waiting for response
+let _request_id = bulk_writer.write_rows_async(rows).await?;
+// Flush completed responses once every 100 batches to prevent memory accumulation.
+if (batch_id + 1) % 100 == 0 {
+let completed = bulk_writer.flush_completed_responses();
+let flushed_rows: usize = completed.iter().map(|r| r.affected_rows()).sum();
+total_flushed_rows += flushed_rows;
+println!("Flushed {} completed responses, totaling {flushed_rows} rows of data.", completed.len());
+}
+}
+println!("All batches have been submitted and are awaiting processing results...");
+// Phase 2: Close connections and collect remaining responses
+let remaining_responses = bulk_writer.finish_with_responses().await?;
+let remaining_rows: usize = remaining_responses.iter().map(|r| r.affected_rows()).sum();
+let total_rows = total_flushed_rows + remaining_rows;
+println!("Bulk Stream Insert completed: {total_rows} lines of data");
+println!("The following have been updated: {total_flushed_rows} lines，finally collected: {remaining_rows} 行");
+println!("Successfully processed {batch_count} batches");
+Ok(())
+}
+Performance Optimization ​
+Concurrency Tuning ​
+rust// Assume a single instance writing to a single table, CPU cores = 4
+// Network-Bound: Bulk Stream Insert mainly waits for network transmission
+let network_bound_options = BulkWriteOptions::default()
+.with_parallelism(16);  // Recommended: 8-16, to fully utilize network bandwidth
+// CPU-Intensive: When heavy computation is required before data insertion
+let cpu_intensive_options = BulkWriteOptions::default()
+.with_parallelism(4);   // Recommended: set to the number of CPU cores
+// Mixed Workload: Adjust according to the actual bottleneck
+let balanced_options = BulkWriteOptions::default()
+.with_parallelism(8);   // Balance between network and CPU
+Compression Choice ​
+rust// Zstd: Higher compression ratio, suitable for environments with limited network bandwidth; may consume more CPU
+let zstd_options = BulkWriteOptions::default()
+.with_compression(CompressionType::Zstd);
+// Lz4: Faster compression speed, suitable for environments with limited CPU resources
+let lz4_options = BulkWriteOptions::default()
+.with_compression(CompressionType::Lz4);
+// No Compression: Fastest speed, suitable for high-speed network environments
+let no_compression_options = BulkWriteOptions::default()
+.with_compression(CompressionType::None);
+Batch Size Tuning ​
+rust// Small batch: Lower latency, suitable for scenarios with high real-time requirements
+let small_batch_rows = bulk_writer.alloc_rows_buffer(1_000, 512)?;
+// Large batch: Higher throughput, suitable for batch processing scenarios
+let large_batch_rows = bulk_writer.alloc_rows_buffer(100_000, 2048)?;
+Benchmarks ​
+A benchmark tool is available in greptimedb-ingester-rust, simulating log workloads with 22 fields.
+Table Schema ​
+sqlCREATE TABLE IF NOT EXISTS `benchmark_logs` (
+`ts` TIMESTAMP(3) NOT NULL,
+`log_uid` STRING NULL,
+`log_message` STRING NULL,
+`log_level` STRING NULL,
+`host_id` STRING NULL,
+`host_name` STRING NULL,
+`service_id` STRING NULL,
+`service_name` STRING NULL,
+`container_id` STRING NULL,
+`container_name` STRING NULL,
+`pod_id` STRING NULL,
+`pod_name` STRING NULL,
+`cluster_id` STRING NULL,
+`cluster_name` STRING NULL,
+`trace_id` STRING NULL,
+`span_id` STRING NULL,
+`user_id` STRING NULL,
+`session_id` STRING NULL,
+`request_id` STRING NULL,
+`response_time_ms` BIGINT NULL,
+`log_source` STRING NULL,
+`version` STRING NULL,
+TIME INDEX (`ts`)
+)
+ENGINE=mito
+WITH(
+append_mode = 'true',
+skip_wal = 'true'
+);
+Data Characteristics ​
+Key Features: Large log_message Field ​
+Target Length: 1,500 characters (actual length ranges from 1,350 to 1,650 characters).
+Content Generation: Template-based system that produces different types of messages according to log level.
+Stack Trace: For ERROR level logs, there's a 70% probability of including 3–8 lines of Java stack trace information.
+Placeholder Replacement: Dynamically replaces variables such as user ID, IP address, timestamps, etc.
+Field Cardinality / Dimension Distribution ​
+High Cardinality Fields (Nearly Unique):
+trace_id, span_id: Generated using 64-bit random numbers
+session_id, request_id: Generated using 64-bit random numbers
+log_uid: Ensured uniqueness based on timestamp + row index
+Medium Cardinality Fields (About 100,000 Values):
+host_id/host_name: id format as host-{0-99999}
+service_id/service_name: id format as service-{0-99999}
+container_id/container_name: id format as container-{0-99999}
+pod_id/pod_name: id format as pod-{0-99999}
+cluster_id/cluster_name: id format as cluster-{0-99999}
+Low-cardinality and other fields are omitted here.
+Data Distribution Characteristics ​
+Log Level Distribution (Realistic Production Pattern):
+INFO: 84%, normal operation messages
+DEBUG: 10%, detailed diagnosis information
+WARN: 5%, warning messages
+ERROR: 1%, error messages with stack trace
+Run Benchmark Test
+Start GreptimeDB
+Create a table
+Sequentially start Bulk & Regular API Benchmarks
+Startup commands:
+shell# Bulk API Benchmark
+cargo run --example bulk_api_log_benchmark --release
+# Regular API Benchmark
+cargo run --example regular_api_log_benchmark --release
+My local test results are as follows:
+API TypeThroughputTotal TimeAvg. LatencyImprovement
+Bulk API155,099 rows/s12.90sN/A (async)+48.8%
+Regular API104,237 rows/s19.19s683.46msBaseline
+Bulk API Results ​
+plain=== GreptimeDB Bulk API Log Benchmark ===
+Target rows: 2000000
+Batch size: 100000
+Parallelism: 8
+→ Batch 1: 100000 rows processed (201010 rows/sec)
+→ Batch 10: 1000000 rows processed (193897 rows/sec)
+→ Batch 20: 2000000 rows processed (195556 rows/sec)
+Final Results:
+• Total rows: 2000000
+• Total batches: 20
+• Duration: 12.90s
+• Throughput: 155090 rows/sec
+Regular API Results ​
+plain=== GreptimeDB Regular API Log Benchmark ===
+Target rows: 2000000
+Batch size: 100000
+→ Batch 1: 100000 rows processed, 100000 affected (125120 rows/sec, 641.73ms latency)
+→ Batch 10: 100000 rows processed, 100000 affected (119781 rows/sec, 620.04ms latency)
+→ Batch 20: 100000 rows processed, 100000 affected (104761 rows/sec, 775.90ms latency)
+Final Results:
+• Total rows: 2000000
+• Total batches: 20
+• Duration: 19.19s
+• Throughput: 104232 rows/sec
+• Average latency: 683.46ms
+More benchmark details here.
+Summary ​
+As shown in this log testing scenario:
+Throughput: Bulk API (155,099 rows/s) is almost 50% faster than Regular API (104,237 rows/s). It’s worth noting that this test was conducted locally using the loopback interface, so network bandwidth pressure was not a consideration. Also, Regular API did not enable gRPC compression, whereas Bulk API used Arrow encoding with Lz4 compression. If you enable compression for the Regular API, throughput drops significantly due to the large data volume (those results aren’t listed here—feel free to try it out yourself if interested).
+Regular API is more suitable for scenarios with smaller data per request, for example writing 200–500 rows at a time, and where low throughput is acceptable but low latency is preferred (manual testing is recommended).
+Bulk API is more suitable for scenarios requiring higher throughput and can tolerate some latency—this may include the time needed to accumulate data on the client side before writing it to the database in bulk.
+So how should you choose? Here are some reference scenarios below: 👇
+When to Use Which API ​
+Use CaseRecommended APIReason
+Real-time alertingRegular APIImmediate response needed
+IoT sensorsRegular APISmall data, low-latency required
+Interactive dashboardsRegular APIResponsive UX
+ETL pipelinesBulk APIHigh volume, delay-tolerant
+Log collection and ingestionBulk APIBatch-friendly, high throughput
+Historical importBulk APIOne-off large ingestion
+When selecting a specific API, please make a comprehensive assessment based on factors such as data real-time requirements, system resource pressure, and network bandwidth.
+The two write methods provided by GreptimeDB each have their own advantages in different scenarios. For developers, flexibly combining these writing capabilities allows you to better meet actual business needs and achieve goals for system scalability and high performance.
+Stay in the loop
+Join our community
+Get the latest updates and discuss with other users.
+Links
+GREPTIME INC
+440 N. Wolfe Road, Suite 30
+Sunnyvale, CA 94085
+28215 Madelin Manor Lane
+Spring, TX 77386
+Subscribe to our newsletter
+Products
+GreptimeDB OSS
+GreptimeDB Enterprise
+Resources
+Documentation
+Blog
+Download
+Docker Repository
+Community
+Open Source
+Roadmap
+Contribute Guide
+Slack Community
+Company
+About Greptime
+Careers
+Brand
+Contact
+Privacy
+Terms
+©Copyright 2026 Greptime Inc. All Rights ReservedEnglish
+
+=== ROW 193 | f012940 | https://signoz.io/blog/opentelemetry-rust | 2026-03-11T00:00:00 | twir-links ===
+Implementing OpenTelemetry in Rust Applications | SigNoz
+For the complete documentation index, see llms.txt. Markdown versions are available by appending .md to documentation URLs.
+SigNoz
+Product
+Use CasesDocs
+ResourcesPricingCustomers
+Search docs...K
+Sign InGet StartedOpen main menu
+languageRust
+Introduction
+What is OpenTelemetry? [Everything You Need to Know]
+Understanding OpenTelemetry Demo: A Hands-on Guide
+Things to Keep in Mind When Choosing an OpenTelemetry Backend
+Top OpenTelemetry Tools Most Suited for OpenTelemetry Data
+OpenTelemetry API vs SDK - Key Differences Explained
+OpenTelemetry Architecture - Understanding the design concepts
+Unlocking Observability - Dive into OpenTelemetry's Top Use Cases
+Getting Started with OpenTelemetry [Frequently Asked Questions]
+OpenTelemetry Fundamentals
+Core Concepts
+Getting Started with OpenTelemetry Visualization - A Practical Guide
+OpenTelemetry - gRPC vs HTTP for Efficient Tracing
+How Do OpenTelemetry Auto-Instrumentation Agents Work?
+What is OTLP and How It Works Behind the Scenes
+OpenTelemetry Resource Attributes Explained Practically
+OpenTelemetry Environment Variables: A Developer’s Field Guide
+How OpenTelemetry Baggage Enables Global Context for Distributed Systems
+How OpenTelemetry Auto-instrumentation Works - Behind the Scenes
+Logs
+OpenTelemetry Logs - A Complete Introduction & Implementation
+OpenTelemetry Events vs Logs - Key Differences Explained
+Metrics
+OpenTelemetry Metrics with 5 Practical Examples
+OpenTelemetry - Comparing Traces vs Metrics for Monitoring
+Understanding How OpenTelemetry Histograms (Actually) Work
+OpenTelemetry Collector
+OpenTelemetry Collector from A to Z: A Production-Ready Guide
+Patterns for Deploying OpenTelemetry Collector at Scale
+SigNoz Community Call - Using OpenTelemetry Collector Processor
+Authentication Model in OpenTelemetry
+OpenTelemetry Collector vs. Fluentbit - Key Differences
+OpenTelemetry Collector vs Exporter - Key Differences Explained
+The Comprehensive Guide to OTel Collector Contrib
+Parsing logs with the OpenTelemetry Collector
+Tracing and APM
+What is Distributed Tracing in OpenTelemetry?
+Complete guide to OpenTelemetry Tracing (with code examples)
+Understanding OpenTelemetry Spans in Detail
+OpenTelemetry - Understanding Traces vs. Spans
+Understanding OpenTelemetry - Trace ID vs. Span ID
+An overview of Context Propagation in OpenTelemetry
+A Fully Open Source APM Built For OpenTelemetry | SigNoz
+SigNoz + Tracetest: OpenTelemetry-Native Observability Meets Testing
+Language and Frameworks
+Rust
+Implementing OpenTelemetry in Rust Applications
+Databases, Caches, and Messaging
+Caches
+How to Monitor Redis Metrics with OpenTelemetry?
+Memcached Metrics Monitoring with OpenTelemetry
+Databases
+How to Monitor MySQL Metrics with OpenTelemetry
+How to Monitor PostgreSQL metrics with OpenTelemetry
+OpenTelemetry MongoDB | Monitor and visualize your MongoDB database calls
+How to Monitor MongoDB Metrics with OpenTelemetry
+Monitoring CouchDB with OpenTelemetry and SigNoz
+Messaging & Streaming
+Complete Guide to tracing Kafka clients with OpenTelemetry in Go
+Out-of-box OpenTelemetry-powered Kafka & Celery monitoring
+Maximizing Scalability - Apache Kafka and OpenTelemetry
+How To Monitor RabbitMQ Metrics With OpenTelemetry
+Deep dive into observability of Messaging Queues with OpenTelemetry
+Infrastructure, Cloud, and CI/CD
+CI/CD Observability
+CI/CD Observability with OpenTelemetry - A Step by Step Guide
+Monitoring Backstage with OpenTelemetry:Closing the observability blind spot
+CI/CD Observability Powered by OpenTelemetry
+Cloud & Infrastructure Monitoring
+Is OpenTelemetry ready for Infra Monitoring?
+How to export Azure Monitor Metrics using OpenTelemetry to SigNoz
+Health Check Monitoring With OpenTelemetry | Complete Code Tutorial
+Amazon EKS Monitoring with OpenTelemetry [Step By Step Guide]
+OpenTelemetry ECS Tutorial - Monitor AWS ECS metrics [Step-By-Step Guide]
+OpenTelemetry-Powered Infrastructure Monitoring
+Containers & Orchestration
+Monitoring Docker Containers Using OpenTelemetry [Full Tutorial]
+Kubernetes Observability with OpenTelemetry | A Complete Setup Guide
+Kubernetes Cluster Monitoring with OpenTelemetry | Complete Tutorial
+OpenTelemetry Operator Complete Guide [OTel Collector + Auto-Instrumentation Demo]
+Web Servers & Proxies
+Implementing OpenTelemetry with Nginx - Instrument and visualize traces
+Nginx Metrics and Logs Monitoring with OpenTelemetry
+Monitor HAProxy Metrics and Logs with OpenTelemetry [Step By Step Guide]
+How to Monitor Apache Server Metrics with OpenTelemetry
+LLMs, AI, and ML
+Are Claude's Models Actually Getting Better? I Instrumented Claude Code to Find Out
+Bringing Observability to Claude Code: OpenTelemetry in Action
+Is Claude Code Getting Worse? How to Measure Degradation with OpenTelemetry
+LangChain Observability: How to Monitor LLM Apps with OpenTelemetry (With Demo App)
+LLM Observability in the Wild - Why OpenTelemetry should be the Standard
+Observing LlamaIndex Apps with OpenTelemetry + SigNoz
+Observing LLM Applications with OpenTelemetry—A Hands-on Guide [2026]
+Observing Vercel AI SDK with OpenTelemetry + SigNoz
+Best Practices
+Optimising OpenTelemetry Pipelines to Cut Observability Costs and Data Noise
+Is OpenTelemetry Production-Ready? A Practical Guide
+OTel-Native by Design - Building Backends That Export to Any Observability Stack
+Misc
+Comparing Datadog and New Relic's support for OpenTelemetry data
+Using OpenTelemetry Collector Loki Receiver to Send Logs to SigNoz [Code Tutorial]
+Current state of OpenTelemetry and how it fits in the DevOps ecosystem | Q&A
+Diving in to OpenTelemetry data with our new Trace and Logs Explorer
+MCP Observability with OpenTelemetry
+Did OpenTelemetry deliver on its promise in 2023?
+OpenTelemetry Webinars - The Open Agent Management Protocol
+OpenTelemetry Webinars - The Trace API
+OpenTelemetry for AI - OpenLLMetry with SigNoz and Traceloop
+OpenTelemetry Webinars - Apache Kafka and OTLP data
+Reducing OpenTelemetry Bundle Size in Browser Frontend
+Should you DIY your Opentelemetry Monitoring?
+Comparisons
+Are there any alternatives to OpenTelemetry worth considering?
+OpenMetrics vs OpenTelemetry - A guide on understanding these two specifications
+OpenTelemetry vs Datadog - Choosing the Right Monitoring Tool
+OpenTelemetry and Jaeger | Key Features & Differences [2026]
+OpenTelemetry vs. OpenTracing - Decoding the Future of Telemetry Data
+OpenTelemetry vs Prometheus - Key Differences Explained
+OpenTelemetry vs APM - Which Monitoring Approach Wins?
+OpenTelemetry vs. Application Insights - Key Differences
+OpenTelemetry vs AWS X-Ray - Which Tracing Tool to Choose?
+OpenTelemetry vs Azure Monitor - Choosing the Right Tool
+OpenTelemetry vs Brave - A Practical Comparison Guide
+OpenTelemetry vs. CloudWatch - Choosing the Right Monitoring Tool
+OpenTelemetry vs Dynatrace - Which Tool Is Right for You?
+OpenTelemetry vs Elastic APM - Which Monitoring Tool to Choose?
+OpenTelemetry vs ELK - Choosing the Right Observability Stack
+OpenTelemetry vs. Fluent Bit - Which Tool Is Right for You?
+OpenTelemetry vs Grafana - Key Differences Explained
+OpenTelemetry vs Honeycomb - Which Observability Tool Wins?
+OpenTelemetry vs Logstash - Which Logging Tool Is Right for You?
+OpenTelemetry vs Loki - Choosing the Right Observability Tool
+OpenTelemetry vs Micrometer - Choosing the Right Metrics Tool
+OpenTelemetry vs. New Relic - Which Monitoring Tool Fits You?
+OpenTelemetry vs OpenCensus - Key Differences Explained
+OpenTelemetry vs Splunk - Which Monitoring Tool Is Right for You?
+OpenTelemetry vs. Telegraf - Choosing the Right Monitoring Tool
+OpenTelemetry vs Tempo - Key Differences Explained
+OpenTelemetry vs. X-Ray - Choosing the Right Tracing Tool
+Learn OpenTelemetryOpenTelemetry Quick Start
+Blog
+Implementing OpenTelemetry in Rust Applications
+Implementing OpenTelemetry in Rust Applications
+Last Updated: June 16, 202615 min read
+Over the past several years, Rust has become the go-to language for reliable, high-throughput systems. It also influencing other ecosystems, with teams increasingly adopting Rust for the "heavy-duty" data processing layers.
+Case in point: Python developers have been enjoying order-of-magnitude faster performance after switching to developer tools like Astral’s uv for project and dependency management, or ruff for their linting and formatting needs.
+These tools have helped cut down on CI/CD bills, and have enabled large productivity gains for engineering teams around the globe.
+uv is essentially entirely written in Rust.
+Why do Rust Applications Need Observability?
+If you know Rust, you might wonder why you need observability in the first place?
+While the language itself offers incredible correctness guarantees, a Rust application can still encounter slowdowns and failures as it interacts with other system components, due to human error in business logic or higher-level runtime bugs.
+As such, it becomes vital to have insights into how your applications process data, what events occur during these processes, and how they affect its health and performance.
+In this write-up, we will explore how to use OpenTelemetry (OTel) to instrument Rust applications through a practical demo, delving into key implementation details as we progress. We will capture all three telemetry signals (traces, metrics, and logs) and visualize them using an OpenTelemetry-native backend.
+What is OpenTelemetry?
+Familiar with OpenTelemetry?
+This section gives a brief overview of OpenTelemetry. Feel free to skip ahead to the next section that dives into technical decisions.
+To start, we must understand what OpenTelemetry is, and why it’s vital for our purpose: understanding application behaviour across its lifespan and development cycle.
+OpenTelemetry is a Cloud Native Computing Foundation (CNCF) project aimed at standardizing the way we instrument applications for generating telemetry data. Before OpenTelemetry arrived, telemetry data lived in silos and often had little or no correlation between signals.
+It follows a specification-driven development model that standardizes telemetry generation and collection details, meaning any compatible backend can process and visualize telemetry data emitted via its SDKs.
+As there is no need to rewrite the entire instrumentation plumbing each time you change observability backends, there is no vendor lock-in.
+Before we look at our demo application, let’s understand how logging crates integrate into the OpenTelemetry ecosystem.
+State of Logging and OpenTelemetry
+OpenTelemetry integrations across most major programming languages have a fundamental divide between how trace and metric instrumentation is configured versus how logs are handled.
+While traces and metrics are typically introduced when actively implementing observability, logging is usually defined as a fundamental default. When scaffolding application code, engineers almost always use the language’s preferred logging libraries. This often leaves little room for utilizing the OpenTelemetry logging SDK as the default logger.
+Recognizing this scenario, the OpenTelemetry Rust project does not expect developers to use a new logging library. Instead it provides bridge libraries to generate OpenTelemetry LogRecords from log statements emitted by the log or tracing crates.
+Further, the project recommends using tracing for new Rust applications. Given this recommendation and tracing's core Span concept, which naturally aligns with  OpenTelemetry spans, we have chosen it for logging events in our demo application.
+Later, we will see how this integration actually happens within the application code.
+Powered by Tokio
+The entire application runs on Tokio, which is often regarded as the one true async runtime, and powers much of Rust’s networking ecosystem. The web server uses Tokio for async execution, while the telemetry and logging layer is implemented via tracing — another project within the Tokio ecosystem.
+Implementing OpenTelemetry in Rust Applications
+Now let’s set up the demo application, configure SigNoz as the backend to receive and visualize its telemetry data, and understand how we can use it to delve deep into application behaviour.
+We’ll also go over key implementation details that will help you wrap your head around the moving parts involved in the instrumentation process.
+Ease of Instrumentation via Agents
+Because of Rust’s compiled nature, the OTel implementation isn’t as straightforward as something like Python, which typically relies on auto-instrumentation agents to make things easy. These agents patch objects during start-up to enable applications to emit telemetry.
+Here, we have implemented the instrumentation logic manually.
+Prerequisites
+Before we begin, ensure you have:
+The Rust toolchain installed (Download here).
+A SigNoz Cloud account
+uv installed (Download here).
+We built the app on the 1.93.1 version, and recommend that you use a similar version for maximum compatibility.
+You can check the version of your Rust installation via rustup check , and if necessary, update via the rustup update command:
+Copy❯ rustup check
+stable-aarch64-apple-darwin - Up to date : 1.93.1 (01f6ddf75 2026-02-11)
+rustup - Up to date : 1.28.2
+❯ rustup update
+info: syncing channel updates for 'stable-aarch64-apple-darwin'
+info: checking for self-update
+stable-aarch64-apple-darwin unchanged - rustc 1.93.1 (01f6ddf75 2026-02-11)
+info: cleaning up downloads & tmp directories
+uv is required to run the Python script to emulate an upstream microservice to showcase trace context propagation.
+Setting up SigNoz
+SigNoz is an OpenTelemetry-native observability platform that provides logs, traces, and metrics in a single pane of glass.
+Sign up for a free SigNoz Cloud account.
+Follow this guide to create ingestion keys for your account.
+Ensure the region and ingestion key values are readily accessible for the following steps.
+Once done, you’re ready to setup the application and point it to your SigNoz instance.
+Running the Rust Demo Application
+Clone the SigNoz Examples repository and navigate to the application folder:
+Copygit clone https://github.com/SigNoz/examples.git
+cd examples/rust/opentelemetry-rust-demo
+Install the application dependencies and set the OpenTelemetry-specific environment variables while running the application:
+CopyOTEL_EXPORTER_OTLP_ENDPOINT="https://ingest.<region>.signoz.cloud:443" \
+SIGNOZ_INGESTION_KEY="<your-ingestion-key>" \
+OTEL_RESOURCE_ATTRIBUTES="service.name=opentelemetry-rust-demo,service.version=0.1.0,deployment.environment=dev" \
+cargo run
+Set your SigNoz tenant region and ingestion key in the OTEL_EXPORTER_OTLP_ENDPOINT and SIGNOZ_INGESTION_KEY environment variables respectively.
+OTEL_RESOURCE_ATTRIBUTES defines the metadata to attach with each batch of telemetry that goes out of our application. The service name opentelemetry-rust-demo ensures the OTel backend can recognize where the telemetry is coming from.
+Once the application compiles and runs, you’ll see an output like:
+The OpenTelemetry Rust application emits log events via the tracing crate.
+The application is now live on http://localhost:8085. Visit the URL and ensure that you get a Hello, World! response.
+Before we move ahead, let’s go over the key implementation details to understand exactly how we’ve integrated OpenTelemetry into our Rust application.
+Anatomy of the OpenTelemetry Setup
+The application uses the hyper HTTP crate to expose API endpoints. Calling these endpoints allows users to calculate the Fibonacci sequence of u8 integers, make an external API call to showcase trace context propagation, or receive 404 responses via a fallback handler — for example, if you call // instead of the index / endpoint.
+Dependency Choices
+We install dependencies for running the web server, executing the core application logic (e.g., serde & serde_json for parsing request bodies), and enabling OpenTelemetry along with its bridge to the tracing crate.
+The opentelemetry-otlp crate, which implements the exporter logic for telemetry signals, requires the grpc-tonic and tls-roots features to communicate with secure OTLP backends over gRPC.
+The Core OpenTelemetry Setup
+The core of the OpenTelemetry configuration involves building providers for each telemetry signal.
+The init_<signal>_provider functions build OTLP Exporters with the necessary configuration and define them as the "provider" for global usage. As all three signals export to the same SigNoz instance, they share the same configuration in their builder methods.
+Copyfn init_tracer_provider() -> SdkTracerProvider {
+...
+// use gRPC exporter with TLS and metadata headers for SigNoz cloud
+let otlp_endpoint = OTLP_ENDPOINT.clone();
+let otlp_exporter = OtlpSpanExporter::builder()
+.with_tonic()
+... // reduced for brevity
+.build()
+.unwrap();
+let provider = SdkTracerProvider::builder()
+.with_batch_exporter(otlp_exporter)
+.build();
+global::set_tracer_provider(provider.clone());
+provider
+}
+If you need to debug issues or understand what the raw telemetry data looks like, enable the exporters from the opentelemetry_stdout crate. We have commented them out to avoid cluttering the console.
+Trace Context Propagation
+For distributed traces, we also initialize a TraceContextPropagator. We combine this with our custom wrapper structs that implement the OTel Extractor and Injector traits against hyper's headers.
+Copystruct HeaderExtractor<'a>(&'a hyper::header::HeaderMap);
+impl<'a> Extractor for HeaderExtractor<'a> {
+fn get(&self, key: &str) -> Option<&str> {
+self.0.get(key).and_then(|value| value.to_str().ok())
+}
+fn keys(&self) -> Vec<&str> {
+self.0.keys().map(|k| k.as_str()).collect()
+}
+}
+struct HeaderInjector<'a>(&'a mut hyper::header::HeaderMap);
+impl<'a> Injector for HeaderInjector<'a> {
+fn set(&mut self, key: &str, value: String) {
+let header_name = match hyper::header::HeaderName::from_bytes(key.as_bytes()) {
+Ok(name) => name,
+Err(_) => return,
+};
+let header_value = match hyper::header::HeaderValue::from_str(&value) {
+Ok(value) => value,
+Err(_) => return,
+};
+self.0.insert(header_name, header_value);
+}
+}
+The router function uses the HeaderExtractor to extract trace context from incoming requests’ headers, setting it as the parent context for the current span.
+Conversely, the httpbin function utilizes the HeaderInjector to inject the active trace context into the headers of outgoing requests, ensuring that the trace remains active across service boundaries.
+Bridging OpenTelemetry Traces and Logs
+The init_tracing_subscriber function registers the following layers as Subscribers for the global tracing  provider:
+The OpenTelemetryTracingBridge layer, which uses our OTel logging provider to ensure all application Events are also emitted as OpenTelemetry LogRecord statements.
+The OpenTelemetry Span layer, created via the tracing_opentelemetry crate, ensures that tracing spans are reliably translated into equivalent OpenTelemetry Spans.
+Copyfn init_tracing_subscriber(tracer: SdkTracer) {
+let filter = EnvFilter::new(
+"info", // removed values for brevity
+);
+let logger_provider = LOGGER_PROVIDER
+.get()
+.expect("logger provider should be initialized before tracing subscriber");
+let otel_log_layer = OpenTelemetryTracingBridge::new(logger_provider);
+let otel_span_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+tracing_subscriber::registry()
+.with(filter)
+.with(tracing_subscriber::fmt::layer())
+.with(otel_span_layer)
+.with(otel_log_layer)
+.init();
+}
+As discussed above, the OTel Rust project focuses on bridging existing logging implementations. The opentelemetry::global module therefore lacks a log-equivalent of the set_tracer_provider and set_meter_provider helper functions.
+To work around this limitation and to safely share the logging provider instance across the application, we store it in a OnceLock.
+OnceLock guarantees that the provider initializes only once, and provides lock-free read access across all Tokio tasks.
+Copystatic LOGGER_PROVIDER: OnceLock<SdkLoggerProvider> = OnceLock::new();
+...
+fn init_logger_provider() {
+...
+let provider = SdkLoggerProvider::builder()
+.with_log_processor(BatchLogProcessor::builder(otlp_exporter).build())
+.build();
+let _ = LOGGER_PROVIDER.set(provider);
+}
+In contrast, we acquire the tracer explicitly within the main function using the global tracing provider we set up earlier, and pass it directly as a function argument to init_tracing_subscriber.
+Generating Telemetry Data for Visualization
+To ensure you have enough data to experiment with, and understand how OpenTelemetry works, we have prepared a simple load generator script that calls the endpoints defined in the application. You can run it in a separate terminal instance:
+Copychmod +x load_gen.sh
+./load_gen.sh
+To induce failures in the fibonacci endpoint, you can try sending a large number manually.
+Copycurl -i localhost:8085/fibonacci -d '{"number": 20111111}'
+Since our application expects a u8 integer, it will raise an appropriate error when attempting to parse the input:
+Copy{"error":"invalid value: integer `20111111`, expected u8 at line 1 column 19"}
+Such entries will be explicitly marked as failures by our application, and reflected in our observability backend. In SigNoz, you should now see a service named opentelemetry-rust-demo
+SigNoz trace detail view showcasing an error trace for sending an invalid payload.
+The trace details view has a Related Signals section. By clicking on the Logs button, you will see a split view showing all logs related to that trace via trace and span IDs.
+You can open the entries in the Logs Explorer view if you wish to inspect them in detail.
+Access all the logs for a trace via telemetry correlation in SigNoz.
+Visualizing the Flow of Data
+In distributed systems, it is common for a single user request to span across multiple services. To demonstrate this flow, let’s call our Rust application from a Python script that is also instrumented to export telemetry to OpenTelemetry.
+Before running the command, ensure your region and ingestion key are set in the environment variables:
+CopyOTEL_SERVICE_NAME="py-rust-client" \
+OTEL_EXPORTER_OTLP_ENDPOINT="https://ingest.<region>.signoz.cloud:443" \
+OTEL_EXPORTER_OTLP_HEADERS="signoz-ingestion-key=<your-signoz-key>" \
+uv run \
+--with opentelemetry-distro \
+--with opentelemetry-exporter-otlp \
+--with opentelemetry-instrumentation-requests \
+opentelemetry-instrument python scripts/python_client.py
+You will be prompted to enter the number of requests you’d like to make to the application. For now, you can just enter 1.
+Copyuv run ...
+Installed 25 packages in 21ms
+Enter max API calls to make: 1
+{'httpbin': {'args': {}, 'data': '', 'files': {}, 'form': {}, 'headers': {'Accept': '*/*', 'Host': 'httpbin.org', 'Traceparent': '00-92bddc16cccfe39df69db2bf6e79a263-4e60e386e4e38e02-01', 'Tracestate': '', 'X-Amzn-Trace-Id': 'Root=1-69ac1ead-255755c94cab463b7763a7c4'}, 'json': None, 'method': 'GET', 'origin': '106.215.144.235', 'url': 'https://httpbin.org/anything'}, 'note': 'This endpoint calls https://httpbin.org/anything with propagated trace context.', 'propagated': {'traceparent': '00-92bddc16cccfe39df69db2bf6e79a263-4e60e386e4e38e02-01'}}
+Notice the Traceparent header in the output above. This is the exact context injected by our application before it made the external call to httpbin.org!
+If you open SigNoz trace view and inspect the GET request from the py-rust-client, you will see a detailed breakdown of the flow of the trace across the service layers.
+The Python script called the Rust /external endpoint, which in turn called the external httpbin.org API, propagating the trace context with each network hop.
+A distributed trace in SigNoz. Notice how each external call creates a child span under the caller service’s span.
+This propagation ensures that all spans created during the request fall under a single trace. Whenever a service utilizes an existing trace context, it attaches its spans as children of the upstream API call’s span.
+Here, the Python client’s span becomes the parent for the Rust application, which becomes the parent for the further downstream httpbin API.
+Monitor System Health with Metrics
+Metrics are a foundational pillar of observability, and for good reason. Tracking key metrics helps you understand overall system health at a glance.
+In this demo, we are capturing two "standard" metrics — active requests via an up-down counter and request duration via a histogram.
+When ingesting metric data, SigNoz performs aggregations on the raw data to make the data digestible. Let’s see what insights we can derive from these metrics after the load generator has been running for some time.
+Active Requests: Since this metric records the number of in-flight requests, it will primarily capture data points for the (relatively) long-running /fibonacci and the //  fallback endpoints.
+While the fallback endpoint returns a 404 response after some delay, the / endpoint receives a request and processes it within few milliseconds, meaning its counter increments and decrements almost instantly.
+So the periodic metric export snapshot is unlikely to capture its value as non-zero.
+Viewing the Active Requests data per-url, we can see predictable traffic patterns.
+Request Duration: This metric is an OpenTelemetry histogram that records the duration of each request and increments a counter corresponding to a specific duration bucket for that endpoint. These buckets enable the observability backend to calculate percentiles and infer the performance of that endpoint over time.
+By checking the p99 aggregate, we can see that the /external API has experienced a spike in its latency, jumping from ~2.5s to 4s, while the other endpoints have remained stable.
+In the real world, an engineer would investigate this spike: are we being rate-limited by the downstream external API, are we saturating the server’s network bandwidth, and so on.
+Request duration histograms track system health by monitoring p99 (and other) latencies.
+By now, you must have understood how OpenTelemetry helps eliminate the guesswork behind the occasional latency spike, or by breaking down previously "invisible" failures.
+This level of observability becomes absolutely vital as applications continue to grow in complexity.
+What's Next with OpenTelemetry and Rust
+With this blog, we hope that now you have the fundamental knowledge required to begin your observability journey with OpenTelemetry and Rust.
+We began by exploring why you should instrument your Rust applications, defined OpenTelemetry and its role in the observability landscape, and understood the code implementations and the dependency choices.
+Finally, we used SigNoz to visualize events as they happen in Rust applications and observe their impact on performance.
+SigNoz is an OpenTelemetry-native platform that visualizes traces, metrics, and logs in a single pane. If you’re interested in trying out SigNoz for your applications, sign up for a 30-day free trial (no credit card required).
+Is this page helpful
+Send feedback
+AuthorDhruv Ahuja
+Tags
+OpenTelemetryRust
+AuthorDhruv Ahuja
+Read Time15 min read
+Last UpdatedJune 16, 2026
+Tags
+OpenTelemetryRust
+On this page
+Why do Rust Applications Need Observability?
+What is OpenTelemetry?
+State of Logging and OpenTelemetry
+Implementing OpenTelemetry in Rust Applications
+Prerequisites
+Running the Rust Demo Application
+Anatomy of the OpenTelemetry Setup
+Generating Telemetry Data for Visualization
+Visualizing the Flow of Data
+Monitor System Health with Metrics
+What's Next with OpenTelemetry and Rust
+Is this page helpful
+Send feedback
+Table of Contents
+DocsIntroductionContributingMigrate from DatadogSigNoz API
+OpenTelemetryWhat is OpenTelemetryOpenTelemetry Collector GuideOpenTelemetry Demo
+CommunitySupportSlackXLaunch WeekDashboard TemplatesDevOps WordleNewsletterKubeCon, Atlanta 2025
+MoreSigNoz Cloud vs DatadogSigNoz Cloud vs New RelicSigNoz Cloud vs GrafanaSigNoz Cloud vs DynatraceSigNoz Cloud vs Dash0CareersAboutTermsPrivacySecurity & Compliance
+SigNoz
+All systems operational
+Ask AI about SigNoz
+ChatGPTClaudeAI ModePerplexity
+
+=== ROW 194 | f012963 | https://github.com/rust-lang/unsafe-code-guidelines/issues?q=is%3Aopen+label%3Afinal-comment-period+sort%3Aupdated-desc+state%3Aopen | 2026-04-01T00:00:00 | twir-links ===
+Forum for discussion about what unsafe code can and can't do
+
+
+UCG - Rust's Unsafe Code Guidelines
+===
+
+The purpose of this repository is to collect and discuss all sorts of questions that come up when writing unsafe code.
+It is primarily used by the [opsem team](https://github.com/rust-lang/opsem-team/) to track open questions around the operational semantics, but we also track some "non-opsem" questions that fall into T-lang or T-type's purview, if they are highly relevant to unsafe code authors.
+
+The [Unsafe Code Guidelines Reference "book"][ucg_book] is a past effort to systematize a consensus on some of these questions.
+Most of it has been archived, but the [glossary](https://rust-lang.github.io/unsafe-code-guidelines/glossary.html) is still a useful resource.
+
+Current consensus is documented in [t-opsem FCPs](https://github.com/rust-lang/opsem-team/blob/main/fcps.md) and the [Rust Language Reference].
+
+[ucg_book]: https://rust-lang.github.io/unsafe-code-guidelines
+[Rust Language Reference]: https://doc.rust-lang.org/reference/index.html
+
+## See also
+
+The [Rustonomicon] is a draft document discussing unsafe code. It is intended to
+be brought into agreement with the content here. It represents an organized
+effort to explain how to write Rust code, rather than a reference.
+
+[Rustonomicon]: https://doc.rust-lang.org/nightly/nomicon/
+
+## Code of Conduct and licensing
+
+All interactions on this repository (whether on issues, PRs, or
+elsewhere) are governed by the [Rust Code of
+Conduct](CODE_OF_CONDUCT.md).
+
+Further, all content on this repository is subject to the standard
+[Rust](LICENSE-MIT) [licensing](LICENSE-APACHE).
+
+
+=== ROW 195 | f013080 | https://rust-lang.zulipchat.com/#narrow/channel/233931-t-compiler.2Fmajor-changes/topic/Add.20.60-Zllvm-target-feature.60.20target.20.2Amodif.E2.80.A6.20compiler-team.23994/near/606147265 | 2026-07-01T00:00:00 | twir-links ===
+Public view of rust-lang | Zulip team chat
+Because you're using an unsupported or very old browser, Zulip may not load.
+Because you're using a very old version of the desktop app, Zulip may not load. Download the latest version.
+If this message does not go away, try reloading the page.
+Error loading Zulip. Try reloading the page.
+Settings
+×
+Personal
+Organization
+Profile
+Account & privacy
+Preferences
+Notifications
+Alert words
+Uploaded files
+Topics
+Muted users
+Organization profile
+Organization settings
+Organization permissions
+Custom emoji
+Linkifiers
+Code playgrounds
+Default user settings
+Channel folders
+Authentication methods
+Show more
+×
+×
+×
+Zulip Server
+Version 12.0-1057-g31036ca946
+Forked from upstream at 12.0-1049-gb6d0518d2a
+Copyright 2012–2015 Dropbox, Inc., 2015–2021 Kandra Labs, Inc., and contributors.
+Zulip is open-source software,
+distributed under the Apache 2.0 license.
+Combined feed
+All your messages.
+Log in
+No matches.
+VIEWS
+Recent conversations
+Inbox
+Combined feed
+Mentions
+Reactions
+Starred messages
+Drafts
+Scheduled messages
+Reminders
+DIRECT MESSAGES
+PINNED CHANNELS
+GENERAL
+announce
+general
+new members
+T-COMPILER
+rustc-codegen-gcc
+t-compiler
+t-compiler/arm
+t-compiler/backports
+t-compiler/const-eval
+t-compiler/debuginfo
+t-compiler/diagnostics
+t-compiler/gpgpu-backend
+t-compiler/help
+t-compiler/incremental
+t-compiler/linker
+t-compiler/llvm
+t-compiler/major changes
+t-compiler/meetings
+t-compiler/mir-opts
+t-compiler/ops
+t-compiler/parallel-rustc
+t-compiler/performance
+t-compiler/prioritization/alerts
+t-compiler/project-const-traits
+t-compiler/query-system
+t-compiler/relink-dont-rebuild
+t-compiler/risc-v
+t-compiler/rust-analyzer
+t-compiler/rustc-dev-guide
+t-compiler/wasm
+t-compiler/windows
+wg-autodiff
+22 INACTIVE
+22 INACTIVE
+rustc-reading-club
+RustcContributor::admin
+RustcContributor::explore
+RustcContributor::grow
+RustcContributor::new
+t-compiler/call-for-participation
+t-compiler/cargo-bisect-rustc
+t-compiler/incremental-hir
+t-compiler/loong-arch
+t-compiler/opaque-types
+t-compiler/rust-2018
+t-compiler/workspace-rebuild-perf
+z-archived-t-compiler/shrinkmem-sprint
+z-archived-t-compiler/wg-meta
+z-archived-t-compiler/wg-nll
+z-archived-t-compiler/wg-parselib
+z-archived-t-compiler/wg-pipelining
+z-archived-t-compiler/wg-polymorphization
+z-archived-t-compiler/wg-profile-guided-optimization
+z-archived-t-compiler/wg-rfc-2229
+z-archived-t-compiler/wg-rls-2.0/chalk
+z-archived-t-compiler/wg-self-profile
+T-LANG
+t-lang
+t-lang/contracts
+t-lang/custom-refs
+t-lang/effects
+t-lang/fls
+t-lang/gen
+t-lang/implicit-trait-bounds
+t-lang/in-place-init
+t-lang/interop
+t-lang/library-trait-evolution
+t-lang/meetings
+t-lang/meta
+t-lang/move-trait
+t-lang/pattern-types
+t-lang/project-never-type
+t-lang/try
+8 INACTIVE
+8 INACTIVE
+t-lang/ghost-code
+t-lang/major changes
+t-lang/ops
+t-lang/project-macro-repetition-counts
+t-lang/pub-macro-rules
+t-lang/roadmap-2024
+t-lang/temporary-lifetimes-2024
+t-lang/type-ascription
+T-BOOTSTRAP
+t-infra/bootstrap
+t-infra/bootstrap/announcements
+t-infra/bootstrap/backports
+1 INACTIVE
+1 INACTIVE
+t-infra/bootstrap/docs
+T-CARGO
+t-cargo
+t-cargo/build-integration
+t-cargo/build-script
+t-cargo/PubGrub
+T-CONTENT
+t-content
+T-COUNCIL
+council
+council/project-director-election-proposal
+funding
+licensing
+t-launching-pad
+3 INACTIVE
+3 INACTIVE
+project leads (public)
+rfc-leadership-council-feedback
+z-archived-wg-governance
+T-CRATES.IO
+t-crates-io
+1 INACTIVE
+1 INACTIVE
+t-crates-io/notifications
+T-DEVTOOLS
+t-clippy
+t-clippy/fcp
+t-clippy/meetings
+t-devtools
+t-rustdoc
+t-rustdoc/meetings
+t-rustfmt
+t-rustfmt/backports
+t-rustup
+T-DOCS.RS
+t-docs-rs
+T-INFRA
+t-infra
+t-infra/announcements
+t-infra/bors
+triagebot
+1 INACTIVE
+1 INACTIVE
+t-internal-sites
+T-LANG-DOCS
+t-lang-docs
+t-lang-docs/book
+t-lang-docs/cookbook
+t-lang-docs/reference
+t-lang-docs/rustlings
+2 INACTIVE
+2 INACTIVE
+t-lang-docs/nomicon
+t-lang-docs/rust-by-example
+T-LIBS
+t-libs
+t-libs/api-changes
+t-libs/backports
+t-libs/crates
+t-libs/meetings
+t-libs/meta
+t-libs/stdarch
+t-libs/wg-allocators
+t-testing-devex
+1 INACTIVE
+1 INACTIVE
+t-libs/api-guidelines
+T-MDBOOK
+t-mdbook
+T-OPSEM
+miri
+t-opsem
+T-PATTERNS
+t-patterns
+1 INACTIVE
+1 INACTIVE
+t-patterns/project-deref-patterns
+T-RELEASE
+rollups
+t-release
+t-release/triage
+T-STYLE
+t-style
+T-SPEC
+t-spec
+T-TYPES
+t-types
+t-types/assumptions-on-binders
+t-types/call-for-participation
+t-types/checked-type-alias
+t-types/dictionary-passing
+t-types/early-late-cleanup
+t-types/formality
+t-types/meetings
+t-types/nominated
+t-types/polonius
+t-types/specialization
+t-types/trait-system-refactor
+1 INACTIVE
+1 INACTIVE
+t-types/negative-impls
+EVENTS
+all-hands-2026
+team-health-summit-2026
+2 INACTIVE
+2 INACTIVE
+all-hands-2025
+leads-summit-2024
+EXTERNAL
+battery-packs-rs
+MIRI
+miri/debugger
+T-GOALS
+goals
+goals/2025h1/rustc-perf-improvements
+goals/build-std
+goals/meta
+goals/proposed
+goals/reflection
+RCN
+commercial-network
+RUST FOUNDATION
+foundation
+SAFETY CRITICAL CONSORTIUM
+safety-critical-consortium
+safety-critical-consortium/coding-guidelines
+VISION DOC
+vision-doc-2025
+OTHER
+edition
+floating-point
+gsoc
+outreachy
+project-const-generics
+project-inline-asm
+project-packages-as-namespaces
+project-portable-simd
+project-rustc-public
+rust-for-linux
+rust-packaging
+security-chat
+t-compiler/incremental-systems-rethought
+t-website
+tbd-signing
+wg-async
+wg-binary-size
+wg-bindgen
+wg-cli
+wg-embedded
+wg-formal-methods
+wg-macros
+wg-secure-code
+yocto
+zulip
+17 INACTIVE
+17 INACTIVE
+ctcft
+i18n
+ospp
+project-const-generics/adt_const_params-rfc
+project-error-handling
+project-exploit-mitigations
+project-ffi-unwind
+project-safe-transmute
+project-thir-unsafeck
+project-type-changing-struct-update
+rust-all-hands-2020 (public)
+turbowish
+wg-async/async-fn-in-trait-impl
+wg-async/book
+wg-async/stream-trait-rfc
+wg-macros/triage
+z-archived-wg-database
+T-COMMUNITY (DEFUNCT)
+17 INACTIVE
+17 INACTIVE
+t-community/l10n
+t-community/l10n/de
+t-community/l10n/es
+t-community/l10n/fa
+t-community/l10n/fr
+t-community/l10n/it
+t-community/l10n/ja
+t-community/l10n/pl
+t-community/l10n/pt
+t-community/l10n/ru
+t-community/l10n/tr
+t-community/l10n/zh
+t-community/rust-survey
+t-community/rust-survey-2019
+t-community/rust-survey-2020
+t-community/rust-survey-2021
+t-community/youtube
+LOG IN TO BROWSE MORE
+Back
+ALL DIRECT MESSAGES
+This view is still loading messages.
+Load more
+Some older messages are unavailable. Upgrade your organization to access your full message history.
+End of results from your message history. Include messages in your public channels sent when you weren't subscribed?
+Expand search
+End of messages in your combined feed.
+View all messages in your public channels
+Compose message
+Start new conversation
++
+New direct message
+Enter a topic (skip for general chat)
+Drafts()
+Invite to organization
+Reset zoom
+Open
+Download
+
+=== ROW 196 | f013113 | https://github.com/rust-lang/rfcs/pull/3987 | 2026-07-29T00:00:00 | twir-links ===
+RFC: Externref lang item for Wasm targets
+
+---
+
+@guybedford · 2026-07-29T00:09:07Z:
+This RFC proposes a new externref lang type (`core::arch::wasm32::externref`, `feature(wasm_externref)`): an opaque, unforgeable reference to a WebAssembly host value, lowering to the Wasm `externref` reference type in function signatures.
+
+Following the semantics of Clang's `__externref_t` (shipped since Clang 15), it is a bare-position-only type, legal solely as the top-level type of function parameters, return values and local bindings and enforced at type-check time. This allows host references (e.g. JavaScript values) to be marshalled from one foreign call to another directly enabling better performance and interoperability between Wasm ecosystem crates.
+
+[Rendered](https://github.com/guybedford/rfcs/blob/externref-lang-item/text/3987-wasm-externref-lang-item.md)
+
+---
+
+@programmerjake · 2026-07-29T00:44:08Z:
+why forbid `externref` in closure arguments/return values? forbidding it in closure captures is reasonable since you can't store it in structs but a capture-less closure should behave the same as a function -- where `externref` is allowed.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..810abe63d889a0d281147086cf553f199bca4c4a)*
+
+---
+
+@clarfonthey · 2026-07-29T01:25:13Z:
+My immediate gut feeling toward this is that simply having the type "opt out" of the type system is a hammer that feels like it will lead to loads of annoying hacks, but the amount of restrictions on `externref` feel like they wouldn't be possible to cover via other means, which is a compelling reason to not support it.
+
+Essentially, listing all the requirements:
+
+* Cannot be referenced (no &-refs, or even &raw-refs)
+* No defined layout (similar to `extern type`)
+* No Type ID (`!Any`)
+* Cannot be moved onto the stack (`!Move`, except…)
+* *Can* be arguments or return values of C or Rust ABIs
+
+Note that stuff like "never instantiated as a generic" could be useful as lints, but as type-system guarantees they seem fragile.
+
+Note that being ABI-only have interesting consequences, like you *could* define `repr(transparent)` structs with them, but it would effectively be stuck with whatever struct you used at the ABI level, based upon what you've defined your `extern fn`s as, which could be helpful.
+
+Basically, I think that it's a steep bar to potentially satisfy all these requirements with explicit type-system details but it feels a lot better than just "this sidesteps the type system entirely" which is gonna lead to *so* many awful hacks.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@Jules-Bertholet · 2026-07-29T03:52:49Z:
+For a proposal like this one, if you want the slightest chance of acceptance, you ***cannot*** afford to skimp on this section or the Rationale and Alternatives.
+
+First, do not assume everyone in your audience has more than passing familiarity with WASM, or any idea what an `externref` is. You will need to explain this in the RFC itself. [RFC 3884](https://github.com/rust-lang/rfcs/pull/3884) is a good example of providing background for a niche target feature.
+
+Second, to convince the lang team to accept an invasive and controversial change like this one, you will need to, at minimum, *prove* that nothing less can meet the needs of WASM users. You cite two major motivations; you should elaborate on both:
+
+- **Interoperability and fewer custom wrappers**: What are the specific patterns that break because of lack of interoperability, that would become possible with this proposal? And in the Rationale, why can't interoperability be achieved another way, e.g. standardizing on a common table system (similar to the C ABI and other [tool conventions](https://github.com/WebAssembly/tool-conventions/tree/main))? Ideally, give examples from specific real-world projects.
+- **Performance and optimization:** What are the specific usage patterns you anticipate for this feature (taking into account the many limits you impose on how `externref` can be used)? And in the Rationale, why is this proposal the only reasonable way to meet the performance requirements of those specific patterns? Ideally, you should cite benchmarks from a real-world project.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@Jules-Bertholet · 2026-07-29T04:04:57Z:
+Please elaborate here as well.
+
+- **Clang / LLVM `__externref_t`:** What was their motivation for doing this? Are people using and enjoying this feature despite the restrictions on where `__externref_t` can appear? Did they face any unexpected challenges, and how did they overcome them? Link to their proposals and documentation.
+- **"wasm-bindgen externref mode: post-link signature rewriting via walrus":** What is this? Why is it "motivating precendent"?
+- **Wasm-GC languages**: So, is this feature necessary to do FFI with those languages on WASM? If so, that's great motivation! Make it part of your case, don't be shy about it. How is "storing [externref] in language-level aggregates" represented in FFI?
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@Jules-Bertholet · 2026-07-29T04:27:21Z:
+Note that whether or not this RFC ends up accepted in something like its current form, none of this work will be wasted. By fully describing the problem space, you enable everyone working on Rust to consider how what they are working on or thinking about intersects with Wasm's specific needs, and the end result will be a language that better supports them.
+
+---
+
+@Darksonn · 2026-07-29T08:39:03Z:
+Could we change wasm to make this type less special?
+
+You've explained that the table representation is currently bespoke, which causes interoperability problems. But why can't wasm just pick one and standardize it on the wasm side? Then it'd no longer be a bespoke representation, but just the standard ABI and we can build *that* into the language and support it as a completely normal type with integer size.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@RalfJung · 2026-07-29T12:21:27Z:
+The semantics of this RFC cannot be supported by the Abstract Machine that we have developed so far to talk about Rust. That's a big setback since that Abstract Machine is needed for us to confidently answer questions like "is this MIR transform correct" or "are we correctly translating MIR to LLVM IR". In other words, as-is this RFC robs us of the ability to precisely reason about MIR, which is inacceptable. This isn't even properly discussed as a drawback, and no attempt is made at sketching what the Abstract Machine for Rust could look like with `externref`. You can look at [MiniRust](https://github.com/minirust/minirust/) as a basis if you want to get an idea for what an Abstract Machine for current Rust could look like. (The RFC talks about the fact that this breaks type system assumptions, but that's only a small fraction of the problem. We've had RFCs that break type system assumptions before. This RFC breaks Abstract Machine assumptions. We've never had an RFC anything like this.)
+
+Usually the approach to represent "external resources" in a language like Rust is something similar to file descriptors: a number into a table that is managed outside the realm of the language and that we can only talk about indirectly. The RFC mentions tables but only as "third-party" options. But a table does not have to be third-party, the intrinsics required for that could be in libcore. Given the gigantic cost of the proposed solution, the RFC needs to spend a comparable gigantic amount of space and effort explaining why the table solution, even if it became a first-party concept with good language and library integration, is so bad that we have to undertake the biggest change of the language since Rust 1.0 in order to avoid it.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@RalfJung · 2026-07-29T12:34:52Z:
+There 's a major drawback that's not discussed enough IMO: none of the existing language and library ecosystem works for this, meaning it will be a major pain to do *anything* with these types. You cannot return them from `Result` functions, you cannot use them in async blocks/functions, you cannot use `==` on them, you cannot newtype them... this RFC is proposing to introduce a fundamentally new kind of thing to Rust only to then make that thing a complete nightmare to use for anything.
+
+The result of this will not feel like "Rust supports `externref` now". It will feel like "`externref` has been bolted on to Rust in a poorly integrated unergonomic way".
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@RalfJung · 2026-07-29T12:38:08Z:
+>  wasm-bindgen's `JsValue` does not interoperate with other custom table wrapping systems.
+
+So let's define a standard table system for Rust that's used across the ecosystem, and let's design it in a way that it can be picked up by other languages as well (or can be adjusted to eventually achieve interop with other languages, once anyone else is interested).
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@juntyr · 2026-07-29T13:09:09Z:
+While the proposed design would mirror `externref` exactly, I think a non-zero cost wrapper could work better. The wrapper would still be special in that any stores or loads to memory would be translated into stores and loads into a Rust-owned table. As an optimisation, a pass could then look for cases where an `externref` in fact only passed as a function parameter and remove the table calls. In that case, Rust users could use an almost-normal opaque type, and cases that are written to comply with `externref`'s usage rules would be optimised to compile to the same code as using this restricted proposal
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@Nadrieril · 2026-07-29T13:13:22Z:
+Also, without a lot more opsem work:
+
+- Cannot be the type of a struct/enum field (except maybe transparent structs)
+
+---
+
+@clarfonthey · 2026-07-29T15:41:07Z:
+So, I kind of felt that would be implicit due to "no defined layout" but we can add it explicitly too. (I guess that without layout it could still technically be bolted onto the end of a struct but I'm not sure extern types allow that, especially if alignment is undefined.)
+
+---
+
+@guybedford · 2026-07-29T17:20:13Z:
+You're correct that this could work mechanically, but it is a consequence of the blanket generics ban - `FnOnce<Args>` has `Args = (externref, ...)` which is banned as a generic `externref` type.
+
+Note that my original version of this proposal only allowed `externref` in `extern` block foreign function definitions and `extern "C" fn` exports. That could still be a possible reframing of this proposal to avoid the complexity of arbitrary function scenarios.
+
+---
+
+@guybedford · 2026-07-29T17:27:39Z:
+This is covered in the future possibilities section briefly but I could expand on it further.
+
+Basically, the shared table would support `&externref` as the storable variant as an additional feature (`__externref_t*` in https://github.com/llvm/llvm-project/issues/201466) This layers onto the base `externref` support though which itself keeps all the strong guards defined by this RFC.
+
+So the design of this `externref` remains a requirement even when `&externref` exists - none of the work in this proposal is wasted and the layering works out naturally.
+
+If we made `externref` just an alias for `__externref_t*` ignoring support for `__externref_t` then that would force all FFI values to be table indices, which is exactly the situation we are trying to get away from here.
+
+If we made `externref` a magical alias that picks one or the other representation depending on usage position, that would break a whole bunch more invariants in having a far more complex Heisenberg type.
+
+---
+
+@guybedford · 2026-07-29T17:35:22Z:
+In this scenario, how would you distinguish between the opaque form, and actually getting the index of an `&externref` on an FFI boundary? Or would `externref` mean different things depending on usage site? How to categorize those cases and avoid `&&externref` being amgiuous?
+
+---
+
+@juntyr · 2026-07-29T19:05:30Z:
+My idea would be that `externref` in Rust-only code is effectively a table index, but that at FFI boundaries (when defining or calling `extern "C"` functions), the actual WASM `externref` is passed, with table index conversions happening right at the boundary. A reasonably clever optimisation pass could then see that
+
+```rust
+unsafe extern "C" {
+    fn create_ref() -> externref;
+    fn use_ref(v: externref);
+}
+
+pub fn run() {
+    unsafe {
+        let r = create_ref();
+        use_ref(r);
+    }
+}
+```
+
+which would lower to a `externref` -> table insert -> table extract -> `externref` sequence, could be replaced by just passing the `externref` directly.
+
+
+---
+
+@guybedford · 2026-07-29T23:27:26Z:
+It's an FFI feature primarily, yes.
+
+---
+
+@guybedford · 2026-07-29T23:28:34Z:
+Would it help if we formally restricted `externref` to only `extern "C"` and `extern` block functions? That would still provide the major benefit IMO.
+
+---
+
+@Jules-Bertholet · 2026-07-29T23:37:04Z:
+I don't think that makes a difference. As long as values of this type are passing through Rust code, we need a full semantics to understand what is happening.
+
+> It's an FFI feature primarily, yes.
+
+As I've suggested elsewhere, please please provide a full fleshed-out example so that those of us who don't know Wasm can fully grok your use-case. (Take all the time you need, don't rush it)
+
+---
+
+@ds84182 · 2026-07-30T00:39:08Z:
+You could skip all of the language changes if externref naturally decayed to an index within a table when it needs to be stored to memory. This needs runtime support. Similar to panic handlers, the compiler would depend on externally provided table allocation and free functions.
+
+Otherwise I don't think this RFC will make any reasonable progress.
+
+---
+
+@programmerjake · 2026-07-30T01:40:01Z:
+> You could skip all of the language changes if externref naturally decayed to an index within a table when it needs to be stored to memory.
+
+I think this is the third time that something like that was proposed -- I proposed it on Zulip. I do think that having the Rust type be an index into a table except when passed by value in function args/return values (maybe limited to `extern "C"`) is a good idea, and that LLVM can help with optimizing to remove redundant table allocations/reads/writes.
+
+---
+
+@ds84182 · 2026-07-30T02:36:47Z:
+If anything, I don't think Clang should be a role model. `__externref_t` is a non-standard extension to C and C++ implemented in Clang to handle a bespoke target feature. Other compilers, like GCC and MSVC, do not have this (or any type like this).
+
+More generally, I do not think languages should change at such a core level to support something extremely niche like this. WebAssembly has so many oddities that have to be papered over due to fundamental issues in its design. Those oddities should be dealt with by the compiler and/or runtime.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@RalfJung · 2026-07-30T07:21:13Z:
+> Would it help if we formally restricted externref to only extern "C" and extern block functions? That would still provide the major benefit IMO.
+
+One can define and call `extern "C"` functions from Rust so on its own that doesn't really help.
+
+> I think this is the third time that something like that was proposed -- I proposed it on Zulip. I do think that having the Rust type be an index into a table except when passed by value in function args/return values (maybe limited to extern "C") is a good idea, and that LLVM can help with optimizing to remove redundant table allocations/reads/writes.
+
+Yeah that makes sense: have this behave like a normal type with a special ABI. ABIs already involve special concepts we cannot represent in Rust, like registers. Having a type that's a table index normally but a bare `externref` on the ABI will stretch the limits of our already overstretched ABI handling in rustc, but at least that is "just" an implementation concern.
+
+---
+
+@Diggsey · 2026-07-30T11:53:52Z:
+WASM supports multiple tables and has two different table types so far - https://developer.mozilla.org/en-US/docs/WebAssembly/Reference/Definitions/table
+
+It's also possible that it might support doing "more things" with `externref` or `funcref` types in future, which could be hard to retrofit onto an opinionated ABI-based approach.
+
+I wonder if this could be solved via https://doc.rust-lang.org/beta/core/arch/macro.global_asm.html instead?
+
+Instead of trying to build a parallel set of semantics into the Rust AM, just use global ASM to turn it into operations that do make sense in the Rust AM?
+
+---
+
+@RalfJung · 2026-07-30T12:07:48Z:
+The best you can do with global asm is implement the table yourself, I think? The actual values flowing through Rust can still at best be table indices.
+
+> It's also possible that it might support doing "more things" with externref or funcref types in future, which could be hard to retrofit onto an opinionated ABI-based approach.
+
+Well, languages based on addressable memory are hard to retrofit onto an opinionated semantics with primitive reference types...
+
+---
+
+@Diggsey · 2026-07-30T13:14:07Z:
+> The best you can do with global asm is implement the table yourself, I think? The actual values flowing through Rust can still at best be table indices.
+
+Yes, I'm suggesting that this might be the best approach.
+
+> Well, languages based on addressable memory are hard to retrofit onto an opinionated semantics with primitive reference types...
+
+Well, quite. For example, these operations are already in WASM, and an opinionated ABI-based approach could support some of them via intrinsics, but many would be hard or impossible I think:
+
+| Operation / instruction | `funcref` | `externref` | Result / effect | Notes |
+|---|:---:|:---:|---|---|
+| `ref.null func` | ✅ | — | Produces a null `funcref` | For the function-reference hierarchy |
+| `ref.null extern` | — | ✅ | Produces a null `externref` | For the external-reference hierarchy |
+| `ref.func $f` | ✅ | — | Produces a non-null reference to `$f` | The function must be declared for reference use |
+| `ref.is_null` | ✅ | ✅ | Produces `i32` | `1` for null, otherwise `0` |
+| `ref.as_non_null` | ✅ | ✅ | Converts nullable reference to non-null reference | Traps when the operand is null |
+| `ref.eq` | ✅ | ✅ | Produces `i32` identity comparison | Both operands must satisfy the instruction’s reference-type constraints; it does not inspect their contents |
+| `ref.test <type>` | ✅ | Limited | Produces `i32` | Runtime type test; mainly useful with typed function and GC reference hierarchies |
+| `ref.cast <type>` | ✅ | Limited | Produces a narrowed reference | Traps if the runtime type does not match |
+| `drop` | ✅ | ✅ | Discards the reference | Works on every value type |
+| `select` | ✅ | ✅ | Selects one of two references | Both alternatives must have a compatible type |
+| `select (result <reftype>)` | ✅ | ✅ | Typed selection | Explicit result type |
+| `local.get` | ✅ | ✅ | Reads a local reference | Local must have the corresponding reference type |
+| `local.set` | ✅ | ✅ | Writes a local reference | |
+| `local.tee` | ✅ | ✅ | Writes and retains the reference | |
+| `global.get` | ✅ | ✅ | Reads a global reference | |
+| `global.set` | ✅ | ✅ | Writes a mutable global reference | Global must be mutable |
+| `table.get` | ✅ | ✅ | Reads a reference from a table | Table element type must be compatible |
+| `table.set` | ✅ | ✅ | Writes a reference into a table | |
+| `table.grow` | ✅ | ✅ | Grows a table using a reference as the initial value | Returns the old size or `-1` |
+| `table.fill` | ✅ | ✅ | Fills table entries with a reference | |
+| `table.copy` | ✅ | ✅ | Copies references between tables | Source and destination element types must be compatible |
+| `table.init` | ✅ | ✅ | Initializes a table from an element segment | Element segment type must be compatible |
+| `table.size` | ✅ | ✅ | Produces the table size | Does not operate on an individual reference value |
+| `elem.drop` | ✅ | ✅ | Discards an element segment | Does not operate on an individual reference value |
+| `call_indirect` | ✅ | ❌ | Calls the referenced function from a table | Performs a runtime signature check |
+| `return_call_indirect` | ✅ | ❌ | Tail-calls a function from a table | Requires tail-call support |
+| `call_ref` | ✅ | ❌ | Calls a typed function reference directly | Requires a typed function reference, not merely an unrefined `funcref` |
+| `return_call_ref` | ✅ | ❌ | Tail-calls a typed function reference | Typed function references plus tail calls |
+| Function parameter passing | ✅ | ✅ | Passes a reference into a function | Works for Wasm-defined and imported functions |
+| Function result | ✅ | ✅ | Returns a reference | Works for Wasm-defined and imported functions |
+| `call` / imported call | ✅ | ✅ | May consume or produce references | According to the callee’s declared signature |
+| `return` | ✅ | ✅ | Returns reference-typed results | According to the current function signature |
+| `br` | ✅ | ✅ | Transfers references as label arguments | According to the target block type |
+| `br_if` | ✅ | ✅ | Conditionally transfers references | |
+| `br_table` | ✅ | ✅ | Transfers references to one of several labels | All target label types must be compatible |
+| `block`, `loop`, `if` parameters/results | ✅ | ✅ | Carries references through structured control flow | Reference types can appear in block signatures |
+| Import/export | ✅ | ✅ | Exchanges references across the host boundary | Subject to the embedding API |
+| `any.convert_extern` | ❌ | ✅ input | Converts `externref` to an internal `anyref` representation | GC/reference conversion; does not reveal the host object |
+| `extern.convert_any` | ❌ | ✅ output | Converts an internal `anyref` back to `externref` | Inverse of `any.convert_extern` |
+
+---
+
+@guybedford · 2026-07-30T15:39:41Z:
+I'm not completely opposed to this framing, and see the attraction of forcing the opqaue host value semantics to the very edge of the FFI boundary. I can certainly explore the a cross-toolchain prototype further on this and share back what I find.
+
+---
+
+@guybedford · 2026-07-30T15:41:45Z:
+Very explicitly the goal of this proposal is typing JavaScript interop, NOT Wasm GC interop.
+
+That means we care about JS builtin types (`wasm:js/` intrinsic imports), not arbitrary GC ops.
+
+---
+
+@guybedford · 2026-07-30T15:48:27Z:
+> If anything, I don't think Clang should be a role model
+
+Certainly that makes sense, and I agree, the proposal should be justified independently for Rust and not blindly follow any semantics based purely on precedent.
+
+> More generally, I do not think languages should change at such a core level to support something extremely niche like this.
+
+IMO, JavaScript interop is not a complex or niche topic and this is a major quality of life improvement to that story. Rust has solved far harder and far more niche problems!
+
+---
+
+@TimNN · 2026-07-31T06:14:06Z:
+Not sure if it's worth including it here, but I was somewhat interested in this topic in the past and wrote a bit about it:
+
+* https://hackmd.io/@TimNN/SJh8MNiN6 was my explanation of the problem, describing the different implementation options I saw. 
+* https://hackmd.io/@TimNN/Hk1LO6iMJe was an attempt to fit this more cleanly into the type system (based on the new Sized Hierarchy RFC) , by introducing `AbstractValue` and `AbstractCopy` traits.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@TimNN · 2026-07-31T06:14:48Z:
+Should this (briefly) mention how this could be extended to support WASM GC types?
+
+Also, supporting transparent wrapper types around `externref` seems like a relatively simple future extension.
+
+*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rfcs/3987/f635361c8e3d927208afd6097d4fc5f30e703b43..ce3886d83cc4e5b27012a1320b2c8bfd38e1e356)*
+
+---
+
+@TimNN · 2026-07-31T06:45:06Z:
+I've thought a bunch about "externref in Rust" in the past (though it's been quite a while), including prototyping some bits.
+
+I think my latest conclusion was also that representing `externref` as a table index was the cleanest way to represent it in Rust. (Because introducing it as an "abstract value" would require significant changes to / extensions of the language). 
+
+The main downside I saw was that it makes the table index conversion implicit, hiding the associated cost.
+
+(At the time I was thinking that (post-mono) MIR (or LLVM) optimizations could even represent`&externref` as `externref` if it's address is never taken).
+
+=== ROW 197 | f013224 | https://users.rust-lang.org/t/an-ai-assistant-llm-for-rust-lang-org/107676 | 2024-03-02 | users-forum ===
+An AI assistant/(LLM) for rust-lang.org
+
+@jasn-armstrng · 2024-03-02T18:01:00.574Z:
+Dear Rust Community,
+I'm writing to propose integrating an AI assistant or a large language model (LLM) like GPT into the rust-lang.org website. This AI assistant could significantly enhance the user experience by offering a more intuitive and efficient way to navigate the vast amount of information available.
+Here are some potential functionalities the AI assistant could provide:
+Enhanced Documentation Search: Many users struggle to find specific information within the extensive Rust documentation. The AI assistant could understand natural language queries and pinpoint relevant sections, saving users valuable time.
+Intelligent Blog Exploration: The assistant could analyze the blog content and suggest articles or references related to a user's search query. This would be particularly helpful for users seeking solutions to specific problems or wanting to delve deeper into a particular topic.
+Context-Aware Code Examples: Imagine the AI assistant suggesting relevant code examples based on the user's current code snippet or the problem they're trying to solve. This could be a game-changer for learning and development.
+Interactive Tutorials: An AI-powered interactive tutorial system could tailor learning experiences based on the user's skill level and progress. This would create a more personalized and engaging learning environment.
+Community Integration: The assistant could potentially connect users with relevant discussions on forums or Stack Overflow based on their current task or question. This would foster a more collaborative learning environment.
+Benefits for the Rust Community:
+Increased User Engagement: Easier access to information would keep users engaged and productive within the Rust ecosystem.
+Reduced Learning Curve: AI-powered tutorials and suggestions could significantly reduce the learning curve for new Rust programmers.
+Improved Documentation Reach: The AI assistant could help users discover hidden gems within the documentation, leading to a better understanding of Rust's capabilities.
+Strengthened Community Interaction: By facilitating connections to relevant discussions, the AI assistant could foster a more vibrant and supportive community.
+Next Steps:
+This is just a starting point for discussion. I encourage the community to consider the potential benefits and challenges of integrating AI into rust-lang.org. Perhaps a pilot program or user survey could be conducted to gauge interest and identify the most valuable functionalities.
+Thank you for your time and consideration. I believe this integration has the potential to significantly enhance the Rust learning and development experience for everyone.
+Sincerely
+
+---
+
+@jofas · 2024-03-02T18:08:23.470Z:
+Your proposal is probably inevitable, though I largely disagree with your benefits. Honestly, sounds to me like all you want is @quinedot to be always online
+
+---
+
+@jdahlstrom · 2024-03-02T18:18:23.273Z:
+Did… you did use ChatGPT to write this post, did you? It has such an obvious style that I can’t even imagine the amount of eye-rolling going on amongst teachers and TAs grading student work these days.
+
+---
+
+@kornel · 2024-03-02T18:19:54.122Z:
+These things could be helpful, but LLMs are controversial due to risk of hallucinating wrong answers, as well on ideological grounds due to being based on copyrighted material without compensation or even attribution (even though it's probably legal), and being a threat to creative labor.
+MDN added such assistant, and it wasn't well received in the community.
+
+---
+
+@jdahlstrom · 2024-03-02T18:22:57.516Z:
+What I would’t be totally opposed to actually is integrating some Copilot-like thing into play.r-l. assuming it would in fact make it more convenient to write quick code snippets.
+
+---
+
+@jofas · 2024-03-02T18:29:13.794Z:
+To be clear, I also believe there are potential benefits to semantic search and LLMs. But not the ones listed in the OP, except "improved documentation reach."
+
+---
+
+@jasn-armstrng · 2024-03-02T18:37:22.641Z:
+Not advocating anything like co-pilot but rather LLM driven semantic search.
+
+---
+
+@jumpnbrownweasel · 2024-03-02T18:37:26.330Z:
+Making it completely opt in -- so it doesn't appear in the UI at all unless enabled by a preference -- would avoid some resistance, for me at least. I wouldn't use it, for now at least, but I can understand why it could be important to start working on it and improving it. People are already using GPT for Rust questions and then coming to the forum with the output and asking for more help. So eventually perhaps a built-in GPT for the forum would be an improvement over that.
+
+---
+
+@quinedot · 2024-03-02T18:45:42.155Z:
+I'm very flattered...assuming you don't mean my posts are LLM-quality  .
+
+---
+
+@steffahn · 2024-03-02T18:52:30.627Z:
+Re. “semantic search” are there good precedents to look at for that? I have a hard time imagining the kinds of capabilities LLMs can offer there.
+For context: My personal experience with ChatGPT always was that it’s almost impossible to get actual search results of actual “true” data / reference material out of it. Though perhaps that’s because it isn’t tailored to a narrower but better-known (to it) data set. It certainly cannot reliably and accurately quote from it’s original language training data, nor give references. I have not worked with models that are “fine tuned” (I believe that’s the correct term) to specific data sets yet, though. And as far as the web search capabilities it provides are concerned[1], the Bing queries it produces are most often almost childishly naive, with no hopes of finding any good results. (And then it just goes on and summarizes the useless web search results anyways, even if it has barely anything to do with the concrete question I’ve had.)
+not that that capability must have a lot to do with the proposed idea of “semantic search”, but at least both involve “search” and “LLM”, and it’s the best in terms of experience that I personally have ↩︎
+
+---
+
+@shanesveller · 2024-03-02T21:00:26.817Z:
+jasn-armstrng:
+Thank you for your time and consideration. I believe this integration has the potential to significantly enhance the Rust learning and development experience for everyone.
+@jasn-armstrng As a user who registered today with this being your only forum topic, can you share anything about your previous experience learning, using, or teaching Rust yourself?
+
+---
+
+@ZiCog · 2024-03-02T21:17:10.366Z:
+ChatGPT was an interesting waste of time for me last week.
+After spending half a day struggling to use some Rust crate (it does not matter what it is here) I had made no progress. The docs were not helping my simple mind. The examples did not cover what I wanted to do. The error messages coming out of it made no sense to me.
+In desperation I turned to ChatGPT. I tried to ask my question as clearly as possible and give as much context as I could. ChatGPTs initial response looked kind of reasonable. This was encouraging.
+However it did not compile. I promoted again with the error message and it politely apologised for the mistake and gave a new version of its suggestion.
+That did not work either.
+This conversation went on for quite a while, but ChatGPTs responses got worse and worse. It was hallucinating methods on that crate that did not exist all kind of nonsense. Starting over from scratch with a different tack did not help. After three hours I gave up and went down the pub.
+Three beers later, in a desolate, quiet bar, a solution sprung into my mind. I cracked open the MacBook and tried it. It worked!
+Conclusions:
+a) ChatGPT is worse at Rust than even me after three beers!
+or
+b) I'm to stupid to prompt ChatGPT in a productive way.
+
+---
+
+@steffahn · 2024-03-02T22:33:24.927Z:
+Just out of curiosity (as that does tend to make a real difference in capabilities in my experience)[1] was that the (paid) ChatGPT 4 model or the ChatGPT 3.5 one?
+by which – if it was version 3.5 – I am in no way trying to claim that I have any expectation of version 4 being necessarily any better at your particular task you gave it. I am just curious, and not trying to promote paid ChatGPT subscriptions ↩︎
+
+---
+
+@ZiCog · 2024-03-02T22:39:53.261Z:
+Only the free ChatGPT 3.5 on chat.openai.com.
+I'm not into paying until I see some signs it might actually be useful.
+So far, on a few tasks now, not looking good.
+
+---
+
+@the-mcmaster · 2024-03-02T22:42:32.532Z:
+All I can imagine is a screenshot someone takes in the future where someone tricks the Rust LLM to give out instructions on how to enrich uranium, or something ridiculous like that. The technology is cool, but its unpredictable like people.
+The main issue I see is not the LLM itself, but who is hosting it. Whoever hosts it will carry the liability of its responses. Additionally, whoever hosts it can affect its biases, which I foresee being a mess.
+I argue that a Rust LLM is cool, but Rust shouldn't host it.
+
+---
+
+@jasn-armstrng · 2024-03-02T22:45:16.253Z:
+Thanks for the question. I've just started using Rust, coming from mainly Python.
+I want to be able to use the extensive resources already on rust-lang.org and not have to go to SO, ChatGPT, Copilot, YouTube, or books to know how to idiomatically open/read/write to a file for example.
+If this is possible and what is highlighted here is a "reading documentation" skill issue please let me know and I'm open to recommendations.
+
+---
+
+@Vorpal · 2024-03-02T23:39:28.336Z:
+Three points here:
+Rust documentation search is pretty bad currently. It only finds things from the types and names it seems. Nothing from the actual documentation text. This lead me to asking @BurntSushi for where to find replace in regex-automata recently. Turns out it was called interpolate. The module documentation text has the replace keyword though. This is not the first time something like this has happened. I believe just adding proper full text search would be a huge step forward.
+Copilot for smarter tab completion is the one AI thing thing I actually found useful. Sure it is hallucinating quite a bit. But I know what I want generally and it helps save key strikes when it gets it right. It is really good for repeated cases (handle enum variant a b c and d according to a pattern, write one by hand get the others for free). Given that I have RSI (carpal tunnel, both hands) from too much computer usage I love this.
+AI customer service is infuriating. I had to call FedEx the other day. They had something that even pretended typing on a keyboard to look up a shipping number. The whole experience left a bad taste in my mouth.
+
+---
+
+@steffahn · 2024-03-02T23:46:13.410Z:
+ZiCog:
+I'm not into paying until I see some signs it might actually be useful.
+Understandable. By the fact that I was asking about your experience, you can probably see I’ve not ever been using it for the purpose of Rust development, either. I find it super useful for learning more about foreign languages, for example.
+At translations and re-formulating stuff it’s perfect of course; spotting grammar and stylistic issues also works pretty good, etc… when asking grammar questions, the results depend - sometimes good, sometimes lots of hallucination.
+Even for simple-ish tasks, one quality of the better model also was that it’s just way better at accurately following instructions. Like, if I want it to point out grammar mistakes in a text, and specify it should list the mistakes, not re-write the whole text into a fixed version, that’s the kind of thing where the GPT-3 models sometimes just plain did not do what I was asking for.
+
+---
+
+@kpreid · 2024-03-03T00:44:38.885Z:
+Vorpal:
+Rust documentation search is pretty bad currently. It only finds things from the types and names it seems. Nothing from the actual documentation text.
+Note that one of the factors here is that the entire documentation search code and index is distributed along with every set of generated documentation, so that it is private and offline-compatible. So, functionality improvements need to be weighed against increased size of the output.
+
+---
+
+@Vorpal · 2024-03-03T08:12:27.419Z:
+kpreid:
+Note that one of the factors here is that the entire documentation search code and index is distributed along with every set of generated documentation, so that it is private and offline-compatible. So, functionality improvements need to be weighed against increased size of the output.
+I believe there could be ways to mitigate this (compress the index file, shard the index based on n-grams, ...). Also as I understand it, docs.rs currently makes crates share CSS and js resources (that is one of the reasons it uses nightly)?
+Anyway I opened a thread on internals about this (pre-pre-pre-rfc?), so if you have specific insights, please share over there.
+
+---
+
+@anon80458984 · 2024-03-03T14:45:16.966Z:
+I do not have any financial interest in phind.com
+I've found phind.com quite a bit more useful than Google for questions of the form "I know this Rust question has a < 10 line solution; find it for me." ; (non scientific numbers) Google is < 5% , Phind is about 50/50 for me.
+
+---
+
+@ZiCog · 2024-03-03T15:31:01.512Z:
+Wow, I was just now asking ChatGPT to knock up some Rust code using Tokio for a simple task and it's solution obviously would not work. I gave up negotiating with it for something better, it always seems to just get worse as we go along for me.
+Seeing your post I cut and pasted exactly the same question in to phind.com. Its suggestion looks to be spot on first time (almost, but that's my prompts fault).
+Not only that it lists a bunch of sources, presumably from which the response came.
+
+---
+
+@kpreid · 2024-03-03T18:58:54.743Z:
+ZiCog:
+Wow, I was just now asking ChatGPT to knock up some Rust code using Tokio for a simple task and it's solution obviously would not work. I gave up negotiating with it for something better, it always seems to just get worse as we go along for me.
+I haven't yet personally chatted with any LLMs (that I am aware of…), but from what I've heard, this is essentially what you should expect when it doesn't know something: they haven't been trained to have “the correct answer is that I don't know”[1] (nobody's figured out how to do that yet, I assume, because it'd be clearly valuable if they did), so when they've already given you the best guess, asking further just iterates on "this is what most textually-resembles a correct answer to this question and is different from the previous answer". So, when you get that kind of output, you know it's time to stop.[2]
+which is different from being instructed to not answer a certain category of questions, because then the category is a known thing ↩︎
+Or take a different approach — apparently some remarkable results have come from prompting LLMs to “think out loud” about a problem rather than just give the answer. ↩︎
+
+---
+
+@ZiCog · 2024-03-03T19:07:12.357Z:
+kpreid:
+...when you get that kind of output, you know it's time to stop.
+What you describe is certainly my experience with ChatGTP.
+However phind did actually make appropriate tweaks to its original solution when I said it had a little problem with it. So we were still moving forward.
+I have read quite a few devs that say one has to learn how to prompt the thing to tease out better answers. But that is not what I have managed to do yet.
+So far the score on AI finding solutions to things I was stuck on are:
+ChatGTP 0
+phind 1
+Me 3
+
+---
+
+@Jesper · 2024-03-03T19:34:12.246Z:
+kpreid:
+I haven't yet personally chatted with any LLMs
+Why not - out of principle?
+
+---
+
+@kpreid · 2024-03-03T21:15:05.441Z:
+Jesper:
+Why not - out of principle?
+Several reasons:
+I do not find myself to have specific problems that I expect would be usefully solved this way.
+For the specific case of “how do I use this library” — I've always found diving into the API documentation to be the fastest way forward, for me. (Often when I've had trouble using a library, the problem was that they didn't have good reference documentation and the only information was in tutorials/examples which didn't cover the case I wanted. Perhaps a LLM could assemble the info I want, but I expect that anything that's well-known enough to be in the LLM's data set is also popular and/or maintained enough that decent documentation exists.)
+I appreciate high-quality writing, that communicates a concept well by choosing the right words — if I ask an LLM, I will get something that is likely sometimes to mimic the form of other writing without actually having underlying coherence. This seems both unaesthetic and potentially subtly harmful. (But, of course, I already admitted I haven't tried. I just read about other people's successes and failures.)
+I'm concerned  about the amount of collective rushing-forward to develop and use more AI that is being done, and I want to minimize the amount of action I take which supports this trend.
+I should say, though, that “chatted” was an important qualifier in my previous post — I do make use of GitHub Copilot, because it is good at things like completing a set of impls or match arms based on my having written one example, which are especially tedious and RSI-aggravating. But I never ask it “here is my problem in English; solve it for me”.
+
+---
+
+@frapa · 2024-03-04T08:01:27.872Z:
+These things could be helpful, but LLMs are controversial due to risk of hallucinating wrong answers, as well on ideological grounds due to being based on copyrighted material without compensation or even attribution, and being a threat to creative labor.
+Indeed, apart from the obvious quality issues as outlined in some other answers, I am concerned about this copyright issue!
+How can companies take all copyrighted work from people online and turn it into a product without attributing or paying anybody? How's that even legal? Sure I can change my license to forbid it, but they won't honor it, isn't it?
+Search engines would drive people to your site, artwork or code, but LLM don't.
+That's why I plan to move all my code away from GitHub/Gitlab, I've been working on my own open-source git host last month ...
+
+---
+
+@farnz · 2024-03-04T11:13:09.975Z:
+steffahn:
+Re. “semantic search” are there good precedents to look at for that? I have a hard time imagining the kinds of capabilities LLMs can offer there.
+The term to watch for is "retrieval-augmented generation" (RAG); the idea is that you take the query, run it through some form of document retrieval (such as an approximate nearest neighbour database), and then feed both the query and the search results into the LLM.
+If done well, this causes the LLM to summarise the relevant subset of the documents that were found, and thus a RAG can give you a friendly summary with references where the LLM output helps you understand why the references are useful, and the documents you rely on are the references.
+It's still an area of active research (as so much LLM-related stuff is), but that's the current front-runner in LLM-assisted semantic search.
+
+---
+
+@kevinmcfarlane · 2024-03-04T11:24:12.993Z:
+ZiCog:
+Conclusions:
+a) ChatGPT is worse at Rust than even me after three beers!
+or
+b) I'm to stupid to prompt ChatGPT in a productive way.
+I'm hooked up to several Chat AIs. Depending on the prompt some are better than others. No one Chat is better than all others for every question. For technical and programming questions Phind is the best on average. Perplexity is also quite good.
+There is a skill to crafting prompts. If you hunt around YouTube you'll find various videos on the topic. Though I haven't yet seen one that is coding-specific.
+ZiCog:
+Only the free ChatGPT 3.5
+MS Copilot (formerly Bing Chat) uses GPT-4, so you should try that. Perplexity gives you some limited free GPT-4 access as well. Phind used to but has withdrawn that.
+FWIW, I've been using various Chat AIs with Rust for quite some time and I've found them informative - even when they get answers slightly wrong. And then they correct themselves when I point it out. (I've also found his in non-programming contexts.)
+Several of the Chats provide web links with their answers as well. These are not foolproof but you're not in the situation of the original ChatGPT.
+Vorpal:
+Copilot for smarter tab completion is the one AI thing thing I actually found useful. Sure it is hallucinating quite a bit. But I know what I want generally and it helps save key strikes when it gets it right. It is really good for repeated cases (handle enum variant a b c and d according to a pattern, write one by hand get the others for free).
+Yes. I'm using the free Codeium in VS Code and VS, and the code generation is pretty cool and sometimes spooky when it generates almost exactly what I was going to type. It's like code snippets on steroids. Even when it's not quite what you intended, and only 90% right, it still saves you time.
+I'm surprised at the hostility in this thread to the OG though, especially if it's something you can opt out of. I also tried getting it to translate some C# to Rust a bit at a time and it was accurate, except being off by one in one case. In a section where the C# was using LINQ the Rust was an imperative loop. I then asked it to make it as concise as the C# and it rewrote using a slick functional construct, educating e in the process.
+But bear in mind you've certainly been using AI behind the scenes in regular search engines for years anyway. The difference now is that users can provide an input.
+Whether regular search or AI search you still have to keep your brain engaged.
+
+---
+
+@jdahlstrom · 2024-03-04T11:25:33.561Z:
+It is possible to get ChatGPT to fix its own errors if:
+the problem is actually something semi-non-obscure, [1]
+and you either already know the answer, or have a good hunch of the answer, or (optimally) ChatGPT’s initial wrong answer was correct enough that you can work with it and "reason step by step" as they say. [2]
+But if you’re clueless about some niche topic, it’s going to be just as clueless as you.
+That said, GPT-4 vastly outclasses, outsmarts and out-thinks GPT-3.5.[3] It still hallucinates – it still doesn't know how to say "I'm not sure" – and if it doesn’t know something, it can’t magic up information (except with the web search feature! that could easily change things) but it’s definitely a great deal smarter about many things. I subscribed to it for a few months and was impressed, but ultimately I didn’t need it so I cancelled for now. But I should maybe check it out again.
+In any case, it’s important to understand that it’s not a teacher, except in topics you could more or less look up in Wikipedia or MathWorld or Stack Overflow anyway. But it can function as really weird, kind of autistic savant junior colleague-ish that you can collaborate with as long as you’re very aware of its limits. The most important of them being the fact that it can suddenly start spewing nonsense (eloquent nonsense, but nonsense nevertheless) all the while thinking it's being very helpful and a good boi.
+eg. math, or JavaScript I guess. But Rust+tokio is hopelessly out of ChatGPT’s league due to the near-epsilon amount of training material available. ↩︎
+A well-known trick to get an LLM to be smarter is to ask it to "show its work" or "write out its reasoning step by step". This works well, just like it works for humans. Every token generated gives it extra context to predict the next token, and the inferential steps to take are smaller. This essentially gives it a larger "short-term memory" (remember, it's a pure, stateless predict-the-next-token function on strings 𝓣* → 𝓣, where 𝓣 is an alphabet of tokens, that's just called iteratively). ↩︎
+GPT-4 in fact predates GPT-3.5 by several months, and was supposed to simply be the direct successor of GPT-3. In closed red-team testing people found that it's a) scarily smart and b) scarily amoral, without any restraints on how dangerous, illegal or unethical advice it could tell you. So OpenAI decided to release an interim version and spend a few more months adjusting version 4's morality chip, or conjuring a soul for it, or something like that (more prosaically called "reinforcement learning with human feedback"). ↩︎
+
+---
+
+@jdahlstrom · 2024-03-04T12:46:37.433Z:
+kevinmcfarlane:
+I'm surprised at the hostility in this thread to the OG though, especially if it's something you can opt out of.
+Honestly, I'd be much more impressed if their message didn't read as being written >90% by ChatGPT, prompted with something like "Please write me some convincing reasons why the Rust community should incorporate an AI assistant function to the Rust website".
+
+---
+
+@kevinmcfarlane · 2024-03-04T12:59:35.042Z:
+jdahlstrom:
+It is possible to get ChatGPT to fix its own errors if:
+the problem is actually something semi-non-obscure, [1]
+and you either already know the answer, or have a good hunch of the answer, or (optimally) ChatGPT’s initial wrong answer was correct enough that you can work with it and "reason step by step" as they say. [2]
+But if you’re clueless about some niche topic, it’s going to be just as clueless as you.
+Yep. Agree with that. I used it a bit with a Coursera Math for ML course I did recently. It was helpful, but I needed to have covered the material myself first. In one case, I was able to spot that its answer was wrong, based on its initial reasoning for something that I was unclear of myself. But, using the logic it clarified for me, I was able to point out that its answer was wrong. It then corrected itself.
+I wouldn't have been able to do this if I had no idea about the topic.
+
+---
+
+@ZiCog · 2024-03-04T13:06:44.682Z:
+A poem about Rust in Rust by hind.com
+fn main() {
+let verses = [
+"In the realm where Rust's power unfurls,",
+"A tale of memory, we must tell.",
+"A language of safety, it's known,",
+"But corruption lurks, in its own zone.",
+"",
+"In safety's embrace, it hides its sting,",
+"Yet corruption seeks, to bring its wing.",
+"A pointer's dance, in the unsafe's night,",
+"Where data's integrity, takes flight.",
+"",
+"A memory corruption, subtle and sly,",
+"In Rust's safety, it finds its way.",
+"A dance with danger, in the night,",
+"Where data's integrity, takes flight.",
+"",
+"In Rust's embrace, it hides its sting,",
+"Yet corruption seeks, to bring its wing.",
+"A pointer's dance, in the unsafe's night,",
+"Where data's integrity, takes flight.",
+"",
+"A memory corruption, subtle and sly,",
+"In Rust's safety, it finds its way.",
+"A dance with danger, in the night,",
+"Where data's integrity, takes flight.",
+];
+for verse in &verses {
+println!("{}", verse);
+}
+}
+Sorry.
+
+---
+
+@jdahlstrom · 2024-03-04T13:19:28.004Z:
+Ugh, the tortured meter was definitely painful to read.
+GPT-4, btw, understands meters fairly well based on my limited tests last year, certainly better than 3.5 which mostly doesn't even try. For example I asked for a poem in the Kalevala meter (trochaic tetrameter), and 4 actually delivered. 3.5 knew what I meant but its attempt at using it was anything but.
+
+---
+
+@anon80458984 · 2024-03-04T13:24:49.825Z:
+I personally do not find hallucinations to be a big problem for the following reason:
+Let T = time it takes human to generate a solution. Let V = time for me to check if a "solution" is correct or not.
+Generally, T / V > 100 or so. So even if it's 50/50 correct vs BS, it's not a big deal if it's fairly obvious to detect the BS solutions.
+
+---
+
+@steffahn · 2024-03-04T13:26:21.593Z:
+(I’m replying to @ZiCog, but this is also a remark of caution to all participants of this thread.)
+Please pay attention to our forum rules against machine generated content. I think this poem here is more tolerable in this thread than most other places in our forum, because the whole thread talks about LLMs, so LLM-generated content isn’t entirely off-topic and certainly if you want to share your own thoughts about a particular piece of LLM content, you may of course quote it…
+… but ultimately, this is still a human discussion about LLMs, and filling up the chat with answers that comprise of nothing but machine-generated content has the potential to make the overall experience worse & too spammy. (Imagine if the whole thread became filled with off-topic, uncommented demonstrations of AI outputs.)
+See also my post here about my interpretation of our forum rules. Also note that if you aren’t sure about the rules, clearly marked AI-generated content is generally not going to bring you into much of any trouble[1], since I appreciate correctly marked AI content every day over the unfortunate alternative of any (low-effort low-quality) unmarked AI content spam.
+unless perhaps if it goes very clearly against previous moderation feedback you received ↩︎
+
+---
+
+@jdahlstrom · 2024-03-04T13:28:31.742Z:
+I think you're onto something here. We can use standard computational complexity theory to reason about this stuff. After all, the whole P vs NP debacle is about problems that are difficult to solve but given a solution candidate it is easy to check if it's BS or not. I guess the literature doesn't exactly use the term "BS" but I think it's well justified in this case. Going to write a paper, brb ->
+
+---
+
+@steffahn · 2024-03-04T13:34:49.914Z:
+This depends heavily on the context IMO. In the context of programming for example, it is easy to verify AI-generated content for accuracy. The program you get either does compile and behave correctly, or it doesn’t, and you can test that. (Especially in not memory-unsafe languages where you have more hope that bugs & misbehavior don’t silently break your program’s behavior; especially in languages with strict type systems where many bugs are caught by the compiler, which makes verifying all the easier.)
+On the other hand, if you’re asking for information or explanations of things, especially less technical topics, it can be much harder (or at least more tedious) to verify, and hallucinations are causing more trouble.
+
+---
+
+@jasn-armstrng · 2024-03-04T13:47:53.039Z:
+I did write using an LLM only because writing a communication like that isn’t something I am good at. I wanted to highlight a challenge, propose a solution and invite discussion. I don’t see the issue with using an LLM for that. I gave it my points and it did the rest. Why would you assume that my thought process and prompt was that casual?
+
+---
+
+@Jesper · 2024-03-04T13:49:35.814Z:
+Confabulation - not halucination
+
+---
+
+@jofas · 2024-03-04T13:50:59.421Z:
+steffahn:
+The program you get either does compile and behave correctly, or it doesn’t, and you can test that.
+There is an interesting study showing how LLMs produce code that compiles but misuses APIs rather often. Which is of course a concern and "it compiles" shouldn't be a reassurance that the code produced is also correct I guess.
+
+---
+
+@anon80458984 · 2024-03-04T13:55:31.803Z:
+Clearly the solution is to teach LLMs Idris / Coq / Lean. You write the pre-condition, post-condition for the code, along with a big-Oh running time.
+The LLM generates code along w/ a proof.
+No more hallunications.
+/s
+
+---
+
+@2e71828 · 2024-03-04T14:07:38.071Z:
+jasn-armstrng:
+I did write using an LLM only because writing a communication like that isn’t something I am good at. I wanted to highlight a challenge, propose a solution and invite discussion. I don’t see the issue with using an LLM for that.
+The biggest problem in this case is that the LLM wasn’t very good at writing this communication, either.  While the text is perfectly erudite in isolation, it completely failed to match the usual tone of this forum and stripped your thoughts of any personality.
+
+---
+
+@kevinmcfarlane · 2024-03-04T14:34:59.568Z:
+steffahn:
+On the other hand, if you’re asking for information or explanations of things, especially less technical topics, it can be much harder (or at least more tedious) to verify, and hallucinations are causing more trouble.
+True, but for those Chat AIs that provide links you can at least look at the links. This helps but is still not foolproof.
+I remember asking Perplexity about a finding reported on a website that was potentially controversial. It answered that this was fake news in effect (because it was biased against the website - the website was just the messenger in this case).
+But Perplexity did provide a link. If you drilled into the details it turned out that what was reported was correct - or at least agreed with the original source - and Perplexity was wrong!
+So in this case Perplexity was kind enough to dish up a self-refutation.
+
+---
+
+@the8472 · 2024-03-04T15:04:20.044Z:
+Vorpal:
+(pre-pre-pre-rfc?)
+Tangent: Why do people do this? You're so many recursions down the road that this loses any meaning and you could just have a discussion without tagging it as being part of something that mimics being a process but isn't.
+(I have the same impression about "Is X idiomatic?" posts. They hint at the user wanting something, but they're suffering from the snowclone obscuring the actual questions)
+
+---
+
+@curoli · 2024-03-05T15:12:19.388Z:
+Regarding the state of web searches - currently, if you enter in Google Search
+i found out m
+the first auto-complete suggestion will be
+i found out my husband was a pdf file
+
+---
+
+@kevinmcfarlane · 2024-03-05T16:13:53.899Z:
+You get that result in Bing and DuckDuckGo too, but not as the first hit. You don't get it in Brave or Presearch.
+
+---
+
+@steffahn · 2024-03-05T21:40:04.305Z:
+I wonder if that tells more about the status of the web itself than about searches.
+
+---
+
+@lgoeldner · 2024-03-05T22:11:42.802Z:
+I would like to propose a counter movement, disallowing all llm/ai generated content on the site and not using an llm based natural language search due to there still being issues with hallucinations and energy use.
+
+---
+
+@geebee22 · 2024-03-05T22:39:37.972Z:
+kevinmcfarlane:
+I'm surprised at the hostility in this thread to the OG though
+It may be scepticism rather than outright "hostility", but my perception is that so-called "Artificial Intelligence" as it exists currently is a false claim. The "neural networks" are not actually intelligent, they have not the faintest clue what they are opining on, rather they simulate intelligence, and sooner or later they get caught out making (often hilarious) mistakes which make it obvious they have no real understanding at all, they are imposters! [ They can still be useful in limited domains to carry out routine well-specified tasks... but "intelligence" is I think a misnomer ].
+[ Edit: perhaps this is stating the obvious, and for that I apologise. But I think it is easy to forget what we are dealing with. ]
+
+---
+
+@anon80458984 · 2024-03-06T00:22:50.130Z:
+LLMs are:
+infinitely patient
+don't throw temper tantrums
+returns code snippet in < 15s
+Yeah, there's a 50/50 chance it hallucinates, but the expected value of typing into a LLM code search is so damn high.
+Furthermore, LLMs are improving far faster than most programmers I know. So it seems like a good tech to invest in as its values only increase over time.
+
+---
+
+@Cerber-Ursi · 2024-03-06T02:23:38.106Z:
+geebee22:
+and sooner or later they get caught out making (often hilarious) mistakes which make it obvious they have no real understanding at all
+Exactly my experience with humans (including myself).
+
+---
+
+@farnz · 2024-03-06T11:42:02.649Z:
+geebee22:
+They can still be useful in limited domains to carry out routine well-specified tasks... but "intelligence" is I think a misnomer
+The key to understanding the "cognitive abilities" of current AIs is that they've only got one tool; they predict what "should" come next based on what the prompt says and what they've output so far. This is a form of intelligence, but it's not the only form humans use. For example, we can switch to logical reasoning if prediction doesn't work; AIs can't. We can switch to analogy if prediction is wrong; AIs can't.
+
+---
+
+@curoli · 2024-03-06T16:22:07.800Z:
+Well, both. It shows that the web contains both useful and useless things, and that web search engines don't know the difference.
+
+---
+
+@kevinmcfarlane · 2024-03-06T16:33:04.034Z:
+geebee22:
+The "neural networks" are not actually intelligent, they have not the faintest clue what they are opining on, rather they simulate intelligence, and sooner or later they get caught out making (often hilarious) mistakes which make it obvious they have no real understanding at all
+In my experience of playing with them over the past year I've found that they are both surprisingly impressive and surprisingly dumb.
+By the latter I mean you can occasionally create what appears to be an easily answerable prompt and they all fail - at lest the free versions anyway. E.g., one of the exercises in Rustlings is a soccer tournament with a handful of countries playing each other. Some have more than one game. I tried asking the AIs to add up total goals scored for and against for each country. They all failed. Some even wrote some Python code and still failed. Bing Chat at the time was able to get the correct answer but only after about six corrections.
+Another prompt I tried was to list the declared US presidential candidates for each of the major parties. Bing got it right on one of them initially. All the others were wrong and typically miles wrong, such as pulling out politicians from previous elections!
+I tried again a few weeks later and they were still all wrong, including Bing this time. So Bing regressed!
+Re: the "simulate intelligence," this reminds me of philosopher John Searle's "Chinese Room" thought experiment argument against Strong AI. The central point of his argument is syntax is not sufficient for semantics.
+
+---
+
+@kevinmcfarlane · 2024-03-06T16:39:45.884Z:
+Why not just say "this result was generated by AI."
+But whether generated by AI or human, it still needs to be verified.
+
+---
+
+@afetisov · 2024-03-06T17:56:37.176Z:
+Regarding the OP: LLMs are ridiculously expensive to run. A VC-backed corporation trying to monopolize the market (like ClosedAI) can afford to burn money, providing free or priced below running costs AI to the users. An underfunded open source project just cannot. Also, the quality of results from LLMs is all over the place, with good models also being the most expensive ones to run. Fine-tuning the quality of AI responses is a full-time job for multiple people, not something an overworked community can afford to do.
+Ergo, there is nothing gained and multiple problems rising from providing LLM at rust-lang.org. Users who believe they'd benefit from talking to a chatbot would do better using one of the multiple existing free and paid services.
+
+---
+
+@kevinmcfarlane · 2024-03-07T15:15:45.345Z:
+FWIW, I've been using the free Codeium (similar to GitHub Copilot) with VS Code and I've found it to be nicely complementary and also accurate so far, in that what it generates compiles and gives correct results. But I consider myself a novice at this stage so I'm sure there are harder challenges. In my own code I've encountered one off-by-one error bit that was just in translating some C# to Rust.
+One thing that's useful is that when I click on a compiler error, Codeium inserts a "Codeium Explain" link in the popup. This will sometimes give a clearer explanation than the compiler and can offer a suggested fix in cases where the compiler help does not.
+
+---
+
+@caellian · 2024-03-21T13:50:00.956Z:
+afetisov:
+Ergo, there is nothing gained and multiple problems rising from providing LLM at rust-lang.org . Users who believe they'd benefit from talking to a chatbot would do better using one of the multiple existing free and paid services.
+100% agree. And it ends up only being useful for answering things that have been answered already. In my experience, GH Copilot was useful for generating some simple impls in code, but GPT, MS Copilot, etc. never gave me the right answer to question at hand and trying to guide them always takes more time than stitching together existing solutions I find through normal web/git search.
+The purpose of a forum is so that people can discuss their problems, and this forum has a lot of very active users, a lot of whom are very talented. So I think adding an LLM would be detrimental to the experience:
+If someone asks a question that's been answered and gets directed to the answered one, that improves the ease of finding the original question - that didn't come up with different framing or search terms.
+New unique questions increase to pool of available correct answers to problems.
+Finding a way of answering questions one doesn't know the answer to helps improve their skills/knowledge.
+On the other hand, LLMs require a lot of resources, tweaking, maintenance, etc. which IMO isn't worth the value they provide yet. They could be getting very good soon as people are looking at ways of reducing their memory and compute footprints, as well as their accuracy. But as things stand right now, I see them as just a cool toy that underperforms in most non-trivial cases.
+
+---
+
+@ericlangedijk · 2024-03-24T08:56:09.348Z:
+I completely gave up on the one AI I tried: chat gpt. Mostly it spits out complete nonsense (even in the most simplistic scenarios). I will wait a few more years before I retry.
+
+---
+
+@ZiCog · 2024-03-24T10:18:37.772Z:
+Noooo, retry now. I also had disappointment with ChatGPT, it started out with reasonable looking code as solutions to questions all be it code that did not compile or had obvious issues. Things just got worse and worse as I prompted it for repairs.
+But things have been going much better with phind.com. For example:
+I asked phind to translate some C code to Rust, a hundred lines or so. It did it almost perfectly including rewriting some C macros as Rust macros. The code compiled and ran although there was one trivial bug.
+I have had phind describe what complex regular expressions do, in detail, and provide examples of what matched the pattern and what did not. Which is great because I never write regexps and always forget how to read them.
+Yesterday I asked phind to generate some code that demonstrates the use of the "type state" pattern in Rust. I specified the legal state transitions. It created a simple example, again almost perfectly.  I then asked for enhancements: Add some examples functions that can only be used in certain states, add a function that can be used in all states, add some data payload to the state machine. It did it all. Not perfectly but it compiled and ran after a few obvious mistakes were tweaked. See here: https://www.phind.com/agent?cache=clu4dwxa50000jy08sc6yqpq0
+I like the way phind explains in plain English what it is doing and why.
+I have no connection with phind, I've just been having fun playing with it.
+
+---
+
+@correabuscar · 2024-05-24T07:42:47.685Z:
+Right since today(24th of May 2024), it seems OpenAI allows using GPTs created by others(for the free users, at least, although it's "Limited access to advanced data analysis, file uploads, vision, web browsing, and custom GPTs") and immediately I see 2-3 top ones that deal with Rust:
+Untitled1404×1051 133 KB
+So for what is worth, this satisfies my need for a rust LLM/AI assistant! Heck yea!
+EDIT: Well, using custom GPTs as a free user is more limiting than using GPT-4o, because the latter allows the chat to be continued with the free GPT-3.5 (unless you've added attachments when GPT-4o was available earlier in that chat/conversation, then it says 3.5 doesn't support attachments and you're prompted to start a new chat).
+But using a Custom GPT seems to have flagged the conversation as having used an attachment, automatically(even if you haven't technically, I'm guessing because the Custom GPT internally used attachments to train GPT-4o to their specific domain of knowledge), even if you just simply tag via @ the Custom GPT in the free chat with GPT-3.5, therefore once the limit for the Custom GPTs is (temporarily)reached (which is the same as the limit for GPT-4o), you can't continue the chat with 3.5 and are prompted to either start a new chat or wait until the limit is reset in 3-4 hours from then(which is better than until tomorrow morning, but still a learning showstopper). Basically, Custom GPTs as a free user, aren't as useful as I initially thought due to this inability to continue chatting with the free 3.5 after the limitation is reached and until it resets in a few hours.
+Here's a quick diff between those 3 though:
+For the prompt explain: The wildcard pattern is always irrefutable.
+ChatGPT - Rust has this reply: https://chatgpt.com/share/c62022e3-77fb-44e0-ad7e-022ac523a5e7
+ChatGPT - Rust has this reply: https://chatgpt.com/share/25f52687-0b24-44cd-b73e-eefcaa843482
+ChatGPT - Rust Assistant has this reply: https://chatgpt.com/share/36dd3afe-d5af-4d4a-9b09-109b788c18b1
+My fav. are the last two.
+
+---
+
+@system · 2024-08-22T07:43:35.403Z:
+This topic was automatically closed 90 days after the last reply. We invite you to open a new topic if you have further questions or comments.
+

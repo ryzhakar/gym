@@ -1,0 +1,3638 @@
+=== ROW 56 | f002643 | https://neon.com/blog/how-to-build-github-copilot-extensions | 2025-02-06 | domain-subframes ===
+How to Build GitHub Copilot Extensions - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+How to Build GitHub Copilot Extensions
+At Layer, we built Neon’s Copilot Extension—and we can build yours too
+Andrew Hamilton–Chief Technology Officer at LayerFeb 06, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+As soon as GitHub Copilot burst onto the scene, everyone started asking, “How do we teach Copilot about our platform?” Whether you’re building a managed Postgres service (like Neon) or a specialized set of APIs, it’s no longer enough to rely on devs hunting through documentation. They want AI-driven integrations that bring your endpoints and best practices directly into their coding workflow.
+That’s where Layer comes in. We can help you create a Copilot extension—written in any language—that seamlessly injects your product’s intelligence into GitHub Copilot (and any other AI surface for that matter).
+In this blog post, we’ll walk you through the steps we used to built Neon’s Copilot Extension (and why the idea of a “Copilot extension” isn’t quite what you might expect).
+Install System Prerequisites: Python, Ngrok
+First, make sure that you have the latest versions of Python and Ngrok installed onto your system.
+Webhook Subscriptions: Like Building a Discord Bot
+If you’ve built a Discord bot before, you’re already familiar with this pattern: you set up a server, then point the platform at it so it can deliver events to your endpoint. That’s exactly how GitHub Copilot extensions work under the hood: You create a web server—written in any language you like—and subscribe it to events from GitHub. Whenever Copilot needs to query your extension, it fires an HTTP request to your server.
+This “subscription” approach is powerful for two reasons:
+Language freedom. Because all you need is a server that handles HTTP requests, you’re not locked into Python, Java, Node, or any specific tech stack. If you can spin up a server, you can handle Copilot extension calls—whether you prefer Go, OCaml, or even Ruby.
+Unlimited custom logic. Once the requests arrive, it’s entirely up to you how to process them. Want to authenticate users, pull data from a Postgres database, or call a third-party API? Go for it. The webhook subscription doesn’t dictate how your code runs; it just ensures Copilot knows where to send requests.
+In other words, the only thing you really need to do is let GitHub know where your server lives. Once that’s done, you can implement your Copilot “extension” in the language of your choice, and handle incoming Copilot requests in whatever way best suits your application’s needs.
+Our Server
+So now we get to the interesting stuff—making our copilot server. Here Layer’s starter code:
+import httpx
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import StreamingResponse
+import debugpy
+app = FastAPI()
+debugpy.listen(("0.0.0.0", 8888))
+SYSTEM_MESSAGE = {
+"role": "system",
+"content": """Respond as though you have too much food in your mouth""",
+}
+def prepare_messages(user_messages: list) -> list:
+return user_messages + [SYSTEM_MESSAGE]
+async def get_github_completion(messages: list, auth_token: str):
+async with httpx. AsyncClient() as client:
+response = await client.post(
+"https://api.githubcopilot.com/chat/completions",
+headers={
+"Authorization": f"Bearer {auth_token}",
+"Content-Type": "application/json",
+},
+json={
+"messages": prepare_messages(messages),
+"stream": True,
+},
+timeout=30.0,
+)
+return response
+@app.post("/completion")
+async def completion(request: Request):
+req = await request.json()
+auth_token = request.headers.get("x-github-token")
+messages = req.get("messages", [])
+if not auth_token:
+raise HTTPException(status_code=401, detail="Missing authentication token")
+response = await get_github_completion(messages, auth_token)
+return StreamingResponse(
+response.aiter_bytes(),
+media_type="text/event-stream",
+status_code=response.status_code,
+)
+This code does has two important objectives:
+Create endpoint for Copilot to hit: POST /completion route responds to Copilot requests
+Craft Prompt: The system message is injected into the message history to modify the response given.
+Start the server by running this command:
+uvicorn {FILENAME}:app --reload
+Now that we have created our server, we need to subscribe to it to handle Copilot requests.
+Registering Github App
+Ironically, this is the hardest part of the tutorial (honestly, because Github is a beefy tool). In order to let Copilot know what URL to hit every time the @{YOUR_EXTENSION_NAME} name is used, we create a Github App for the subscription. To do this, navigate to the Github Apps page:
+Here we are going to create a new Github App and fill in some sensible defaults so that we can hit our server.
+Fill out a name: (The name spacing for Github apps is very restrictive, so choose something obscure)
+Fill out Homepage URL: This can be any URL, it’s just required by Github
+Fill out Callback URL: Make this https://github.com.  It will be called when authorizing the usage of a Github app and will redirect them back to Github afterwards.
+Deactivate Webhook: We won’t be using this feature, so nothing to worry about here.
+Enable Account Permissions: This step is REQUIRED, otherwise the Copilot app won’t work. Give Read-Only access to “Copilot Chat” and “Copilot Editor Context”
+Allow Install on Any Account: This allows you to share the extension with anyone.
+Now, hit “Create Github App”.
+Congrats, if you have done all this, you created your first Github App! 🥳
+Now lets navigate to the Copilot tab where it will ask you what “App Type” you want to try to create. Select “Agent”:
+I promise you, the Github config is just about over. Now we are going to use Ngrok to expose your local development server on the internet. It’s a pretty neat service.
+First, let’s expose our local dev server to the internet so that Copilot can hit it! This should be done in a separate terminal from the uvicorn server. Both need to be running simultaneously.
+ngrok http 8000
+Now my VSCode window looks like this, with the left side hosting the Uvicorn server on port 8000 and the Ngrok tunnel on the right terminal with the forwarding port.
+Now, take the forwarding address that I highlighted above and append /completion to the end of it and place it in the URL field of the Agent definition:
+Ok, we are finally done with config! Now let’s install and use it. This can be done super easily. Just type the name of your app into the copilot chat. In my case that looks like this:
+Follow the prompts to connect by authorizing Github to utilize the app, and ta-da! You have your own Neon Copilot extension!
+Want Your Own Extension? Build it With Layer
+Now, this Copilot extension is a way to dip your toes into the world of LLM Extensibility—but going fully production-ready (like we did with Neon) means setting up retrieval-augmented generation (RAG), function calling, message analytics, and more.
+Plus, you’ll have to replicate this logic across all the surfaces you plan to support.
+That’s exactly why we built Layer: a unified platform for managing LLM extensions. We handle Copilot, VS Code, OpenAI GPTs, Anthropic MCP, and beyond—so you can focus on building a great user experience instead of juggling integrations. AI Agents will be writing more and more software in the future—so if you’re a company that wants to make your API easy for AI agents to use, Layer is here to help. Book a demo here if you want to learn more.
+On this page
+Install System Prerequisites: Python, Ngrok
+Webhook Subscriptions: Like Building a Discord Bot
+Our Server
+Registering Github App
+Want Your Own Extension? Build it With Layer
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 58 | f002685 | https://github.com/slint-ui/slint/issues/7657 | 2025-02-18 | domain-subframes ===
+javascript event loop becomes extremly slow in wayland 
+
+---
+
+@sigmaSd · 2025-02-18T13:15:37Z:
+Updates below this is not related to the workaround pr
+
+### Bug Description
+
+I wrote this pr https://github.com/slint-ui/slint/pull/7550 to workaround https://github.com/slint-ui/slint/issues/5780
+
+It appeared to work, but I just noticed that it have a subtle but a critical bug, it makes the node  (or deno) event loop extremely slow
+
+
+
+### Reproducible Code (if applicable)
+
+
+src/main.js
+
+```ts
+import * as slint from "slint-ui";
+import Fastify from "fastify";
+
+// Create fastify instance
+const fastify = Fastify({
+  logger: false,
+  disableRequestLogging: true,
+});
+
+// Define route
+fastify.get("/", async (request, reply) => {
+  return "Hello World";
+});
+
+// Start server first
+try {
+  await fastify.listen({ port: 8383, host: "localhost" });
+  console.log("Server running at http://localhost:8383/");
+} catch (err) {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+}
+
+// Load and run Slint UI
+let ui = slint.loadFile("ui/app-window.slint");
+let window = new ui.AppWindow();
+
+window.request_increase_value = function () {
+  window.counter = window.counter + 1;
+};
+
+// Cleanup on process termination
+process.on("SIGINT", async () => {
+  await fastify.close();
+  process.exit();
+});
+
+await window.run();
+```
+
+package.json
+```json
+{
+    "name": "counter",
+    "version": "1.0.0",
+    "main": "src/main.js",
+    "type": "module",
+    "dependencies": {
+        "fastify": "^5.2.1",
+        "slint-ui": "1.10.0-nightly.2025021719"
+    },
+    "scripts": {
+        "start": "node ."
+    }
+}
+```
+
+ui/app-window.slint
+```slint
+import { Button, VerticalBox } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    in-out property<int> counter: 42;
+    callback request-increase-value();
+    VerticalBox { 
+        Text {
+            text: "Counter: \{root.counter}";
+        }
+        Button {
+            text: "Increase value";
+            clicked => { 
+                root.request-increase-value();
+            }
+        }
+     }
+}
+```
+
+run in wayland: `node src/main.js`
+test with: `oha http://localhost:8383`
+result: oha bearly makes any request
+
+run in xorg: `WAYLAND_DISPLAY="" node src/main.js`
+test with: `oha http://localhost:8383`
+result: oha makes request normally
+
+
+### Environment Details
+
+https://github.com/user-attachments/assets/b51a7de3-c828-4bf3-bfb6-23eaa631dea3
+
+- Slint Version: 1.10.0-nightly.2025021719
+- Platform/OS: linux fedora 41 
+- Programming Language: node
+- Backend/Renderer: default
+
+
+### Product Impact
+
+I propose to remove the workaround until there is a more correct solution, the workaround does more harm:
+- the event loop gets extremely slow
+- the issue is not noticeable immediately , at least the original cpu issue is mostly noticeable
+
+---
+
+@ogoffart · 2025-02-18T13:26:09Z:
+Thanks for letting us know
+
+So you suggest to revert the PR 7550?
+
+I used the github interface to revert the PR in https://github.com/slint-ui/slint/pull/7658
+
+---
+
+@sigmaSd · 2025-02-18T13:27:27Z:
+Yes that works thanks
+
+---
+
+@sigmaSd · 2025-02-18T13:33:36Z:
+wait I just noticed that even the original version have the same slowness
+
+---
+
+@sigmaSd · 2025-02-18T13:37:24Z:
+Sorry for the confusion, but I retested 1.9.2, 
+I thought it takes 100 % cpu but  at least it doesn't throttle the event loop
+Turns out no, the event loop is also slow and oha can't send requests
+
+It seems like this is a new issue I found, node + wayland makes the js event loop extremely slow, 
+
+The workaround then is still useful, at least it removes the 100% cpu usage
+
+TLDR: 
+- node  + wayland makes the event loop ex termly slow
+- the workaround removes the 100%cpu usage, its useful, its not the cause of the slowness
+
+I suggest to keep the workaround, and to debug this new issue
+
+---
+
+@sigmaSd · 2025-02-18T17:33:52Z:
+@ogoffart I have a new breakthrough, in case of wayland napi `process_events` is **not** polled automaticly, it only gets polled if there are mouse input or keyboard input
+
+https://github.com/user-attachments/assets/ac032b9e-2ebc-4624-b703-775784fd649d
+
+
+Xorg in the other hand polls events continuously independent of mouse /keyboard events
+
+---
+
+@sigmaSd · 2025-02-18T17:37:41Z:
+What I'm suspecting is that internally wayland blocks if there are no mouse/keyboards events, it blocks waiting
+
+---
+
+@sigmaSd · 2025-02-18T18:34:23Z:
+I traced the blocking call to https://github.com/smol-rs/polling/blob/3cc19cc1387ab80b582961765260aa473a347d67/src/epoll.rs#L214
+timeout_ms = -1 its -1 because timer_fd is Some(fd) so its relying on timer_fd to wake up but its not happening
+
+---
+
+@sigmaSd · 2025-02-18T19:31:49Z:
+Ok I found how to fix it, removing this continue, makes the app works completly normal, it doesn't block and the event loop work at normal speed  https://github.com/rust-windowing/winit/blob/f6e66a71f8b486564c30d38491b2ebca13f29c89/src/platform_impl/linux/wayland/event_loop/mod.rs#L269
+
+---
+
+@sigmaSd · 2025-02-18T19:34:09Z:
+I feel like the commit message might have a clue https://github.com/rust-windowing/winit/commit/cad3277550089e97cd9b92c8bfc836e12fc6f264
+
+---
+
+@sigmaSd · 2025-02-18T20:07:55Z:
+By removing that continue even the workaround I did is not needed anymore, it works pretty well without any other modifications
+
+---
+
+@sigmaSd · 2025-02-19T07:23:21Z:
+My conclusion is:
+- Currently slint uses `ControlFlow::Wait` with winit wayland
+- When there are no events the code is blocking at https://github.com/rust-windowing/winit/blob/f6e66a71f8b486564c30d38491b2ebca13f29c89/src/platform_impl/linux/wayland/event_loop/mod.rs#L214
+- Js is single threaded so its event loop is also stuck
+
+Changing this https://github.com/slint-ui/slint/blob/c71e2f3c964154bd0bbb6776c1eafb5107c42e2a/internal/backends/winit/event_loop.rs#L589 or https://github.com/slint-ui/slint/blob/c71e2f3c964154bd0bbb6776c1eafb5107c42e2a/internal/backends/winit/event_loop.rs#L606 to be `ControlFlow::Poll` make the application work normally
+
+I saw that there is a workaround for wasm32 for something similar, can we also special case javascript + winit so that it uses `ControlFlow::Poll` ?
+
+---
+
+@tronical · 2025-02-19T08:05:42Z:
+> When there are no events the code is blocking
+
+Perhaps this is a bug in winit, as we're calling `pump_events` with `Some(Duration::ZERO)` and that should return instead of block:
+
+> Passing a timeout of Some(Duration::ZERO) would ensure your external event loop is never blocked but you would likely need to consider how to throttle your own external loop.
+(from https://docs.rs/winit/latest/winit/platform/pump_events/trait.EventLoopExtPumpEvents.html#tymethod.pump_events )
+
+
+
+---
+
+@sigmaSd · 2025-02-19T08:56:20Z:
+@tronical I did some tests with winit, here is what I found, winit 0.30.9
+```rs
+fn main() -> std::process::ExitCode {
+    use std::process::ExitCode;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use winit::application::ApplicationHandler;
+    use winit::event::WindowEvent;
+    use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+    use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+    use winit::window::{Window, WindowId};
+
+    #[derive(Default)]
+    struct PumpDemo {
+        window: Option<Window>,
+    }
+
+    impl ApplicationHandler for PumpDemo {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            let window_attributes = Window::default_attributes().with_title("A fantastic window!");
+            self.window = Some(event_loop.create_window(window_attributes).unwrap());
+        }
+
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            _window_id: WindowId,
+            event: WindowEvent,
+        ) {
+            println!("{event:?}");
+
+            let window = match self.window.as_ref() {
+                Some(window) => window,
+                None => return,
+            };
+
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::RedrawRequested => {
+                    // XXX: If I uncomment this the event loop will continue working regardless of ControlFlow
+                    // window.request_redraw();
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let mut event_loop = EventLoop::new().unwrap();
+    // XXX With Wait the event loop gets blocked unless I uncomment window redraw
+   // If I change it to Poll the event loop never gets blocked even without redraw requests
+   // In X11 even with Wait and no redraw requests, the event loop does not get blocked
+    event_loop.set_control_flow(ControlFlow::Wait);
+
+    let mut app = PumpDemo::default();
+
+    loop {
+        let timeout = Some(Duration::ZERO);
+        // XXX: the block happen here
+        let status = event_loop.pump_app_events(timeout, &mut app);
+
+        if let PumpStatus::Exit(exit_code) = status {
+            break ExitCode::from(exit_code as u8);
+        }
+
+        println!("Update()");
+        sleep(Duration::from_millis(16));
+    }
+}
+```
+I added 3 XXX comments explaining my findings, what do you think should I ask winit devs ?
+
+---
+
+@tronical · 2025-02-19T10:48:46Z:
+> what do you think should I ask winit devs ?
+
+It seems to me that winit should ignore the control flow when using `pump_events`, but since it isn't we can work around that by using `Poll` instead, but only when the loop is driven by `pump_events`. Would you feel comfortable attempting to do that?
+
+I think this also means that https://github.com/slint-ui/slint/pull/7658 can be merged, right?
+
+---
+
+@sigmaSd · 2025-02-19T11:54:57Z:
+Yes I agree the revert PR should be merged because when this issue is fixed it won't be needed 
+
+I'm not really confortable making this PR it would be great if someone familiar with this tales over from here , thanks
+
+---
+
+@tronical · 2025-02-19T12:56:46Z:
+> Yes I agree the revert PR should be merged because when this issue is fixed it won't be needed
+
+Done.
+ 
+> I'm not really confortable making this PR it would be great if someone familiar with this tales over from here , thanks
+
+That's ok :). Would you be available to try a patch? I've made one at https://gist.github.com/tronical/583afe01be8a4b8743544c4cbf258265 but I don't know if this solves the problem.
+
+
+---
+
+@sigmaSd · 2025-02-19T22:24:49Z:
+Hopefully I can test it tomorrow 
+
+---
+
+@sigmaSd · 2025-02-20T10:24:16Z:
+@tronical your patch work indeed
+
+one question should this be special cased for Duration::Zero , I fell like any duration as long that its Some, should make the controlflow Poll
+
+---
+
+@sigmaSd · 2025-02-20T10:25:36Z:
+I'm testing like this btw
+```ts
+import * as slint from "npm:slint-ui@1.7.1";
+const ui = await slint.loadSource(
+  "export component Window { }",
+  "main.js",
+);
+
+Deno.serve(() => new Response("hello world"));
+new ui.Window().run();
+```
+and running `oha -n 9999999 http://localhost:8000`
+
+Obviously I have to use deno vendor and cargo vendor and patch dependencies
+
+---
+
+@tronical · 2025-02-20T10:26:41Z:
+> [@tronical](https://github.com/tronical) your patch work indeed
+> 
+> one question should this be special cased for Duration::Zero , I fell like any duration as long that its Some, should make the controlflow Poll
+
+Right, that probably makes sense. Well spotted :)
+
+---
+
+@tronical · 2025-02-20T13:08:36Z:
+I thought a bit more about it and I'll do this workaround only for `Zero`. It doesn't make sense to return `Wait` when Some(2s)` was specified. Instead, I'll leave it to the winit implementation to handle that correctly, and just work around the `Some(0)` case.
+
+=== ROW 60 | f002883 | https://github.com/wasm-bindgen/wasm-bindgen/pull/4472 | 2025-04-06 | domain-subframes ===
+Workaround for a TextDecoder bug in Safari causing a RangeError to be thrown
+
+---
+
+@bes · 2025-04-06T17:04:01Z:
+`TextDecoder` in Safari has a limitation that causes it to throw `RangeError` after decoding more than 2GiB of data. This causes long running wasm programs that need to use `TextDecoder` to crash and start throwing `RuntimeError` with the message "Out of bounds memory access".
+
+We work around the issue by tracking how much data has been decoded by any given `TextDecoder`, and replace it when it comes close to 2GiB, deducting a small margin of 1MiB which has been empirically shown to reduce the likelihood of miscounting (for unknown reasons) causing a `RangeError` to be thrown.
+
+This commit also adds stricter handling of the kind of declaration used for TextDecoder and TextEncoder - TextDecoder always uses let because it needs to be mutable, and TextEncoder always uses const because it doesn't need to be mutable.
+
+Fixes https://github.com/rustwasm/wasm-bindgen/issues/4471
+
+---
+
+@bes · 2025-04-06T17:08:56Z:
+Some unrelated clippy lints are failing, has CI rustc been updated without updating the code?
+
+---
+
+@bes · 2025-04-07T11:28:13Z:
+There don't seem to be any tests (generated .js-files) that use the non-browser path of `getText` 🤔 
+
+---
+
+@stephanemagnenat · 2025-04-09T09:13:39Z:
+> Some unrelated clippy lints are failing, has CI rustc been updated without updating the code?
+
+@daxpedda do you have any input on these? The PR works around a critical bug on Safari and would be very useful for many people!
+
+---
+
+@stephanemagnenat · 2025-04-14T18:37:01Z:
+@bes I opened an issue (#4482) as even `main` does not compile any more in CI.
+
+---
+
+@bes · 2025-04-14T18:48:29Z:
+> @bes I opened an issue (#4482) as even `main` does not compile any more in CI.
+
+Thanks
+
+
+---
+
+@bes · 2025-04-15T20:26:45Z:
+We've been running this fix in production for a week now, and the results are encouraging. Screenshots from Sentry.
+
+Ignore the first column, it's low because of a quirk in how Sentry does data cutoff...
+
+<img width="1139" alt="range_error" src="https://github.com/user-attachments/assets/7356adc4-1be0-460d-98ce-b5003301ba07" />
+
+<img width="1142" alt="safari_by_version" src="https://github.com/user-attachments/assets/a637de66-2071-4243-840b-91da192bf1a4" />
+
+
+Can you guess which day the fix went out?
+
+---
+
+@stephanemagnenat · 2025-08-05T07:35:01Z:
+@bes the CI has been fixed in latest main commit, could you rebase your PR please? That should help it getting merged, now that there are more active maintainers (see #4533) ;-)
+
+---
+
+@bes · 2025-08-06T09:00:45Z:
+> I'm a tiny bit concerned about the 1MiB margin. This [comment](https://bugs.webkit.org/show_bug.cgi?id=280593#c2) shows that it fails at 2,147,483,600 bytes and succeeds at 2,147,483,500 bytes. So the margin should be between 148 and 47 bytes.
+> 
+> Considering how reproducable this test looks like, it would be nice to find out the exact number it fails at. The precise number is actually not that important, it would just be nice to once and for all establish that it actually fails at a certain number and that its not flaky or anything.
+> 
+> In any case, until somebody finds the time to actually try this out we will leave it at the current 1MiB margin considering that there is real-world data behind it.
+
+I tried a small margin at first but could not get it to work on my machine, so I grabbed a margin which I thought was large enough to avoid problems but small enough to not have any significance (1 MiB is 0.049% of 2GiB)
+
+---
+
+@daxpedda · 2025-08-06T09:46:13Z:
+> I tried a small margin at first but could not get it to work on my machine, so I grabbed a margin which I thought was large enough to avoid problems but small enough to not have any significance (1 MiB is 0.049% of 2GiB)
+
+If you can actually try it, could you do the following:
+```js
+const decoder = new TextDecoder()
+const buffer1 = new ArrayBuffer(100)
+
+for (let i = 0; i < 21474836; i++) {
+    decoder.decode(buffer1)
+}
+
+const buffer2 = new ArrayBuffer(1)
+let i = 2147483601
+
+try {
+    for (; i <= 2147483648; i++) {
+        decoder.decode(buffer2)
+    }
+} catch {
+    console.err(`failed at ${i} number of bytes`)
+}
+```
+And check if it fails consistently at the same number of bytes.
+
+---
+
+@bes · 2025-08-06T10:02:16Z:
+Added a line in the changelog.
+
+> If you can actually try it, could you do the following:
+
+I'm on vacation right now, supposed to go on a day trip, so pushing these change kinda in between packing. I would appreciate if we can skip this for now :)
+
+---
+
+@stephanemagnenat · 2025-08-06T10:26:37Z:
+@bes thank you so much for your work!
+
+@daxpedda thank you for merging! Any plan for making a release soon? This fix would be very useful to us!
+
+---
+
+@daxpedda · 2025-08-06T11:36:47Z:
+I not yet back to maintaining `wasm-bindgen` so my time is quite limited right now, I'll leave this to the other maintainers to decide.
+
+My 2¢: making a release is relatively low cost so I favor making one as soon as requested.
+
+---
+
+@stephanemagnenat · 2025-08-06T11:41:04Z:
+> My 2¢: making a release is relatively low cost so I favor making one as soon as requested.
+
+Is there an ideal way to make such a request? Should I open a new issue for that, or do other maintainers read closed PR?
+
+---
+
+@daxpedda · 2025-08-06T11:43:30Z:
+You asking for it here was the request.
+But please open a tracking issue so it doesn't get lost!
+
+---
+
+@bes · 2025-04-06T17:04:55Z:
+I am not sure why I needed these changes. I am using rustc 1.86.0, maybe I should be using another version?
+
+---
+
+@bes · 2025-04-07T11:26:39Z:
+I managed to lose the `name` parameter here, will look into that.
+
+---
+
+@daxpedda · 2025-08-05T09:44:28Z:
+Lets convert those to hex.
+
+---
+
+@bes · 2025-08-06T08:57:54Z:
+Converted to hex
+
+---
+
+@stephanemagnenat · 2025-08-06T09:38:20Z:
+Tests still have the decimal version.
+
+---
+
+@bes · 2025-08-06T09:43:03Z:
+That's generated JS, does it matter?
+
+---
+
+@stephanemagnenat · 2025-08-06T09:45:40Z:
+I guess not ;-)
+
+=== ROW 62 | f003033 | https://bytecodealliance.org/articles/invoking-component-functions-in-wasmtime-cli | 2025-05-21 | domain-subframes ===
+Bytecode Alliance — Running WebAssembly (Wasm) Components From the Command Line
+Home
+About
+News
+Projects
+Membership
+GitHub
+Zulip
+Calendar
+Running WebAssembly (Wasm) Components From the Command Line
+May 21, 2025
+Tim McCallum
+Wasmtime’s 33.0.0 release supports invoking Wasm component exports directly from the command line with the new --invoke flag.
+This article walks through building a Wasm component in Rust and using wasmtime run --invoke to execute specific functions (enabling powerful workflows for scripting, testing, and integrating Wasm into modern development pipelines).
+The Evolution of Wasmtime’s CLI
+Wasmtime’s run subcommand has traditionally supported running Wasm modules as well as invoking that module’s exported function. However, with the evolution of the Wasm Component Model, this article focuses on a newer capability; creating a component that exports a function and then demonstrating how to invoke that component’s exported function.
+By the end of this article, you’ll be ready to create Wasm components and orchestrate their exported component functions to improve your workflow’s efficiency and promote reuse. Potential examples include:
+Shell Scripting: Embed Wasm logic directly into Bash or Python scripts for seamless automation.
+CI/CD Pipelines: Validate components in GitHub Actions, GitLab CI, or other automation tools without embedding them in host applications.
+Cross-Language Testing: Quickly verify that interfaces match across implementations in Rust, JavaScript, and Python.
+Debugging: Inspect exported functions during development with ease.
+Microservices: Chain components in serverless workflows, such as compress → encrypt → upload, leveraging Wasm’s modularity.
+Tooling & Dependencies
+If you want to follow along, please install:
+Rust (if you already have Rust installed, make sure you are on the latest version),
+cargo (if already installed, please make sure you are on the latest version),
+cargo component (if already installed, please make sure you are on the latest version), and
+wasmtime CLI (or use a precompiled binary). If already installed, ensure you are using v33.0.0 or newer.
+You can check versions using the following commands:
+$ rustc --version
+$ cargo --version
+$ cargo component --version
+$ wasmtime --version
+We must explicitly add the wasm32-wasip2 target. This ensures that our component adheres to WASI’s system interface for non-browser environments (e.g., file system access, sockets, random etc.):
+$ rustup target add wasm32-wasip2
+Creating a New Wasm Component With Rust
+Let’s start by creating a new Wasm library that we will later convert to a Wasm component using cargo component and the wasm32-wasip2 target:
+$ cargo component new --lib wasm_answer
+$ cd wasm_answer
+If you open the Cargo.toml file, you will notice that the cargo component command has automatically added some essential configurations.
+The wit-bindgen-rt dependency (with the ["bitflags"] feature) under [dependencies], and the crate-type = ["cdylib"] setting under the [lib] section.
+Your Cargo.toml should now include these entries (as shown in the example below):
+[package]
+name = "wasm_answer"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+wit-bindgen-rt = { version = "0.41.0", features = ["bitflags"] }
+[lib]
+crate-type = ["cdylib"]
+[package.metadata.component]
+package = "component:wasm-answer"
+[package.metadata.component.dependencies]
+The directory structure of the wasm_answer example is automatically scaffolded out for us by cargo component:
+$ tree wasm_answer
+wasm_answer
+├── Cargo.lock
+├── Cargo.toml
+├── src
+│   ├── bindings.rs
+│   └── lib.rs
+└── wit
+└── world.wit
+WIT
+If we open the wit/world.wit file, that cargo component created for us, we can see that cargo component generates a minimal world.wit that exports a raw function:
+package component:wasm-answer;
+/// An example world for the component to target.
+world example {
+export hello-world: func() -> string;
+}
+We can simply adjust the export line (as shown below):
+package component:wasm-answer;
+/// An example world for the component to target.
+world example {
+export get-answer: func() -> u32;
+}
+But, instead, let’s use an interface to export our function!
+While the above approach works, the recommended best practice is to wrap related functions inside an interface, which you then export from your world. This is more modular, extensible, and aligns with how the Wasm Interface Type (WIT) format is used in multi-function or real-world components. Let’s update the wit/world.wit file as follows:
+package component:wasm-answer;
+interface answer {
+get-answer: func() -> u32;
+}
+world example {
+export answer;
+}
+Next, we update our src/lib.rs file accordingly, by pasting in the following Rust code:
+#[allow(warnings)]
+mod bindings;
+use bindings::exports::component::wasm_answer::answer::Guest;
+struct Component;
+impl Guest for Component {
+fn get_answer() -> u32 {
+42
+}
+}
+bindings::export!(Component with_types_in bindings);
+Now, let’s create the Wasm component with our exported get_answer() function:
+$ cargo component build --target wasm32-wasip2
+Our newly generated .wasm file now lives at the following location:
+$ file target/wasm32-wasip2/debug/wasm_answer.wasm
+target/wasm32-wasip2/debug/wasm_answer.wasm: WebAssembly (wasm) binary module version 0x1000d
+We can also use the --release option which optimises builds for production:
+$ cargo component build --target wasm32-wasip2 --release
+If we check the sizes of the debug and release, we see a difference of 2.1M and 16K, respectively.
+Debug:
+$ du -mh target/wasm32-wasip2/debug/wasm_answer.wasm
+2.1M	target/wasm32-wasip2/debug/wasm_answer.wasm
+Release:
+$ du -mh target/wasm32-wasip2/release/wasm_answer.wasm
+16K	target/wasm32-wasip2/release/wasm_answer.wasm
+How Invoke Works: A Practical Example
+The wasmtime run command can take one positional argument and just run a .wasm or .wat file:
+$ wasmtime run foo.wasm
+$ wasmtime run foo.wat
+Invoke: Wasm Modules
+In the case of a Wasm module that exports a raw function directly, the run command accepts an optional --invoke argument, which is the name of an exported raw function (of the module) to run:
+$ wasmtime run --invoke initialize foo.wasm
+Invoke: Wasm Components
+In the case of a Wasm component that uses typed interfaces (defined in WIT, in concert with the Component Model), the run command now also accepts the optional --invoke argument for calling an exported function of a component.
+However, the calling of an exported function of a component uses WAVE(a human-oriented text encoding of Wasm Component Model values). For example:
+$ wasmtime run --invoke 'initialize()' foo.wasm
+You will notice the different syntax of initialize versus 'initialize()' when referring to a module versus a component, respectively.
+Back to our get-answer() example:
+$ wasmtime run --invoke 'get-answer()' target/wasm32-wasip2/debug/wasm_answer.wasm
+42
+You will notice that the above get-answer() function call does not pass in any arguments. Let’s discuss how to represent the arguments passed into function calls in a structured way (using WAVE).
+Wasm Value Encoding (WAVE)
+Transferring and invoking complex argument data via the command line is challenging, especially with Wasm components that use diverse value types. To simplify this, Wasm Value Encoding (WAVE) was introduced; offering a concise way to represent structured values directly in the CLI.
+WAVE provides a standard way to encode function calls and/or results. WAVE is a human-oriented text encoding of Wasm Component Model values; designed to be consistent with the WIT IDL format.
+Below are a few additional pointers for constructing your wasmtime run --invoke commands using WAVE.
+Quotes
+As shown above, the component’s exported function name and mandatory parentheses are contained in one set of single quotes, i.e., 'get-answer()':
+$ wasmtime run --invoke 'get-answer()' target/wasm32-wasip2/release/wasm_answer.wasm
+The result from our correctly typed command above is as follows:
+42
+Parentheses
+Parentheses after the exported function’s name are mandatory. The presence of the parenthesis () signifies function invocation, as opposed to the function name just being referenced. If your function takes a string argument, ensure that you contain your string in double quotes (inside the parentheses). For example:
+$ wasmtime run --invoke 'initialize("hello")' foo.wasm
+If your exported function takes more than one argument, ensure that each argument is separated using a single comma , as shown below:
+$ wasmtime run --invoke 'initialize("Pi", 3.14)' foo.wasm
+$ wasmtime run --invoke 'add(1, 2)' foo.wasm
+Recap: Wasm Modules versus Wasm Components
+Let’s wrap this article up with a recap to crystallize your knowledge.
+Earlier Wasmtime Run Support for Modules
+If we are not using the Component Model and just creating a module, we use a simple command like wasmtime run foo.wasm (without WAVE syntax). This approach typically applies to modules, which export a _start function, or reactor modules, which can optionally export the wasi:cli/run interface—standardized to enable consistent execution semantics.
+Example of running a Wasm module that exports a raw function directly:
+$ wasmtime run --invoke initialize foo.wasm
+Wasmtime Run Support for Components
+As Wasm evolves with the Component Model, developers gain fine-grained control over component execution and composition. Components using WIT can now be run with wasmtime run, using the optional --invoke argument to call exported functions (with WAVE).
+Example of running a Wasm component that exports a function:
+$ wasmtime run --invoke 'add(1, 2)' foo.wasm
+For more information, visit the cli-options section of the Wasmtime documentation.
+Benefits and Usefulness
+The addition of support for the run --invoke feature for components allows users to specify and execute exported functions from a Wasm component. This enables greater flexibility for testing, debugging, and integration. We now have the ability to perform the execution of arbitrary exported functions directly from the command line, this feature opens up a world of possibilities for integrating Wasm into modern development pipelines.
+This evolution from monolithic Wasm modules to composable, CLI-friendly components exemplifies the versatility and power of Wasm in real-world scenarios.
+Bylaws | IP Policy | Copyright © 2019-2023 the Bytecode Alliance contributors.
+
+=== ROW 65 | f003082 | https://github.com/bytecodealliance/wasmtime/pull/10924 | 2025-06-04 | domain-subframes ===
+Add intial porting of table_ops from arbitrary to mutatis
+
+---
+
+@khagankhan · 2025-06-04T19:38:43Z:
+<!--
+Please make sure you include the following information:
+
+- If this work has been discussed elsewhere, please include a link to that
+  conversation. If it was discussed in an issue, just mention "issue #...".
+
+- Explain why this change is needed. If the details are in an issue already,
+  this can be brief.
+
+Our development process is documented in the Wasmtime book:
+https://docs.wasmtime.dev/contributing-development-process.html
+
+Please ensure all communication follows the code of conduct:
+https://github.com/bytecodealliance/wasmtime/blob/main/CODE_OF_CONDUCT.md
+-->
+
+This is the initial (unofficial) porting of `table_ops` from `arbitrary` to `mutatis`.
+
+No new features are added. This is a direct port of the existing implementation using the `arbitrary` crate to the `mutatis` framework.
+
+Open to review and feedback.
+
+Initial work towards: bytecodealliance/wasmtime#10327  
+cc @ospencer @fitzgen
+
+
+
+---
+
+@github-actions[bot] · 2025-06-04T22:44:55Z:
+#### Subscribe to Label Action
+
+cc @fitzgen
+
+<details>
+This issue or pull request has been labeled: "fuzzing"
+
+Thus the following users have been cc'd because of the following labels:
+
+* fitzgen: fuzzing
+
+To subscribe or unsubscribe from this label, edit the <code>.github/subscribe-to-label.json</code> configuration file.
+
+[Learn more.](https://github.com/bytecodealliance/subscribe-to-label-action)
+</details>
+
+---
+
+@khagankhan · 2025-06-12T18:40:05Z:
+Thanks, @fitzgen! currently working on it. Will integrate your suggestions in the next commit.
+
+---
+
+@fitzgen · 2025-06-12T18:00:40Z:
+I think we won't need this helper anymore, given the `fixup` helper function I suggested in private communication.
+
+---
+
+@fitzgen · 2025-06-12T18:01:37Z:
+And this can become an arbitrary `insert` instead of `append` (which is a subset of an `insert` operation).
+
+---
+
+@fitzgen · 2025-06-12T18:05:46Z:
+Similarly, I think this function body will get cleaned up a ton with the `fixup` pass. Additionally, whenever possible we don't want to report mutations that we know will fail so if the ops are empty we shouldn't call `c.mutation(...)`. Putting these things together, I expect this will become something like:
+
+```rust
+if !ops.ops.is_empty() {
+    c.mutation(|ctx| {
+        let i = ctx.rng().gen_index(ops.ops.len()).unwrap();
+        ops.ops[i] = choose_random_op();
+        Ok(())
+    })?;
+}
+```
+
+---
+
+@fitzgen · 2025-06-12T18:07:49Z:
+And this can become something like
+
+```rust
+if !ops.ops.is_empty() {
+    c.mutation(|ctx| {
+        let i = ctx.rng().gen_index(ops.ops.len()).unwrap();
+        ops.ops.remove(i);
+        Ok(())
+    })?;
+}
+```
+
+---
+
+@fitzgen · 2025-06-12T18:10:44Z:
+And the `insert` mutation would be something like
+
+```rust
+c.mutation(|ctx| {
+    let i = ctx.rng().gen_index(ops.ops.len() + 1).unwrap();
+    ops.ops.insert(random_op());
+    Ok(())
+})?;
+```
+
+---
+
+@fitzgen · 2025-06-12T18:13:36Z:
+This is accidentally `O(n*n)` because the helper walks every op in every iteration of this loop. You'll want to have a local `stack` variable that is adjusted as ops are generated here.
+
+---
+
+@fitzgen · 2025-06-12T18:15:11Z:
+And rather than generating the max every time, it probably makes sense to do something like
+
+```rust
+for _ in ctx.rng().gen_index(MAX_OPS).unwrap() {
+   // ...
+}
+```
+
+---
+
+@fitzgen · 2025-06-12T18:16:02Z:
+And this can be `TableOps::default()` where the default is an empty set of ops, since we will generate new ops just below. There is no need to start with this prologue every time.
+
+---
+
+@fitzgen · 2025-06-12T18:21:02Z:
+Don't think this needs to be `pub` because I don't think it is used outside this module.
+
+---
+
+@fitzgen · 2025-06-12T18:21:08Z:
+Ditto.
+
+---
+
+@fitzgen · 2025-06-12T18:23:20Z:
+This macro should just be `TableOps::default()`, which can simply be derived on the type rather than written out.
+
+---
+
+@fitzgen · 2025-06-12T18:23:52Z:
+Here we would add `Default` next to `Debug`.
+
+---
+
+@fitzgen · 2025-06-12T18:25:18Z:
+I don't think we should need this, and can simply use an empty `TableOps::default()` instead, but if we did want to create this particular sequence in a bunch of places we should just use a function rather than a macro.
+
+---
+
+@fitzgen · 2025-06-12T18:26:58Z:
+Because the `TableOpsMutator` is the default, we don't actually need this test; it is redundant with `mutate_table_ops_with_default_mutator`.
+
+---
+
+@fitzgen · 2025-06-12T18:27:35Z:
+Reminder for this TODO.
+
+---
+
+@khagankhan · 2025-06-12T18:38:01Z:
+Yes! I am working on that and a `fixup` method results in much cleaner code.
+
+---
+
+@khagankhan · 2025-06-12T18:38:27Z:
+Right!!
+
+
+---
+
+@khagankhan · 2025-06-24T16:37:15Z:
+Removed.
+
+
+---
+
+@khagankhan · 2025-06-24T16:37:21Z:
+Added
+
+---
+
+@khagankhan · 2025-06-24T16:37:42Z:
+added new methods instead of macros
+
+---
+
+@khagankhan · 2025-06-24T16:37:50Z:
+Done
+
+---
+
+@khagankhan · 2025-06-24T16:38:09Z:
+Added new empty() method
+
+=== ROW 68 | f003238 | https://qdrant.tech/blog/case-study-gooddata | 2025-07-09 | domain-subframes ===
+How GoodData turbocharged AI analytics with Qdrant
+Vector Space Stream: a research-first broadcast for engineers. Eight talks on compression, edge, hybrid search, and more. Sept 17. Tune in
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free0
+How GoodData turbocharged AI analytics with Qdrant
+Daniel Azoulai·
+July 09, 2025
+Home
+/
+Blog
+/
+How GoodData turbocharged AI analytics with Qdrant
+On this page:
+GoodData’s Evolution into AI-Powered Analytics
+Scaling AI Capabilities to Meet Enterprise Demands
+Deploying Qdrant’s Scalable Vector Database
+Real-Time Performance and Scalability Gains
+Positioned for Advanced AI Growth
+Additional resources
+Share on X
+Share on LinkedIn
+GoodData’s Evolution into AI-Powered Analytics
+AI is redefining how people interact with data, pushing analytics platforms beyond static dashboards toward intelligent, conversational experiences. While traditionally recognized as a powerful BI platform, GoodData is laser-focused on accelerating both ’time to insight’ and ’time to solution’ by enhancing productivity for analysts and business users alike.
+What sets GoodData apart is its unique position in the market: a composable, API-first platform designed for teams that build data products, not just consume them. With deep support for white-labeled analytics, embedded use cases, and governed self-service at scale, GoodData delivers the flexibility modern organizations need. With AI being integrated across every layer of the platform, GoodData is helping their over 140,000 end customers move from traditional BI to intelligent, real-time decision-making.
+Scaling AI Capabilities to Meet Enterprise Demands
+Initially, GoodData’s prototype leveraging OpenAI faced scalability limitations. The initial version attempted to load GoodData’s entire semantic model into the AI context for every user query. This led to high compute costs, slow response times, and exceeded technical limits of large language models. Instead, directly embedding extensive semantic layers into LLM contexts proved costly, slow, and impractical.
+Jan Soubusta, Field CTO at GoodData, recalled:
+“Putting the whole semantic layer directly into an LLM was unsustainable. The response times ballooned, and we consistently hit context size limits.”
+This shift in approach was essential, as most GoodData customers work with complex data models, often spanning tens or even hundreds of datasets and metrics, unlike traditional desktop BI tools, which typically support a single user working with a single dataset at any given time.
+Deploying Qdrant’s Scalable Vector Database
+GoodData transitioned to a Retrieval-Augmented Generation (RAG) strategy, requiring a high-performance vector database. After exploring DuckDB and pgvector, GoodData chose Qdrant due to its high-availability architecture and superior performance.
+GoodData leveraged Qdrant’s official Helm chart, deploying smoothly in Kubernetes and efficiently managing near-real-time embedding updates, crucial for multilingual semantic layers.
+Real-Time Performance and Scalability Gains
+For enterprise customers embedding GoodData as whitelabeled analytics solutions, these improvements mean AI assistants can respond as quickly as a human analyst, responding with relevant metrics, dashboards, or insights in mere seconds.
+And adopting Qdrant brought significant benefits to empower GoodData’s AI assistant to do this, include:
+Embedding updates completed in seconds (hundreds to thousands per minute).
+Semantic search results returned within 100 milliseconds.
+AI assistant responses are maintained at approximately 5–10 seconds, with Qdrant’s latency overhead negligible.
+Jan emphasized performance efficiency:
+“The overhead from Qdrant is negligible; queries run in tens of milliseconds, making it ideal for real-time analytics applications.”
+Positioned for Advanced AI Growth
+This shift positions GoodData not just as a dashboard provider, but as a foundation for next-gen AI applications embedded directly into enterprise products. In the future, GoodData expects to add significant personalization via
+AI-powered data stories
+Turnkey agent-to-agent interfaces and orchestration
+GenAI- supported findops optimization
+Perceptive “always on” analytics.
+Qdrant provides GoodData a stable, scalable foundation for expanding into document-based semantic search and ontology management. With Qdrant, GoodData confidently supports complex, real-time AI use cases, enhancing end-user accessibility and productivity.
+Architecture to enable real-time monitoring and AI-driven search capabilities in Kubernetes environment.
+Additional resources
+GoodData live demo
+Free GoodData trial
+Qdrant Cloud signup
+Get Started with Qdrant FreeGet Started
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Pricing
+Use Cases
+Advanced Search
+Recommendation Systems
+Retrieval Augmented Generation
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Status Page
+Certification
+Resources
+Blog
+Benchmarks
+Technical Articles
+Events
+Startup Program
+Demos
+Bug Bounty
+Company
+About Us
+Customers
+Partners
+Careers
+Contact Us
+Sign up for Qdrant updates
+We'll occasionally send you best practices for using vector data and similarity search, as well as product news.
+© 2026 Qdrant.
+Terms
+Privacy Policy
+Impressum
+Recruitment Privacy Policy
+Cookie ConsentUp!
+
+=== ROW 69 | f003266 | https://forums.swift.org/t/is-this-a-bug-in-automatic-reference-counting/81167 | 2025-07-17 | domain-subframes ===
+Is this a bug in automatic reference counting?
+
+@theundergroundsorcerer · 2025-07-17T16:48:49.152Z:
+When I run the following code
+class OwnedValue {
+var value: Int
+init(_ value: Int) {
+self.value = value
+}
+}
+struct ValueOwner {
+let ownedValue1: OwnedValue
+let ownedValue2: OwnedValue
+}
+func updateValue(owndedValue ownedValue: consuming OwnedValue, with newValue: Int) {
+if isKnownUniquelyReferenced(&ownedValue) {
+print("Value \(ownedValue.value) is unique")
+} else {
+print("Value \(ownedValue.value) is not unique")
+}
+ownedValue.value = newValue
+}
+func testOwnership() {
+let valueOwner = ValueOwner(
+ownedValue1: OwnedValue(10),
+ownedValue2: OwnedValue(15))
+let valueOwner2 = consumeValueOwner(valueOwner: consume valueOwner)
+print("\(valueOwner2.ownedValue1.value), \(valueOwner2.ownedValue2.value)")
+}
+@discardableResult
+func consumeValueOwner(valueOwner: consuming ValueOwner) -> ValueOwner {
+let ownedValue1 = valueOwner.ownedValue1
+let actualOwnedValue1 = ownedValue1.value
+let ownedValue2 = valueOwner.ownedValue2
+let actualOwnedValue2 = ownedValue2.value
+_ = consume valueOwner
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+return ValueOwner(
+ownedValue1: OwnedValue(actualOwnedValue1),
+ownedValue2: OwnedValue(actualOwnedValue2))
+}
+testOwnership()
+the output is
+Value 15 is not unique
+Value 10 is unique
+If I reorder the last lines in testOwnership the output becomes
+Value 10 is not unique
+Value 15 is unique
+Now, after this line
+_ = consume valueOwner
+there should be only one reference for each one of the ownedValues. Yet, for some reason, a reference stays alive during first call.
+Now replacing
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+with
+updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: consume ownedValue1, with: actualOwnedValue2 + 10)
+does result in correct output. (it is enough to do it in the first line TBH)
+Value 15 is unique
+Value 10 is unique
+Is it a bug or a feature?
+It looks like a bug TBH.
+It occurs in release mode.
+
+---
+
+@bbrk24 · 2025-07-17T16:50:49.253Z:
+Not exactly. From what I remember, objects are held until end of scope by default, so that weak references continue to work after what would otherwise be the last use. Years ago there was an experiment to change this that broke a lot of idiomatic Cocoa code, iirc.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T16:51:50.051Z:
+But the object is explicitly consumed by
+_ = consume valueOwner
+Should not it end its lifetime?
+Also, has it been the case - ValueOwner alive until last use, why after changing
+updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+to
+updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+we do gt the expected behavior?
+If valueOwner is alive until
+updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
+then consume should not have any effect - we still have two references - one in the alive valueOwner and second local to updateValue.
+
+---
+
+@jrose · 2025-07-17T17:03:33.306Z:
+It makes a difference whether the local variables are consumed, as you already noticed. If they are, then yes, inside updateValue the references should always be unique. If not, then you’re leaving it up to the optimizer. It would be valid for both ownedValue1 and ownedValue2 to be kept alive until the end of consumeValueOwner.
+So, why doesn’t the optimizer treat them the same? I’m a bit bemused by this too; it feels like if the optimizer can “forward” the last use of one refcounted object, it should be able to do the same for another, independent refcounted object. Even if they were dynamically the same object, there are distinct, immutable local references to it. Maybe an optimizer person can answer your actual question; all I’ve done is elaborate on bbrk’s point that this is permitted behavior.
+To summarize: this is a missed optimization, and a missed optimization is not a bug, even if it’s observable by the program.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:10:08.546Z:
+Okay. But is not
+_ = consume valueOwner
+supposed to explicitly end the lifetime of valueOwner? Or only end its scope?
+Correct me if I am wrong, but accessing members of valueOwner, using a weak reference, after it has been explicitly consumed is not idiomatic Cocoa code, but undefined behavior. (Old idiomatic Cocoa code exists from times long before consume, borrow, became a thing as far as I am aware).
+
+---
+
+@ksluder · 2025-07-17T17:13:18.838Z:
+I think Jordan is saying you need to make this change:
+@discardableResult
+func consumeValueOwner(valueOwner: consuming ValueOwner) -> ValueOwner {
+let ownedValue1 = valueOwner.ownedValue1
+let actualOwnedValue1 = ownedValue1.value
+let ownedValue2 = valueOwner.ownedValue2
+let actualOwnedValue2 = ownedValue2.value
+_ = consume valueOwner
+-      updateValue(owndedValue: ownedValue2, with: actualOwnedValue1 + 10)
+-      updateValue(owndedValue: ownedValue1, with: actualOwnedValue2 + 10)
++     updateValue(owndedValue: consume ownedValue2, with: actualOwnedValue1 + 10)
++     updateValue(owndedValue: consume ownedValue1, with: actualOwnedValue2 + 10)
+return ValueOwner(
+ownedValue1: OwnedValue(actualOwnedValue1),
+ownedValue2: OwnedValue(actualOwnedValue2))
+}
+
+---
+
+@jrose · 2025-07-17T17:21:39.694Z:
+Formally, let ownedValue2 = valueOwner.ownedValue2 creates an independent owned reference to ownedValue2. It doesn’t matter to the local variable that valueOwner gets destroyed afterwards. In manual-retain-release terms, it’s closer to id ownedValue2 = [valueOwner.ownedValue2 retain]. (Just like ObjC ARC, for the record.)
+In practice, there’s almost never an actual retain performed here, because the compiler can see that it would be redundant (this is better than ObjC ARC, which often can’t be quite as confident). But when we’re talking about what is and isn’t permitted, and what is and isn’t a bug, the answer is that the local variable is an independent owner. Which is why you can consume it at all.
+If you can use an object after it’s been destroyed, that’s a bug. But that shouldn’t be possible in Swift without going through an API labeled “unsafe”, sidestepping the concurrency rules to make a data race, or calling back to an ObjC API that does something Swift can’t check.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:24:27.538Z:
+I am aware making this change works, and I've mentioned it in my original post. The thing I don't understand is - why is it necessary.
+Citing E366
+In this document, we propose adding a new operator, marked by the context-sensitive keyword consume, to the language. consume ends the lifetime of a specific local let, local var, or function parameter, and enforces this by causing the compiler to emit a diagnostic upon any use after the consume. This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers. As an example
+In this document, we propose adding a new operator, marked by the context-sensitive keyword consume, to the language. consume ends the lifetime of a specific local let, local var, or function parameter, and enforces this by causing the compiler to emit a diagnostic upon any use after the consume. This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers. As an example:
+useX(x) // do some stuff with local variable x
+// Ends lifetime of x, y's lifetime begins.
+let y = consume x // [1]
+useY(y) // do some stuff with local variable y
+useX(x) // error, x's lifetime was ended at [1]
+// Ends lifetime of y, destroying the current value.
+_ = consume y // [2]
+useX(x) // error, x's lifetime was ended at [1]
+useY(y) // error, y's lifetime was ended at [2]
+It seems that
+_ = consume valueOwner
+is supposed to end the lifetime, not just the scope.
+
+---
+
+@jrose · 2025-07-17T17:25:21.967Z:
+It ends the lifetime of valueOwner, but just like in ObjC that doesn’t immediately end the lifetime of its members. It merely releases them.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:28:30.704Z:
+But what about
+This allows for code that relies on forwarding ownership of values for performance or correctness to communicate that requirement to the compiler and to human readers
+part?
+This is a toy example, but it does rely on the fact that valueOwner is not alive, with naive assumption that its members are not alive either.
+
+---
+
+@jrose · 2025-07-17T17:31:28.108Z:
+You are the one who assigned its members to local variables. Now you need to consume those to get the forwarding guarantee you’re looking for.
+
+---
+
+@ksluder · 2025-07-17T17:47:16.261Z:
+I had deleted my post because I realized that @theundergroundsorcerer had written updateValue() to take consuming arguments, so I assumed I had misunderstood the problem. But it seems like you’re saying the consume at the call site is necessary.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T17:49:54.404Z:
+jrose:
+You are the one who assigned its members to local variables. Now you need to consume those to get the forwarding guarantee you’re looking for.
+This is not always an option. What happens if there are more “wrapping levels” but my code relies on the fact that the object (and its part as well) ended its lifetime, but consuming the wrapped references is not an option? (They could be private for example).
+
+---
+
+@John_McCall · 2025-07-17T17:55:11.645Z:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value). If Swift always consumed in these situations (as Rust does), making a parameter consuming would be source-breaking, and we did not want programmers to have to make that choice. The consequence is that, for now, clients have to be explicit about wanting to consume.
+It would be good if Swift could promise to consume in cases like this one where it can clearly see that the variable is not used after the potentially-consuming use. As was noted earlier in the thread, however, this could also be source-breaking (in a different sense) because it could end the lifetime of an object that the code was implicitly relying on staying alive, whether through weak references or something spookier. It’s something we’re still interested in, but it’s not an easy change to make.
+
+---
+
+@John_McCall · 2025-07-17T17:57:09.988Z:
+theundergroundsorcerer:
+This is not always an option. What happens if there are more “wrapping levels” but my code relies on the fact that the object (and its part as well) ended its lifetime, but consuming the wrapped references is not an option? (They could be private for example).
+If you cannot consume it explicitly, I don’t know how you’re expecting the compiler to do it implicitly.
+
+---
+
+@theundergroundsorcerer · 2025-07-17T22:38:21.589Z:
+John_McCall:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value). If Swift always consumed in these situations (as Rust does), making a parameter consuming would be source-breaking, and we did not want programmers to have to make that choice. The consequence is that, for now, clients have to be explicit about wanting to consume.
+Please correct me if I am wrong, but I recall that one of the SE proposals said that copyable variable is copied instead of being consumed if it is being used later. My issue not with consuming parameters, but with consume operator which is supposed to end the life of an object, but seemingly doesn't and is "subject to optimization". An object is being consumed explicitly, using consume operator.
+Citing SE-0377
+SE-0366 introduced an operator that explicitly ends the lifetime of a variable before the end of its scope. This allows the compiler to reliably destroy the value of the variable, or transfer ownership, at the point of its last use, without depending on optimization and vague ARC optimizer rules. When the lifetime of the variable ends in an argument to a consume parameter, then we can transfer ownership to the callee without any copies.
+In addition, almost all examples using consume seem to imply that it ends the lifetime of operator, while things still seem to happen behind the scenes and "depend" on the optimizer.
+John_McCall:
+If you cannot consume it explicitly, I don’t know how you’re expecting the compiler to do it implicitly.
+I can consume the wrapper, but I don't see whether it guarantees that references it stores are consumed as well, or implicitly alive references that are part of another object that was consumed earlier, as in my example.
+
+---
+
+@John_McCall · 2025-07-17T23:29:20.227Z:
+theundergroundsorcerer:
+Please correct me if I am wrong, but I recall that one of the SE proposals said that copyable variable is copied instead of being consumed if it is being used later. My issue not with consuming parameters, but with consume operator which is supposed to end the life of an object, but seemingly doesn't and is "subject to optimization".
+The consume operator is not itself subject to optimization. But consume on a storage location of copyable type only transfers ownership of the value stored in that specific location. Other locations will have independent ownership of the values they store. So if you have a reference to an object in two locations, and you transfer ownership of only one of them, the object will stay alive.
+Allow me to simplify your example:
+func consumeValueOwner(valueOwner: consuming ValueOwner) {
+// At this point, `valueOwner` has ownership of its current value, which
+// is a struct value consisting of two strong object references.
+// Let's assume these are references to different objects, which we'll
+// call A and B, and that this value is the only remaining reference
+// to them.
+let obj = valueOwner.ownedValue1
+// `obj` now has independent ownership of the object A.
+// There are two references to this object.
+_ = consume valueOwner
+// We have consumed the value out of `valueOwner`, leaving it empty.
+// Ownership is transferred to a temporary, which is immediately dropped.
+// In other words, we destroy the value that was previously stored in
+// `valueOwner`, which is to say, we destroy the two strong references
+// by decrementing the reference count on the objects they refer to.
+// There is still a reference to A in `obj`.
+// There are no longer any references to B, and the object will be
+// immediately destroyed at this point.
+let propertyValue = obj.value
+// The set of extant references to object A has not changed.
+updateValue(ownedValue: obj, with: propertyValue + 10)
+// Because arguments passed to consuming parameters are copied,
+// the parameter to `updateValue` is an independent reference to
+// object A, and `obj` continues to have its value. Therefore there are
+// two references to object A, and the unique reference test within
+// `updateValue` fails.
+// When we reach the end of the scope, all local variables (that have
+// not already been consumed from) are destroyed, dropping the
+// last reference to object A and causing it to be immediately
+// destroyed.
+}
+So whether consume consumes the value in the named location is not subject to optimization — it must do so, and if that is the only reference to the value, you should see that reflected in reference counts and so on. But if there are other copies of the same value (or its component values) in other locations, they will maintain independent ownership. Those other locations are not somehow magically affected by an independent copy of their value having been consumed from somewhere else.
+Explicitly using consume on the argument to updateValue forces the compiler to transfer ownership from obj to the consuming parameter, rather than copying, and is the right thing to do if you need a guarantee of no copies. This could also be done automatically by Swift's optimizer, but currently this does not happen reliably for reasons already discussed.
+This sensitivity of reference counts to optimization — and the finickiness of manually optimizing it — definitely makes unique-reference tests somewhat semantically frustrating. That is why we encourage them to be used mostly for things like copy-on-write data structures, where the expected cost of a non-unique reference is just a performance hit. (And that performance hit, and the difficulty of optimizing it, is definitely something that programmers have also noted as frustrating when doing Swift performance work.)
+
+---
+
+@theundergroundsorcerer · 2025-07-18T06:14:35.960Z:
+Thanks. Great explanation. So the problem is not that valueOwner stays alive, but with the fact that whether consuming ownedValue parameters are copied or not is a subject to optimization, independent of valueOwner being consumed?
+Hence, if we are interested in forcing forwarding, every consuming function argument should be passed with preceeding consume word (when it's possible)?
+John_McCall:
+That is why we encourage them to be used mostly for things like copy-on-write data structures, where the expected cost of a non-unique reference is just a performance hit
+The origin of my question was dealing with some COW issues - it just boiled to this toy example.
+Correct me if I am wrong, but using consuming parameters together with copyable allows modifiying the function argument, which can be a good thing in some use scenarios. Previously we needed either to make a local copy within the function (which introduces extra overhead) or pass them as inout which breaks protection mechanisms (because I want to modify the copy, not the object itself) Is this intended use or just a "side effect"? Or we are not supposed to use them in this way?
+
+---
+
+@CrystDragon · 2025-07-18T06:47:46.398Z:
+Thanks for your elaboration. Can you please clarify in what circumstances are consuming parameters for copyable types not implicitly copied? Is it what you put in the parentheses?
+John_McCall:
+Passing a copyable value to a consuming parameter in Swift will generally still perform a copy (if the expression does not naturally produce an owned value)
+For example, for one of the motivating examples of consuming parameter in the proposal:
+extension String {
+// Append `self` to another String, using in-place modification if
+// possible
+consuming func plus(_ other: String) -> String {
+// Modify our owned copy of `self` in-place, taking advantage of
+// uniqueness if possible
+self += other
+return self
+}
+}
+// This is amortized O(n) instead of O(n^2)!
+let helloWorld = "hello ".plus("cruel ").plus("world")
+Although String is copyable, this optimization can still work here if we can rely on self not being implicitly copied when passed to plus. It is crucial that self does have an exclusive ownership of the string buffer, otherwise the following += will trigger COW.
+So what do you mean by saying "if the expression (does or) does not naturally produce an owned value"?. Does this implicit copy happen on the callee's side?
+
+---
+
+@John_McCall · 2025-07-18T15:11:15.789Z:
+theundergroundsorcerer:
+Thanks. Great explanation. So the problem is not that valueOwner stays alive, but with the fact that whether consuming ownedValue parameters are copied or not is a subject to optimization, independent of valueOwner being consumed?
+I would say that the core problem is just that code is allowing the caller to still have an independent copy by not consuming ownedValue1. The optimization question is just something that adds some unpredictability on top of that, because it could have saved you here by implicitly consuming, it just didn’t.
+theundergroundsorcerer:
+Hence, if we are interested in forcing forwarding, every consuming function argument should be passed with preceeding consume word (when it's possible)?
+Correct.
+theundergroundsorcerer:
+Is this intended use or just a "side effect"? Or we are not supposed to use them in this way?
+This is an intended use. If you don’t semantically want to modify the caller’s copy of the value, it shouldn’t be inout. Having decided that, if it’s still good for performance for the callee to have ownership of the value, then yeah, you should take it consuming. This works well in some ways with Swift’s semantics of copying into consuming parameters because the caller isn’t forced to worry about it — they’ll get the optimization opportunistically, and if they want to cooperate to get it in more places, they can explicitly consume. But you should understand the flip side of that: if this optimization is really important to you — if you would actually prefer it if callers had to explicitly copy when they cannot cooperate with the optimization — the language is going to be somewhat at odds with that goal because of the copying into consuming thing.
+
+---
+
+@John_McCall · 2025-07-18T15:53:29.436Z:
+CrystDragon:
+So what do you mean by saying "if the expression (does or) does not naturally produce an owned value"?
+Many expressions have to produce an independent value that the evaluating context will has independent ownership of: functions have to return independent values, getters have to return independent values, and so on. Other expressions don’t: most importantly, references to stored variables or properties. (This is all getting more complicated as we introduce more support for lifetime-dependent values, but for now, this is the big picture.)
+The big concern about implicitly forwarding values is that forwarding necessarily means the caller loses access to the value. If the caller actually needs the value to stay alive, either because it’s going to use it again or because the program as a whole has an implicit dependency on its lifetime (e.g. because of a weak reference somewhere else), the forward can break behavior.
+But that’s really only a problem with expressions that don’t naturally produce an independent value. If you use a call expression directly as an argument for a consuming parameter, the current context doesn’t have any other way of referring to that result, so it obviously can’t directly use it again later. Along similar lines, forwarding it could end up shortening its lifetime and invalidating weak references earlier, but it doesn’t really seem reasonable that someone would expect the the current context to keep this temporary value alive arbitrarily. So there’s no good reason not to implicitly forward into the parameter.
+CrystDragon:
+Does this implicit copy happen on the callee's side?
+Yes. The callee simply receives a value that it has ownership of, with no idea how that was produced.
+
+---
+
+@CrystDragon · 2025-07-22T14:53:12.978Z:
+John_McCall:
+Yes. The callee simply receives a value that it has ownership of, with no idea how that was produced.
+Thank you for tirelessly explaining this to us, but I'm a little bit confused by your last statement in this post. You replied to my question with "Yes.", but I suppose you actually mean "No", right?
+My understanding of your other lines is this: in a scenario of a function func foo(_ a: consuming A) being invoked as foo(someExpressionOfA), the compiler will insert implicit copies from the "caller" (not the "callee") side when it cannot tell someExpressionOfA can produce an independent value. Am I right?
+
+---
+
+@John_McCall · 2025-07-22T17:11:08.100Z:
+CrystDragon:
+Thank you for tirelessly explaining this to us, but I'm a little bit confused by your last statement in this post. You replied to my question with "Yes.", but I suppose you actually mean "No", right?
+Ah, yes, sorry. The problem with caller/callee terminology is that I misread it about 20% of the time. It is the caller’s responsibility.
+CrystDragon:
+My understanding of your other lines is this: in a scenario of a function func foo(_ a: consuming A) being invoked as foo(someExpressionOfA), the compiler will insert implicit copies from the "caller" (not the "callee") side when it cannot tell someExpressionOfA can produce an independent value. Am I right?
+Correct. The semantics are that we emit the expression in a way that produces an independent value, which may require copies.
+
+=== ROW 70 | f003375 | https://iroh.computer/blog/message-framing-tutorial | 2025-08-12 | domain-subframes ===
+Tutorial: Message Framing with iroh - Iroh
+Open main menu
+Services
+Use Cases
+Docs
+Blog
+Pricing
+Sign Up
+12k
+ServicesHostingObservabilityEnterprisePartners
+Use CasesRemote accessDistributed AIVideo StreamingData Sync & Device BackupPayments & POSIoT & EmbeddedDocsBlogPricing
+Blog Index
+Tutorial: Message Framing with irohAugust 12, 2025 by ramfox, matheus23, b5
+This tutorial is a written version of the youtube tutorial published on the n0computer youtube channel:
+Intro
+The first time you dig into iroh to write your own protocol, you quickly realize that what you mostly interact with is the QUIC API.
+The QUIC API can feel extremely low level: you are dealing with raw streams and sometimes need to use methods that involve literally reading and writing a single byte at a time.
+In this post, we are going to talk about message framing as a technique to get you away from having to think of your protocol in terms of bytes and instead thinking of it in terms of logical messages.
+Message framing is a generally applicable concept, and by no means limited to working with protocols on iroh!
+Framed Messages
+QUIC connections are made of streams and those streams can be bi-directional or uni-directional. Bi-directional streams are streams you can read from and write to in both directions. Uni-directional streams are streams that can only be written to on one side and read from by the other.
+A single QUIC connection to another endpoint can have many streams, some uni-directional, some bi-directional.
+For the purposes of this tutorial, we are going to focus on a single, uni-directional stream, where one side writes to the stream and the other side reads from it.
+Streams are made up of bytes. You write bytes to the stream and you read bytes out of it.
+But the big question here is: once side A has written to the stream, how does side B know how much data to read?
+The first thing you might do when trying to get familiar with working with streams, is you might just use APIs like write_all and read_all, to write a chunk of data to the stream and then read that full chunk of data off of it, then close the stream.
+This is fine while you are getting familiar, but when you go to write your protocols you will want something more sophisticated.
+What we really want to do is send multiple logical messages on the stream, and have some format for figuring out how to separate out those messages. We also must deal with the fact that not all messages are going to be the same length.
+That's where message framing comes in. In message framing, you prepend the length, in bytes, of your message data to your message before sending over the data. On the receiving side, you read that length data first, then you create or adjust your buffer to accommodate that length, and finally read the exact number of bytes off your stream and into your buffer.
+The next time you read off the stream, you read off another length, and repeat the process.
+For an in-depth look at message framing, including a look into other forms of framing that already exist in networking, watch the youtube video that this tutorial is based on.
+Code setup
+First, head to your coding directory and run cargo init frame_me, which is what we are calling this project locally.
+Open up your IDE and take a look at your main.rs, which should simply show a main function that prints "Hello, world!" For sanity, run cargo run in your terminal to ensure everything is set up correctly.
+Now, let's add a few crates that we will be using in this example:
+cargo add tokio iroh anyhow
+Tokio is our async runtime, iroh is our networking library, and the Anyhow crate allows us to do easy error handling.
+Setting up our main function
+Heading back to main.rs, let's prep our main function to work with tokio:
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+Ok(())
+}
+CopyCopied!
+This doesn't do anything yet, but run cargo run to make sure everything is peachy!
+For this example, we are going to show the send and receive sides in the same main function. This just makes the example easier to illustrate and keeps it down to a single file. Normally, we would create a whole CLI with different commands associated with the send and receive sides. Our examples of dumbpipe and sendme show this pattern off nicely.
+For this demo, we are going to set up the receiving side, set up the sending side, write on the sending side, read from the receiving side, and then clean up and close down.
+use iroh::{Endpoint, Watcher, protocol::Router};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+Ok(())
+}
+CopyCopied!
+The iroh::Endpoint is the endpoint on which we make connections. By default, an iroh::Endpoint allows us to dial by endpoint_id without having to manually send address information.
+We use the EndpointBuilder to create the receive endpoint, recv_ep.
+The iroh::protocol::Router is where we will eventually add our custom protocol. We've already created the ALPN for our custom protocol, which we are calling ALPN.
+The ALPN string is formatted based on the conventions we recommend. The first section indicates this is an iroh protocol, the second indicates that the protocol is called smol, and the last section shows this is version 0 of the protocol, all delimited by a "/".
+We use the RouterBuilder to create the recv_router, which won't do much for us until we add our custom protocol later.
+The addr is the endpointAddr of the receive endpoint, which contains all the address information we know about ourselves, including our endpoint_id. We will use the addr to connect from the send endpoint to the receive endpoint, using the Endpoint::connect method.
+Scaffolding out write_frame and read_frame
+Now that we have a connection, let's open a stream and send some data!
+We can use the Connection::open_bi to create a bi-directional stream, or Connection::open_uni to create a uni-directional stream. In this case, we will create a uni-directional stream.
+To be more explicit, using open_bi would give us both a SendStream and RecvStream, while using open_uni will give us only a SendStream. In our example, we will be using open_uni.
+Once we have our SendStream, we have many different options for how we want to write to the stream, but we will cover that in a later section. For now, let us continue with our main function, and we'll scaffold out write_frame and read_frame functions that we will include in the code for now, but actually implement later.
+use iroh::{
+Endpoint, Watcher,
+endpoint::{RecvStream, SendStream},
+protocol::Router,
+};
+const ALPN: &[u8] = b"iroh/smol-msgs/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+todo!();
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+todo!();
+}
+CopyCopied!
+So, as you see, we're using todo! in the write_frame and read_frame functions. This allows the program to compile, but if we run the program and write_frame or read_frame are called, it will throw a panic. It's very useful in development!
+In our main function, we call write_frame to send "hi" and then "fren!" to the receiving side. This is the data that will get framed.
+Then we do some clean up!
+stream.finish()? tells the stream "hey, I'm done sending data".
+conn.closed().await will wait until the other side of the connection calls conn.close() before returning and won't let you send any other data across while it's waiting. conn.close (without the "d") informs the other side of the connection "hey, I'm closing the connection, and here is why".
+send_ep.close().await closes the endpoint. The endpoint won't close until all the connections have closed and cleaned up.
+recv_router.shutdown().await? stops the accept loop, closes all the connections, and closes the underlying endpoint.
+If you call cargo run at this point, the example will compile, but it will error at runtime: the Router is expecting at least one protocol and will error when it builds.
+Smol Protocol
+We've already defined the ALPN. The next thing we want is to create a SmolProtocol that implements the ProtocolHandler trait. This requires us to implement the accept method on the ProtocolHandler trait.
+use iroh::{endpoint::Connection, protocol::{ProtocolHandler, AcceptError}};
+const SMOL_ALPN: &[u8] = b"iroh/smol/0";
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(
+&self,
+connection: Connection,
+) -> Result<(), AcceptError> {
+todo!();
+}
+}
+CopyCopied!
+Again, we are using todo! here, but we will come back to it.
+One thing we can now do, is add the SmolProtocol to our router!
+let recv_router = Router::builder(recv_ep)
+.accept(ALPN, SmolProtocol)
+.spawn();
+CopyCopied!
+Our code so far:
+use iroh::{
+Endpoint, Watcher,
+endpoint::{Connection, RecvStream, SendStream},
+protocol::{AcceptError, ProtocolHandler, Router},
+};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).accept(ALPN, SmolProtocol).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+todo!();
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+todo!();
+}
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+todo!();
+}
+}
+CopyCopied!
+Implementing write_frame and read_frame
+Now we get to the actual message framing part! When we go to write data to the stream, we first need to write the size of the data, then the data itself.
+But what write methods should we use?
+Thankfully, message framing is so popular that tokio provides extension traits for reading and writing that allow you to read and write specific integers to the stream. We are going to use write_u8 to do our length prefixing.
+You'll note that by using a u8, we are limiting our message size to 255 bytes. In a protocol that sends larger messages, you would want to use a larger integer size. (Check out varints that use space-saving techniques when sending smaller numbers, but allow you to express very large numbers as well.)
+But it's u8s for us in this example! So first, we will ensure that the length of the message is smaller than an 8-bit integer. Then, we write the u8 using the write_u8 method, and then we will use write_all to write the entire contents of the message onto the stream:
+use iroh::endpoint::SendStream;
+use tokio::io::AsyncWriteExt;
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+assert!(message.len() <= u8::MAX as usize);
+stream.write_u8(message.len() as u8).await?;
+stream.write_all(message.as_bytes()).await?;
+Ok(())
+}
+CopyCopied!
+The read side first reads a u8 from the stream. If there is no u8 to read, then there are no current messages on the stream to read, and it will return Ok(None). The Ok indicates that there were no read errors during this read, but the None indicates that no data was read off of the stream.
+Next, we create a buffer the size of the u8 that we read. Then, we read that number of bytes from the stream and into the buffer using read_exact, which will fill the buffer with data from the stream.
+We then need to create a UTF-8 string from the bytes in the buffer. Finally, we return the String:
+use iroh::endpoint::RecvStream;
+use tokio::io::AsyncReadExt;
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+let Ok(frame_len) = stream.read_u8().await else {
+return Ok(None);
+};
+let mut buf = vec![0u8; frame_len as usize];
+stream.read_exact(&mut buf).await?;
+let smol_msg = String::from_utf8(buf)?;
+Ok(Some(smol_msg))
+}
+CopyCopied!
+Implementing SmolProtocol
+Time to implement the accept handler on SmolProtocol. This is what will get called each time we get an incoming connection to the Router.
+First, we will take the given connection and create a uni-directional stream using the accept_uni method. This will give us a RecvStream.
+Then we will use the above read_frame function to read messages from the stream and print them to stdout, looping until we find no more messages (i.e., read_frame returns None). If any errors occur while reading, we will convert them from an anyhow::Error to a standard library error before returning.
+Then we will close the connection using connection.close, giving an integer close code and a close reason. In a production-grade protocol, you may have a list of close codes and close reasons to communicate to the other side of the connection why the connection was closed. Sending 0 typically means that the connection closed without error.
+Finally, we return Ok:
+const ALPN: &[u8] = b"iroh/smol/0";
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+let mut stream = connection.accept_uni().await?;
+while let Some(msg) = read_frame(&mut stream)
+.await
+.map_err(anyhow::Error::into_boxed_dyn_error)?
+{
+println!("Got a smol message! {msg}");
+}
+println!("Done reading smol messages");
+connection.close(0u32.into(), b"thx for all the msgs :)");
+Ok(())
+}
+}
+CopyCopied!
+The full example:
+use iroh::{
+Endpoint, Watcher,
+endpoint::{Connection, RecvStream, SendStream},
+protocol::{AcceptError, ProtocolHandler, Router},
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+const ALPN: &[u8] = b"iroh/smol/0";
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+// create the receive side
+let recv_ep = Endpoint::bind().await?;
+let recv_router = Router::builder(recv_ep).accept(ALPN, SmolProtocol).spawn();
+let addr = recv_router.endpoint().endpoint_addr().initialized().await;
+// create a send side & send some messages :)
+let send_ep = Endpoint::bind().await?;
+let conn = send_ep.connect(addr, ALPN).await?;
+let mut stream = conn.open_uni().await?;
+write_frame(&mut stream, "hi").await?;
+write_frame(&mut stream, "fren!").await?;
+// This will interrupt the loop in `read_frames`
+// once it finished reading all frames currently "in flight" to the other end.
+stream.finish()?;
+// We're done with the connection and will wait for the other end to tell us
+// when it finished reading everything :)
+conn.closed().await;
+// Close both ends gracefully:
+send_ep.close().await;
+recv_router.shutdown().await?;
+Ok(())
+}
+async fn write_frame(stream: &mut SendStream, message: &str) -> anyhow::Result<()> {
+assert!(message.len() <= u8::MAX as usize);
+stream.write_u8(message.len() as u8).await?;
+stream.write_all(message.as_bytes()).await?;
+Ok(())
+}
+async fn read_frame(stream: &mut RecvStream) -> anyhow::Result<Option<String>> {
+let Ok(frame_len) = stream.read_u8().await else {
+return Ok(None);
+};
+let mut buf = vec![0u8; frame_len as usize];
+stream.read_exact(&mut buf).await?;
+let smol_msg = String::from_utf8(buf)?;
+Ok(Some(smol_msg))
+}
+#[derive(Debug, Clone)]
+struct SmolProtocol;
+impl ProtocolHandler for SmolProtocol {
+async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+let mut stream = connection.accept_uni().await?;
+while let Some(msg) = read_frame(&mut stream)
+.await
+.map_err(anyhow::Error::into_boxed_dyn_error)?
+{
+println!("Got a smol message! {msg}");
+}
+println!("Done reading smol messages");
+connection.close(0u32.into(), b"thx for all the msgs :)");
+Ok(())
+}
+}
+CopyCopied!
+Further exploring
+We hope you've learned a bit about writing protocols on this journey, specifically how framed messages are an incredibly useful technique.
+In this example, we sent simple strings on our streams, but in a real-world use case, we often send structured data. For a more in-depth example exploring how you might send structured data, including how we at n0 like to serialize and deserialize data to and from the wire, take a look at the framed messages example in iroh-examples.
+Iroh is a dial-any-device networking library that just works. Compose from an ecosystem of ready-made protocols to get the features you need, or go fully custom on a clean abstraction over dumb pipes. Iroh is open source, and already running in production on hundreds of thousands of devices.
+To get started, take a look at our docs, dive directly into the code, or chat with us in our discord channel.
+Footer
+Less net work for networks.
+DiscordTwitterBlueskyMastodonGitHubYouTube
+Build
+Documentation
+Github
+Learn
+Blog
+Examples
+dumbpipe
+sendme
+Connect
+Discord
+Discussion
+Twitter
+© 2025 n0, inc.
+
+=== ROW 71 | f003389 | https://neon.com/blog/azure-native-integration-ga | 2025-08-14 | domain-subframes ===
+Neon’s Microsoft Azure Native Integration is Generally Available - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Product
+Neon’s Microsoft Azure Native Integration is Generally Available
+Deploy and manage Neon Serverless Postgres as a deeply integrated Azure-native service
+Monica Steinke–Technical Product ManagerMay 07, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Neon’s Microsoft Azure Native Integration has reached General Availability, providing developers with a powerful, serverless Postgres solution on Azure. Neon integrates with your existing Azure workflows, including unified billing, Microsoft single-sign on (SSO), and full MACC eligibility. Whether you’re building new apps or scaling global workloads, Neon brings the power of serverless Postgres to your Azure environment with zero friction.
+context
+Neon is working with Microsoft to bring serverless Postgres to the Azure ecosystem. Review our original announcement for a refresher.
+What Is the Neon Azure Native Integration?
+Neon’s Azure Native Integration lets you use Neon like any other native Azure service, fully embedded within your Azure workflows, identity systems, and billing structure.
+You can provision Neon Serverless Postgres directly from the Azure portal, where it appears alongside Microsoft’s own database offerings in the Databases section, complete with a partner badge:
+Once provisioned, you can manage Neon projects, branches, and connection strings using the Azure Command-Line Interface (CLI) and SDK.
+This deep integration also simplifies security and procurement:
+Authenticate using Microsoft Entra ID (formerly Azure Active Directory)
+Consolidate Neon usage into your Azure bill—no separate account or payment required
+What’s New with General Availability?
+While in preview, developers were able to create a Neon organization through Azure; now, with general availability, they can also manage Neon projects, branches, and connection strings directly through Azure.
+This update makes it easier to operationalize Neon across your team, enabling tighter CI/CD integration, more granular environment management, and a faster path from provisioning to production.
+And while we’re excited about the improvements available today, we’re already working on our next enhancement, designed to further simplify identity and access management, making your workflow even more streamlined within the Azure ecosystem.
+Who Benefits From the Neon Azure Native Integration?
+Enterprises with Azure MACC
+If your organization has a Microsoft Azure Consumption Commitment (MACC), Neon is now an eligible partner. Any Neon usage through the Azure Marketplace contributes toward your committed Azure spend, with no additional procurement steps or vendor onboarding required. This makes it simple for enterprises to adopt serverless Postgres within their existing Azure contracts and governance structures.
+Why Neon for Enterprise
+Enterprises choose Neon due to its efficient scalability, strong recovery guarantees, and developer workflows that align with modern software development practices:
+Efficient scalability: Neon’s compute layer scales automatically based on workload, including CPU, memory, and active connections. There’s no need to overprovision resources or worry about connection limits. The benefits are smoother performance during peak traffic, lower infrastructure costs, and reduced operational overhead for engineering teams.
+Reliable recovery options: Neon also enables instant restores, even for multi-terabyte databases. This significantly reduces downtime in the event of failures, providing a strong safety net for production environments. Every database on Neon also includes high availability by default, with no need to manage replicas or monitor replication lag.
+Smoother development workflows: Neon’s database branching makes it easy to create isolated, production-like environments for testing, CI/CD, and feature development. Teams can spin up branches in seconds, iterate quickly, and launch with confidence. And with scale-to-zero, idle dev and staging environments incur no cost, keeping budgets lean across the SDLC.
+All of this is backed by Neon’s commitment to enterprise-grade security and compliance. We follow industry best practices for encryption, access control, and data protection.
+talk to us
+If you’re just discovering Neon, schedule a meeting with our team. Our Solutions Engineers are ready to review your requirements and help you evaluate whether Neon is the right fit.
+AI Startups scaling on Azure
+If you’re a startup, especially if part of the Microsoft for Startups program and embracing the AI wave, the Neon Azure Native Integration is also a perfect fit. Neon’s serverless Postgres architecture delivers the speed, flexibility, and automation that modern AI applications demand. Here’s how AI startups are building on Neon:
+AI agents powered by Neon
+Replit Agent and Create.xyz are using Neon as a foundation for agentic app creation. These AI agents automatically spin up Neon databases in response to user input, whether it’s a new AI workspace, a micro SaaS, or a proof-of-concept app.
+Neon’s instant provisioning, fully managed storage, and powerful API enable agents to deploy Postgres completely autonomously. No manual setup, no disk provisioning, no credential management. Neon handles it all in the background, so the agent can stay focused on the user experience.
+RAG pipelines with pgvector
+Neon is also an ideal vector store for Retrieval-Augmented Generation (RAG) workflows. Startups are building pipelines that generate embeddings with Azure OpenAI Service and store them in Neon using the pgvector extension, unlocking fast, SQL-native semantic search inside a fully managed Postgres environment.
+There’s no need for a separate vector database or added infrastructure. With Neon, you get native vector search, seamless scaling, and the simplicity of standard Postgres tooling to insert, index, and retrieve vectors efficiently.
+And if you’re building with Microsoft-native tools, Neon integrates directly with Semantic Kernel. Using the Postgres memory connector, you can orchestrate a full RAG pipeline:
+Generate embeddings with Azure OpenAI Service
+Store and query them in Neon with pgvector
+Retrieve relevant results in milliseconds, all with SQL
+A Big Milestone, But We’re Just Getting Started
+This release is the result of close collaboration between Neon and Microsoft engineering teams. With a roadmap and ongoing co-investment, we’re working to make Neon truly native to the Microsoft developer ecosystem.
+Whether you’re an individual developer or part of an enterprise engineering team, log in to the Azure Marketplace and try Neon’s Native Integration today.
+Find us at MS Build
+If you’re attending Microsoft Build 2025, come find us at booth 518. We’d love to meet you and hear your feedback on how we can build the best serverless Postgres experience on Azure!
+On this page
+What Is the Neon Azure Native Integration?
+What’s New with General Availability?
+Who Benefits From the Neon Azure Native Integration?
+A Big Milestone, But We’re Just Getting Started
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 74 | f003580 | https://blog.cloudflare.com/r2-sql-deep-dive | 2025-09-25 | domain-subframes ===
+R2 SQL: a deep dive into our new distributed query engine | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+This Post is Available in
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLoginDashboardContact Sales
+Blog
+Birthday WeekDataDeep Dive+5Show 5 more tags
+8 TagsShow 8 tags
+Post Tags
+Birthday WeekDataDeep DiveEdge ComputingR2RustServerlessSQL
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Artificial Intelligence
+Workers
+Client-Side Security
+Architecture
+Multi-tenant Secuity
+Multi-tenant Security
+Edge ComputingR2RustServerlessSQL
+Birthday WeekDataDeep DiveEdge ComputingR2RustServerlessSQL
+September 25, 2025
+R2 SQL: a deep dive into our new distributed query engine
+Yevgen Safronov, Nikita Lapkov, and Jérôme Schneider
+15 minute readCOPY URL
+This post is also available in 简体中文.
+How do you run SQL queries over petabytes of data… without a server?
+We have an answer for that: R2 SQL, a serverless query engine that can sift through enormous datasets and return results in seconds.
+This post details the architecture and techniques that make this possible. We'll walk through our Query Planner, which uses R2 Data Catalog to prune terabytes of data before reading a single byte, and explain how we distribute the work across Cloudflare’s global network, Workers and R2 for massively parallel execution.
+From catalog to query
+During Developer Week 2025, we launched R2 Data Catalog, a managed Apache Iceberg catalog built directly into your Cloudflare R2 bucket. Iceberg is an open table format that provides critical database features like transactions and schema evolution for petabyte-scale object storage. It gives you a reliable catalog of your data, but it doesn’t provide a way to query it.
+Until now, reading your R2 Data Catalog required setting up a separate service like Apache Spark or Trino. Operating these engines at scale is not easy: you need to provision clusters, manage resource usage, and be responsible for their availability, none of which contributes to the primary goal of getting value from your data.
+R2 SQL removes that step entirely. It’s a serverless query engine that executes retrieval SQL queries against your Iceberg tables, right where your data lives.
+Designing a query engine for petabytes
+Object storage is fundamentally different from a traditional database’s storage. A database is structured by design; R2 is an ocean of objects, where a single logical table can be composed of potentially millions of individual files, large and small, with more arriving every second.
+Apache Iceberg provides a powerful layer of logical organization on top of this reality. It works by managing the table's state as an immutable series of snapshots, creating a reliable, structured view of the table by manipulating lightweight metadata files instead of rewriting the data files themselves.
+However, this logical structure doesn't change the underlying physical challenge: an efficient query engine must still find the specific data it needs within that vast collection of files, and this requires overcoming two major technical hurdles:
+The I/O problem: A core challenge for query efficiency is minimizing the amount of data read from storage. A brute-force approach of reading every object is simply not viable. The primary goal is to read only the data that is absolutely necessary.
+The Compute problem: The amount of data that does need to be read can still be enormous. We need a way to give the right amount of compute power to a query, which might be massive, for just a few seconds, and then scale it down to zero instantly to avoid waste.
+Our architecture for R2 SQL is designed to solve these two problems with a two-phase approach: a Query Planner that uses metadata to intelligently prune the search space, and a Query Execution system that distributes the work across Cloudflare's global network to process the data in parallel.
+Query Planner
+The most efficient way to process data is to avoid reading it in the first place. This is the core strategy of the R2 SQL Query Planner. Instead of exhaustively scanning every file, the planner makes use of the metadata structure provided by R2 Data Catalog to prune the search space, that is, to avoid reading huge swathes of data irrelevant to a query.
+This is a top-down investigation where the planner navigates the hierarchy of Iceberg metadata layers, using stats at each level to build a fast plan, specifying exactly which byte ranges the query engine needs to read.
+What do we mean by “stats”?
+When we say the planner uses "stats" we are referring to summary metadata that Iceberg stores about the contents of the data files. These statistics create a coarse map of the data, allowing the planner to make decisions about which files to read, and which to ignore, without opening them.
+There are two primary levels of statistics the planner uses for pruning:
+Partition-level stats: Stored in the Iceberg manifest list, these stats describe the range of partition values for all the data in a given Iceberg manifest file. For a partition on day(event_timestamp), this would be the earliest and latest day present in the files tracked by that manifest.
+Column-level stats: Stored in the manifest files, these are more granular stats about each individual data file. Data files in R2 Data Catalog are formatted using the Apache Parquet. For every column of a Parquet file, the manifest stores key information like:
+The minimum and maximum values. If a query asks for http_status = 500, and a file’s stats show its http_status column has a min of 200 and a max of 404, that entire file can be skipped.
+A count of null values. This allows the planner to skip files when a query specifically looks for non-null values (e.g., WHERE error_code IS NOT NULL) and the file's metadata reports that all values for error_code are null.
+Now, let's see how the planner uses these stats as it walks through the metadata layers.
+Pruning the search space
+The pruning process is a top-down investigation that happens in three main steps:
+Table metadata and the current snapshot
+The planner begins by asking the catalog for the location of the current table metadata. This is a JSON file containing the table's current schema, partition specs, and a log of all historical snapshots. The planner then fetches the latest snapshot to work with.
+2. Manifest list and partition pruning
+The current snapshot points to a single Iceberg manifest list. The planner reads this file and uses the partition-level stats for each entry to perform the first, most powerful pruning step, discarding any manifests whose partition value ranges don't satisfy the query. For a table partitioned by day(event_timestamp), the planner can use the min/max values in the manifest list to immediately discard any manifests that don't contain data for the days relevant to the query.
+3. Manifests and file-level pruning
+For the remaining manifests, the planner reads each one to get a list of the actual Parquet data files. These manifest files contain more granular, column-level stats for each individual data file they track. This allows for a second pruning step, discarding entire data files that cannot possibly contain rows matching the query's filters.
+4. File row-group pruning
+Finally, for the specific data files that are still candidates, the Query Planner uses statistics stored inside Parquet file's footers to skip over entire row groups.
+The result of this multi-layer pruning is a precise list of Parquet files, and of row groups within those Parquet files. These become the query work units that are dispatched to the Query Execution system for processing.
+The Planning pipeline
+In R2 SQL, the multi-layer pruning we've described so far isn't a monolithic process. For a table with millions of files, the metadata can be too large to process before starting any real work. Waiting for a complete plan would introduce significant latency.
+Instead, R2 SQL treats planning and execution together as a concurrent pipeline. The planner's job is to produce a stream of work units for the executor to consume as soon as they are available.
+The planner’s investigation begins with two fetches to get a map of the table's structure: one for the table’s snapshot and another for the manifest list.
+Starting execution as early as possible
+From that point on, the query is processed in a streaming fashion. As the Query Planner reads through the manifest files and subsequently the data files they point to and prunes them, it immediately emits any matching data files/row groups as work units to the execution queue.
+This pipeline structure ensures the compute nodes can begin the expensive work of data I/O almost instantly, long before the planner has finished its full investigation.
+On top of this pipeline model, the planner adds a crucial optimization: deliberate ordering. The manifest files are not streamed in an arbitrary sequence. Instead, the planner processes them in an order matching by the query's ORDER BY clause, guided by the metadata stats. This ensures that the data most likely to contain the desired results is processed first.
+These two concepts work together to address query latency from both ends of the query pipeline.
+The streamed planning pipeline lets us start crunching data as soon as possible, minimizing the delay before the first byte is processed. At the other end of the pipeline, the deliberate ordering of that work lets us finish early by finding a definitive result without scanning the entire dataset.
+The next section explains the mechanics behind this "finish early" strategy.
+Stopping early: how to finish without reading everything
+Thanks to the Query Planner streaming work units in an order matching the ORDER BY clause, the Query Execution system first processes the data that is most likely to be in the final result set.
+This prioritization happens at two levels of the metadata hierarchy:
+Manifest ordering: The planner first inspects the manifest list. Using the partition stats for each manifest (e.g., the latest timestamp in that group of files), it decides which entire manifest files to stream first.
+Parquet file ordering: As it reads each manifest, it then uses the more granular column-level stats to decide the processing order of the individual Parquet files within that manifest.
+This ensures a constantly prioritized stream of work units is sent to the execution engine. This prioritized stream is what allows us to stop the query early.
+For instance, with a query like ... ORDER BY timestamp DESC LIMIT 5, as the execution engine processes work units and sends back results, the planner does two things concurrently:
+It maintains a bounded heap of the best 5 results seen so far, constantly comparing new results to the oldest timestamp in the heap.
+It keeps a "high-water mark" on the stream itself. Thanks to the metadata, it always knows the absolute latest timestamp of any data file that has not yet been processed.
+The planner is constantly comparing the state of the heap to the water mark of the remaining stream. The moment the oldest timestamp in our Top 5 heap is newer than the high-water mark of the remaining stream, the entire query can be stopped.
+At that point, we can prove no remaining work unit could possibly contain a result that would make it into the top 5. The pipeline is halted, and a complete, correct result is returned to the user, often after reading only a fraction of the potentially matching data.
+Currently, R2 SQL supports ordering on columns that are part of the table's partition key only. This is a limitation we are working on lifting in the future.
+Architecture
+Query Execution
+Query Planner streams the query work in bite-sized pieces called row groups. A single Parquet file usually contains multiple row groups, but most of the time only a few of them contain relevant data. Splitting query work into row groups allows R2 SQL to only read small parts of potentially multi-GB Parquet files.
+The server that receives the user’s request and performs query planning assumes the role of query coordinator. It distributes the work across query workers and aggregates results before returning them to the user.
+Cloudflare’s network is vast, and many servers can be in maintenance at the same time. The query coordinator contacts Cloudflare’s internal API to make sure only healthy, fully functioning servers are picked for query execution. Connections between coordinator and query worker go through Cloudflare Argo Smart Routing to ensure fast, reliable connectivity.
+Servers that receive query execution requests from the coordinator assume the role of query workers. Query workers serve as a point of horizontal scalability in R2 SQL. With a higher number of query workers, R2 SQL can process queries faster by distributing the work among many servers. That’s especially true for queries covering large amounts of files.
+Both the coordinator and query workers run on Cloudflare’s distributed network, ensuring R2 SQL has plenty of compute power and I/O throughput to handle analytical workloads.
+Each query worker receives a batch of row groups from the coordinator as well as an SQL query to run on it. Additionally, the coordinator sends serialized metadata about Parquet files containing the row groups. Thanks to that, query workers know exact byte offsets where each row group is located in the Parquet file without the need to read this information from R2.
+Apache DataFusion
+Internally, each query worker uses Apache DataFusion to run SQL queries against row groups. DataFusion is an open-source analytical query engine written in Rust. It is built around the concept of partitions. A query is split into multiple concurrent independent streams, each working on its own partition of data.
+Partitions in DataFusion are similar to partitions in Iceberg, but serve a different purpose. In Iceberg, partitions are a way to physically organize data on object storage. In DataFusion, partitions organize in-memory data for query processing. While logically they are similar – rows grouped together based on some logic – in practice, a partition in Iceberg doesn’t always correspond to a partition in DataFusion.
+DataFusion partitions map perfectly to the R2 SQL query worker’s data model because each row group can be considered its own independent partition. Thanks to that, each row group is processed in parallel.
+At the same time, since row groups usually contain at least 1000 rows, R2 SQL benefits from vectorized execution. Each DataFusion partition stream can execute the SQL query on multiple rows in one go, amortizing the overhead of query interpretation.
+There are two ends of the spectrum when it comes to query execution: processing all rows sequentially in one big batch and processing each individual row in parallel. Sequential processing creates a so-called “tight loop”, which is usually more CPU cache friendly. In addition to that, we can significantly reduce interpretation overhead, as processing a large number of rows at a time in batches means that we go through the query plan less often. Completely parallel processing doesn’t allow us to do these things, but makes use of multiple CPU cores to finish the query faster.
+DataFusion’s architecture allows us to achieve a balance on this scale, reaping benefits from both ends. For each data partition, we gain better CPU cache locality and amortized interpretation overhead. At the same time, since many partitions are processed in parallel, we distribute the workload between multiple CPUs, cutting the execution time further.
+In addition to the smart query execution model, DataFusion also provides first-class Parquet support.
+As a file format, Parquet has multiple optimizations designed specifically for query engines. Parquet is a column-based format, meaning that each column is physically separated from others. This separation allows better compression ratios, but it also allows the query engine to read columns selectively. If the query only ever uses five columns, we can only read them and skip reading the remaining fifty. This massively reduces the amount of data we need to read from R2 and the CPU time spent on decompression.
+DataFusion does exactly that. Using R2 ranged reads, it is able to read parts of the Parquet files containing the requested columns, skipping the rest.
+DataFusion’s optimizer also allows us to push down any filters to the lowest levels of the query plan. In other words, we can apply filters right as we are reading values from Parquet files. This allows us to skip materialization of results we know for sure won’t be returned to the user, cutting the query execution time further.
+Returning query results
+Once the query worker finishes computing results, it returns them to the coordinator through the gRPC protocol.
+R2 SQL uses Apache Arrow for internal representation of query results. Arrow is an in-memory format that efficiently represents arrays of structured data. It is also used by DataFusion during query execution to represent partitions of data.
+In addition to being an in-memory format, Arrow also defines the Arrow IPC serialization format. Arrow IPC isn’t designed for long-term storage of the data, but for inter-process communication, which is exactly what query workers and the coordinator do over the network. The query worker serializes all the results into the Arrow IPC format and embeds them into the gRPC response. The coordinator in turn deserializes results and can return to working on Arrow arrays.
+Future plans
+While R2 SQL is currently quite good at executing filter queries, we also plan to rapidly add new capabilities over the coming months. This includes, but is not limited to, adding:
+Support for complex aggregations in a distributed and scalable fashion;
+Tools to help provide visibility in query execution to help developers improve performance;
+Support for many of the configuration options Apache Iceberg supports.
+In addition to that, we have plans to improve our developer experience by allowing users to query their R2 Data Catalogs using R2 SQL from the Cloudflare Dashboard.
+Given Cloudflare’s distributed compute, network capabilities, and ecosystem of developer tools, we have the opportunity to build something truly unique here. We are exploring different kinds of indexes to make R2 SQL queries even faster and provide more functionality such as full text search, geospatial queries, and more.
+Try it now!
+It’s early days for R2 SQL, but we’re excited for users to get their hands on it. R2 SQL is available in open beta today! Head over to our getting started guide to learn how to create an end-to-end data pipeline that processes and delivers events to an R2 Data Catalog table, which can then be queried with R2 SQL.
+We’re excited to see what you build! Come share your feedback with us on our Developer Discord.
+On this page
+Discuss Online
+Related tags
+Birthday WeekDataDeep DiveEdge ComputingR2RustServerlessSQL
+Follow on Social Media
+Cloudflare
+Jérôme Schneider
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 Cloudflare, Inc.
+|Your privacy choicesReport security issues|Privacy Policy|Terms of use|GDPR|Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login opens in a new tabDashboard opens in a new tabContact Sales opens in a new tabStart Building opens in a new tab
+opens in a new tab opens in a new tab opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+PartnersEnglish
+This Post is Available in
+简体中文
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+TürkçeLightDark
+
+=== ROW 76 | f003594 | https://github.com/zed-industries/zed/issues/39031 | 2025-09-27 | domain-subframes ===
+AI: Agent & tools just stop working no matter the model/provider
+
+---
+
+@kinoute · 2025-09-27T19:19:53Z:
+### Summary
+
+<!-- Please insert a one line summary of the issue below -->
+The Agent panel works for a few time then it either goes in an infinite loop doing something, either it says it will do something (like listing or searching) and it doesnt do it. The "loader" disappears after a few seconds just like that, without any errors.
+
+### Description
+<!--  Describe with sufficient detail to reproduce from a clean Zed install. -->
+Steps to trigger the problem:
+1. Run Zed
+2. Open Agent Panel, ask something to do
+3. The Agent sometimes starts answering but it might have to use one tool, it just stops (see video).
+
+It seems to have getting worse in the latest versions. Earlier (one week or two weeks ago?) I got the infinite loop thing a lot but not this "no action done" thing.
+
+**Expected Behavior**: The agent does its thing
+**Actual Behavior**: The agent stops just like it thinks it has done its job, no matter the model picked. I have no problem running VSCode+Cline with these models.
+
+https://github.com/user-attachments/assets/42d3b891-494d-40a0-a540-c48ea014d1fa
+
+### Model Provider Details
+- Provider: Mistral API or custom OpenAI provider (with Mistral Small behind)
+- Model Name: Codestral, devestral, magistral...
+- Mode: Agent Panel
+- Other Details (MCPs, other settings, etc):
+
+Zed Settings:
+
+```json
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+  "context_servers": {
+    "mcp-server-gitlab": {
+      "source": "extension",
+      "enabled": true,
+      "settings": {
+        "gitlab_personal_access_token": "xxx",
+        "gitlab_api_url": "xxx"
+      }
+    },
+    "mcp-server-git": {
+      "source": "custom",
+      "enabled": true,
+      "command": "uvx",
+      "args": ["mcp-server-git"]
+    }
+  },
+  "icon_theme": "Material Icon Theme",
+  "journal": {
+    "hour_format": "hour24"
+  },
+  "collaboration_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": false
+  },
+  "linked_edits": false,
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  },
+  "tabs": {
+    "activate_on_close": "neighbour"
+  },
+  "languages": {
+    "Shell Script": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "shfmt",
+          "arguments": [
+            "--filename",
+            "{buffer_path}",
+            "--indent",
+            "4",
+            "--space-redirects"
+          ]
+        }
+      }
+    },
+    "Markdown": {
+      "format_on_save": "on",
+      "use_on_type_format": false,
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Python": {
+      "language_servers": ["!ty", "pylsp", "!pyright", "ruff"],
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "language_server": {
+            "name": "ruff"
+          }
+        },
+        {
+          "code_actions": {
+            "source.organizeImports.ruff": true,
+            "source.fixAll.ruff": true
+          }
+        }
+      ]
+    }
+  },
+  "lsp": {
+    "ruff": {
+      "initialization_options": {
+        "config-file": "pyproject.toml"
+      },
+      "settings": {
+        "python": {
+          "pythonPath": "./.venv/bin/python"
+        }
+      }
+    },
+    "pylsp": {
+      "settings": {
+        "python": {
+          "pythonPath": "./.venv/bin/python"
+        },
+        "plugins": {
+          "mypy": {
+            "enabled": true,
+            "settings": {
+              "python": {
+                "pythonPath": "./.venv/bin/python"
+              }
+            }
+          },
+          "autopep8": { "enabled": false },
+          "black": { "enabled": false },
+          "flake8": { "enabled": false },
+          "isort": { "enabled": false },
+          "mccabe": { "enabled": false },
+          "pycodestyle": { "enabled": false },
+          "pydocstyle": { "enabled": false },
+          "pyflakes": { "enabled": false },
+          "pylint": { "enabled": false },
+          "yapf": { "enabled": false },
+
+          // keep the others
+          "jedi": { "enabled": false },
+          "rope": { "enabled": true },
+          "rope_autoimport": { "enabled": true },
+          "rope_completion": { "enabled": false },
+
+          // disable pylsp ruff in favor of `ruff server`
+          "ruff": { "enabled": false }
+        }
+      }
+    }
+  },
+  "ui_font_size": 14,
+  "buffer_font_size": 12,
+  "base_keymap": "SublimeText",
+  "buffer_font_family": "RobotoMono Nerd Font Mono",
+  "ui_font_family": ".SystemUIFont",
+  "theme": {
+    "mode": "system",
+    "light": "Hivacruz",
+    "dark": "Hivacruz"
+  },
+  "indent_guides": {
+    "enabled": true,
+    "line_width": 1,
+    "active_line_width": 1,
+    "coloring": "indent_aware",
+    "background_coloring": "disabled"
+  },
+  "show_wrap_guides": true,
+  "terminal": {
+    "font_family": "RobotoMono Nerd Font Mono",
+    "font_size": 11,
+    "detect_venv": {
+      "on": {
+        "activate_script": "pyenv",
+        "directories": [".env", "env", ".venv", "venv"]
+      }
+    }
+  },
+  "cursor_blink": true,
+  "telemetry": {
+    // Send debug info like crash reports.
+    "diagnostics": false,
+    // Send anonymized usage data like what languages you're using Zed with.
+    "metrics": false
+  },
+  "agent": {
+    "always_allow_tool_actions": false,
+    "enable_feedback": false,
+    "default_profile": "write",
+    "profiles": {
+      "write": {
+        "name": "Write",
+        "tools": {
+          "copy_path": true,
+          "create_directory": true,
+          "delete_path": true,
+          "diagnostics": true,
+          "edit_file": true,
+          "fetch": true,
+          "list_directory": true,
+          "project_notifications": true,
+          "move_path": true,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "grep": true,
+          "terminal": true,
+          "thinking": true,
+          "web_search": true,
+          "open": true
+        },
+        "enable_all_context_servers": true,
+        "context_servers": {
+          "mcp-server-gitlab": {
+            "tools": {
+              "search_repositories": true,
+              "push_files": true,
+              "get_file_contents": true,
+              "fork_repository": true,
+              "create_repository": true,
+              "create_or_update_file": true,
+              "create_merge_request": true,
+              "create_issue": true,
+              "create_branch": true
+            }
+          }
+        }
+      }
+    },
+    "default_model": {
+      "provider": "mistral",
+      "model": "codestral-latest"
+    },
+    "notify_when_agent_waiting": "never"
+  },
+  "language_models": {
+    "openai_compatible": {
+      "Sahar": {
+        "api_url": "xxx.com/v1",
+        "available_models": [
+          {
+            "name": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+            "display_name": "Mistral Small 3.1",
+            "max_tokens": 128000,
+            "capabilities": {
+              "tools": true,
+              "images": true,
+              "parallel_tool_calls": true,
+              "prompt_cache_key": false
+            }
+          }
+        ]
+      }
+    },
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1"
+    }
+  }
+}
+```
+
+### Zed Version and System Specs
+
+Zed: v0.205.6 (Zed) 
+OS: macOS 15.7
+Memory: 16 GiB
+Architecture: aarch64
+
+---
+
+@kinoute · 2025-09-27T19:24:03Z:
+I also tested with Zed Preview (0.206.3) but still the same. The logs just show random things like:
+
+> 2025-09-27T21:22:30+02:00 INFO  [agent2::agent] Received prompt request for session: 00513767-855a-476b-b037-5ecb2fc15100
+2025-09-27T21:22:30+02:00 INFO  [agent2::thread] Thread::send called with model: codestral-latest
+
+And nothing else
+
+---
+
+@timjonaswechler · 2025-09-29T08:43:03Z:
+Hey, I’ve noticed some similar behavior. With every Mistral model I tested, it either gets stuck in a loop (see image), says “I will start …” but then does nothing, or the prompt runs and nothing shows up at all. Most of the time, when I retry, the chat is broken with errors.
+
+
+<img width="779" height="1235" alt="Image" src="https://github.com/user-attachments/assets/7d91354d-5b3c-4862-bc22-98e51b86da83" />
+
+---
+
+@MrSubidubi · 2025-09-30T15:31:46Z:
+Thanks for the report and details provided! That does not sound good, we'll try to reproduce this and take a look.
+
+---
+
+@mikebronner · 2025-10-03T21:29:04Z:
+I'm seeing the same behavior with this in the logs, this is happening with any model provided by Zed that I choose (when it does happen it happens across the board for Zed models, not for Copilot or Claude Code)
+
+```
+2025-10-03T14:27:18-07:00 INFO  [agent2::agent] Received prompt request for session: d9c00dac-e60a-4bdc-a76a-42f844a6e022
+2025-10-03T14:27:18-07:00 INFO  [agent2::thread] Thread::send called with model: Claude Sonnet 4 Thinking
+2025-10-03T14:27:19-07:00 INFO  [lsp] Language server with id 2 sent unhandled notification indexingStarted:
+[
+  null
+]
+```
+
+When I switch to Copilot I see the following error:
+
+<img width="603" height="394" alt="Image" src="https://github.com/user-attachments/assets/b91046b7-cdc0-4065-9c24-fbac30cddfed" />
+
+Not meaning to hijack the thread (it might be related): why is the error message giving a different token count than zed? Zed show 48k, and the error is saying 134k.
+
+---
+
+@kinoute · 2025-10-05T18:54:17Z:
+I had to switch unfortunately to VSCode + Cline for the moment, Zed with AI is unusable like this for me :(
+
+I start a new thread, the model starts responding like "let me check this file". The loader still appears for a few seconds then stops just like that, no error.
+
+---
+
+@timjonaswechler · 2025-10-05T21:56:08Z:
+I get everytime from the ACP with Claude Code and Copilot - Claude 4.5 Model and sometimes with Copilot-GPT Codex "Bad Tool usage" error. Right at the start of model ever prompt where I have some files as context🫠
+
+**Edit:** Ok Some how Claude Code ACP works now 🤷‍♂️ as well as the copilot models. maybe i later can show a error image 
+
+---
+
+@mikebronner · 2025-10-05T22:22:05Z:
+> I get everytime from the ACP with Claude Code and Copilot - Claude 4.5 Model and sometimes with Copilot-GPT Codex "Bad Tool usage" error. Right at the start of model ever prompt where I have some files as context🫠
+
+Yea, I have been seeing that recently as well
+
+
+---
+
+@kinoute · 2025-10-06T13:39:28Z:
+In my case, it is really linked to Mistral API/models. I don't have any problems with Sonnet 4 or Gemini models. As soon as I switch to Mistral models through their API, it does (almost) nothing.
+
+Another video:
+
+https://github.com/user-attachments/assets/fb70f1b8-78c7-47d1-b659-7c670d1b6207
+
+---
+
+@olejorgenb · 2025-10-16T12:34:04Z:
+I use the Zed agent/model provider and today it has been impossible to use. It stops randomly during processing with no indication of what went wrong (I checked Zed: logs)
+
+---
+
+@olejorgenb · 2025-11-03T16:12:38Z:
+Happens again now (Zed provider, Sonnet 4, old style subscription, Zed 0.210.4). No error messages in the logs:
+
+```
+2025-11-03T17:11:16+01:00 INFO  [agent] Received prompt request for session: c7bb0ce1-c68b-463c-8962-4310e0c391b6
+2025-11-03T17:11:16+01:00 INFO  [agent::thread] Thread::send called with model: Claude Sonnet 4
+```
+
+The request is not counted though against the quota though.
+
+---
+
+@Sh4rK · 2025-11-21T18:31:32Z:
+This, more specifically the random stopping, has been happening to me too, I tried with various models on OpenRouter.
+
+Also, the agent responses generally seem to start way slower than in other editors. Even with a fast model on OpenRouter, I have to wait a lot sometimes to see some output.
+
+---
+
+@berlund · 2025-11-28T11:42:38Z:
+I had similar problems with Mistral models, I could narrow it down the call id for the tool does not match Mistrals expectations:
+
+```
+Failed to connect to Mistral API: 400 Bad Request {"object":"error","message":"Tool call id was call_isEgYb8tZWpFNClnLXYFsqVd but must be a-z, A-Z, 0-9, with a length of 9.","type":"invalid_function_call","param":null,"code":"3280"}
+```
+
+This can easily be triggered by prompting for the current time
+
+---
+
+@miguelraz · 2025-12-22T19:38:20Z:
+@kinoute this probably was fixed recently - is calling tools still an issue?
+
+---
+
+@joestump · 2026-01-06T09:26:01Z:
+@Sh4rK seeing similar behavior. Especially the random stopping. My workaround for now is to stop and re-prompt it to review what it's done and pick up where it left off. Doesn't seem to be tied to any specific model. Happens with both Gemini and Claude for me.
+
+---
+
+@nkapila6 · 2026-03-05T13:23:12Z:
+Facing this issue with OpenRouter as well. Have to do send multiple continue requests to get a response.
+
+---
+
+@miguelraz · 2026-03-05T14:25:45Z:
+This is only happening for Mistral providers though @nkapila6 , correct?
+
+Perhaps the above comment can help out @MrSubidubi https://github.com/zed-industries/zed/issues/39031#issuecomment-3589009553
+
+---
+
+@hllshiro · 2026-03-09T08:41:10Z:
+I'm using SGlang to run Qwen2.5-72B-Instruct(max context 128k), which works fine in cline, but I'm having a similar problem in zed. I had to repeatedly type "continue" to get the agent to continue working. 
+
+---
+
+@miguelraz · 2026-03-10T05:19:46Z:
+Bummer @hllshiro , we'll let the team know.
+
+---
+
+@rpjohnst · 2026-03-14T18:26:50Z:
+I am seeing this behavior with Qwen3.5-9B on Zed 0.227.1 and llama.cpp b8280 or b8340. I have this in `settings.json`:
+```json
+  "agent": {
+    "default_profile": "write",
+    "default_model": {
+      "provider": "llama.cpp",
+      "model": "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+    },
+  },
+  "language_models": {
+    "openai_compatible": {
+      "llama.cpp": {
+        "api_url": "http://localhost:8080",
+        "available_models": [
+          {
+            "name": "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+            "max_tokens": 160512,
+          }
+        ]
+      }
+    },
+  },
+```
+I'm running `llama.cpp` with simply `llama-server -hf unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL`. (I've also tried unsloth's non-`UD` variant `Q4_K_XL`, `bartowski`'s `Q4_K_M`, and the smaller `unsloth/Qwen3.5-4B-GGUF:UD-Q8_K_XL`; these all have the same issue.)
+
+If I pass `--verbose` to `llama-server` then I can see a typical failure ends with Zed providing a tool response followed by [the model's generation prompt](https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/chat_template.jinja#L147), e.g. `...</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n`, and the model responding with nothing. The last response looks like this:
+```json
+{
+  "choices": [{ "finish_reason": "stop", "index": 0, "delta": {} }],
+  "created": 1773511031,
+  "id": "chatcmpl-CzDJ9jcWvg0w3K5Ia0CksYEsH7ixANTK",
+  "model": "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+  "system_fingerprint": "b8280-b2e1427c9",
+  "object": "chat.completion.chunk",
+  "timings": {
+    "cache_n": 13495,
+    "prompt_n": 1668,
+    "prompt_ms": 6912.459,
+    "prompt_per_token_ms": 4.144160071942446,
+    "prompt_per_second": 241.30342038918423,
+    "predicted_n": 140,
+    "predicted_ms": 9559.073,
+    "predicted_per_token_ms": 68.27909285714286,
+    "predicted_per_second": 14.645771614046675
+  },
+  "__verbose": { /* ... */ }
+}
+```
+
+Interestingly, if I pass `--chat-template-kwargs '{"enable_thinking":false}'` to `llama-server`, this does not seem to happen.
+
+This does not seem to happen with other agents like Qwen Code or Claude Code, used from Zed or other editors.
+
+---
+
+@gabrielacos · 2026-04-01T12:48:40Z:
+Same issue here with llama_cpp, model start to read files , then stops all of the sudden.
+Local model Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF:Q4_K_M, this set up works with cline.
+
+
+
+
+---
+
+@michalss · 2026-05-05T15:22:09Z:
+Same its happening over and over again.. :(
+
+<img width="644" height="127" alt="Image" src="https://github.com/user-attachments/assets/4fa91749-53c1-4351-8076-27d01d47dca7" />
+
+Unlimited loading context and then nothing... its very bad..
+
+---
+
+@benbrandt · 2026-05-08T09:09:34Z:
+It looks like you are using cladue code, which is different than the zed agent which this issue was originally addressing
+
+---
+
+@anilzeybek · 2026-05-24T15:06:35Z:
+I’m seeing what looks like the same class of issue with the built-in Zed agent.
+
+Zed agent starts responding / generating, the UI still shows it as in progress, but tokens stop arriving and no error is shown.
+
+---
+
+@morgankrey · 2026-06-09T16:00:18Z:
+Thanks everyone. I'm going to close this thread because it now contains multiple unrelated "agent stops" failure modes across providers and integration paths. Keeping these in one issue makes it hard to identify a root cause or verify a fix.
+
+If this still happens on the latest Zed, please open a fresh issue with:
+- Provider and model
+- Native Zed provider vs ACP/CLI integration
+- Zed version and OS
+- Whether the issue reproduces in a new thread
+- Whether it reproduces with tools disabled
+- Logs around the stopped turn
+- A minimal prompt or exported thread
+
+Please file separate issues for provider-specific request-format errors and generic Zed-agent stalls.
+
+---
+
+@M0chaCat · 2026-06-21T03:09:47Z:
+the ORIGINAL issue still happens!!! this should actually be looked into-
+

@@ -1,0 +1,2029 @@
+=== ROW 45 | f002226 | https://forums.swift.org/t/se-0451-raw-identifiers/75602 | 2024-10-24 | domain-subframes ===
+SE-0451: Raw identifiers
+
+@Joe_Groff · 2024-10-24T19:28:16.585Z:
+Hi everybody. Review for SE-0451: Raw identifiers begins now and runs through November 7th, 2024.
+Reviews are an important part of the Swift evolution process. All review feedback should be either on this forum thread or, if you would like to keep your feedback private, directly to the review manager. When contacting the review manager directly, please keep the proposal link at the top of the message.
+What goes into a review?
+The goal of the review process is to improve the proposal under review through constructive criticism and, eventually, determine the direction of Swift. When writing your review, here are some questions you might want to answer in your review:
+What is your evaluation of the proposal?
+Is the problem being addressed significant enough to warrant a change to Swift?
+Does this proposal fit well with the feel and direction of Swift?
+If you have used other languages or libraries with a similar feature, how do you feel that this proposal compares to those?
+How much effort did you put into your review? A glance, a quick reading, or an in-depth study?
+More information about the Swift evolution process is available at https://github.com/apple/swift-evolution/blob/main/process.md.
+Thank you for contributing to Swift's evolution!
+Joe Groff
+Review Manager
+
+---
+
+@Paul_Cantrell · 2024-10-24T20:36:18.912Z:
+A quick mini-review, without deep consideration:
+The rationale makes sense, both parts (descriptive idents and algorithmically generated idents). This is useful enough to modify the language.
+The general approach is sensible, and the syntax is reasonable.
+I say +1! (Readers may choose to interpret that exclamation point as either emphasis or factorial.)
+One concern: part of the rationale is to allow programmatic synthesis of identifiers with arbitrary contents. This proposal as it stands does not fully accomplish that goal; I'm slightly concerned about accepting it:
+without escape characters, and
+with the prohibition on operator-char-only identifiers.
+For example, the proposal mentions turning raw filenames / paths into identifiers. Filenames can contain newlines, and +* is a valid filename. Both are unlikely to occur in practice, but both are possible.
+This means that code that transforms filenames (or other arbitrary strings) into Swift identifiers would still need to dance around Swift’s syntactic rules and invent some ad hoc, nonstandard escaping scheme (or otherwise police allowed characters in its emitted identifiers). While this proposal would reduce the number of characters that require ad hoc escaping, it would not eliminate the need for such ad hoc escaping altogether. The proposal therefore does not significantly reduce burden for code that synthesizes identifiers.
+It seems to me that raw identifiers ought to offer the simple, uniform promise that:
+any string is allowed, given a standard escaping scheme that is part of Swift’s syntax and not part of the identifier itself, and
+the specific contents of the raw identifier will never create semantic differences.
+Those two principles imply that:
+`foo\nbar`() or some equivalent should be allowed, and
+Int.`+` should refer to a regular identifier named +, just as Int.`foo` refers to a regular identifier named foo.
+I understand the desire not to complicate the proposal with this esoteric problem, and accepting it as an incremental step makes sense; thus my +1. However, the proposal does seem incomplete as it stands if synthesizing arbitrary identifiers is in fact an ultimate goal.
+
+---
+
+@Jnosh · 2024-10-25T10:00:20.415Z:
+I am in favor of this proposal.
+I have hit many of the pain points mentioned in the proposal before:
+Having written Kotlin before, writing test names using raw identifiers was really nice. It makes test names more readable and easier to name, removing the burden of having to force a test description into a valid identifier.
+I have also run into enums with cases that should naturally start with e.g. a number. The option of using raw identifiers would be welcome here.
+I have a package plugin that generates code to embed some resources. Being able to generate identifiers much more freely without having to try to transform input into valid identifiers would also be very welcome here.
+The test name use case in particular makes this feature worth including in the language for me. The other applications are a nice bonus on top.
+While this feature may slightly increase the burden on language and tooling developers, many more developers would profit from it and the proposal makes a good case for why the burden on tooling would hopefully be manageable.
+To @Paul_Cantrell's point, could some of the remaining escaping pain for code generation maybe be alleviated by a small utility package in that area?
+Something that could be queried for the set of disallowed characters, used to test if a given string is a valid raw identifier and maybe even offers one or more basic transformations to turn an arbitrary string into a valid raw identifier.
+The proposal could discuss such a package as a future direction or call on the community to develop such functionality.
+
+---
+
+@grynspan · 2024-10-25T18:15:45.980Z:
+Since Swift Testing is one of the motivators for this proposal, I think it's important to note that we will not be able to provide support for this feature immediately. The testing team is in favour of adding this feature, but adoption/support won't be automatic.
+I discussed the proposal with @allevato off-forum and we determined that, for Swift Testing to support it, we may also need runtime changes so that we can correctly construct fully-qualified type names and/or function names that use this feature. We don't know at this point if those runtime changes will be backwards-compatible with older versions of Apple's platforms.
+Paul_Cantrell:
+Those two principles imply that:
+``foo\nbar() or some equivalent should be allowed, and
+If escape sequences are supported, we will need to make sure that swift-syntax correctly handles them, and that they do not accidentally allow for the use of a backtick in an identifier (which would make parsing a fully-qualified type name impossible.)
+
+---
+
+@grynspan · 2024-10-25T19:03:40.793Z:
+Just chatted with @Joe_Groff as well. The demangling problem is a tough nut to crack especially when you consider the need to remain backwards-compatible with older Apple OS releases.
+One possible solution would be to encode the leading and trailing backticks in these names when mangling them so that they would simply automatically be present on demangling regardless of the OS version you're using. We could solve the problem of ambiguous string representations at the same time.
+Interior backticks still pose a problem, but so long as round-tripping the demangled names isn't necessary, we could insert some invisible combining Unicode character next to the backtick code point so that, when decoded to a Swift string, they would present as distinct Characters from the leading/trailing backticks.
+We would need to ensure that these encoding changes only occur for symbol names that would be invalid otherwise. If I write:
+struct `MyStruct` {}
+That's valid today without raw identifiers, so it should still mangle as simply MyStruct. I think.
+
+---
+
+@Alejandro · 2024-10-25T19:25:49.503Z:
+grynspan:
+The demangling problem is a tough nut to crack especially when you consider the need to remain backwards-compatible with older Apple OS releases.
+Older runtimes already can't handle names with symbols/whitespace in them, I don't think needing to be backwards compatible is possible here.
+
+---
+
+@allevato · 2024-10-25T19:25:49.903Z:
+grynspan:
+One possible solution would be to encode the leading and trailing backticks in these names when mangling them so that they would simply automatically be present on demangling regardless of the OS version you're using. We could solve the problem of ambiguous string representations at the same time.
+That's an interesting idea! I can explore that in the implementation.
+This would be a minor change in principle to the proposal, which currently states
+In both cases, the backticks are not considered part of the identifier; they only delimit the identifier from surrounding tokens.
+I think it would be the case that if the identifier cannot be spelled in source code without the backticks, and if the mangling of the symbol also includes the backticks (and thus round-tripping it preserves the backticks), then as far as both the user and the runtime are concerned, the backticks are part of the identifier. I don't think that's problematic, though, since it's solving a real issue.
+Interior backticks still pose a problem, but so long as round-tripping the demangled names isn't necessary, we could insert some invisible combining Unicode character next to the backtick code point so that, when decoded to a Swift string, they would present as distinct Characters from the leading/trailing backticks.
+This seems like something we can punt on for the time being, since the proposal as written forbids interior backticks in an identifier. (But if it were to be accepted with that as a change, we'd need to handle it.)
+We would need to ensure that these encoding changes only occur for symbol names that would be invalid otherwise.
+This should also be straightforward; the implementation has a function that checks whether an identifier must be escaped in any context (as opposed to escaped keywords, which only need to be escaped in certain unqualified contexts), so the mangler could use that to check whether it needs to affix literal backticks to the string before mangling it.
+
+---
+
+@Joe_Groff · 2024-10-25T19:28:17.952Z:
+Alejandro:
+Older runtimes already can't handle names with symbols/whitespace in them, I don't think needing to be backwards compatible is possible here.
+I suspect that it's not so much that they can't, more that they don't, and will just render whatever identifier the demangler gives them verbatim. So if the verbatim demangling includes enough delimiting/escaping of raw identifiers to make them distinguishable from existing identifiers, that should be enough for old runtimes to do close enough to the right thing for new code running against an old runtime to be able to cope.
+
+---
+
+@Alejandro · 2024-10-25T19:30:28.080Z:
+I mean, it seems from the demangler's perspective it just fails at demangling these things:
+$swift demangle --tree-only
+$s1A3A CV
+<<NULL>> CV
+
+---
+
+@grynspan · 2024-10-25T19:32:59.458Z:
+Alejandro:
+I mean, it seems from the demangler's perspective it just fails at demangling these things:
+That's unfortunate and would mean Swift Testing will not be able to adopt this feature unless it is gated on a minimum deployment target (i.e. the compiler won't accept a raw identifier on an Apple platform without a high-enough minimum target version.)
+
+---
+
+@allevato · 2024-10-25T19:35:12.848Z:
+That particular example isn't a valid mangled identifier even under the new rules. Literal spaces would never appear in a mangled identifier; since they aren't identifier-safe ASCII characters, they would get punycoded. There are some examples in the implementation PR's tests:
+$ xcrun swift-demangle '_$s4test0014foospace_ntJBbyyF'
+_$s4test0014foospace_ntJBbyyF ---> test.foo space() -> ()
+The version of swift-demangle that I'm running here is from Xcode, so it doesn't have (or need) support for raw identifiers. If we inserted the punycode-encoding of literal backticks into the mangling, they would be printed back out as well.
+
+---
+
+@Alejandro · 2024-10-25T19:37:33.344Z:
+I thought that maybe we could use punycode here, but I thought we could only do that for non-ASCII. If we can pull that off for everything then
+
+---
+
+@allevato · 2024-10-25T19:46:39.124Z:
+Alejandro:
+I thought that maybe we could use punycode here, but I thought we could only do that for non-ASCII. If we can pull that off for everything then
+What I found out while implementing the proposal was that the mangler was already set up to punycode anything that isn't identifier-safe ASCII. So that part is already done, even before this proposal touched anything. The only case I had to adjust it for was identifiers starting with a digit, which were round-tripping incorrectly. (But if we add backticks to these identifiers, that will even solve the round-tripping issue for identifiers with leading digits in a backwards-compatible way.)
+
+---
+
+@Karl · 2024-10-25T19:54:48.821Z:
+It's a -1 from me.
+The swift-testing examples in particular are not at all compelling, and IMO actually the opposite.
+I think that swift-testing has made some strange design decisions. Test suites can become very large and complex, and adding some descriptive prose is clearly a good thing - just as we do in our library and application code as those codebases grow.
+But the thing is, we already have a system designed specifically for this kind of prose -- documentation comments. Our documentation infrastructure is excellent these days, so why does swift-testing seem to encourage the use of every other mechanism?
+First it's string parameters to the macro:
+@Test("square returns x * x")
+func squareIsXTimesX() {
+#expect(square(4) == 4 * 4)
+}
+Now it's suggested that we change it to this:
+@Test func `square returns x * x`() {
+#expect(square(4) == 4 * 4)
+}
+Honestly, both of these look bad to me, and the second one looks even worse. Choosing function names that contain spaces and special characters confusable with executable code is such an obvious bad practice that I would never use this myself, and would ban it from every codebase where I have the authority to do so.
+Sorry, but it's just not readable and could easily be actively harmful.
+As an alternative:
+/// Tests that ``square`` returns `x * x`.
+///
+@Test func testSquare() {
+#expect(square(4) == 4 * 4)
+}
+That is way more readable, easily scales to multiple lines, allows complex formatting, tables, etc, not to mention links to other functions and types in the project. The way documentation comments work, the first line is already considered a "summary" which can be used in test output or the Xcode sidebar.
+I can't understand why we go through these contortions for a not-excellent result, when we have a truly excellent and class-leading documentation engine just sitting there.
+I have sympathy for the Bazel use-case, but I'd rather that be addressed by a more targeted proposal. The other motivating use-cases (non-alphabetic identifiers) are not, by themselves, significant enough to be worth addressing IMO.
+
+---
+
+@grynspan · 2024-10-25T19:54:54.187Z:
+allevato:
+The only case I had to adjust it for was identifiers starting with a digit, which were round-tripping incorrectly.
+Oddly enough, I ran into this exact issue as well.
+
+---
+
+@MPLewis · 2024-10-25T21:09:11.557Z:
+Personally, I agree with you that the testing use-case is ugly and I’d much prefer documentation comments and normally-named functions. But that’s just a matter of style and the Bazel and enum cases are compelling enough to me that I don’t think we should prevent people from using raw identifiers if they so choose, assuming that the implementation doesn’t cause issues in other places (which it doesn’t seem like it does).
+
+---
+
+@michelf · 2024-10-26T12:31:34.332Z:
+Personally, the only example that feels useful to me is the one where you can make identifiers (especially enum cases) that start with a digit.
+But then the proposal says you have to always quote them even after a dot, and to me this makes it worse than current workarounds using a letter or underscore prefix. The proposal explains this is to avoid ambiguity in a tuple, but most types aren't tuples and it'd be easy to disallow digit-only names in a tuple.
+About tuples… Everywhere in the language it's always been the case that y.a is the same as y.`a`. So it comes as a big surprise that y.0 could be something different from y.`0`. Please don't allow this, we don't need this confusion. Example from proposal:
+let a = (5, `0`: 10)
+let b = y.0    // z <- 5
+let c = y.`0`  // z <- 10
+
+---
+
+@CharlesS · 2024-10-26T18:33:15.878Z:
+I think I'm also a -1 on this, for the same reasons that @Karl and @michelf laid out. Every proposed use for this seems ugly compared to alternatives using currently allowed syntax.
+
+---
+
+@allevato · 2024-10-26T19:04:29.796Z:
+michelf:
+About tuples… Everywhere in the language it's always been the case that y.a is the same as y.`a` . So it comes as a big surprise that y.0 could be something different from y.`0`. Please don't allow this, we don't need this confusion. Example from proposal:
+let a = (5, `0`: 10)
+let b = y.0    // z <- 5
+let c = y.`0`  // z <- 10
+I'm sympathetic to this, but there's a fundamental distinction here. The reason that y.a and y.`a`  are treated identically is specifically because a is a valid identifier. Requiring the use of backticks around 0 in this situation is important signal that conveys to the reader "the 0 here does not mean what it normally means".
+The opposite argument could just as easily be made that it's a big surprise that x.for and f(for: x) are allowed when for.x and f(x: for) are not. We simply don't find it confusing now because we've grown accustomed to those rules.
+It's also quite unlikely that anyone would write code like the one in that specific example, which only serves to show how the rules are chosen to avoid collisions. When discussing changes like this to parsing/lookup, we must consider extreme edge cases like this and how they fit into the larger system. If we chose the rule that a.0 could mean the same as a.`0` , then we'd still have a different set of rules that we need to define (which do we choose if there are two possible meanings?).
+But the existence of such examples is not an encouragement for folks to write code that looks like that, just as the fact that Swift allows emoji and other obscure Unicode characters is not an encouragement to have those permeate a codebase. History has shown that even with those tools, most developers are able to use them wisely and only when necessary, and I have every reason to expect that the same would hold true here.
+
+---
+
+@michelf · 2024-10-26T20:27:11.559Z:
+allevato:
+I'm sympathetic to this, but there's a fundamental distinction here. The reason that y.a and y.a  are treated identically is specifically because a is a valid identifier. Requiring the use of backticks around 0 in this situation is important signal that conveys to the reader "the 0 here does not mean what it normally means".
+The problem is I've always seen the 0 in a.0 as an identifier. Just like you can have a.default where default becomes an identifier,  with a.0 the 0 also becomes an identifier for the field. Perhaps this is not how the compiler parses things internally, but that's how I model it in my head when reading such code.
+Allowing unquoted identifiers that start with a digit (when after a dot) would make enum cases that start with a digit actually convenient at the point of use. It would also allow a struct to mimic the API of a tuple, which could be useful when refactoring. Whereas a.0 and a.`0` meaning different things is much less useful, in addition to being confusing. Maybe it makes things more consistent in some interpretation of the language, but not in mine.
+
+---
+
+@1-877-547-7272 · 2024-10-26T21:14:47.994Z:
+IMO, it's not that inconsistent. Tokens that start with a number would have to be escaped in normal use anyway to prevent the compiler from interpreting it as a number:
+let `0` = 5
+let x = 0   // x == 0
+let y = `0` // y == 5
+The above example isn't that different from:
+let tuple = (0, `0`: 5)
+let x = tuple.0   // x == 0
+let y = tuple.`0` // y == 5
+With that being said, I strongly agree that non-tuple types (where there wouldn't be any ambiguity) should be allowed to use numeric members without escaping them.
+The proposal argues that we need to escape numeric members in order to prevent confusion between indexed and labeled tuple members, but that's not a concern for non-tuple types. Is anyone going to get confused by a statement like this?
+let color = Color(hue: .red, variant: .100)
+Forcing all uses of numeric members to be escaped adds unnecessary clutter and hinders the usefulness of this proposal. I think that we should allow unescaped numeric members whenever practical.
+
+---
+
+@disc0infern0 · 2024-10-28T13:17:34.905Z:
++1000 for the proposed syntax:
+@Test func testSquare()  {
+It is so much clearer.
+
+---
+
+@grynspan · 2024-10-28T13:20:44.186Z:
+That's the current syntax!
+
+---
+
+@disc0infern0 · 2024-10-28T13:27:53.844Z:
+In general, I would support this proposal, though I do not like the proposed Swift testing amendments.
+I recently was doing some trig work in swift/SwiftUI, and found that instead of writing Angle(radians: 2*Double.pi) , I wanted to create a static extension on Angle, that would let me write Angle.360 , or given type inference, .360 to refer to an angle of 360 degrees. Similarly for 90, 180, 270.
+So I support the idea of being able to define the extension as
+extension Angle {
+static let `180` = Angle(radians: Double.pi)
+}
+I would want to use it without the backticks.
+I also would prefer not to use backticks when referencing enum cases. Perhaps disallow use of raw identifiers in tuples, since this seems a far more rare use case?
+
+---
+
+@disc0infern0 · 2024-10-28T13:30:19.681Z:
+Oops.I missed the /// comments above it. If those could be picked up automatically, (similarly to how the Xcode quick help functions do?), then that would be great.
+
+---
+
+@grynspan · 2024-10-28T13:41:13.509Z:
+Karl:
+As an alternative:
+/// Tests that ``square`` returns `x * x`.
+///
+@Test func testSquare() {
+#expect(square(4) == 4 * 4)
+}
+disc0infern0:
+Oops.I missed the /// comments above it. If those could be picked up automatically, (similarly to how the Xcode quick help functions do?), then that would be great.
+I've been trying to figure out how to approach this suggestion. I would emphasize really quickly here that this proposal is not about adding a feature to Swift Testing per se—it's just that Swift Testing could benefit from it if it's implemented.
+It is already perfectly valid to write what you have here, and it should compile as-is, but you still need to name the function under the comment, and we've gotten feedback that this is not as ergonomic as it could be and that it would be nicer if a test function could just have a single name. That doesn't then imply that @allevato's proposal here is the only option (or the best option or the worst option, for that matter.)
+Comments are not part of the syntax tree in Swift and do not contribute to the name of a symbol. Even if they did in this instance (and from a technical standpoint, it's not impossible for us to make @Test consume those comments), it wouldn't solve Swift Testing's problem, nor would it solve the other problems this proposal is intended to address.
+
+---
+
+@allevato · 2024-10-28T14:00:54.201Z:
+1-877-547-7272:
+With that being said, I strongly agree that non-tuple types (where there wouldn't be any ambiguity) should be allowed to use numeric members without escaping them.
+Treating members of tuples and members of non-tuple types differently actually introduces more inconsistency when you start peeling back the edges. To say that you can write this:
+struct S { var `0`: Int }; let s = S(); _ = s.0
+enum E { case `0` }; _ = E.0
+But then force the tuple use case to add backticks for disambiguation:
+let x = (a: 1, `0`: 2); _ = x.`0`
+...would be unlike any lookup rules currently in the language, because whether an identifier needs to be escaped or not is a decision made purely on its position in the syntax tree, not based on any type information.
+If we wanted to have that rule, then are we restricting it to wholly numeric identifiers? We have to require backticks for member access in some cases because non-identifier characters would otherwise be ambiguous. For example,
+enum BillboardTop100 { case `99 Luftballoons` }
+_ = BillboardTop100.99 Luftballoons  // " " is confusable with token delimiting
+_ = BillboardTop100.`99 Luftballoons`  // ok
+enum AspectRatio { case `16:9` }
+_ = AspectRatio.16:9  // ":" is confusable with ternary colon
+_ = AspectRatio.`16:9`  // ok
+enum Version { case `15.0` }
+_ = Version.15.0  // `.` is confusable with member access
+_ = Version.`15.0`  // ok
+extension WestCoast { enum Rapper { case `2Pac` } }
+_ = WestCoast.Rapper.2Pac  // not entirely numeric, but not confusable
+So as far as I can tell, the requested rule would be "for tuple types, raw identifiers must always be escaped by backticks to distinguish them from element indices; for non-tuple types, raw identifiers may not be escaped if they start with an identifier character or a digit and otherwise only contain identifiers characters and digits."  That's a mouthful, and it would have wide-ranging consequences for the implementation of the compiler and other tooling.
+The proposal instead offers a simpler rule: "raw identifiers must always be escaped by backticks".
+I certainly understand the aesthetic reasons behind the request, but optimizing for something so subjective isn't particularly a goal here, and carving out such narrow special exceptions would actually harm the understanding and usage of the feature. That being said, there's nothing in the proposal that specifically closes the door to that space being explored in the future, either.
+
+---
+
+@filiplazov · 2024-10-28T14:01:42.229Z:
+As someone who has written extremely long unit test function names, because I like to be very descriptive, i find this change way more readable over camelCase long function names.
+However I hope we can restrict this per module, like unit test targets because I would really hope people would not use this in regular function names as that would negatively impact readability in my opinion.
+
+---
+
+@ktoso · 2024-10-28T14:12:47.642Z:
+I think this is a very useful thing to do, and the testing rationale is a very strong motivation IMHO.
+This actually enables one of the "styles" that ScalaTest has offered since a while, and look as this in ScalaTest [1]:
+class SetSpec extends RefSpec {
+object `A Set` {
+object `when empty` {
+def `should have size 0` {
+assert(Set.empty.size == 0)
+}
+}
+}
+}
+That's pushing it a bit further, but the basic idea to:
+@Test
+func `empty Set: should have size 0`() { }
+Small side note is that we could also allow
+// @Test
+// var `empty Set: should have size 0` { }
+to avoid the "hanging" () at the end there... but perhaps that's only bothering me and it't too big of a deal.
+I should also bring up another example from my previous work-life where we used this Scala feature of `` quoting to great effect. The Akka HTTP library I worked on used this to model headers and content explicitly, to great effect:
+// akka-http (scala)
+// https://tools.ietf.org/html/rfc7232#section-3.2
+object `If-None-Match` extends ModeledCompanion[`If-None-Match`] {
+val `*` = `If-None-Match`(EntityTagRange.`*`)
+def apply(first: EntityTag, more: EntityTag*): `If-None-Match` =
+`If-None-Match`(EntityTagRange(first +: more: _*))
+}
+val `application/java-archive`                                                  = abin("java-archive", NotCompressible, "jar", "war", "ear")
+val `application/javascript`                                                    = awoc("javascript", "js")
+val `application/json`                                                          = awfc("json", HttpCharsets.`UTF-8`, "json")
+val `application/json-patch+json`                                               = awfc("json-patch+json", HttpCharsets.`UTF-8`)
+val `application/merge-patch+json`                                              = awfc("merge-patch+json", HttpCharsets.`UTF-8`)
+val `application/problem+json`                                                  = awfc("problem+json", HttpCharsets.`UTF-8`)
+val `application/grpc+proto`                                                    = abin("grpc+proto", NotCompressible)
+This is very nice in practice because we then don't have to reinvent "weird spellings" and making weird upper-lower-snake-or-something-else constants, but can use the exact spellings a specification uses, which is really nice for reading and mapping the code to actual rutime
+Long story short, I think this is a worthy extension to the language! I've been missing it here and there, and I'm really happy to see it come to Swift now :-)
+[1] ScalaTest
+
+---
+
+@lukeredpath · 2024-10-28T16:43:50.074Z:
+I am against this proposal and do not see any tangible benefits - the syntax for both defining and using raw identifiers is undesirable. As others have said, if it were down to me I would not allow this to be used in any codebase I was responsible for.
+The redundancy in swift-testing functions is indeed a mild annoyance, it would be great to find a solution to this, but this isn't it. -1 from me.
+
+---
+
+@woolsweater · 2024-10-28T18:03:59.033Z:
+I have carefully re-read the original proposal and the new version. I don't believe any of the original reasons for rejection have been overcome by circumstances or the amendments. This adds syntactic complexity to the language — particularly in reading code — that is not justified by the mild benefits.
+The technical detail that the declaration let `foo bar baz` creates the identifier foo bar baz and not `foo bar baz` is irrelevant to a user of the language, because they have to read and write the backticks everywhere anyways. As a specific and concrete example, this does not in fact allow us to create enum cases with leading digits, because using the identifier always requires a leading backtick in the source: expressions like let code = HTTPStatus.403 and .failure(code: .403) are still invalid. The use case of allowing leading digits in property names is a worthy goal, and I don't believe that this proposal achieves it satisfactorily.
+Similarly, the distinctions of meaning between escaped identifiers and raw identifiers are too fine. A reader's brain is often forced to act like a compiler at the semantic level; making them puzzle over syntax as well is an unnecessary extra burden. The marginal utility of writing a tuple like (a: Int, `0`: Bool) does not warrant the awareness of language minutia then required by reading the use sites t.`0` vs. t.0.
+I believe this proposal should be rejected, again.
+
+---
+
+@jlukas · 2024-10-28T19:59:40.763Z:
+Could we not resolve this by banning duplicate labels in tuples? E.g. (a: 1, `0`: 2) would be invalid, thus avoiding the conflict. This would also make the .0 syntax that tuples use less magical.
+
+---
+
+@Nobody1707 · 2024-10-28T20:29:33.555Z:
+I don't see why numeric identifiers need to be back-ticked on use at all. We shouldn't allow tuples to have both an unnamed first field and a named `0` field at the same time (or more generally an unnamed field with an index of N and a named N should not both exist on the same tuple).
+
+---
+
+@FlorianPircher · 2024-10-28T22:09:33.713Z:
+I am in favor of raw identifiers, mostly for tests. Also, they can be useful for interoperability with other systems (languages, databases, …) that allow a different identifier syntax than Swift.
+I don’t think they will be used much in regular code as the ` backtick character is less convenient than the common camelCase. So, most other code should be unaffected by this change. The `identifier` syntax exists already and this just makes it more useful.
+
+---
+
+@Pippin · 2024-10-28T22:31:31.556Z:
+No matter what is decided upon, it will still be annoying that there are now different rules depending on the structure of the identifier. Currently:
+You can use backticks to make an identifier that matches a Swift keyword, but don't need them at the usage site.
+Tuples don't need backticked-int-dot-syntax, because implementation/legacy reasons.
+If allowed there would be more "exceptions" people would have to consider:
+You can make (almost) any string an identifier, as long as it's backticked.
+If a number, you don't need backticks at the usage site.
+If not a number, you will need backticks at the usage site.
+Obviously the last 2 exceptions might not make it. Inconsistency within the language is a bit annoying and having to know which X rule to apply in Y situation is even more annoying when writing.
+I almost wish instead digits were allowed as identifier heads. The issue of "confusing with integers" is also annoying ... but self choosing. The only area I see that being an issue is if a digit-only identifier is in scope and I wish instead the compiler emitted a warning, or potentially an error, that this would cause confusion with integers and offer remedies (explicit self, maybe force backticked for local variables). This is not an issue for dot syntax usages.
+https://docs.swift.org/swift-book/documentation/the-swift-programming-language/summaryofthegrammar#Lexical-Structure
+There sure are some weird Unicode characters allowed in identifiers. TIL. /aside
+I think the proposal puts too much on the testing example. As said above, there are other cleaner to write/read mechanisms to document tests. Where I see this as the most powerful is in tooling, auto-generated values, or domain-specific code like in the HTTP example. However this lands, there will be opinionated micro/macro style guides for its usage. I personally will probably never use this unless it is really^really^really better over other methods.
+So, I support it. This will obviously make its way into frameworks but I see its potential in tooling efforts that have been made, or yet to be made, for the language. I can live with some backticks in certain places, even if it’s annoyingly inconsistent.
+
+---
+
+@YOCKOW · 2024-10-29T04:03:42.437Z:
+I want to support this proposal because it is useful for metaprogramming that is covered in "Naturally non-alphabetic identifiers" and "Code generators and FFI".
+You may often use directly Swift identifiers rather than dictionaries for kind of performance reason or for some other reason.
+Examples which come to my mind are:
+Use Case 1: Identifiers starting with numerics
+// List of path extensions
+enum PathExtension: String, Sendable {
+case `123` = "123"
+case `3dml` = "3dml"
+case `3ds` = "3ds"
+case `3g2` = "3g2"
+case `3gp` = "3gp"
+case `7z` = "7z"
+case aab = "aab"
+case aac = "aac"
+// Other cases follow
+}
+Use Case 2: Identifiers containing punctuations
+// The map of Unicode scalars in "Po" category
+enum OtherPunctuation: String, Sendable {
+// This (U+FE50) is allowed in current Swift.
+case `﹐` = "Small Comma"
+// This (U+00A1) is not allowed in current Swift.
+case `¡` = "Inverted Exclamation Mark"
+// :
+// :
+}
+However, as someone said, I also tend to think such identifiers containing whitespaces or punctuations should be limited to internal use. (Not limited by the language but recommended by the guideline?)
+
+---
+
+@Karl · 2024-10-29T19:39:46.687Z:
+Your post caused me to consider something else, which I think is quite important.
+The reason the Swift grammar limits characters to the set it does is not solely to make parsing easier - it is also for security. Even the Unicode consortium does not recommend that languages accept all characters everywhere: UTS#55 Source Code Handling.
+Source code, that is, plain text meant to be interpreted as a computer language, poses special security and usability issues that are absent from ordinary plain text. The reader (who may be the author or a reviewer) should be able to ascertain some properties of the underlying representation of the text by visual inspection, such as:
+the extent of lexical elements within the text;
+the nature of a lexical element (comment, string, or executable text);
+the order in memory of lexical elements;
+the equivalence or inequivalence of identifiers.
+The potential presence in source code of characters from many writing systems, including ones whose writing direction is right-to-left, can make it difficult to ensure these properties are visually recognizable. Further, the reader may not be aware of these sources of confusion. These issues should be remedied at multiple levels: as part of computer language design, by ensuring that editors and review tools display source code in an appropriate manner, and by providing diagnostics that call out likely issues.
+Accordingly, this document provides guidance for multiple levels in the ecosystem of tools and specifications surrounding a computer language. Section 3, Computer Language Specifications, is aimed at language designers; it provides recommendations on the lexical structure, syntax, and semantics of computer languages.
+This is explored in more depth in UAX#31 Identifiers and Syntax.
+The formal syntax provided here captures the general intent that an identifier consists of a string of characters beginning with a letter or an ideograph, and followed by any number of letters, ideographs, digits, or underscores. It provides a definition of identifiers that is guaranteed to be backward compatible with each successive release of Unicode, but also adds any appropriate new Unicode characters.
+The formulations allow for extensions, also known as profiles. That is, the particular set of code points or sequences of code points for each category used by the syntax can be customized according to the requirements of the environment. Profiles are described as additions to or removals from the categories used by the syntax. They can thus be combined, provided that there are no conflicts (whereby one profile adds a character and another removes it), or that the resolution of such conflicts is specified.
+And of course, it wouldn't be Unicode if it didn't come with a table, of which characters are allowed in which positions. These are the ID_* and XID_* family of properties, which we even make available in Unicode.Scalar.Properties - isIDStart | Apple Developer Documentation
+They document some standard profiles, such as for allowing mathematical symbols and emojis. In theory we could extend it with our own profiles, but any extra characters we allow should be considered carefully.
+Anyway, compare that with the set of characters allowed by the proposal:
+A raw identifier may contain any valid Unicode characters except for the following:
+The backtick (```) itself, which termintes the identifier.
+The backslash (\), which is reserved for potential future escape sequences.
+Carriage return (U+000D) or newline (U+000A); identifiers must be written on a single line.
+The NUL character (U+0000), which already emits a warning if present in Swift source but would be disallowed completely in a raw identifier.
+All other non-printable ASCII code units that are also forbidden in single-line Swift string literals (U+0001...U+001F, U+007F).
+This seems extremely broad. In particular, it seems to allow isolated combining characters (which may combine with the surrounding text when rendered in an editor) and the Unicode line separator (U+2028), which is explicitly called out in UTS#55 because even though compilers tend not to recognise it as a newline (including the Swift compiler), editors may render it as one:
+The Unicode Standard encompasses multiple representations of the New Line Function (NLF). These are described in Section 5.8, Newline Guidelines, in [Unicode], as well as in Unicode Standard Annex #14, Line Breaking Algorithm [UAX14].
+An opportunity for spoofing can occur if implementations are not consistent in the supported representations of the newline function: multiple logical lines can be displayed as a single line, or a single logical line can be displayed as multiple lines.
+For instance, consider the following snippet of C11, as shown in an editor which conforms to the Unicode Line Breaking Algorithm:
+// Check preconditions.
+if (arg == (void*)0) return -1;
+If the line terminator at the end of line 1 is U+2028 Line Separator, which is not recognized as a line terminator by the language, the compiler will interpret this as a single line consisting only of a comment; to a reviewer, the program is visually indistinguishable from one that has a null check, but that check is really absent.
+
+---
+
+@allevato · 2024-10-29T19:52:12.101Z:
+Karl:
+This seems extremely broad. In particular, it seems to allow isolated combining characters and the Unicode line separator (U+2028), which is explicitly called out in UTS#55 because even though compilers tend not to recognise it as a newline (including the Swift compiler), editors may render it as one:
+This is an excellent point! While I made an adjustment to the proposal after the pitch that forbade an identifier from consisting of only whitespace (which does capture U+2028 and U+2029), that didn't go so far as to forbid the use of those separators in an identifier if it contained other non-whitespace. Just as we currently ban the ASCII line separators from raw identifiers, I think it would be perfectly reasonable (and proper) to extend that to include those Unicode code points as well, essentially matching what the standard library implements in Character.isNewline.
+
+---
+
+@JuneBash · 2024-10-29T19:54:25.834Z:
+I am all for the idea of having these sorts of raw identifiers, namely for tests, but I agree with some of the other posters here expressing concerns about security & ugliness. For tests, could this be covered by a variant of the @Test macro?
+@Test("2 * 2 evaluates to 4") {
+#expect(2 * 2 == 4)
+}
+
+---
+
+@allevato · 2024-10-29T19:57:24.626Z:
+As @grynspan mentioned above, this is not a swift-testing feature proposal, so major changes to how swift-testing declares tests are out of scope here. The swift-testing use case is just used to illustrate one of many places where the feature would provide a benefit, specifically without having to make significant design changes to other libraries.
+(I'll add, however, that in my opinion, removing the test function name entirely would only serve to make the testing experience worse. One of the benefits of this proposal is that the test description becomes the name of the test, meaning that there is a single description/symbol that appears in all backtraces, UIs, debugger views, etc. The proposed syntax would remove the need to "name the test twice", but the tooling must still conjure up a name for that thing, and that name would be completely hidden from users and tooling.)
+
+---
+
+@YOCKOW · 2024-10-30T01:11:46.979Z:
+Karl:
+This seems extremely broad. In particular, it seems to allow isolated combining characters (which may combine with the surrounding text when rendered in an editor)
+I'm not against your point, but just in case, let me say Swift already allows some isolated combining characters in identifiers.
+Quote from "Identifiers" section in TSPL:
+Grammar of an identifier
+identifier → identifier-head identifier-characters ?
+...
+identifier-head → U+3004–U+3007, U+3021–U+302F, U+3031–U+303F, or U+3040–U+D7FF
+...
+U+3040–U+D7FF contains U+3099(COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK) which is a combining character.
+For example, "\u{304B}\u{3099}" == "\u{304C}"  is true in Swift.
+Note that U+3099 is different from U+309B(KATAKANA-HIRAGANA VOICED SOUND MARK) which is not a combining character.
+Executing the following command on your terminal (zsh)
+% echo "let \u3099 = 0; print(\u3099)" | swift repl
+will put out the result 0.
+Swift seems not to normalize identifiers
+echo "let \u304B\u3099 = 0; let \u304C = 1; print(\u304B\u3099 == \u304C)" | swift repl
+is executed successfully and prints "false".
+
+---
+
+@CharlesS · 2024-10-30T01:38:12.234Z:
+Regardless, that comment was wonderfully illustrative.
+
+---
+
+@taylorswift · 2024-10-30T02:34:32.933Z:
+the way i see it, this proposal was crafted to support two realistic use cases:
+defining identifiers (usually enum cases) that start with a digit
+enum CompressionEngine
+{
+case `7z`
+}
+enum HTTPStatus
+{
+case `2xx`
+case `3xx`
+case `4xx`
+case `5xx`
+}
+embedding natural language strings in function names for test identification
+@Test func `square returns x * x` ()
+{
+}
+there are a few other problems - like preserving spellings from other languages (e.g. box-shadow), or encoding file paths (e.g. myapp/extensions/widget/common/utils) - that feel conceptually adjacent and are roped in as additional motivations, but wouldn’t actually be solved by this proposal, as it is not possible to completely eliminate the need to transform input strings into Swift identifiers, and there are also a few other things this proposal would enable, such as including unusual punctuation in identifiers (e.g. 16:9). but to me that just isn’t anywhere near as motivating as the leading digit use case.
+for #2, i feel that working this into the macro system, where the macro could mangle a name based on a string input, makes more sense than enabling all special characters in all identifiers. for #1, leading digits, we don’t need a new delimiter, because it is already unambiguous.
+
+---
+
+@Karl · 2024-10-30T08:14:34.312Z:
+Interesting. We should revisit which code-points are allowed in identifiers at some point (it's possible our grammar definitions predate a lot of this advice). It would technically be source-breaking, but actual breakage should be limited to questionable identifiers (such as you demonstrated, single combining characters and the like) that probably qualify as "actively harmful" to continue supporting.
+Ideally, no identifiers (raw or standard) should interact typographically with their surrounding text.
+Rust is ahead of us here. It does not allow U+3099 to be used as an identifier:
+// Rust:
+fn main() {
+let ゙ = 42;
+println!("Hello, {}",  ゙);
+}
+-------------
+error: unknown start of token: \u{3099}
+--> src/main.rs:2:9
+|
+2 |     let ゙ = 42;
+|         ^
+error: unknown start of token: \u{3099}
+--> src/main.rs:3:28
+|
+3 |     println!("Hello, {}",  ゙);
+|                            ^
+error: expected pattern, found `=`
+--> src/main.rs:2:11
+|
+2 |     let ゙ = 42;
+|          ^ expected pattern
+What's more, the Rust compiler even includes confusable detection:
+// Swift:
+func visitScope() {}
+// Cyrillic small letter 'o'
+func visitScоpe() {}
+// No warnings or errors
+// Rust:
+fn visitScope() {}
+fn visitScоpe() {}
+-------------
+warning: found both `visitScope` and `visitScоpe` as identifiers, which look alike
+--> src/lib.rs:2:4
+|
+1 | fn visitScope() {}
+|    ---------- other identifier used here
+2 | fn visitScоpe() {}
+|    ^^^^^^^^^^ this identifier can be confused with `visitScope`
+|
+= note: `#[warn(confusable_idents)]` on by default
+warning: the usage of Script Group `Cyrillic` in this crate consists solely of mixed script confusables
+--> src/lib.rs:2:4
+|
+2 | fn visitScоpe() {}
+|    ^^^^^^^^^^
+|
+= note: the usage includes 'о' (U+043E)
+= note: please recheck to make sure their usages are indeed what you want
+= note: `#[warn(mixed_script_confusables)]` on by default
+Confusable detection is something we can get from ICU, although it is sometimes helpful to augment it with custom rules. I made an example package a while ago which uses ICU and some custom rules from Chromium to spoof-check Unicode domain names from Swift.
+
+---
+
+@nukka123 · 2024-10-30T14:14:05.183Z:
+typo? 0451-escaped-identifiers.md
+case ColorVariant {
+
+---
+
+@allevato · 2024-10-30T14:19:54.874Z:
+Fixed. Thank you!
+
+---
+
+@allevato · 2024-10-30T14:41:51.304Z:
+taylorswift:
+for #1, leading digits, we don’t need a new delimiter, because it is already unambiguous.
+There definitely are situations where it's ambiguous. Since enum cases are static members, they can be referenced without any leading qualification or punctuation in static contexts:
+enum E {
+case a
+static let oldNameForA = a  // ok
+static var oldNameForA2: E { a }  // ok
+}
+So, if we swap those out for numeric identifiers, we'd have:
+enum E {
+case `123`  // or case 123??
+static let oldNameForA = 123  // ok, but incorrectly inferred to be Int
+static var oldNameForA2: E { 123 }  // error: type mismatch, Int != E
+}
+Certainly, changing the language's type checking rules to allow bare integer literals to be treated as identifiers is not a path we want to go down, so there do still exist situations where we either need to (1) escape these identifiers or (2) qualify them with a type. I'm of the opinion that forcing only a specific subset identifiers to be qualified based on their spelling is a worse landing point than requiring them to be consistently escaped wherever they're used. (Even if we were to decide that we could elide the backticks for something like E.123, we could still permit E.`123`  just as we permit both E.for and E.`for` .)
+
+---
+
+@scanon · 2024-10-30T14:56:04.012Z:
+I might be reading too much into the comment, but I think Taylor is proposing something like "allow identifiers that start with a digit, so long as they contain at least one non-digit," which I think removes the ambiguity that you pointed to.
+
+---
+
+@allevato · 2024-10-30T14:57:19.775Z:
+That would still be conflicting with octal, binary, and hexadecimal literals.
+
+---
+
+@ksluder · 2024-10-30T14:57:38.475Z:
+What about 1_000 and 0xFF?
+
+---
+
+@taylorswift · 2024-10-30T15:01:08.718Z:
+the list of numeric literal patterns has been pretty stable, and i don’t anticipate that we would add more bases, so the rule could just be “anything that doesn’t already look like an integer literal”
+
+---
+
+@allevato · 2024-10-30T15:07:10.431Z:
+Just to make sure I'm clear on your suggestion regarding identifiers/numbers then, which of these is it?
+An identifier can start with a digit if it doesn't look like a numeric literal, and identifiers that look like numeric literals are forbidden because there is no way to spell them
+An identifier can start with a digit if it doesn't look like a numeric literal, but backticks can be used to escape identifiers that would otherwise look like a numeric literal; e.g., case `0x0`
+Something else?
+
+---
+
+@taylorswift · 2024-10-30T15:14:41.552Z:
+for me, #1 would cover most of my envisioned use cases, but i suspect if it went through evolution people might ask for a way to escape the names in #2, so that’s probably where we would end up.
+the commitment that we’re making is we won’t be able to add support for more bases in the future (e.g. 0zXYZ) and regex syntax highlighters won’t handle these very well, but those seem like relatively minor costs.
+
+---
+
+@macguru · 2024-11-01T15:09:17.306Z:
+tl;dr Overall I'm neutral on the proposal, but the swift-testing example is a bad idea.
+I know this is not about adding this to swift-testing, but as a heavy swift-testing adaptor, I'd like to add my perspective to the general idea proposed here. I think sentence-named test cases are not a good idea (and thus example to this proposal), even in the current swift-testing.
+Function names are easily recognizable and, for tests at least, often unique identifiers. We use them all the time and everywhere for navigation, searching, analysis, and more. My favorite feature: you can double-click them to select them quickly. They are common and understood across system boundaries. While Xcode might make the use of sentences nice, I have my doubts for everything else.
+To illustrate: our CI runs on Gitlab. When a test run fails, I view the log, where it says something like:
+Failing tests:
+MathTests.square2EvaluatesTo4()
+I select the name, command-tab to Xcode, hit Command-O and paste the name. How would this work with the sentence names? In the "okay" scenario, the log would contain the sentence (with backticks?):
+Failing tests:
+MathTests.`2 * 2 evaluates to 4`()
+That would be fiddly to select, I cannot double-click, but might just be fine. What I fear is that we'll see mangled names there. Maybe not in the log, but everywhere else in the interface. Something like (the mangled name is just something copied from above):
+Failing tests:
+MathTests._$s4test0014foospace_ntJBbyyF()
+Does Xcode's Quick Open support mangled names? Can anybody actually recognize or even read them? I don't.
+In a log or a trace, identifiers stick out, sentences blend it. Camelcased identifiers are easy to spot, many small words look like debug output.
+Let's not forget backtraces from swift-testing are already completely incomprehensible at times and more mangling certainly won't make it better.
+I recognize this is purely a practical and ergonomic argument, but ergonomics are important to me and make me faster and more efficient at what I do. And that's why think sentence identifiers are a bad idea in general (and we're not using them in our code).
+
+---
+
+@John_McCall · 2024-11-01T16:04:51.522Z:
+Many, many languages have evolved additional numeric literals over the course of their history. I would strongly oppose adding bare identifiers that would lock out that option.
+
+---
+
+@Nobody1707 · 2024-11-01T23:01:23.494Z:
+The only start with numeric identifiers I'd want are the exactly .N forms that tuple indexes use. And I wouldn't even mind if they were restricted to only be generated by macros. I just don't want to have to backtick them on every use.
+
+---
+
+@lorentey · 2024-11-04T20:31:15.931Z:
+I am personally in favor of this; I think our profession should move beyond parsing/editing text syntax, and this feels like a tiny baby step towards that direction.
+A quick reading of the proposal text has raised some nitpicking questions for me, mostly related to Unicode versioning:
+The proposal allows any "valid Unicode character" (with a handful of explicitly enumerated exceptions). What precisely does that mean? Most importantly, will Unicode scalars with unassigned code points be considered valid? (Under what version of Unicode?)
+The proposal disallows identifiers that solely consist of characters with the White_Space property. What version of Unicode is going to be used to make that determination? Is there a path to upgrading to newer versions of Unicode, or are we going to get forever stuck on a legacy one?
+When do two raw identifiers resolve to the same identity? Do they need to be composed of precisely the same scalars, or is there a normalization algorithm?
+E.g., is this going to be an error, or will the two names below be considered distinct?
+let `foo;bar`: Int // U+003B SEMICOLON
+let `foo;bar`: Int // U+037E GREEK QUESTION MARK
+If there is a normalization scheme, what is it? (Does it follow the Unicode spec? Which version? Is there an upgrade path?)
+I think it's a shame that we can't use \u{37e} escapes in this context (yet).
+
+---
+
+@Philippe_Hausler · 2024-11-04T20:33:20.668Z:
+Some of the rules proposed would help with MMIO interface generation for embedded - some registers will start with leading numeric values (or for that matter be purely numeric). As others have stated it is a bit unfortunate for this proposal not letting those be typed w/o having backticks.
+
+---
+
+@allevato · 2024-11-05T20:46:12.583Z:
+lorentey:
+The proposal allows any "valid Unicode character" (with a handful of explicitly enumerated exceptions). What precisely does that mean? Most importantly, will Unicode scalars with unassigned code points be considered valid? (Under what version of Unicode?)
+The version of Unicode that would be used would be the tables compiled into the standard library, since the parser is now written in Swift. Disallowing unassigned code points seems like the most obvious choice; it wouldn't allow a code point that we might need to forbid later for some reason. The only real risk I can see is that code using an assigned-in-the-future code point would not be able to be compiled with an older parser, which seems like a reasonable restriction (similar to how code using other new language features obviously can't be compiled with an older compiler).
+The proposal disallows identifiers that solely consist of characters with the White_Space property. What version of Unicode is going to be used to make that determination? Is there a path to upgrading to newer versions of Unicode, or are we going to get forever stuck on a legacy one?
+This is an interesting question, because Unicode also defines the Pattern_White_Space property which is guaranteed to be stable/immutable and contains a subset of White_Space (plus LTR/RTL markers). Given that, it would also be worth considering the following formulation:
+The only whitespace characters permitted in a raw identifier are characters with the Pattern_White_Space property, except for those that are line/paragraph separators.
+A raw identifier may not consist of only whitespace characters as it is defined above.
+I'm somewhat hesitant to carve out arbitrary exceptions like this if it makes the rules harder to understand (and to implement, for things like regex-based tooling that may want to match these), but since Pattern_White_Space is immutable and we'd only be subtracting from it, we're left with an extremely small and manageable set: \u{0020}, \u{200E}, and \u{200F}. So maybe that would be OK.
+When do two raw identifiers resolve to the same identity? Do they need to be composed of precisely the same scalars, or is there a normalization algorithm?E.g., is this going to be an error, or will the two names below be considered distinct?
+let `foo;bar`: Int // U+003B SEMICOLON
+let `foo;bar`: Int // U+037E GREEK QUESTION MARK
+If there is a normalization scheme, what is it? (Does it follow the Unicode spec? Which version? Is there an upgrade path?)
+I agree that confusables and normalization are important considerations, but it's worth noting that we have these issues today with regular identifiers. Latin Capital A and Greek Capital Alpha are both valid but separate identifiers in Swift, as would be something like Ä written as a single code point vs. with combining diacritics. I think we should address them holistically, but not necessarily as part of this proposal.
+
+---
+
+@davedelong · 2024-11-05T23:22:16.002Z:
+Overall, I'm not in favor of this change.
+As others have said, I find the test naming motivation anti-compelling; its inclusion, more than anything, leads me to believe we should not accept this. If Swift Testing really wants to have fancy English-like test names, it should be able to do that as part of the Test macro. We don't need to extend the language for that.
+In my mind, the real motivation for this is to allow properties, cases, and methods to start with numbers, so you can do things like .480p, HTTPStatus.200, and so on.
+This proposal does not allow for that. Instead, it's allowing for these declarations to begin with backticks, which is not the same thing as allowing them to begin with numbers.
+Therefore, I do not want this. Either let me start the declarations with numbers, or I'll just keep working around the limitation in other ways. I don't want more exceptions to the grammar.
+
+---
+
+@ahoppen · 2024-11-06T03:06:01.918Z:
+allevato:
+The version of Unicode that would be used would be the tables compiled into the standard library, since the parser is now written in Swift
+I don’t think this is true. The new lexer doesn’t use String and I don’t think it uses any of the stdlib’s Unicode tables. Instead has its own logic for classifying Unicode characters (swift-syntax/Sources/SwiftParser/Lexer/UnicodeScalarExtensions.swift at main · swiftlang/swift-syntax · GitHub and swift-syntax/Sources/SwiftParser/CharacterInfo.swift at main · swiftlang/swift-syntax · GitHub)
+
+---
+
+@allevato · 2024-11-06T10:15:27.300Z:
+Is there any reason not to access Unicode.Scalar.Properties and similar APIs from the lexer? It seems like there would be nothing that prevents us from asking whether a scalar is assigned, unless that's purely a policy decision?
+
+---
+
+@idrougge · 2024-11-06T11:03:20.080Z:
+YOCKOW:
+Swift seems not to normalize identifiers
+echo "let \u304B\u3099 = 0; let \u304C = 1; print(\u304B\u3099 == \u304C)" | swift repl
+is executed successfully and prints "false".
+Indeed, generated resource identifiers in Xcode preserve the decomposed representation from the Apple file system. So that Ä is generated as A + ¨.
+
+---
+
+@Karl · 2024-11-06T11:33:56.380Z:
+The swift grammar does not reference any Unicode properties; it is specified as a list of specific code-points.
+I suggested above that we should look at revisiting this and bringing it in to alignment with the latest advice from Unicode. This would use scalar properties:
+The formal syntax provided here captures the general intent that an identifier consists of a string of characters beginning with a letter or an ideograph, and followed by any number of letters, ideographs, digits, or underscores. It provides a definition of identifiers that is guaranteed to be backward compatible with each successive release of Unicode, but also adds any appropriate new Unicode characters.
+This advice allows for profiles with targeted exceptions - e.g. allowing identifiers to start with underscores, or allowing them to start with digits (that seems like it would be a popular change):
+The formulations allow for extensions, also known as profiles. That is, the particular set of code points or sequences of code points for each category used by the syntax can be customized according to the requirements of the environment. Profiles are described as additions to or removals from the categories used by the syntax.
+Concretely, I'm suggesting that we reformulate the existing grammar as one of these "profiles", and take the opportunity to check that our definitions are not too broad (e.g. identifiers shouldn't be allowed to start with a combining character).
+Then, I would suggest that instead of allowing any Unicode characters, "raw" identifiers could use an expanded profile, for instance allowing whitespace and other specific characters typically discouraged in identifiers.
+
+---
+
+@rauhul · 2024-11-06T16:13:42.041Z:
+-1 for exactly the same reasons @davedelong mentioned above. I specifically want to reiterate:
+davedelong:
+In my mind, the real motivation for this is to allow properties, cases, and methods to start with numbers, so you can do things like .480p, HTTPStatus.200, and so on.
+And It feels like a miss to not solve this problem.
+I personally dont have an issue using import `foo/bar/module`, but I can't imagine wanting to ever to use an api that makes pervasive use of these identifiers.
+I hope no one ever would do this, but an API like  func `plus 1`(x: Int) - > Int is horribly obnoxious in my mind.
+Additionally, I think the meta-effects on the ecosystem will not be great.
+It's very annoying to use `` double ticks `` in markdown to monospace code using these identifiers.
+I also foresee many random parsers around the web will struggle to handle the identifiers and overall quality of swift visual styling will suffer.
+
+---
+
+@ahoppen · 2024-11-06T16:14:55.964Z:
+allevato:
+Is there any reason not to access Unicode.Scalar.Properties and similar APIs from the lexer? It seems like there would be nothing that prevents us from asking whether a scalar is assigned, unless that's purely a policy decision?
+In my opinion the main reason is that we want these tables to be stable and not be dependent on the Unicode tables of the Swift compiler that was used to build the new Swift compiler.
+
+---
+
+@allevato · 2024-11-06T16:16:49.944Z:
+ahoppen:
+In my opinion the main reason is that we want these tables to be stable and not be dependent on the Unicode tables of the Swift compiler that was used to build the new Swift compiler.
+That's a fair point now, but is it a sustainable position long-term? If we do ever want to add normalization/confusables support for identifiers at some point in the future, the parser (and the rest of the compiler) will eventually need to use Unicode properties or other Unicode APIs in some fashion.
+
+---
+
+@ahoppen · 2024-11-06T16:28:39.265Z:
+I think that’s a discussion we can have but I don’t think this review thread is the right place to have that conversation.
+
+---
+
+@lorentey · 2024-11-06T18:53:40.219Z:
+allevato:
+The version of Unicode that would be used would be the tables compiled into the standard library, since the parser is now written in Swift.
+That feels like a choice we might regret, as it splits the language into multiple parallel dialects. On Apple's platforms, the Swift Standard Library (and the Unicode tables therein) ship as part of the operating system. If the parser uses the same Unicode implementation as the stdlib, then the same compiler binaries will exhibit different behavior based on the version of the OS they're running on.
+ahoppen:
+I don’t think this is true. The new lexer doesn’t use String and I don’t think it uses any of the stdlib’s Unicode tables. Instead has its own logic for classifying Unicode characters
+That sounds like the right thing to do!
+allevato:
+Disallowing unassigned code points seems like the most obvious choice; it wouldn't allow a code point that we might need to forbid later for some reason.
+That sounds like a good plan.
+Caveat: If we let the stdlib dictate what code points are considered assigned, then the set of accepted characters will be decided by the version of the host OS that builds the code, not the version of Swift implemented by the compiler. That feels bad to me.
+allevato:
+I'm somewhat hesitant to carve out arbitrary exceptions like this if it makes the rules harder to understand (and to implement, for things like regex-based tooling that may want to match these), but since Pattern_White_Space is immutable and we'd only be subtracting from it, we're left with an extremely small and manageable set: \u{0020}, \u{200E}, and \u{200F}. So maybe that would be OK.
+Yes, that would make the rules eminently clear.
+"Regex-based tooling" raises some alarm bells for me, for the same reason as above. I think it would be a mistake to allow Swift code to fail to build (or to let their behavior change) because somebody upgrades their build environment's OS.
+allevato:
+I agree that confusables and normalization are important considerations, but it's worth noting that we have these issues today with regular identifiers.
+This was a clarifying question. I did not mean to hint that the two foo;bar spellings above should be the same (nor different) -- I think the behavior should be explicitly stated, though, as it has direct ABI stability implications.
+Not doing any normalization whatsoever avoids issues with Unicode versioning, which I believe is a clear benefit.
+If Swift itself will not set rules, the rational thing to do is probably for each project to set up strict policies about what sets of characters they are willing to accept within their source code, and what subset of that they feel acceptable to expose on their ABI surface.
+
+---
+
+@allevato · 2024-11-06T19:21:23.045Z:
+lorentey:
+On Apple's platforms, the Swift Standard Library (and the Unicode tables therein) ship as part of the operating system. If the parser uses the same Unicode implementation as the stdlib, then the same compiler binaries will exhibit different behavior based on the version of the OS they're running on.
+This is a good point. The first solution that comes to mind would be to effectively "freeze" the current ranges of unassigned code points by hardcoding them into the parser, and anything added to the Unicode standard later on wouldn't be available until the compiler was explicitly updated to support it. The number of contiguous ranges of unassigned code points is quite large, but other than that I can't think of a technical reason it wouldn't work.
+I suspect that we're still going to have a reckoning with this kind of problem in the future if we want to support things like normalization, unless the answer to that (and maybe it is) is also that the parser must maintain its own copies of the Unicode data that it needs to perform those operations.
+"Regex-based tooling" raises some alarm bells for me, for the same reason as above. I think it would be a mistake to allow Swift code to fail to build (or to let their behavior change) because somebody upgrades their build environment's OS.
+To clarify, what I meant here was that the reduced set of valid whitespace characters would simplify tools like regex-based syntax highlighting and the sort; nothing specifically related to building the code itself.
+
+=== ROW 54 | f002488 | https://forums.swift.org/t/pitch-explicit-specialization/76967 | 2025-01-02 | domain-subframes ===
+[Pitch] Explicit Specialization
+
+@ben-cohen · 2025-01-02T18:11:26.122Z:
+Hi Swit Evolution,
+A proposal to formalize an attribute that has existed since fairly early Swift in underscored form, that gives more control over generic performance.
+Explicit Specialization
+Proposal: SE-NNNN
+Authors: Ben Cohen
+Review Manager: TBD
+Implementation: Available in nightly toolchains using the underscored @_specialize
+Status: Awaiting review
+Introduction
+The Swift compiler has the ability to "specialize" a generic function at compile time. This specialization creates a custom implementation of the function, where the generic placeholders are substituted with specific types. This can unlock optimizations of that specialized function that can be dramatically faster than the unspecialized version in some circumstances. The compiler can generate this specialized version and call it when it can see at the call site with what concrete types a function is being called, and the body of the function to specialize.
+In some cases, though, this information is obscured from the compiler. This proposal introduces a new attribute, @specialize, which allows the author of a generic function to generate pre-specialized versions of that function for specific types. When the unspecialized version of the function is called with one of those types, the compiler will generate code that will re-dispatch to those prespecialized versions if available.
+Motivation
+Consider the following generic function that sums an array of any binary integer type:
+extension Sequence where Element: BinaryInteger {
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+If you call this function directly on an array of a specific integer type (e.g. Array<Int>):
+let arrayOfInt: [Int] = // ...
+let result = arrayOfInt.sum()
+in optimized builds, the Swift compiler it will generate a specialized version of sum for that type.
+If you inspect the binary, you will see this specialized version under a symbol _$sST3sumSz7ElementRpzrlEAASdyFSaySiG_Tg5, which demangles to generic specialization <[Swift.Int]> of (extension in example):Swift.Sequence< where A.Element: Swift.BinaryInteger>.sum() -> Swift.Double, alongside the unspecialized version.
+This specialized version of sum will be optimized specifically for Array<Int>. It can move a pointer directly over the the array's buffer, loading the elements into registers directly from memory. On modern hardware, it can make use of dedicated instructions to convert the them to floating point. It can do this because it can see the implementation of sum, and can see the exact types on which it is being called. What exact assembly instructions are generated will differ significantly between e.g. Array<Int8>.sum and Array<UInt64>.sum.
+Here is that Array<Int>-specialized code when compiled to x86-64 with swiftc -Osize:
+_$sST3sumSz7ElementRpzrlEAASdyFSaySiG_Tg5:
+mov     rax, qword ptr [rdi + 16]
+xorpd   xmm0, xmm0
+test    rax, rax
+je      .LBB1_3
+xor     ecx, ecx
+.LBB1_2:
+cvtsi2sd        xmm1, qword ptr [rdi + 8*rcx + 32]
+inc     rcx
+addsd   xmm0, xmm1
+cmp     rax, rcx
+jne     .LBB1_2
+.LBB1_3:
+ret
+Now consider some code that places an optimization barrier between the call site and the concrete type:
+protocol Summable: Sequence where Element: BinaryInteger { }
+extension Array: Summable where Element: BinaryInteger { }
+var summable: any Summable = []
+// later, when summable has been populated with an array of some kind of integer
+let result = summable.sum()
+The compiler now has no way of knowing what type Summable is at the call site – neither the sequence type, nor the element type. So its only option is to execute the fully unspecialized code. Instead of advancing a pointer over a buffer and loading values directly from memory, it must iterate the sequence by first calling makeIterator() and then calling next(), unwrapping optional values until it reaches nil.  And instead of using a single instruction to convert an Int to a Double, it must call the generic initializer on Double that uses methods on the BinaryInteger protocol to convert the value into floating point representation. Unsurprisingly, this code path will be about 2 orders of magnitude slower than the specialized version. This is true even if the actual type being summed ends up being [Int] at runtime.
+A similar situation would occur when sum is a generic function in a binary framework which has not provided an @inlinable implementation. While the Swift compiler might know the types at the call site, it has no ability to generate a specialized version because it cannot see the implementation in order to generate it. So it must call the unspecialized version of sum.
+The best way to avoid this situation is just to avoid type erasure in the first place. This is why concrete types and generics should be preferred whenever practical over existential types for performance-sensitive code. But sometimes type erasure, particularly for heterogenous storage, is necessary.
+Similarly, ABI-stable binary framework authors do not always want to expose their implementations to the caller, as this tends to generate a very large and complex ABI surface that cannot be easily changed later. It also prevents upgrades of binary implementations without recompiling the caller, allowing for e.g. an operating system to fix bugs or security vulnerabilities without an app needing to be recompiled.
+Proposed solution
+A new attribute, @specialize, will allow the author of a function to cause the compiler to generate specializations of that function. In the body of the unspecialized version, the types are first checked to see if they are of one of the specialized types. If they are, the specialized version will be called.
+So in our example above:
+extension Sequence where Element: BinaryInteger {
+@specialize(where Self == [Int])
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+A specialized version of [Int].sum will be generated in the same way as if it had been specialized for a callsite. And inside the unspecialized generic code, the additional check-and-redispatch logic will be inserted at the start of the function.
+Doing this restores the performance of the specialized version of sum (less a check and branch of the calling type) even when using the existential any Summable type.
+Detailed design
+The @specialize attribute can be placed on any generic function. It takes an argument with the same syntax as a where clause for a generic signature.
+The where clause must fully specialize all the generic placeholders of the types in the function signature. In the case of a protocol extension, as seen above, that includes specifying Self.
+As well as protocol extensions, it can also be used on extensions of generic types, on computed properties (note, it must be put on get explicitly, not on the shorthand where it is elided), and on free functions:
+extension Array where Element: BinaryInteger {
+@specialize(where Element == Int)
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+var product: Double {
+@specialize(where Element == Int8)
+get { reduce(1) { $0 * Double($1) } }
+}
+}
+@specialize(where T == Int)
+func sum<T: BinaryInteger>(_ numbers: T...) -> Double {
+numbers.reduce(0) { $0 + Double($1) }
+}
+All placeholders must be fully specified in the where clause even if they do not appear to be used in the function body:
+extension Dictionary where Value: BinaryInteger {
+// error: Too few generic parameters are specified in 'specialize' attribute (got 1, but expected 2)
+// note: Missing equality constraint for 'Key' in 'specialize' attribute
+@specialize(where Value == Int)
+func sum() -> Double {
+values.reduce(0) { $0 + Double($1) }
+}
+}
+Bear in mind that even when not explicitly used in the body, they may be used implicitly. For example, in calculating the location of stored properties. Depending on how Dictionary is laid out, it may be important to know the size of the Key even if key values aren't used. But even if there is absolutely no use of a generic type in the body being specialized, the type must be explicitly specified. This requirement could be loosened in future, see "Partial Specialization" in future directions.
+Where multiple placeholders need to be specified separately, they can be separated by commas, such as in the fix for the above example:
+extension Dictionary where Value: BinaryInteger {
+@specialize(where Value == Int, Key == Int)
+func sum() -> Double {
+values.reduce(0) { $0 + Double($1) }
+}
+}
+Source compatibility
+The addition or removal of explicit specializations has no impact on the caller, and is opt-in. As such it has no source compatability implications.
+ABI compatibility
+This proposal covers only internal specializations, dispatched to from within the implementation of an unspecialized generic function. As such it has no impact on ABI. It can be applied to existing ABI-stable functions in libraries built for distribution, and can be removed later without ABI impact. Generic functions can continue to be inlinable to be specialized by the caller, and the code to dispatch to specialized versions will not appear in the inlinable code emitted into the swift interface file.
+A future direction where explicit specializations are exposed as ABI appears in Future Directions.
+Implications on adoption
+Explicit specializations impose no new runtime requirements on either the caller or the called function, so use of them can be back-deployed to earlier Swift runtimes.
+Future directions
+Partial Specialization
+The need to fully specify every type when using @specialize is somewhat limiting. For example, in the Dictionary example above, no reference is made in the code to the Key type in summing the values. Having to explicitly state the concrete type for Key means you need separate specializations for [String:Int], [Int:Int] and so on.
+Even in cases where dynamic dispatch through the protocol is still required for the unspecialized aspects (such as determining where to find the values in a dictionary's layout), this might not be in the hot part of the function and so partial specialization might be the better trade-off.
+Closely related to partial specialization is the ability to specialize once for all particular type layouts. In the Dictionary.sum example, it might only matter what the size of the key type is in order to efficiently iterate the values.
+Another example of this is Array.append. There is only one single implementation needed for appending an AnyObject-constrained to an array. The append operation needs to retain the object, but does not need any other properties. So two class instances could be appended using the same method irrespective of their actual type. Similar techniques could be used to provide shared specializations for BitwiseCopyable types, possibly with the addition of a supplied size argument to avoid having to use value witness calls.
+Making Specializations Publicly Available
+This proposal keeps expliicit specializations internal only. For ABI-stable frameworks, a useful future direction would be to make these symbols publicly available and listed in the .swiftinterface file, for callers to link to directly.
+Doing this allows ABI-stable framework authors to expose specializations without exposing the full implementation details of a function as inlinable code. While adding a public specialized symbol to a framework is ABI, it is a much more limited ABI surface compared to providing an inlinable implementation, which requires any future changes to a type to consider the previous inlinable code's behavior to ensure it remains compatible forever in older binaries. A specialized entry point could be updated in a framework to fix a bug without recompiling the caller. Specializations in binary frameworks also have the benefit of avoiding duplication of code into the caller.
+Requiring Specialization
+A related feature is the ability to require specialization either at the call site, or on a protocol. Specialization does not always have to happen at the call site even when it could – it remains an optimization (albeit a very aggressively applied one currently). If the specializatino does not happen, it would be useful to force the compiler to override its heuristics, similar to forcing linlining of a long but critical function.
+There are also protocols that are only meant to be used in specialized form in optimized builds. Arguably BinaryInteger is one of them. It may be worth exploring in these cases an annotation to indicate this to the caller, either via a compile-time errror/warning, or a runtime error.
+Tooling Directions
+This proposal only outlines language syntax the developer can use to instruct the compiler to emit a specialized version of a function. Complimentary to this is development of tooling to identify profitable specializations to add, for example by profiling typical usage of an app. It should be noted that specialization is only required in highly performance sensitive code. In many cases, explicit specialization will have little impact on overall performance while increasing binary size.
+The current implementation requires the attribute to be attached directly to the function being specialized. Tooling to produce specializations would benefit from an additional syntax that could be added in a separate file, or even into a separately compiled binary.
+Alternatives considered
+Many alternatives to this proposal – such as whole-program analysis to determine prespecializations automatically – are complimentary to this technique. Even in the presence of better optimizer heroics, there are still benefits to having explicit control over specialization.
+This proposal takes as a given Swift's current dispatch mechanisms. Some alternatives to this proposal tend to end up requiring fundamental changes to Swift's core generics implementation, and are therefore out of scope for this proposal.
+
+---
+
+@Nevin · 2025-01-02T18:31:27.147Z:
++1 to making this part of the language.
+As a possible future direction, how about specializing to another protocol?
+For example, a function on BinaryInteger might optimize better when the type also conforms to FixedWidthInteger, or a function on Sequence might optimize better when the type also conforms to RandomAccessCollection.
+Something like:
+@specialize(where Element: FixedWidthInteger)
+@specialize(where Self: RandomAccessCollection)
+
+---
+
+@jrose · 2025-01-02T19:30:03.266Z:
+One detail worth pinning down: how is the type-check performed? (Treat all of the below as pseudocode.)
+// most restrictive
+if type(of: self) == Foo.self
+// least restrictive, but may involve bridging!
+if let self_ = self as? Foo
+// middle ground that makes sense for classes,
+// but might bug people when it doesn’t work for `any` types
+if type(of: self).isSubclass(of: Foo.self)
+// something else?
+(I’m also curious what the assembly looks like / the code size impact, but that’s less important in these pitch threads than the semantics.)
+
+---
+
+@taylorswift · 2025-01-02T19:40:29.666Z:
+a huge +1 from me. this proposal is a no brainer and bridges a gap in the language that so far has been filled by copious overuse of @inlinable.
+this part is a small drizzle on my parade:
+ben-cohen:
+This proposal keeps expliicit specializations internal only.
+as virtually all real world use cases for @_specialize involve public declarations, since the compiler can already specialize most internal calls. but i understand why an incremental approach is preferred.
+
+---
+
+@beccadax · 2025-01-02T19:57:10.040Z:
+One nit: @_specialize was added so long ago that we hadn’t yet chosen a consistent grammatical style for attributes. Today it ought to be spelled @specialized.
+
+---
+
+@Nevin · 2025-01-02T20:32:16.627Z:
+The proposal should probably include an example of declaring multiple distinct specializations of a single function.
+
+---
+
+@ben-cohen · 2025-01-02T20:59:48.989Z:
+jrose:
+One detail worth pinning down: how is the type-check performed?
+The code generated is basically your first option:
+lea     rdi, [rip + (demangling cache variable for type metadata for [Swift.Int16])]
+call    __swift_instantiateConcreteTypeFromMangledName
+cmp     rax, rbx
+je      .LBB4_5
+lea     rdi, [rip + (demangling cache variable for type metadata for [Swift.Int8])]
+call    __swift_instantiateConcreteTypeFromMangledName
+cmp     rax, rbx
+je      .LBB4_4
+lea     rdi, [rip + (demangling cache variable for type metadata for [Swift.Int])]
+call    __swift_instantiateConcreteTypeFromMangledName
+cmp     rax, rbx
+je      .LBB4_3
+i.e. it fairly naïvely tests for each exact type in turn. This could be improved in future as it doesn't scale so great if you add a lot of explicit specializations.  @Mike_Ash has been doing some parallel but related work recently on pre-specializing type metadata and building efficient lookup tables for that, with which this might have some interesting intersection.
+
+---
+
+@ksluder · 2025-01-02T21:06:51.698Z:
+Can this test be elided when the compiler can statically prove the types?
+
+---
+
+@ben-cohen · 2025-01-02T21:10:25.864Z:
+If it could do that, it could call the specialized version directly in the first place instead of the unspecialized version.
+The swift optimizer does have an "existential specializer" that does something along these lines when the code is trivial enough to look through the type erasure and see it must be one exact type. Trickier is if there are 8 specializations, but it might only be 2 of them for a particular code path. There are solutions to this too, but the more of these things you layer on, the bigger your code size and longer your compile times.
+
+---
+
+@jrose · 2025-01-02T21:20:00.458Z:
+Thanks! This was a semantics question more than a code generation question; it implies that @specialize(where Pointee == NSObject) will not kick in for a Pointee of NSView. Which I think makes sense given the syntax.
+
+---
+
+@ben-cohen · 2025-01-02T21:21:49.176Z:
+Yes, I think that's the right behavior. Certainly, invoking bridging or implicit conversion during the check should be ruled out IMO.  I'll update to clarify in the proposal.
+
+---
+
+@ben-cohen · 2025-01-02T21:24:11.781Z:
+beccadax:
+Today it ought to be spelled @specialized
+Hrrrmph. I guess that isn't so bad in this case, though the imperative form reads much better.
+What's worse is the consequences of this on a proposal to formalize @inline(__always) (which is next up on my list). I really dislike the idea of calling that @inlined(always).
+
+---
+
+@ksluder · 2025-01-02T21:25:46.412Z:
+If it were a macro, which is the more likely name? @specialize and @inline seem like instructions to the compiler, whereas attributes on types feel like adjectives.
+
+---
+
+@OneSadCookie · 2025-01-03T00:19:45.018Z:
+I think the obvious question to ask is, what about entirely alternate implementations for specializations?
+For example, in the example given, maybe I can do much better than the compiler for certain input types, by writing an explicitly-vectorized version myself, or by calling a vDSP API on Apple platforms.
+The proposed syntax doesn't seem to offer a way to do this.
+
+---
+
+@Joe_Groff · 2025-01-03T00:28:55.064Z:
+OneSadCookie:
+I think the obvious question to ask is, what about entirely alternate implementations for specializations?
+For example, in the example given, maybe I can do much better than the compiler for certain input types, by writing an explicitly-vectorized version myself, or by calling a vDSP API on Apple platforms.
+You can do this with explicit control flow inside of the implementation.
+
+---
+
+@OneSadCookie · 2025-01-03T00:35:25.092Z:
+Joe_Groff:
+You can do this with explicit control flow inside of the implementation.
+Suggesting
+extension Sequence where Element: BinaryInteger {
+@specialize(where Self == [Int])
+func sum() -> Double {
+if let arrayOfInt = self as? [Int] {
+#if os(macOS)
+return someMacSpecificAPI(arrayOfInt)
+#else
+return someManuallyVectorizedSum(arrayOfInt)
+#endif
+} else {
+return reduce(0) { $0 + Double($1) }
+}
+}
+}
+And the optimizer will sort it all out?
+I don't love the opportunity there for the static check that @specialize inserts, to differ from the runtime check that I have to add, and I'd never be warned about the mismatch — I'd only know by inspecting the binary.
+(It also relies on the optimizer being able to elide as? casts where the types are known to match, which it might — does it?)
+
+---
+
+@OneSadCookie · 2025-01-03T00:37:59.408Z:
+OneSadCookie:
+I don't love the opportunity there for the static check that @specialize inserts, to differ from the runtime check that I have to add, and I'd never be warned about the mismatch — I'd only know by inspecting the binary.
+Perhaps, like @available and #available, there should be @specialized that I put on the function, and #specialized that I can check for in an if, that accept the same syntax?
+
+---
+
+@Joe_Groff · 2025-01-03T00:38:15.436Z:
+OneSadCookie:
+I don't love the opportunity there for the static check that @specialize inserts,
+The check that @specialize inserts is dynamic, since it's on the callee's side of the ABI boundary. If static specialization can occur, then the checks would get optimized out (but you also wouldn't need @specialize for those cases).
+OneSadCookie:
+(It also relies on the optimizer being able to elide as? casts where the types are known to match, which it might — does it?)
+Casts and T.self == [Int].self style checks should also get optimized out after static specialization, or after a redundant check has already established the equality, yeah.
+
+---
+
+@scanon · 2025-01-03T00:48:33.542Z:
+Joe_Groff:
+Casts and T.self == [Int].self style checks should also get optimized out after static specialization, or after a redundant check has already established the equality, yeah
+It would be nice to be able to guarantee that the check doesn't occur on the non-specialized path as well, so that we're not doing redundant work there. It's statically dead, so it can only ever bloat codesize, but that may not be visible to the optimizer without some work.
+
+---
+
+@ben-cohen · 2025-01-03T00:50:30.512Z:
+OneSadCookie:
+I think the obvious question to ask is, what about entirely alternate implementations for specializations?
+This is an interesting area to explore, but it's important to be clear that it's a very different feature.
+The specializations mentioned here are entirely referentially transparent, using Swift's protocol dispatch semantics to ensure the only observable difference (short of shenanigans) is how quickly the code runs.They are just optimizations where dynamic dispatch is replaced by static, code inlined, low-level optimizations applied to that code etc.
+This is distinct from "when it's this type run this code, when it's that type, run that code", where this code and that code might do very different things semantically. You might not mean for them to differ semantically, but they can.
+This is closely related to what is probably Swift's most confusing behavior – that overloads in protocol extensions don't kick in generically unless they are implementations of methods that appear in the protocol (aka customization points).
+Creating a new technique that allows for dispatching to different implementations based on the type would be a competing feature to protocol-based dispatch. It would have benefits over it sometimes, but also weird edge cases (i.e. a function compiled in one module then used from another couldn't "see" the overloads added in another – yet one compiled in the same module could).
+Sugar and idioms and guaranteed optimizations for the "if this type then do this else do that" dispatch that Joe describes are interesting to think about. But they're a different feature to this one.
+
+---
+
+@SlugFiller · 2025-01-03T02:47:16.191Z:
+So if I'm getting this right, this pitch is basically monomorphized generics that are limited to:
+Functions and computed properties only. Not classes.
+Specializations are defined with the function, and cannot be added post-hoc.
+Specialization cannot specify an alternative implementation.
+Specializations are not exposed outside the module, even when defined.
+I mean, yeah, I get it. Because C doesn't have generics, and because linkers think the C ABI is the only ABI, neither Rust nor C++ have managed to create monomorphized generics as an ABI. But even if you accept that constraint, this pitch is pretty limiting.
+
+---
+
+@ben-cohen · 2025-01-03T03:11:05.365Z:
+SlugFiller:
+Functions and computed properties only. Not classes.
+There is no such thing as specializing a generic class in Swift. Only functions generic over classes (or other types). You can't really talk about specializing "a class", unless what you mean is "always specialize methods you add to this class", which would be sugar for doing that function by function.
+SlugFiller:
+Because C doesn't have generics, and because linkers think the C ABI is the only ABI, neither Rust nor C++ have managed to create monomorphized generics as an ABI.
+The latter does not follow the former. C++ or Rust could have an ABI for monomorphised generics. They just don't. Swift has an ABI for unspecialized generics despite using the same linker, and a future direction in this proposal would allow an ABI for monomorphized generics too, with the same linker.
+
+---
+
+@SlugFiller · 2025-01-03T03:32:49.815Z:
+ben-cohen:
+"always specialize methods you add to this class", which would be sugar for doing that function by function
+Kind of, yes.
+Consider:
+@specialize(where Element == Int)
+struct Stack<Element> {
+var items: [Element] = []
+mutating func push(_ item: Element) {
+items.append(item)
+}
+mutating func pop() -> Element {
+return items.removeLast()
+}
+}
+vs
+struct Stack<Element> {
+var items: [Element] = []
+@specialize(where Element == Int)
+mutating func push(_ item: Element) {
+items.append(item)
+}
+@specialize(where Element == Int)
+mutating func pop() -> Element {
+return items.removeLast()
+}
+}
+(Sorry for the toy example. Taken from Swift docs)
+It would imply extension methods on it should be auto-specialized as well.
+extension Stack {
+// No need to specify @specialize here because all of Stack is specialized for Element == Int
+var topItem: Element? {
+return items.isEmpty ? nil : items[items.count - 1]
+}
+}
+ben-cohen:
+C++ or Rust could have an ABI for monomorphised generics. They just don't.
+I'm not sure that's the case. To monomorphise the generic, you basically need to create a copy of all the code, with the places where the generic is used replaced with direct calls to the specified type. This would need to be done in the linker, if the generic itself is part of the ABI. Linkers do not have this functionality. They can only fill in addresses to functions and variables based on a symbol name. They cannot make a full copy of a function, replacing specific lines in the code. That feature simply does not exist in any currently existing linker.
+
+---
+
+@ksluder · 2025-01-03T03:58:00.538Z:
+Is it too early to think about how this would intersect with @implements? If I recall correctly, the standard library has a couple of instances of methods that use a similarly-named underscored attribute to provide explicit specializations, and maybe even alter the lookup order.
+
+---
+
+@ben-cohen · 2025-01-03T05:37:16.745Z:
+SlugFiller:
+It would imply extension methods on it should be auto-specialized as well.
+Yes, that's what I said. Specializing a type would just be sugar for specializing all methods on a type.
+SlugFiller:
+To monomorphise the generic...This would need to be done in the linker, if the generic itself is part of the ABI.
+This is not true and I'm not sure what point you're trying to make. Yes, monomorphizing involves replacing the general implementation with the specific one. To do this you need a representation that lets you reconstruct that information. Some languages do this with bytecode or IR, which you can process in a compiler, or a linker, or by a JIT at runtime. Swift does this by putting the source in a swift interface file and then processing it when compiling the caller. The linker isn't involved in that. It can be done by the linker, but it doesn't have to be.
+
+---
+
+@jrose · 2025-01-03T05:57:35.937Z:
+I think the mismatch here is that @SlugFiller is talking about monomorphization on demand (which, yeah, the linker will not do) and @ben-cohen is talking about exporting specific monomorphizations (still as a future direction, though). C++ does have the latter: it's extern template foo<string>(); or whatever. That monomorphization of foo will get a (stable!) symbol name that external clients can call even without having a body for foo. (And the library may or may not have customized the implementation of foo<string>; you can't tell from outside the library.)
+Swift's stable ABI does not currently have a mangling for a similar feature. (Also, there's no way to ask for it in the language, though the compiler will sometimes generate such a monomorphization as an optimization! It just won't export it.) What Swift has that C++ doesn't is its polymorphic generic ABI: any generic function has a single implementation that takes a dispatch table (probably several of them, really) to actually do its work, and that has a stable symbol name. And because of Swift's support for separate compilation, there's no way to monomorphize on demand except when information is revealed to the caller (usually via @inlinable). Which is similar to providing the source of a template in a header file, and is a feature that already exists.
+Ben is saying that we could add a new attribute (or a variant of the proposed @specialize), which would export a specific monomorphization, chosen by the library, under a stable symbol name, which clients would then be able to call directly if (and only if) they statically knew they had a matching type. But this is all still a future direction, just like the ideas for partial specialization or "manual specialization" with an explicitly different implementation.
+Though as discussed "manual specialization" is not super important for functions, because once you're no longer sharing a textual implementation with the generic path, you can just write the check as code (if you want it dynamically chosen) or add an overload (if you only care about static choices) or both (if you want to short-circuit the check when possible but still support it in the opaque case). For types this is still potentially more interesting.
+
+---
+
+@SlugFiller · 2025-01-03T06:14:35.713Z:
+ben-cohen:
+Swift does this by putting the source in a swift interface file and then processing it when compiling the caller. The linker isn't involved in that.
+That's not an ABI anymore, though. Quoting your own post:
+ben-cohen:
+It also prevents upgrades of binary implementations without recompiling the caller, allowing for e.g. an operating system to fix bugs or security vulnerabilities without an app needing to be recompiled.
+Processing a monomorphized generic when compiling the caller is basically what C++ does when it includes templates in header instead of code files. And recompiling the caller is the result, if any fix is done to the template code.
+If and when Swift has fully monomorphized generics, they would likely have these same properties.
+As I understand it, Swift currently uses erasure for generics, however. This works as an ABI - Only one version of the function is exposed. The calls to methods on the parameter type are done indirectly, at runtime. The caller does not need to be recompiled when the generic type or function changes, because the "linking" is done at runtime (dynamically, per call).
+jrose:
+C++ does have the latter: it's extern template foo<string>(); or whatever.
+Yes. Exactly. And since it's "future direction", and not part of the pitch, this pitch is even more limiting than this.
+Swift's polymorphic generics allow for true on-demand generics while keeping a stable ABI and avoiding recompilations. But it comes at a performance cost. And without some fundamental change to linkers, this tradeoff is inevitable.
+But there are still a lot of options in between "polymorphic everything" and "recompile everything". It's not a purely binary choice. This pitch, as presented, if I'm reading it correctly, leans very heavily towards the prior.
+
+---
+
+@ben-cohen · 2025-01-03T06:49:34.882Z:
+SlugFiller:
+ben-cohen:
+Swift does this by putting the source in a swift interface file and then processing it when compiling the caller. The linker isn't involved in that.
+That's not an ABI anymore, though.
+Ah, here's the point of confusion. Yes, inlinable code in a swift interface file is ABI, as least from Swift's perspective. Swift includes various features, such as resilient and frozen types, and useable-from-inline symbols, that allow for it to publish ABI-stable inlinable code.
+Inlinable code forms a very messy kind of ABI – one where you need to consider things like how changing an implementation will behave when old copies are still hanging around and running against your new framework. But it is ABI.
+The fact that this ABI is potentially emitted into the client, which means it can't be upgraded underneath a compiled binary, doesn't make it not ABI (though, note that there are variants of inlining where this does work, this is what @backDeployed does).
+SlugFiller:
+As I understand it, Swift currently uses erasure for generics, however.
+"Erasure" isn't a rigorously defined enough term, really, but generally speaking no, Swift doesn't use erasure for generics. The type of a value remains fully known at all times, and the value doesn't need to be held at the end of a pointer. Instead, metadata is passed around identifying the type when needed and provides functions that can manipulate the type (make copies, destroy etc).
+SlugFiller:
+And without some fundamental change to linkers, this tradeoff is inevitable.
+I am still not following why you think that doing work "in the linker" is the key to resolving these things.
+
+---
+
+@SlugFiller · 2025-01-03T07:15:48.345Z:
+ben-cohen:
+the value doesn't need to be held at the end of a pointer
+This one I'm not following. How could different types be held by the same binary code as anything other than a pointer? For instance, you can't allocate it on the stack if the size might vary.
+Metadata being passed around doesn't make it not erasure. That's just RTTI, and is functionally indistinct from vtables. I would say "erasure" is sufficiently rigorously defined. It's when the actual binary implementation is as if the generic was monomorphically applied to a common ancestor of all possible type parameter values, and usage of the parameter type's method is the same as that for any interface or inheritable class with virtual methods.
+It is distinct from "monomorphized" in the obvious way, and from "reified" in that "reified" adds runtime checks for the type and performs JIT to come closer to monomorphized at run time.
+ben-cohen:
+am still not following why you think that doing work "in the linker" is the key to resolving these things.
+Not saying it's "key", just an inevitability. Compiling produces object files for caller and callee. The linker combines those object files. If the linker cannot represent or process generics, it cannot perform the necessary changes to the caller to account for changes in the callee. The result is a need to recreate the object file. i.e. To recompile.
+Which comes back to the original point: You can't have on-demand monomorphization without recompiling the caller for every change in the callee. If you don't have on-demand monomorphization, then the caller can use a type parameter which would force the callee to operate using RTTI, i.e. indirect calls (assuming no JIT), which carries a performance cost (indirect calls are necessarily slower than direct ones). That's the tradeoff.
+
+---
+
+@MPLewis · 2025-01-03T07:39:44.916Z:
+Just because it’s not mentioned explicitly in the pitch: does applying @specialize multiple times generate multiple distinct specializations like @_specialize does now?
+
+---
+
+@Nobody1707 · 2025-01-03T17:04:38.936Z:
+SlugFiller:
+For instance, you can't allocate it on the stack if the size might vary.
+That's where you're wrong, because this is exactly what Swift does. The value witness tables include the size of the type in memory, as well as functions required to copy, move or destroy a value. Slava had an excellent presentation on this a while ago:
+
+---
+
+@ben-cohen · 2025-01-03T18:14:51.818Z:
+MPLewis:
+does applying @specialize multiple times generate multiple distinct specializations like @_specialize does now?
+yes good point that wasn't explicit in the proposal. yes you can stack as many as you like.
+
+---
+
+@dnadoba · 2025-01-03T18:40:09.459Z:
+ben-cohen:
+There is no such thing as specializing a generic class in Swift. Only functions generic over classes (or other types). You can't really talk about specializing "a class", unless what you mean is "always specialize methods you add to this class", which would be sugar for doing that function by function.
+Couldn't Swift's classes generate a specialized dispatch table per generic specialization? The dispatch table could then be chosen during initialization of an instance of that class. This would eliminate the need to check for each specialization per method call. The nice thing about this is that non-final/overrideable methods/properties already do dynamic dispatch through the dispatch table anyway and could directly dispatch to the specialized version, reducing the overhead per method call/property access to essentially zero (minus additional memory required for the specialized dispatch tables but that should be shared with all instances).
+
+---
+
+@davedelong · 2025-01-03T18:51:31.963Z:
+I've wanted something that sounds similar to this but I'm not sure if it's actually covered.
+Occasionally, I've wanted to implement my own Encoder/Decoder for a custom serialization format, especially methods like this, where I'm given a generic Encodable-conforming parameter.
+In some of these cases, I've wanted to conditionalize the logic for special types that I know the format handles differently. For example "If I'm encoding an Array<URL>, behave slightly different than an Array<String>, before falling back to the general 'some sort of encodable thing'".
+I've looked into @_specialize before to do this, so I could have a public func on my coders that handle these mostly-the-same-but-slightly-different logic.
+However, I don't think @specialize will handle this, correct?
+Specific Example
+A specific example would be around working with UserDefaults, which has type-specific methods for reading and writing Int versus Double versus Array<String> versus Data, etc.
+I've tried making UserDefaults conform to generic "key-value store" protocols that only deal with simple "codable" values, and in every time I end up having to do things like this:
+@MainActor protocol KeyValueStore {
+func read<Value: Codable>(_ key: String) throws -> Value
+func write<Value: Codable>(_ key: String, _ value: Value?) throws
+}
+extension UserDefaults: KeyValueStore {
+...
+func write<Value>(_ key: String, _ value: Value?) throws where Value : Codable & Equatable {
+guard let unwrapped = value else {
+self.removeObject(forKey: key)
+return
+}
+switch unwrapped {
+case let i as Int: self.set(i, forKey: key)
+case let f as Float: self.set(f, forKey: key)
+case let d as Double: self.set(d, forKey: key)
+case let b as Bool: self.set(b, forKey: key)
+default:
+do {
+let encoded = try PlistEncoder().encode(unwrapped)
+self.set(encoded, forKey: key)
+} catch let error as EncodingError {
+throw KeyValueStoreError.encodingError(error)
+} catch {
+throw KeyValueStoreError.unknown(error)
+}
+}
+}
+}
+I've wanted to provide specializations of the write<T>(_:_:) specifically for Int, Double, Bool etc instead of having to switch on the type in the single implementation above.
+Edited to add: Playground
+protocol Writer {
+func write<E: Encodable>(_ value: E)
+}
+struct ConcreteWriter: Writer {
+// is there anything I can do to make this be used as part of satisfying the `Writer` protocol?
+func write(_ value: String) {
+print("Writing a string")
+}
+func write<E: Encodable>(_ value: E) {
+print("Using fallback writer of type \(E.self)")
+}
+}
+let writer: any Writer = ConcreteWriter()
+writer.write(42)        // Using fallback writer of type Int
+writer.write("hello")   // Using fallback writer of type String ← 😢
+
+---
+
+@beccadax · 2025-01-03T19:06:37.351Z:
+SlugFiller:
+This one I'm not following. How could different types be held by the same binary code as anything other than a pointer? For instance, you can't allocate it on the stack if the size might vary.
+Sure you can, so long as your metadata table holds the size.
+If you’re familiar with generics from other languages, you’ve probably learned that there are two ways to do them: monomorphization and boxing into a uniform representation (usually some kind of pointer). You are now hitting the point where you realize that Swift has invented a third way.
+
+---
+
+@ben-cohen · 2025-01-03T19:09:47.017Z:
+davedelong:
+In some of these cases, I've wanted to conditionalize the logic for special types that I know the format handles differently
+This is a different feature to the one being proposed – see discussion upthread.
+
+---
+
+@davedelong · 2025-01-03T19:21:02.098Z:
+Ah yes, I missed that. Thanks.
+
+---
+
+@SlugFiller · 2025-01-03T19:42:56.824Z:
+I see it uses alloca for the stack allocation. But I also see it receives an opaque pointer for the parameter e.g. void getSecond(opaque *result, opaque *pair, type *T). So, the value is still technically "held at the end of a pointer", even if it is occasionally allocated on stack (using alloca) instead of the heap.
+I will note that passing T as a separate parameter instead of encoding it into the value itself is an interesting difference from classic erasure.
+Comparing to erasure, it doesn't "save" the use of indirect calls. It only saves the memory requirement of keeping a vtable pointer in each instance of the value type. Instead a pointer to the "clean" value can be used as is, while the vtable-equivalent is passed as a separate parameter (which doesn't require per-instance allocation, only per-type), using the fact that the caller knows the type of the parameter it is passing.
+
+---
+
+@MPLewis · 2025-01-04T03:10:48.964Z:
+Perfect, thanks. As a follow-up, is it (or will it be) documented anywhere in what order the types are checked for pre-specialization when calling the unspecialized version of the function? Or is that not behavior that’s being committed to in this proposal?
+
+---
+
+@ben-cohen · 2025-01-05T00:44:56.029Z:
+I am wary to specify this, because it's very interlinked with how the re-dispatch is implemented, and that shouldn't be part of the defined semantics of the proposal. Even if it's just "as a rule of thumb, it's better to put common specializations at the top" since in future it may be optimized to work completely differently like a hash table lookup and that advice gets left behind like an oxbow lake that people still follow forever.
+(as it happens, today it is basically a sequence of if statements that appear in the order of the @specialize declarations)
+
+---
+
+@scanon · 2025-01-05T01:17:17.060Z:
+ben-cohen:
+as it happens, today it is basically a sequence of if statements that appear in the order of the @specialize declarations
+At the SIL level. The LLVM optimizer and backend are free to do whatever they want to those, as well.
+
+---
+
+@ben-cohen · 2025-01-05T01:42:34.351Z:
+Thanks for the feedback so far. I've updated the proposal PR with clarifications from the thread, diff here.
+
+---
+
+@j-f1 · 2025-01-05T03:23:25.085Z:
+How does this interact with some generic parameter types? I believe the current underscored syntax prohibits the use of some in parameter position so you are able to name all type parameters. Is there a way to extend the syntax to allow handling opaque generic parameter types (perhaps only in simple cases like where they are the only parameter)? For example: @specialize(where: T == String) and @specialize(String)
+
+---
+
+@ben-cohen · 2025-01-05T03:32:36.083Z:
+j-f1:
+Is there a way to extend the syntax to allow handling opaque generic parameter types (perhaps only in simple cases like where they are the only parameter)? For example: @specialize(where: T == String) and @specialize(String)
+We could special case something like this, but it doesn't seem desirable. If you want to refer to a placeholder in multiple places (whether in the signature, or in an attribute as well), you should give it a name.
+
+---
+
+@CrystDragon · 2025-01-06T13:23:20.487Z:
+huge +1!
+Can we manually specify a different implementation for the specialized type?
+Something like this:
+extension Array where Element: BinaryInteger {
+@specialize(where Element == Int)
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+extension [Int] {
+func sum() -> Double { 0 }
+}
+// or, in the form of a customized signature
+extension Array where Element: BinaryInteger {
+@specialize(where Element == Int, superFastImpl)
+func sum() -> Double {
+reduce(0) { $0 + Double($1) }
+}
+}
+extension [Int] {
+func superFastImpl() -> Double { 0 }
+}
+
+---
+
+@Slava_Pestov · 2025-01-06T15:13:31.394Z:
+CrystDragon:
+Can we manually specify a different implementation for the specialized type?
+That would entail taking all the complexity of Swift overload resolution and building it into the runtime. Just do double dispatch with a new protocol instead. For example see this previous discussion: Protocol extension, generics and dynamic dispatch confusion - #2 by Slava_Pestov
+
+---
+
+@CrystDragon · 2025-01-07T06:41:27.615Z:
+Thanks for your reply.
+I understand the overload mechanism in Swift is based on static information in the calling context. But I'm confused why this "internal specialization" feature is related to "overload resolution".
+As Ben illustrated in the pitch, a function marked with @specialize is semantically equal to run-time condition branches, can't we just allow the developer to specify one of the branches?
+This code is modified from the draft text:
+extension Sequence where Element: BinaryInteger {
+@specialize(where Self == [Int])
+@specialize(where Self == [Int8])
+func sum() -> Double {
+if Self.self == [Int].self {
+<execute specialization for [Int].sum()>   // <- for example, this branch can be developer specified
+} else if Self.self == [Int8].self {
+<execute specialization for [Int8].sum()> // <- this branch remains to be provided by the compiler
+} else {
+reduce(0) { $0 + Double($1) }
+}
+}
+}
+
+---
+
+@scanon · 2025-01-07T13:51:51.386Z:
+The code you just wrote works today, without @specialize. The only convenience that's missing is that Self will not be [Int] within the <execute specialization for [Int].sum()> block, but that "only" requires some casting. That would be a nice convenience to have, but it's largely orthogonal to this proposal.
+
+---
+
+@Alejandro · 2025-01-07T16:18:47.523Z:
+We actually have this as an underscored standard library function today as _specialize.
+
+---
+
+@Joe_Groff · 2025-01-07T16:26:02.010Z:
+What is proposed here is only an optimization guide and has no effect on the outward semantics of the function (aside from making it go faster for certain generic argument values). It might be good to make that clear in the proposal up front.
+
+---
+
+@dabrahams · 2025-01-08T22:49:38.702Z:
+What I want right now and seems to be missing (if I've read correctly) is the ability to specialize a function someone else wrote.  Every time my colleague converts an Int64 to an Int32 in his debug builds there is a lazy protocol witness lookup which causes a 300x slowdown in a microbenchmark compared to release builds, which makes Swift look bad(!)  I'd like to be able to say look, just insert this specialization in your code and that will disappear.  I assume(?) a specialization would do that.
+
+---
+
+@ben-cohen · 2025-01-08T22:56:10.736Z:
+Yes, you should be able to do this. This is what this part of Future DIrections, that I probably buried in the Tooling section, was getting at:
+The current implementation requires the attribute to be attached directly to the function being specialized. Tooling to produce specializations would benefit from an additional syntax that could be added in a separate file, or even into a separately compiled binary.
+It's definitely a future direction though because it requires a dynamic lookup table of specializations, rather than the current extremely simple static switch emitted into the start of the unspecialized function.
+
+=== ROW 56 | f002643 | https://neon.com/blog/how-to-build-github-copilot-extensions | 2025-02-06 | domain-subframes ===
+How to Build GitHub Copilot Extensions - Neon
+The Neon backend is GA: a complete set of primitives so agents can build
+Neon
+Product
+Solutions
+Docs
+Pricing
+Resources
+Core Primitives
+Lakebase PostgresServerless Postgres database
+Object StorageS3-compatible storage that branches
+FunctionsServerless compute next to your data
+Managed Better AuthAuthentication built into your database
+AI GatewayOne API for frontier and open-source models
+Features
+Lakebase ArchitectureStorage-compute separation
+AutoscalingAutomatic instance sizing
+BranchingFaster Postgres workflows
+SearchVector, keyword, and hybrid search
+Instant RestoreInstant recovery when mistakes happen
+What is Neon
+Built around Lakebase Postgres, by Databricks
+Use cases
+Full-stack appsDeploy backends via your agent
+Branching workflowsSimplify DB ops to ship faster & safer
+Bursty workloadsAvoid overprovisioning & optimize performance
+Large databasesRestore & replicate your DB in seconds
+Deploy at scale
+Agents
+Infra for app-generation agents like Replit & v0
+AI
+Platforms
+Deploy isolated backends for your end users
+Learn
+BlogTechnical posts & product updates
+Case studiesExplore customer stories
+ChangelogProduct updates
+CommunityConnect on Discord
+StartupsBuild with Neon
+Company
+About usThe company and the mission
+CareersJoin the team
+Contact salesContact sales team
+SecurityCompliance & privacy
+StatusService status
+Discord23.1k
+Log inSign up
+Back to Blog/Community
+How to Build GitHub Copilot Extensions
+At Layer, we built Neon’s Copilot Extension—and we can build yours too
+Andrew Hamilton–Chief Technology Officer at LayerFeb 06, 2025
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+As soon as GitHub Copilot burst onto the scene, everyone started asking, “How do we teach Copilot about our platform?” Whether you’re building a managed Postgres service (like Neon) or a specialized set of APIs, it’s no longer enough to rely on devs hunting through documentation. They want AI-driven integrations that bring your endpoints and best practices directly into their coding workflow.
+That’s where Layer comes in. We can help you create a Copilot extension—written in any language—that seamlessly injects your product’s intelligence into GitHub Copilot (and any other AI surface for that matter).
+In this blog post, we’ll walk you through the steps we used to built Neon’s Copilot Extension (and why the idea of a “Copilot extension” isn’t quite what you might expect).
+Install System Prerequisites: Python, Ngrok
+First, make sure that you have the latest versions of Python and Ngrok installed onto your system.
+Webhook Subscriptions: Like Building a Discord Bot
+If you’ve built a Discord bot before, you’re already familiar with this pattern: you set up a server, then point the platform at it so it can deliver events to your endpoint. That’s exactly how GitHub Copilot extensions work under the hood: You create a web server—written in any language you like—and subscribe it to events from GitHub. Whenever Copilot needs to query your extension, it fires an HTTP request to your server.
+This “subscription” approach is powerful for two reasons:
+Language freedom. Because all you need is a server that handles HTTP requests, you’re not locked into Python, Java, Node, or any specific tech stack. If you can spin up a server, you can handle Copilot extension calls—whether you prefer Go, OCaml, or even Ruby.
+Unlimited custom logic. Once the requests arrive, it’s entirely up to you how to process them. Want to authenticate users, pull data from a Postgres database, or call a third-party API? Go for it. The webhook subscription doesn’t dictate how your code runs; it just ensures Copilot knows where to send requests.
+In other words, the only thing you really need to do is let GitHub know where your server lives. Once that’s done, you can implement your Copilot “extension” in the language of your choice, and handle incoming Copilot requests in whatever way best suits your application’s needs.
+Our Server
+So now we get to the interesting stuff—making our copilot server. Here Layer’s starter code:
+import httpx
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import StreamingResponse
+import debugpy
+app = FastAPI()
+debugpy.listen(("0.0.0.0", 8888))
+SYSTEM_MESSAGE = {
+"role": "system",
+"content": """Respond as though you have too much food in your mouth""",
+}
+def prepare_messages(user_messages: list) -> list:
+return user_messages + [SYSTEM_MESSAGE]
+async def get_github_completion(messages: list, auth_token: str):
+async with httpx. AsyncClient() as client:
+response = await client.post(
+"https://api.githubcopilot.com/chat/completions",
+headers={
+"Authorization": f"Bearer {auth_token}",
+"Content-Type": "application/json",
+},
+json={
+"messages": prepare_messages(messages),
+"stream": True,
+},
+timeout=30.0,
+)
+return response
+@app.post("/completion")
+async def completion(request: Request):
+req = await request.json()
+auth_token = request.headers.get("x-github-token")
+messages = req.get("messages", [])
+if not auth_token:
+raise HTTPException(status_code=401, detail="Missing authentication token")
+response = await get_github_completion(messages, auth_token)
+return StreamingResponse(
+response.aiter_bytes(),
+media_type="text/event-stream",
+status_code=response.status_code,
+)
+This code does has two important objectives:
+Create endpoint for Copilot to hit: POST /completion route responds to Copilot requests
+Craft Prompt: The system message is injected into the message history to modify the response given.
+Start the server by running this command:
+uvicorn {FILENAME}:app --reload
+Now that we have created our server, we need to subscribe to it to handle Copilot requests.
+Registering Github App
+Ironically, this is the hardest part of the tutorial (honestly, because Github is a beefy tool). In order to let Copilot know what URL to hit every time the @{YOUR_EXTENSION_NAME} name is used, we create a Github App for the subscription. To do this, navigate to the Github Apps page:
+Here we are going to create a new Github App and fill in some sensible defaults so that we can hit our server.
+Fill out a name: (The name spacing for Github apps is very restrictive, so choose something obscure)
+Fill out Homepage URL: This can be any URL, it’s just required by Github
+Fill out Callback URL: Make this https://github.com.  It will be called when authorizing the usage of a Github app and will redirect them back to Github afterwards.
+Deactivate Webhook: We won’t be using this feature, so nothing to worry about here.
+Enable Account Permissions: This step is REQUIRED, otherwise the Copilot app won’t work. Give Read-Only access to “Copilot Chat” and “Copilot Editor Context”
+Allow Install on Any Account: This allows you to share the extension with anyone.
+Now, hit “Create Github App”.
+Congrats, if you have done all this, you created your first Github App! 🥳
+Now lets navigate to the Copilot tab where it will ask you what “App Type” you want to try to create. Select “Agent”:
+I promise you, the Github config is just about over. Now we are going to use Ngrok to expose your local development server on the internet. It’s a pretty neat service.
+First, let’s expose our local dev server to the internet so that Copilot can hit it! This should be done in a separate terminal from the uvicorn server. Both need to be running simultaneously.
+ngrok http 8000
+Now my VSCode window looks like this, with the left side hosting the Uvicorn server on port 8000 and the Ngrok tunnel on the right terminal with the forwarding port.
+Now, take the forwarding address that I highlighted above and append /completion to the end of it and place it in the URL field of the Agent definition:
+Ok, we are finally done with config! Now let’s install and use it. This can be done super easily. Just type the name of your app into the copilot chat. In my case that looks like this:
+Follow the prompts to connect by authorizing Github to utilize the app, and ta-da! You have your own Neon Copilot extension!
+Want Your Own Extension? Build it With Layer
+Now, this Copilot extension is a way to dip your toes into the world of LLM Extensibility—but going fully production-ready (like we did with Neon) means setting up retrieval-augmented generation (RAG), function calling, message analytics, and more.
+Plus, you’ll have to replicate this logic across all the surfaces you plan to support.
+That’s exactly why we built Layer: a unified platform for managing LLM extensions. We handle Copilot, VS Code, OpenAI GPTs, Anthropic MCP, and beyond—so you can focus on building a great user experience instead of juggling integrations. AI Agents will be writing more and more software in the future—so if you’re a company that wants to make your API easy for AI agents to use, Layer is here to help. Book a demo here if you want to learn more.
+On this page
+Install System Prerequisites: Python, Ngrok
+Webhook Subscriptions: Like Building a Discord Bot
+Our Server
+Registering Github App
+Want Your Own Extension? Build it With Layer
+Share:
+Subscribe to our changelog
+Receive only our latest updates. No spam, guaranteed.Subscribe
+Share:
+More from Neon
+ProductSep 24, 2026
+Electrifying Neon: building the realtime backend
+ProductSep 22, 2026
+When a file is uploaded, run the job on Neon
+ProductSep 21, 2026
+Custom domains for Neon Functions
+Neon is part of the Databricks Platform
+© Neon 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the Apache Software Foundation.
+Company
+About
+Blog
+Careers
+Contact Sales
+Security
+Resources
+Docs
+Changelog
+Support
+Community Guides
+FAQs
+PostgreSQL Tutorial
+Startups
+Community
+Discord
+GitHub
+X.com
+LinkedIn
+YouTube
+Compliance
+CCPACompliant
+GDPRCompliant
+ISO 27001Certified
+ISO 27701Certified
+SOC 2Certified
+HIPAACompliant
+Compliance Guide
+Neon’s Sub Contractors
+Trust Center
+Neon status loading...
+Privacy NoticeTerms of UseNeon Platform TermsModern Slavery StatementCalifornia Privacy
+
+=== ROW 60 | f002883 | https://github.com/wasm-bindgen/wasm-bindgen/pull/4472 | 2025-04-06 | domain-subframes ===
+Workaround for a TextDecoder bug in Safari causing a RangeError to be thrown
+
+---
+
+@bes · 2025-04-06T17:04:01Z:
+`TextDecoder` in Safari has a limitation that causes it to throw `RangeError` after decoding more than 2GiB of data. This causes long running wasm programs that need to use `TextDecoder` to crash and start throwing `RuntimeError` with the message "Out of bounds memory access".
+
+We work around the issue by tracking how much data has been decoded by any given `TextDecoder`, and replace it when it comes close to 2GiB, deducting a small margin of 1MiB which has been empirically shown to reduce the likelihood of miscounting (for unknown reasons) causing a `RangeError` to be thrown.
+
+This commit also adds stricter handling of the kind of declaration used for TextDecoder and TextEncoder - TextDecoder always uses let because it needs to be mutable, and TextEncoder always uses const because it doesn't need to be mutable.
+
+Fixes https://github.com/rustwasm/wasm-bindgen/issues/4471
+
+---
+
+@bes · 2025-04-06T17:08:56Z:
+Some unrelated clippy lints are failing, has CI rustc been updated without updating the code?
+
+---
+
+@bes · 2025-04-07T11:28:13Z:
+There don't seem to be any tests (generated .js-files) that use the non-browser path of `getText` 🤔 
+
+---
+
+@stephanemagnenat · 2025-04-09T09:13:39Z:
+> Some unrelated clippy lints are failing, has CI rustc been updated without updating the code?
+
+@daxpedda do you have any input on these? The PR works around a critical bug on Safari and would be very useful for many people!
+
+---
+
+@stephanemagnenat · 2025-04-14T18:37:01Z:
+@bes I opened an issue (#4482) as even `main` does not compile any more in CI.
+
+---
+
+@bes · 2025-04-14T18:48:29Z:
+> @bes I opened an issue (#4482) as even `main` does not compile any more in CI.
+
+Thanks
+
+
+---
+
+@bes · 2025-04-15T20:26:45Z:
+We've been running this fix in production for a week now, and the results are encouraging. Screenshots from Sentry.
+
+Ignore the first column, it's low because of a quirk in how Sentry does data cutoff...
+
+<img width="1139" alt="range_error" src="https://github.com/user-attachments/assets/7356adc4-1be0-460d-98ce-b5003301ba07" />
+
+<img width="1142" alt="safari_by_version" src="https://github.com/user-attachments/assets/a637de66-2071-4243-840b-91da192bf1a4" />
+
+
+Can you guess which day the fix went out?
+
+---
+
+@stephanemagnenat · 2025-08-05T07:35:01Z:
+@bes the CI has been fixed in latest main commit, could you rebase your PR please? That should help it getting merged, now that there are more active maintainers (see #4533) ;-)
+
+---
+
+@bes · 2025-08-06T09:00:45Z:
+> I'm a tiny bit concerned about the 1MiB margin. This [comment](https://bugs.webkit.org/show_bug.cgi?id=280593#c2) shows that it fails at 2,147,483,600 bytes and succeeds at 2,147,483,500 bytes. So the margin should be between 148 and 47 bytes.
+> 
+> Considering how reproducable this test looks like, it would be nice to find out the exact number it fails at. The precise number is actually not that important, it would just be nice to once and for all establish that it actually fails at a certain number and that its not flaky or anything.
+> 
+> In any case, until somebody finds the time to actually try this out we will leave it at the current 1MiB margin considering that there is real-world data behind it.
+
+I tried a small margin at first but could not get it to work on my machine, so I grabbed a margin which I thought was large enough to avoid problems but small enough to not have any significance (1 MiB is 0.049% of 2GiB)
+
+---
+
+@daxpedda · 2025-08-06T09:46:13Z:
+> I tried a small margin at first but could not get it to work on my machine, so I grabbed a margin which I thought was large enough to avoid problems but small enough to not have any significance (1 MiB is 0.049% of 2GiB)
+
+If you can actually try it, could you do the following:
+```js
+const decoder = new TextDecoder()
+const buffer1 = new ArrayBuffer(100)
+
+for (let i = 0; i < 21474836; i++) {
+    decoder.decode(buffer1)
+}
+
+const buffer2 = new ArrayBuffer(1)
+let i = 2147483601
+
+try {
+    for (; i <= 2147483648; i++) {
+        decoder.decode(buffer2)
+    }
+} catch {
+    console.err(`failed at ${i} number of bytes`)
+}
+```
+And check if it fails consistently at the same number of bytes.
+
+---
+
+@bes · 2025-08-06T10:02:16Z:
+Added a line in the changelog.
+
+> If you can actually try it, could you do the following:
+
+I'm on vacation right now, supposed to go on a day trip, so pushing these change kinda in between packing. I would appreciate if we can skip this for now :)
+
+---
+
+@stephanemagnenat · 2025-08-06T10:26:37Z:
+@bes thank you so much for your work!
+
+@daxpedda thank you for merging! Any plan for making a release soon? This fix would be very useful to us!
+
+---
+
+@daxpedda · 2025-08-06T11:36:47Z:
+I not yet back to maintaining `wasm-bindgen` so my time is quite limited right now, I'll leave this to the other maintainers to decide.
+
+My 2¢: making a release is relatively low cost so I favor making one as soon as requested.
+
+---
+
+@stephanemagnenat · 2025-08-06T11:41:04Z:
+> My 2¢: making a release is relatively low cost so I favor making one as soon as requested.
+
+Is there an ideal way to make such a request? Should I open a new issue for that, or do other maintainers read closed PR?
+
+---
+
+@daxpedda · 2025-08-06T11:43:30Z:
+You asking for it here was the request.
+But please open a tracking issue so it doesn't get lost!
+
+---
+
+@bes · 2025-04-06T17:04:55Z:
+I am not sure why I needed these changes. I am using rustc 1.86.0, maybe I should be using another version?
+
+---
+
+@bes · 2025-04-07T11:26:39Z:
+I managed to lose the `name` parameter here, will look into that.
+
+---
+
+@daxpedda · 2025-08-05T09:44:28Z:
+Lets convert those to hex.
+
+---
+
+@bes · 2025-08-06T08:57:54Z:
+Converted to hex
+
+---
+
+@stephanemagnenat · 2025-08-06T09:38:20Z:
+Tests still have the decimal version.
+
+---
+
+@bes · 2025-08-06T09:43:03Z:
+That's generated JS, does it matter?
+
+---
+
+@stephanemagnenat · 2025-08-06T09:45:40Z:
+I guess not ;-)
+
+=== ROW 68 | f003238 | https://qdrant.tech/blog/case-study-gooddata | 2025-07-09 | domain-subframes ===
+How GoodData turbocharged AI analytics with Qdrant
+Vector Space Stream: a research-first broadcast for engineers. Eight talks on compression, edge, hybrid search, and more. Sept 17. Tune in
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free0
+How GoodData turbocharged AI analytics with Qdrant
+Daniel Azoulai·
+July 09, 2025
+Home
+/
+Blog
+/
+How GoodData turbocharged AI analytics with Qdrant
+On this page:
+GoodData’s Evolution into AI-Powered Analytics
+Scaling AI Capabilities to Meet Enterprise Demands
+Deploying Qdrant’s Scalable Vector Database
+Real-Time Performance and Scalability Gains
+Positioned for Advanced AI Growth
+Additional resources
+Share on X
+Share on LinkedIn
+GoodData’s Evolution into AI-Powered Analytics
+AI is redefining how people interact with data, pushing analytics platforms beyond static dashboards toward intelligent, conversational experiences. While traditionally recognized as a powerful BI platform, GoodData is laser-focused on accelerating both ’time to insight’ and ’time to solution’ by enhancing productivity for analysts and business users alike.
+What sets GoodData apart is its unique position in the market: a composable, API-first platform designed for teams that build data products, not just consume them. With deep support for white-labeled analytics, embedded use cases, and governed self-service at scale, GoodData delivers the flexibility modern organizations need. With AI being integrated across every layer of the platform, GoodData is helping their over 140,000 end customers move from traditional BI to intelligent, real-time decision-making.
+Scaling AI Capabilities to Meet Enterprise Demands
+Initially, GoodData’s prototype leveraging OpenAI faced scalability limitations. The initial version attempted to load GoodData’s entire semantic model into the AI context for every user query. This led to high compute costs, slow response times, and exceeded technical limits of large language models. Instead, directly embedding extensive semantic layers into LLM contexts proved costly, slow, and impractical.
+Jan Soubusta, Field CTO at GoodData, recalled:
+“Putting the whole semantic layer directly into an LLM was unsustainable. The response times ballooned, and we consistently hit context size limits.”
+This shift in approach was essential, as most GoodData customers work with complex data models, often spanning tens or even hundreds of datasets and metrics, unlike traditional desktop BI tools, which typically support a single user working with a single dataset at any given time.
+Deploying Qdrant’s Scalable Vector Database
+GoodData transitioned to a Retrieval-Augmented Generation (RAG) strategy, requiring a high-performance vector database. After exploring DuckDB and pgvector, GoodData chose Qdrant due to its high-availability architecture and superior performance.
+GoodData leveraged Qdrant’s official Helm chart, deploying smoothly in Kubernetes and efficiently managing near-real-time embedding updates, crucial for multilingual semantic layers.
+Real-Time Performance and Scalability Gains
+For enterprise customers embedding GoodData as whitelabeled analytics solutions, these improvements mean AI assistants can respond as quickly as a human analyst, responding with relevant metrics, dashboards, or insights in mere seconds.
+And adopting Qdrant brought significant benefits to empower GoodData’s AI assistant to do this, include:
+Embedding updates completed in seconds (hundreds to thousands per minute).
+Semantic search results returned within 100 milliseconds.
+AI assistant responses are maintained at approximately 5–10 seconds, with Qdrant’s latency overhead negligible.
+Jan emphasized performance efficiency:
+“The overhead from Qdrant is negligible; queries run in tens of milliseconds, making it ideal for real-time analytics applications.”
+Positioned for Advanced AI Growth
+This shift positions GoodData not just as a dashboard provider, but as a foundation for next-gen AI applications embedded directly into enterprise products. In the future, GoodData expects to add significant personalization via
+AI-powered data stories
+Turnkey agent-to-agent interfaces and orchestration
+GenAI- supported findops optimization
+Perceptive “always on” analytics.
+Qdrant provides GoodData a stable, scalable foundation for expanding into document-based semantic search and ontology management. With Qdrant, GoodData confidently supports complex, real-time AI use cases, enhancing end-user accessibility and productivity.
+Architecture to enable real-time monitoring and AI-driven search capabilities in Kubernetes environment.
+Additional resources
+GoodData live demo
+Free GoodData trial
+Qdrant Cloud signup
+Get Started with Qdrant FreeGet Started
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Pricing
+Use Cases
+Advanced Search
+Recommendation Systems
+Retrieval Augmented Generation
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Status Page
+Certification
+Resources
+Blog
+Benchmarks
+Technical Articles
+Events
+Startup Program
+Demos
+Bug Bounty
+Company
+About Us
+Customers
+Partners
+Careers
+Contact Us
+Sign up for Qdrant updates
+We'll occasionally send you best practices for using vector data and similarity search, as well as product news.
+© 2026 Qdrant.
+Terms
+Privacy Policy
+Impressum
+Recruitment Privacy Policy
+Cookie ConsentUp!
+

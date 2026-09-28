@@ -1,0 +1,2676 @@
+=== ROW 53 | f002466 | https://github.com/bytecodealliance/wasmtime/pull/9889 | 2024-12-21 | domain-subframes ===
+Winch: implement fpu to int conversions for aarch64
+
+---
+
+@MarinPostma · 2024-12-21T16:35:21Z:
+This PR implements FPU to int conversions for winch, with the `unsigned_truncate` and `signed_truncate` methods.
+
+
+---
+
+@MarinPostma · 2024-12-21T16:42:36Z:
+one more in the https://github.com/bytecodealliance/wasmtime/issues/8321 series
+
+---
+
+@github-actions[bot] · 2024-12-21T17:44:38Z:
+#### Subscribe to Label Action
+
+cc @saulecabrera
+
+<details>
+This issue or pull request has been labeled: "winch"
+
+Thus the following users have been cc'd because of the following labels:
+
+* saulecabrera: winch
+
+To subscribe or unsubscribe from this label, edit the <code>.github/subscribe-to-label.json</code> configuration file.
+
+[Learn more.](https://github.com/bytecodealliance/subscribe-to-label-action)
+</details>
+
+---
+
+@saulecabrera · 2025-01-01T17:47:18Z:
+I can help reviewing this one. 
+
+---
+
+@MarinPostma · 2025-01-03T14:41:10Z:
+@saulecabrera I addressed most of the review comments but left a few questions
+
+---
+
+@MarinPostma · 2025-01-04T23:51:56Z:
+@saulecabrera I have made the requested changes
+
+---
+
+@MarinPostma · 2025-01-07T14:38:10Z:
+It should be good now @saulecabrera 
+
+---
+
+@saulecabrera · 2025-01-02T16:49:33Z:
+Here we don´t need to duplicate this method, `fcmp` already exists. 
+
+---
+
+@saulecabrera · 2025-01-02T16:54:57Z:
+```suggestion
+    /// Load the max value for an integer of size out_size, as a floating-point
+    /// of size `in_size`, into register `rd`.
+```
+
+---
+
+@saulecabrera · 2025-01-02T17:00:53Z:
+Nit: I believe that here and in the next match arm below you can omit the `OperandSize::` prefix given that you're already importing it above (e.g., `use OperandSize::*`)
+
+---
+
+@saulecabrera · 2025-01-02T17:01:47Z:
+Similar comment here, I think it should be possible to omit the `OperandSize` prefix in both match arms. 
+
+---
+
+@saulecabrera · 2025-01-02T17:54:24Z:
+If we're writing to `tmp_reg`, I think this should be defined in the signature, similar to `dst`: `tmp_reg: Writable<Reg>`
+
+---
+
+@saulecabrera · 2025-01-02T18:10:03Z:
+I´d suggest avoiding passing a placeholder register here. The temp register that is passed to `unsigned_truncate` is an allocatable register, therefore there's very little chance of it getting unintentionally clobbered.  Instead having a single implementation for both cases, I´d suggest breaking down the implementation in the assembler into two methods, one for each case (signed/unsigned), then in each implementation you can decide to use the scratch register, immediately before emission, without the risk of unintentionally clobbering it. This is similar to how the x64 assembler implementation works. 
+
+---
+
+@MarinPostma · 2025-01-03T14:36:32Z:
+To make sure I understand, similarly to how x86 implementation, you would like to have two methods, `fpu_to_sint` and `fpu_to_uint` in asm, and also, those methods should be passed a temporary register in `masm`, rather than using the provided one in the case of `unsigned_truncate`?
+
+I have a few questions/remarks:
+- what is the purpose of the temp reg in the `unsigned` variant? Why must this registry be allocated rather than used as a temp register? Is the caller expecting to find something in there? It is not explicitly passed as a writable register, but the x64 implementation implicitly converts it to one.
+- While splitting the `convert_` methods for x64 makes sense to me since they correspond to a single instruction, we must emit a bunch of checks that are aware of the sign in the case of aarch64. Do you suggest duplicating all the checks in signed and unsigned variants? Or do we have two methods in ASM that call the current implementation with the `signed` argument set accordingly?
+- I'm sorry if that sounds very ignorant, but why do we have to worry about clobbering a tmp register anyway? Can't it, by definition, be used for any purpose, and one should not have too strong an assumption about what it may contain, especially when handing it over to a callee?
+- I'm surely missing something, but it seems to me that splitting the `convert` method into a signed and unsigned variant, and the use of tmp regs are orthogonal things, so I want to make sure I understand what you want correctly :)
+
+---
+
+@saulecabrera · 2025-01-04T16:38:14Z:
+The purpose of the allocatable temporary register is to provide an extra
+register to aid in the emission of the instruction sequence needed for the
+unsigned case; in x64, 4 registers are required for the instruction sequence:
+1 for the destination and 3 temporary registers. Since in the case of x64 the
+instruction sequence is completely handled by Cranelift, there's no risk of
+unintentionally clobbering any of the registers passed to it, the unintentional
+clobbering risk is particularly important in the case of scratch registers in Winch: even
+though they can be used for any purpose, one important detail about them is that
+they are not tracked by Winch's regalloc therefore they must be used sparingly
+and with extreme caution: a misuse could result in unintentional clobbering and
+therefore subtle bugs. Ideally, the live range of the scratch registers should be
+as short as possible to avoid potential bugs.
+
+In this particular case the reason why I am suggesting improving the usage of
+the scratch register is to minimize the risk of unintentional clobbering of such
+registers: once a scratch register is passed as a parameter, its live range is
+extended and the risk of misuse is greater. A concrete example in this case of
+a potential risk of unintentional clobbering is passing the scratch register to
+`fpu_to_int` and then using the float scratch register in any of the methods
+needed for the instruction sequence needed to fulfill the truncate instructions
+(this is not the case today, but by passing the float scratch register around as
+if it were any other register, it becomes harder to reason and audit in the
+future).
+
+There are some alternatives that I've thought about to improve the
+handling/usage of the scratch registers to address some of the challenges
+exposed in the previous paragraph. We could discuss those in a separate
+issue/PR (e.g., relying on the type system to identify/audit scratch register usage and/or
+providing exclusive access to the scratch registers, similar to what we have for
+the allocatable registers). Care needs to be taken here to ensure that none of
+the solutions explored affect compilation performance. 
+
+Taking a deeper look at your changes for the unsigned case, only 3 registers are
+needed here compared to the x64 implementation which demands 4. This  means that
+you can effectively ignore the temporary register defined in the Masm
+`unsigned_truncate` signature and only rely on the float scratch register.
+
+Taking this into account, my concrete suggestion to move forward here is to:
+
+* Redefine the `unsigned_truncate` signature to be:
+
+```rust
+fn unsigned_truncate(
+    &mut self,
+    context: &mut CodeGenContext<Emission>,
+    src_size: OperandSize,
+    dst_size: OperandSize,
+    kind: TruncKind
+) -> Result<()>;
+```
+
+This allows maximum flexibility to encode the ISA differences and more
+importantly reduces register pressure in cases where only 3 registers are
+needed, reducing unnecessary register pressure where possible is important to
+minimize memory traffic. 
+
+This is similar to how we handle the `div` instruction, given that the
+requirements vary between ISAs.
+
+* Redefine `fpu_to_int` to be:
+
+```rust
+fn fpu_to_int(
+    &mut self,
+    dst: Writable<Reg>,
+    src: Reg,
+    src_size: OperandSize,
+    dst_size: OperandSize,
+    kind: TruncKind,
+    signed: bool
+) { ... };
+```
+
+Avoiding passing the scratch registers as params and shortening their live
+range as much as possible by using them explicitly in each of the helper
+functions that you have to fulfill the instruction sequence. 
+
+---
+
+I believe that with this approach, my concerns will be addressed and there won't
+be a need to split the signed/unsigned implementations (initially I was confused
+with the `TODO` comment in the code and had assumed that the implementation was
+making use of a scratch register that wasn't actually needed, although that's
+not the case). 
+
+
+
+
+---
+
+@MarinPostma · 2025-01-04T17:49:26Z:
+Thanks a lot for the detailed writeup! This makes things a lot clearer. I'll make the changes :+1: 
+
+---
+
+@saulecabrera · 2025-01-05T17:28:26Z:
+Here you can use `CodeGenError::unexpected_operand_size()` instead. https://github.com/bytecodealliance/wasmtime/blob/main/winch/codegen/src/codegen/error.rs#L139
+
+---
+
+@saulecabrera · 2025-01-05T17:30:05Z:
+Similar here, you can use  the appropriate error constructor. 
+
+=== ROW 61 | f003025 | https://github.com/bevyengine/bevy/issues/19296 | 2025-05-19 | domain-subframes ===
+Support hotpatching systems
+
+---
+
+@janhohenheim · 2025-05-19T16:38:57Z:
+## What problem does this solve or what need does it fill?
+
+A common complaint from Bevy users is the relatively high iteration time. Hotpatching is a nice solution for this, as it allows code changes to affect the running binary.
+
+## What solution would you like?
+
+While many things can be hotpatched, I think implementing it for systems is a nice start. This way, users could already start live-editing their UIs by changing a system that re-inserts a UI node hierarchy in `Update`, for example.
+
+## What alternative(s) have you considered?
+
+- Don't implement it
+- Start with hotpatching another area of Bevy
+- Leave it to third-party crates like dextrous-developer
+
+## Additional context
+
+Recently, [Dioxus has released](https://github.com/DioxusLabs/dioxus/releases/tag/v0.7.0-alpha.0) an alpha of  [subsecond](https://github.com/DioxusLabs/dioxus/tree/main/packages/subsecond), which implements exactly this. One of their explicit goals is to make this technology available for other frameworks such as Bevy.
+If we go this route, there is already a [Bevy integration demo](https://github.com/jkelleyrtp/subsecond-bevy-demo). Per @jkelleyrtp, this is not meant as a long-term end-user API, but to give Bevy maintainers and early adopters today an example of how to wire stuff up. We need to spend some time working on the integration between the two, in order to ensure it is safe.
+
+---
+
+@alice-i-cecile · 2025-05-19T17:05:02Z:
+The maintainers are keen on supporting hot reloading in Bevy itself, and at least personally, I would prefer to colalborate with the rest of the ecosystem.
+
+Before adopting this fully, I'd like more investigation / docs into exactly how this would be used by Bevy devs, and the constraints and risks imposed. We don't have a ton of bandwidth to investigate this fully (nor do I personally have the requisite expertise on the technical / implementation side), so I would really value a cohesive design doc or other write-up.
+
+---
+
+@janhohenheim · 2025-05-19T22:57:36Z:
+Here's a little something I threw together to use in the meantime :)
+https://github.com/janhohenheim/bevy_simple_subsecond_system
+
+---
+
+@alice-i-cecile · 2025-05-20T01:38:47Z:
+We're exploring this as a working group: https://discord.com/channels/691052431525675048/1374187654425481266/1374187654425481266
+
+Design doc can be found at: https://hackmd.io/@bevy/SkdMQIYWle/edit
+
+Joint prototype: https://github.com/TheBevyFlock/bevy_simple_subsecond_system/
+
+---
+
+@hecrj · 2025-05-31T22:35:30Z:
+I am interested in integrating `subsecond` into `iced` as well.
+
+I feel that the part of the puzzle that is missing is a standalone version of `dx serve --hot-patch` (i.e. a server implementing the `subsecond` protocol). Ideally, it'd be a cargo subcommand (e.g. `cargo hot`) acting as a drop-in replacement of `cargo run`.
+
+This way, the whole ecosytem can benefit without specifically depending on the Dioxus build process.
+
+I'm not sure if there are any efforts in this direction, but I will look into isolating the relevant parts of `dioxus-cli` soon myself.
+
+---
+
+@alice-i-cecile · 2025-06-01T02:54:47Z:
+> I feel that the part of the puzzle that is missing is a standalone version of dx serve --hot-patch (i.e. a server implementing the subsecond protocol). Ideally, it'd be a cargo subcommand (e.g. cargo hot) acting as a drop-in replacement of cargo run.
+
+This is something that Bevy is interested in too :)
+
+---
+
+@hecrj · 2025-06-01T05:37:16Z:
+Cool!
+
+I am working on it over here: https://github.com/hecrj/cargo-hot
+
+I've got the `Fat` linking stage working. Now I'm getting to the fun part. Will keep you posted.
+
+---
+
+@jkelleyrtp · 2025-06-01T09:00:03Z:
+> Cool!
+> 
+> I am working on it over here: https://github.com/hecrj/cargo-hot
+> 
+> I've got the `Fat` linking stage working. Now I'm getting to the fun part. Will keep you posted.
+
+I get that dioxus is open source, but we've been working on this for the better part of the last year and seeing our work immediately ripped out like this is upsetting.
+
+The least you could do is help us spin `dx` out into a general tool for anyone in the ecosystem, not just clone our work wholesale and package it into another tool.
+
+There are bugs and dragons abound and big work ahead like proper workspace support. Lots of sweat and long nights went into this, hand-rolled assembly, and head banging to figure out esoteric hacks to get it working. I would love it if the community came together to help maintain a "cargo plus plus", not just extricate our work to put their own name on it.
+
+It's understandable if some random fly-by contributor did this, but the head of another large rust project doing it without even reaching out is disappointing.
+
+---
+
+@teohhanhui · 2025-06-01T09:36:41Z:
+> "cargo plus plus"
+
+That's how you kill an ecosystem. It should be a `cargo` subcommand, please.
+
+---
+
+@jkelleyrtp · 2025-06-01T10:11:08Z:
+> > "cargo plus plus"
+> 
+> That's how you kill an ecosystem. It should be a `cargo` subcommand, please.
+
+wasm-bindgen, wasm-pack, and trunk are not cargo subcommands. cargo cannot `run`, `test`, or `bench` wasm, ios, android projects nor does it properly assemble app bundles. wasm-bindgen is the most used cli in the rust ecosystem and it is not a subcommand.
+
+---
+
+@n1ght-hunter · 2025-06-01T10:26:20Z:
+@jkelleyrtp what is it that you actually want?
+
+I understand Dioxus/you put a lot of work into creating subsecond and hot patching and should be referenced etc. (did an amazing job :) )
+but currently at least subsecond and the cli required is very closely tied to Dioxus(i.e. source control, release cycle etc).
+IMO this is not the best for the rust ecosystem as whole as its makes harder to patch and change as required for the whole ecosystem of crates and also means that the Dioxus-cli is required to use hot reloading which is small subset of the total functionally.
+
+to solve some of these issues it makes sense to me to have a separate source control etc for the pure functionally of hot reloading.
+i actually think it might make sense to create an entire github org to handle subsecond and required crates (since it seems to be makeing waves in the rust ecosystem).
+
+i think it would be useful to answer what you were wanting/expecting.
+were you wanting all related subsecond to remain under Dioxus and to what extent.
+would you be willing to move the subsecond and other required functionality to a separate source control (in or out of DioxusLabs org).
+
+> not just extricate our work to put their own name on it.
+
+i dont think anyone wanted to take your work and put their name on it.
+in the case of https://github.com/hecrj/cargo-hot/tree/master
+its currently very experimental its has 4 commits and doesnt even have a readme.
+it currently references your name in the license(did you want somthing else?) and was created for trying out functionally without the full Dioxus cli
+
+---
+
+@TapGhoul · 2025-06-01T11:36:46Z:
+> wasm-bindgen, wasm-pack, and trunk are not cargo subcommands. cargo cannot `run`, `test`, or `bench` wasm, ios, android projects nor does it properly assemble app bundles. wasm-bindgen is the most used cli in the rust ecosystem and it is not a subcommand.
+
+@jkelleyrtp I'd argue it still makes sense as a subcommand, even though others aren't. Cargo subcommands are basically the same as git subcommands - they just attach a prefix, and your binary works the same as standalone. The only difference (from a rudimentary check of making one) is that they automatically set some environment variables in addition, specifically:
+
+- `CARGO_HOME` - `$HOME/.cargo` usually
+- `RUSTUP_TOOLCHAIN` - current target triple
+- `SSL_CERT_DIR` - in my case, `/etc/ssl/certs`
+- `SSL_CERT_FILE` - in my case, `/etc/ssl/cert.pem`
+- `RUST_RECURSION_COUNT` - just a general recursion counter
+- `RUSTUP_HOME` - `$HOME/.rustup` usually
+- `LD_LIBRARY_PATH` - it injects the current rust toolchain lib dir
+- `CARGO` - Full path to the cargo binary for the current active toolchain
+
+as well as adding the actual cargo subcommand name as the first argument.
+
+In the case of the standard dx CLI, it makes sense to be standalone - dioxus is not just a rust tool, and can be initialized via npm too. So requiring it be a cargo subcommand may be a little constraining.
+On the flipside, the cargo subcommands do work without cargo, as they are just named as `cargo-binname` so you can run it as that. For a rust ecosystem tool, I think it makes more sense for it to be a cargo subcommand, if we are trying to make it widely reusable as the dioxus project seems to hope for. The dx cli can just inject what it needs into the argument list when running as a subcommand, assuming that's how you guys would integrate it if it were to be split out.
+
+Many cargo-installed binaries I use don't work as a cargo subcommand, but generally the differentiator between ones that do and ones that don't are if they are specifically about rust code and operating on your actual codebase (with the exception of cargo-install-update, which is a cargo subcommand but doesn't operate on a codebase level - still makes sense to me).
+I'd argue that a subsecond CLI tool makes a lot of sense as a cargo subcommand, given the general pattern I've seen.
+
+---
+
+@hecrj · 2025-06-01T11:47:57Z:
+@jkelleyrtp I am very grateful for all your amazing work; but I don't think you get what open source means.
+
+Even then, I don't think an exploration that is ~8 hours old warrants this reaction. I enjoy exploring on my own and I had no ill intent. In fact, I thought Dioxus could eventually switch to it and join efforts.
+
+I am sorry to disappoint, but I don't need to "reach out" when I am already working right here in the open.
+
+In any case, I am happy to cooperate and join efforts with anyone that would find this tool useful. I am definitely not the right person to maintain it!
+
+---
+
+@janhohenheim · 2025-06-01T11:49:48Z:
+Re: cargo subcommand vs own command
+
+The frustrations with cargo's limitations and its glacial development cycle has led this very project to design the Bevy CLI alpha as a cargo replacement / wrapper and not a subcommand.
+
+I think it's worth not immediately dismissing the validity of a cargo v2. As Jon points out, quite a few projects have come to the conclusion that cargo is often simply not enough. The discussion of whether we want to collectively encourage the ecosystem to migrate to a cargo replacement or not is certainly out of scope for this wee issue. For prolonged discussion of this, I suggest moving to a dedicated issue on the Dioxus repo instead.
+
+For Bevy's use-case, the relevant PR is not even merged yet, the feature is experimental, and the Dioxus version it depends on is in alpha. Really, we should be fine with some hoops right now IMO.
+
+
+---
+
+@TapGhoul · 2025-06-01T11:54:22Z:
+> The frustrations with cargo's limitations and its glacial development cycle has led this very project to design the Bevy CLI alpha as a cargo replacement / wrapper and not a subcommand.
+
+@janhohenheim I am kinda curious - what were the limitations found? Do you have a link to a discussion on the discord or here on github about this? I'm unaware of such limitations as I don't tend to work on CLI tools much, so I'm very interested where the limitations have been found.
+
+---
+
+@janhohenheim · 2025-06-01T12:03:01Z:
+@BD103 @TimJentzsch ^
+
+
+---
+
+@teohhanhui · 2025-06-01T13:23:53Z:
+(Offtopic) Bevy CLI:
+* https://github.com/bevyengine/bevy/issues/436
+* https://hackmd.io/cCHAfbtaSviU_MDnbNHKxg
+* https://github.com/TheBevyFlock/bevy_cli
+
+---
+
+@alice-i-cecile · 2025-06-01T17:09:44Z:
+> There are bugs and dragons abound and big work ahead like proper workspace support. Lots of sweat and long nights went into this, hand-rolled assembly, and head banging to figure out esoteric hacks to get it working. I would love it if the community came together to help maintain a "cargo plus plus", not just extricate our work to put their own name on it.
+
+I would really like to coordinate on the hotpatching work.
+
+From what I understand, the `bevy_cli` is largely a standalone tool (rather than a `cargo` subcommand) because it needs to support custom lints (an important upstream goal), and to ensure that we can easily bundle all sorts of weird functionality that only matters for the game dev use case.
+
+I'm a bit concerned about the notion of a "cargo plus plus". I really appreciate how unified the Rust ecosystem is here, and the upstream `cargo` team has been really supportive of efforts to meet the needs of its users, including GUI folks.
+
+That said, the existing `dx` experience has quite a bit of additional polish and refinement over the `bevy_cli`, even ignoring hotpatching. I'm not sure if a shared frontend makes sense across different frameworks (how do you only grab the components you want?), but that's just a technical question of exactly where we should be drawing a split. I'm very much interested in sharing as much infrastructure there as possible: I think we have a lot of shared goals.
+
+> It's understandable if some random fly-by contributor did this, but the head of another large rust project doing it without even reaching out is disappointing.
+
+I understand your frustration here. From the Bevy side, none of the Bevy maintainers are currently involved in the immediate forking effort, but we have requested a better separation between the subsecond work and the main dioxus framework, in order to better enable collaboration on hotpatching. We wouldn't expect (or want!) merge rights or say in the direction of Dioxus itself, and it really would make issue tracking and contributions easier.
+
+
+
+---
+
+@BD103 · 2025-06-01T19:12:02Z:
+> > The frustrations with cargo's limitations and its glacial development cycle has led this very project to design the Bevy CLI alpha as a cargo replacement / wrapper and not a subcommand.
+> > 
+> > I think it's worth not immediately dismissing the validity of a cargo v2. As Jon points out, quite a few projects have come to the conclusion that cargo is often simply not enough. The discussion of whether we want to collectively encourage the ecosystem to migrate to a cargo replacement or not is certainly out of scope for this wee issue. For prolonged discussion of this, I suggest moving to a dedicated issue on the Dioxus repo instead.
+>
+> janhohenheim I am kinda curious - what were the limitations found? Do you have a link to a discussion on the discord or here on github about this? I'm unaware of such limitations as I don't tend to work on CLI tools much, so I'm very interested where the limitations have been found.
+
+I have a slightly different interpretation than Jan as to why the Bevy CLI was created. In my opinion, Bevy has specific needs that wouldn't fit in a general-purpose, stable tool like Cargo. One of the largest examples of this is [Bevy CLI's web feature](https://thebevyflock.github.io/bevy_cli/cli/web.html), which lets you build, bundle, and test Bevy apps for the web. This kind of feature doesn't fit in base Cargo as the Bevy CLI performs special Bevy-specific logic, such as how it handles assets and the default `index.html`.
+
+From my perspective, it's less that Cargo is _lacking_ features and more that certain features are too specific to be included in a standard Rust distribution. In my opinion, it's better to be able to build off of Cargo with 3rd-party tools than have Cargo implement features that only work for a small subset of the ecosystem.
+
+I personally don't mind Cargo's slow pace. The Cargo maintainers are careful, and are targeting a _much_ larger audience than Bevy's game devs and Dioxus's web devs. They encourage building tools on top of Cargo, that's why they have shortcuts for `cargo-foo` -> `cargo foo` and spin out so much of their logic into reusable libraries.
+
+---
+
+@janhohenheim · 2025-06-01T19:15:50Z:
+Yeah, I think I worded that poorly. Thanks for the correction :)
+
+---
+
+@cart · 2025-06-01T22:35:03Z:
+The Dioxus folks have put a lot of effort into building a useful tool. I think it is _extremely_ reasonable for them to want people using that tool to know it came from them (aka preserving the Dioxus / `dx` branding). We attach the Bevy brand to _many_ of our "general purpose" libraries (Bevy ECS, Bevy Reflect, etc) for the same reason.
+
+If someone were to publish a "debranded" Bevy Reflect without discussing it with us, I would consider that bad form. Legal according to the license, but bad form nonetheless. Imagine the consequences of that library taking over. We would keep doing work to improve things over in Bevy land, but some of the "social capital" and positive public opinion would attrit to the debranded fork instead (the more adoption the fork gets, the more this would be true). Perhaps we get fewer donations because the people who would have supported an open source general purpose Rust reflection library now donate elsewhere. Over time, perhaps we lose our ability to invest developer time in it completely.
+
+I think the Bevy Reflect case is _extremely_ relevant here. There is incredible demand for a general purpose Rust reflection library. But many people see Bevy as a competitor in their space that they couldn't possibly depend on / associate with. Many also see us as a "big" framework that they don't want to pull in. Bevy Reflect is standalone / does not pull in the rest of Bevy, but the perception alone is enough to keep some people away.
+
+In practice this has resulted in pretty much nobody taking a dependency on Bevy Reflect, despite us pioneering in the space _for years_. To my knowledge I was the first person to build such a library in Rust. But time and time again when a big project could have depended on Bevy Reflect, they chose to build a competitor that largely just copied our techniques (Embark, Fyrox, etc). I think the choice to include the Bevy branding here played a big part (but I also concede that taking dependencies is always a complex decision). If we had developed it under a different name and/or under a different "more neutral" org, I strongly suspect we would have been able to appeal to more projects, and perhaps today we would be the "go to" general purpose Rust reflection library. Instead, the new kid on the block Facet will likely occupy that position. I do not think it is a coincidence that Facet is decoupled from a specific "large framework" brand and that it lives on "neutral" ground (its own org).
+
+As an aside, note that I think Facet _is_ probably the better choice for the "general purpose reflection space" at this point, and they are _not_ just a copy of Bevy Reflect. I also think Facet is the better general purpose reflection library because _that is what it set out to do_. Bevy Reflect _was_ built with our needs in mind, and that _has_ resulted in different design decisions (some of which may not have been accepted on more "neutral" ground). I doubt we will switch to Facet (at least not for a long while), as we have a ton of unique use cases where Bevy Reflect serves us better.
+
+I think the parallels between Bevy Reflect and Dioxus' Subsecond (which most end-users will generally know as `dx serve --hot-patch`) are clear. I will not make any recommendations or prescriptions here.
+
+With my "Bevy project lead" hat on, these are the things I want to balance:
+* I want cool projects to succeed and the people that build them to get paid
+* When taking a dependency, I want the smallest "chain of trust" possible. I want to consume a dependency directly through its developer, not a third party intermediary.
+* If a dependency is particularly valuable, I want our users to know that we depend on it (we give visibility to our "big" dependencies like wgpu and winit in a number of places).
+* I want Bevy to feel like a cohesive "one stop shop" experience (ex: download the rust tool chain, install bevy, you're good to go). People shouldn't need to install 10 different command line tools to get the best experience.
+* I don't want people to conflate Bevy apps with Dioxus apps (note that we are also a general purpose UI framework), both for branding / "project health" reasons and "user cognitive load" reasons.
+
+In the context of hot patching, I think that positions us in the following way:
+
+* For as long as Dioxus is the primary developer of the "interesting" technical bits of the hot reloading codebase, I want to consume those things directly from them, and in a way that leaves us on good, collaborative terms (provided Dioxus' implementation can meet our needs, and the needs of our users, and we feel like there is a collaborative relationship that reacts to the Bevy project's needs). 
+* If that means not building "neutral" (or Bevy-specific) subsecond or `dx` wrappers, so be it. But know that this is a pretty major concession when it comes to our "ideal user experience" _and_ the Bevy vs Dioxus app conflation issue. 
+* If a competitor were to emerge that provides a similar experience, brings similar "developer expertise" to the table (aka they aren't just copying/debranding Dioxus code, and I have confidence in their skillset), and that project was ok with us building our own branded developer experience on top (or a more neutral experience), I would heavily consider moving to such a project, as that would be the better constraint solve for us (and our users).
+
+I suspect that other developers will feel the same, and many projects won't have the same scruples we do when it comes to "healthy, mutually beneficial collaboration". Dioxus has pioneered a truly wonderful Rust developer experience and pretty much every major Rust project is going to want it for their users. I suspect that a "best fit" solution for all Rust projects _will_ emerge eventually, whatever that means.
+
+(@jkelleyrtp, @hecrj, @alice-i-cecile)
+
+---
+
+@hecrj · 2025-06-02T00:50:29Z:
+@cart I see things differently. If someone took something like `iced_wgpu` and turned it into a generic 2D renderer, I'd honestly be thrilled and flattered.
+
+I'm strongly against the idea of "branding" in open source, specially when it gets in the way of broader adoption and general-purpose use. It creates conflicting expectations, discourages collaboration across projects, and can ultimately hurt users of the wider ecosystem. Bevy Reflect being a perfect example of this, as you pointed out.
+
+Improving and sharing existing code with others is at the heart of open source. Framing that as "bad form" goes against its very essence. Alternatives usually add value—even if they create fragmentation, that's often outweighed by the diversity and innovation they bring. Open source isn't a zero-sum game.
+
+Of course, credit matters and I make it a point to be very open about my dependencies in all of my projects; specially if I am modifying code directly. You bet I will mention Dioxus in `iced` if we start using `subsecond`.
+
+In any case, it seems we fundamentally disagree on what open source is about, so I am afraid we may not find much common ground here.
+
+I will just restate that I don't have any ill intent. I'm not trying to take credit nor seek attention—my projects have little to no marketing, I barely have any social presence, and I honestly want none of it. I'm just focused on building useful tools.
+
+For this reason, I will remove any unnecessary branding when it may benefit me, my users, or the ecosystem. Whether that's seen as bad form is up to others—but my doors to collaboration will always remain open.
+
+---
+
+@cart · 2025-06-02T01:56:12Z:
+> In any case, it seems we fundamentally disagree on what open source is about, so I am afraid we may not find much common ground here.
+
+I'm sure that isn't true :)
+
+I share your ideals in a number of categories:
+* Open source not being a zero sum game (although I think it is somewhere on the spectrum between zero sum and the reverse)
+* Open source being about collaboration
+* Forking often being a good thing in the ecosystem
+* Open source being about "collective ownership". We are contributing to the commons, to the benefit of all _and_ (largely) without restriction. Everyone is free to do what they want. I will just assert that _sometimes_ "doing what you want" has negative implications for the social and economic state of the ecosystem. 
+
+I think where we disagree is probably in areas like "open source social dynamics" and "open source project funding". Forking a project is not fully non-zero sum. There is only so much oxygen in the room at a given point (there are only so many people in a given space, and they only have so many hours in the day). And if you publicly fork a project, that is (to a degree) using the work of the developers of that project to compete with itself.
+
+If you are fully enlightened you might be able to feel nothing but goodwill for a fork of a project like `iced` that pulls all of your changes, tweaks a few things, and takes the majority of your users (and thus some of the incentives that motivate many of us, such as human connection, words of encouragement, "social credit", and putting food on our table). But many of us humans would feel a bit hurt by that. And the humans developing that project (depending on the context) might consider that "anti-collaborative", as you are choosing to "take up space" with your fork (and benefit from their work), rather than collaborate under a given banner. These banners are "brands", or "collective identities", for better or for worse.
+
+A big part of open source is about _who_ is holding a banner up, _what_ their values are, and _how_ they collaborate. Not all banners are worth collaborating under. For me, _that_ is where forking comes in, and that is where the open source model really shows its resilience. But I consider "public long running forks" to be a method of last resort. It is a sign that collaboration under a given banner has broken down. It is a signal that others should join you under your banner _instead_. That you are not willing to work under the terms of someone else's banner. That is your right. But just like other "rights", such as freedom of speech, sometimes exercising your right is a net negative on your community.
+
+Open source software is not "just" about "software freedom". It is the people that build it, the values they share, and the systems that fuel them. It is an ecosystem. It is a community. Forks _very clearly_ have an effect on that ecosystem, and those effects are complicated (sometimes positive, sometimes negative, but pretty much always both). The ecosystem consists of "productive actions" (adding to the commons) and "consumptive actions" (taking from the commons / making demands of it). Most actions we take can be framed somewhere on that spectrum (what are we "giving" and what are we "taking"). Yes, cloning code is "free", and when considered in a vacuum ... not zero sum. But public forking is more than just a "clone action" (as mentioned above).
+
+I am of the mind that "producers" should be rewarded for their efforts via the various levers mentioned above. For me, _part_ of that is choosing to collaborate under banners even when they aren't 100% perfect for me. Especially in cases where I am taking on more of a "consumer" role.
+
+---
+
+@hecrj · 2025-06-02T02:49:06Z:
+> Forking a project is not fully zero sum. There is only so much oxygen in the room at a given point (there are only so many people in a given space, and they only have so many hours in the day). And if you publicly fork a project, that is (to a degree) using the work of the developers of that project to compete with itself.
+
+I don't think it's that simple. Open source isn't a single room with limited space. Forking creates a new room and can bring new people, it can reduce conflict, and make the community in each room have a stronger focus, work better, and produce more value.
+
+> If you are fully enlightened you might be able to feel nothing but goodwill for a fork of a project like iced that pulls all of your changes, tweaks a few things, and takes the majority of your users
+
+Hard forks do not generally happen over a "few tweaks".
+
+The only way this could happen is if `iced` deliberately kept these tweaks away from the majority of its users. A fork is only possible if you let yourself get forked.
+
+I would probably adopt these tweaks in this case, unless they went completely against the philosophy of the library. But then, it would not be just "a few tweaks" anymore; and the communities would be better off branching out rather than constantly arguing over foundational concepts.
+
+> But many of us humans would feel a bit hurt by that. And the humans developing that project (depending on the context) might consider that "anti-collaborative", as you are choosing to "take up space" with your fork (and benefit from their work), rather than collaborate under a given banner. These banners are "brands", or "collective identities", for better or for worse.
+
+I understand that, but I don't think it's reasonable. These "brands" and "collective identities" encourage tribalism mixed together with a bunch of entitlement and expectations. As Rich Hickey puts it:
+
+> Open source is a licensing and delivery mechanism, period. It means you get the source for software and the right to use and modify it. All social impositions associated with it, including the idea of 'community-driven-development' are part of a recently-invented mythology with little basis in how things actually work, a mythology that embodies, cult-like, both a lack of support for diversity in the ways things can work and a pervasive sense of communal entitlement.
+>
+> — Rich Hickey, [Open Source is Not About You](https://gist.github.com/richhickey/1563cddea1002958f96e7ba9519972d9)
+
+In any case, it seems your argument comes down to "us humans" being inherently flawed or unreasonable. While that may be the case, it doesn't really justify bad behavior. In fact, it seems to be a self-defeating argument. Unless you were mocking me, shouldn't we strive to be like the truly enlightened ones?
+
+> I am of the mind that "producers" should be rewarded for their efforts via the various levers mentioned above. For me, part of that is choosing to collaborate under banners even when they aren't 100% perfect for me. Especially in cases where I am taking on more of a "consumer" role.
+
+I think this is the core issue. I don't think "producers" of open source should be entitled to anything; the same way "consumers" aren't either. This is the real beauty of open source—a gift with no expectations.
+
+---
+
+@cart · 2025-06-02T03:38:54Z:
+> I understand that, but I don't think it's reasonable. These "brands" and "collective identities" encourage tribalism mixed together with a bunch of entitlement and expectations. As Rich Hickey puts it:
+
+Collaboration is inherently political (and therefore tribal). We will come up with words (and yes banners) to (lossily) describe our values, and choose which banners to work under that describe our values. Banners (and the organizations behind them) will rise and fall based on public sentiment / approval. I believe a healthy ecosystem is one where we don't cling too tightly to any given banner, but are also willing to make concessions to collaborate under banners that aren't perfect for us (because otherwise we will all just work alone).
+
+> are part of a recently-invented mythology with little basis in how things actually work
+
+Make a list of your most used open source projects. Each project in that list is almost certainly built by a "tribe" that has rules, codes of conduct, social dynamics, etc. That tribe will have a name and a logo. There will be zealots (which should be discouraged), but most of the developers are likely just pragmatic, good natured people trying to better their lives, and the lives of those around them.
+
+Imagine a world where those projects had no name, no formal organization, no codes of conduct, no common banner. Is that a better world? Notably, its not the world that has been constructed for `iced`, which has all of those things. I would be curious (and excited) to see what that looks like!
+
+> Unless you were mocking me, shouldn't we strive to be like the truly enlightened ones?
+
+I am definitely not mocking you. "Enlightenment" is a tricky beast, and hard to talk about in concrete terms. From my perspective it means (among many other things) cultivating a loving and generous heart, eliminating ego, and letting go of your attachments (or at least, no longer clinging to them). I think these are all noble endeavors and we _should_ strive for them.
+
+But things start to fall apart when you try to take enlightenment into the real world. What concessions will you make to put food on your table, your family's table, or your community's? What things will you cling to? Do you "work" in open source? If you do, might that change how you relate to it? If you don't, are you living an enlightened life in your current job?
+
+Do you think people _should_ "work" in open source at all?
+
+> I think this is the core issue. I don't think "producers" of open source should be entitled to anything; the same way "consumers" aren't either. This is the real beauty of open source—a gift with no expectations.
+
+To reframe this, what if this wasn't about what the "producer" is _entitled_ to, but rather how you think you should treat them? Should someone giving away free gifts be treated with respect and collaborated with, or competed with? Would you try to consider their human feelings (and not operate under the assumption that they are fully enlightened?). Would an enlightened person comport themselves as if everyone else is enlightened?
+
+This has become very philosophical, which is awesome. But this is also not really the place to hash these things out (and its the kind of thing many people will have opinions on). Feel free to leave one more response to what I've said, but I'll refrain from responding further on these more abstract issues, and I will ask that everyone else does the same, in the interest of this thread not devolving.  (edit: but feel free to reach out to me if you want to talk about this more one on one)
+
+---
+
+@douglaslassance · 2025-06-02T04:22:56Z:
+I really appreciate @cart’s nuanced take on good open-source etiquette.
+May I suggest the thread is getting tangential?
+
+---
+
+@cart · 2025-06-02T04:29:21Z:
+> May I suggest the thread is getting tangential?
+
+It has already been suggested (and from my perspective resolved 😄 )
+
+---
+
+@hecrj · 2025-06-02T04:36:38Z:
+I think we are talking past each other a bit.
+
+We interact and relate to open source in very different ways. You seem adamant on framing open source as a dichotomy of collaboration and competition. Winners and losers. One banner or the other. I believe this is a false dichotomy caused by the very same tribalism mindset I am criticizing.
+
+> Imagine a world where those projects had no name, no formal organization, no codes of conduct, no common banner. Is that a better world?
+
+All of these things are present when you go to a theme park, or buy something in a shop, or visit my house. Interacting with these places does not make you part of a "tribe" or put you under a "banner".
+
+I can go to this shop today, and tomorrow to another one. There is no need for me to entangle my own identity with either of them to enjoy them for what they are.
+
+This is what I consider my projects to be. Little places for people to meet and work together when they feel like it. They are not tribes.
+
+> Collaboration is inherently political (and therefore tribal). We will come up with words (and yes banners) to (lossily) describe our values, and choose which banners to work under that describe our values.
+
+Collaboration isn't inherently tribal. It can happen at a small scale, on specific topics, and during a short amount of time. There is also no full alignment of values needed to cooperate. That's the beauty of it.
+
+> To reframe this, what if this wasn't about what the "producer" is entitled to, but rather how you think you should treat them? Should someone giving away free gifts be treated with respect and collaborated with, or competed with? Would you try to consider their human feelings (and not operate under the assumption that they are fully enlightened?). Would an enlightened person comport themselves as if everyone else is enlightened?
+
+As I said, this feels like a false dichotomy. There is no competition.
+
+Me giving away more "free gifts" cannot ever be considered "competing" with someone else that is also giving away "free gifts".
+
+The only way for someone to conclude that is if the original gifts are not truly "free", but come with some "hidden" expectations attached to them.
+
+> Feel free to leave one more response to what I've said, but I'll refrain from responding further on these more abstract issues, and I will ask that everyone else does the same, in the interest of this thread not devolving.
+
+No worries. Happy to leave it here! I enjoyed the conversation. Thank you for taking the time!
+
+---
+
+@douglaslassance · 2025-06-02T04:38:14Z:
+> It has already been suggested
+
+GitHub should let you know if someone replied while you are posting.
+I guess you're not supposed to be editing for more than 15 minutes. 😅
+
+---
+
+@jkelleyrtp · 2025-06-02T07:00:30Z:
+@hecrj 
+
+I was going to soften my response, but after reading through your responses, I think my initial reaction was justified.
+
+Bevy and Dioxus have been collaborating on a library called [Taffy](http://github.com/dioxusLabs/taffy) for two years now. It was the sheer fact that I revived the original stretch project that @alice-i-cecile took note and helped Dioxus get corporate sponsorship, enabling me to go full time. Now, Taffy has 2,700,981 downloads, more than Bevy, Dioxus, Iced, etc and powers many projects like the popular [Zed](https://zed.dev) editor. I am forever grateful - my life has taken a different direction since that initial email.
+
+The fact that Bevy understands the nuance of open source means their project has been more successful than the rest. And it really informs my view on open source. My father likens people who see the world as zero sum games as "crabs in a pot." If we continue to step on each other in the ecosystem, we will never see "escape velocity." As popular as Bevy is, libraries like Next.js see 10m downloads a WEEK, and React sees 5 million a DAY. Iced has 845k in its entire lifetime. We exist in a nascent space.
+
+Our goal with the subsecond engine is to spin it out into a library for a "white label experience." But it is not done yet. We have Dioxus 0.7 we want to get out very soon. It doesn't make sense for us to build cargo subcommand that we will never use. If you want to use subsecond today in its full glory, then `dx serve --hotpatch` is the way right now. In the future, `bevy run --hotpatch` might be a thing too. I would love to see `dx` evolve to be similar to Vue's Vite. I hate watching the Rust ecosystem continue to reinvent the wheel and it would be good for us to work together on shared build tooling. 
+
+Entitlement runs very strong in open source, and everyone in this thread with no skin in the game does not understand what it means to run a company in open source land. I have no shovels to sell you, sadly, but if you think you are entitled for Dioxus to build tools it will never use, then you really don't understand how running a company works.
+
+I suggested a "cargo plus" because I don't believe cargo will ever add something like subsecond to the default user experience. It is too opinionated, too complex, too unstable, there are dragons, people don't like our UI, etc. It's a shame that you cannot run  `cargo run` a WASM app, but I've been to RustNL for three years now, and I can tell you the cargo team does not have bandwidth or funding to stabilize any of this work. I've been told "we love what you do, but we love that you do it over there."
+
+By taking our work wholesale and then distributing it to your users, you gave them hotpatching... but you also burned good will with the people who raised capital, started a company, became experts in binary patching, and then distributed a massively transformative technology for free. You can `dx serve` an iced app. It will be an extremely polished user experience. We will market `dx` as a generic cargo runner soon enough and users will prefer it. 
+
+I want hot-patching to be seen as a communal technology by the ecosystem and find a management structure to it similar to for Taffy. My goal with it was to distribute it as widely as possible in the Rust ecosystem. A rising tide lifts all boats. Having the support - both social and technical - of another large Rust GUI project would be fantastic. But, when the authors of those projects don't truly understand the ethos of open source and burn their goodwill, it makes me never want to work with them in the future. 
+
+---
+
+@hecrj · 2025-06-02T09:25:14Z:
+@jkelleyrtp I am honestly growing a bit tired of this whole diatribe.
+
+I should not have to defend myself for, simply put, improving code you voluntarily open sourced. If you don't like that, I recommend you use a proprietary license next time.
+
+I have asked nothing from you nor Dioxus. I've been working on this tool completely on my own _as an experiment_. There is no entitlement here whatsoever.
+
+I never had any intentions to make the tool an official part of `cargo`, nor I plan on getting in the way of any of the future plans you have for `subsecond`. I am not sure where all of that is coming from. If anything, I've been trying to stay out of your way as much as possible.
+
+I have also not distributed anything to my users. I don't even know yet how I will go about that, or even if I will anytime soon.
+
+It's perfectly fine if you don't want to work with me. I don't think it's warranted, but you seem quite determined to find any reasons to justify it.
+
+And I am afraid this is where my patience runs out. I'm unsubscribing from this thread. If anyone wants to chat further, feel free to reach out. Peace!
+
+---
+
+@jkelleyrtp · 2025-06-02T12:25:39Z:
+@hecrj 
+
+Instead of reaching out with an offer to help modularize the subsecond engine, you went straight to copy-pasting our code into a new project, stripping it down, renaming it, and then started shopping around for help to maintain it. Why not work with us directly? I hope you see how this insulting to our team, especially coming from a project lead.
+
+I’ve been a big fan of Iced for a long time and would’ve loved having more strong technical minds collaborate on cool new things. I was an evangelist for Iced at my first Rust job. We collaborate with many other “competitors” - Tauri, Leptos, Xilem, Bevy-UI, etc.
+
+We are excited to work with the community to bring Subsecond to everyone, but would appreciate if people worked together with respect.
+
+
+---
+
+@airstrike · 2025-06-02T13:48:08Z:
+@jkelleyrtp 
+
+> Instead of reaching out with an offer to help modularize the subsecond engine, you went straight to copy-pasting our code into a new project, stripping it down, renaming it, and then started shopping around for help to maintain it. Why not work with us directly? I hope you see how this insulting to our team, especially coming from a project lead.
+
+You're complaining about someone experimenting on open source software in their own private repo for a handful of hours as if they had slapped their branding on your product as-is and started distributing it to general users. Which, by the way, your license would allow for, but is not the case here. Note it's `hecrj/cargo-hot` not `iced-rs/cargo-hot`.
+
+I also see no evidence of anyone "shopping around for maintainers". Ironically and tragically, if anything this discussion has a chilling effect on people trying considering contributing to this ecosystem.
+
+Whether you choose to feel insulted is besides the point. You have sufficient agency to choose to engage collaboratively instead.
+
+I get that you built something *really cool* and you want full credit for it. Nobody is trying to take that away! But you're complaining about a developer not working with you directly and yet all you've done is encourage people to not work with you directly.
+
+Generally I only find criticism productive if it comes with a suggestion for improvement. What exactly are you suggesting?
+
+Maybe let's focus less on how insulted we feel and more on what we imagine the ideal future to look like in a way that maximizes the benefits to the Rust ecosystem, and then work towards that. I think we'll find much more common ground if we spend our energy there instead.
+
+---
+
+@douglaslassance · 2025-06-02T16:30:33Z:
+> I thought Dioxus could eventually switch to it and join efforts.
+
+I think this is when things started to sound bad @hecrj. I was in line with "this is just an experiment", but suggesting Dioxus would switch to join your effort to extract and "debrand" their code seems like the wrong thing to do.
+
+---
+
+@cart · 2025-06-02T19:33:51Z:
+I've locked this conversation as its scope has expanded well beyond its topic, things are heating up, and I highly doubt future conversation will be productive. We will continue to discuss the future of hotpatching with the Dioxus folks and interested contributors in a more appropriate setting.
+
+=== ROW 62 | f003033 | https://bytecodealliance.org/articles/invoking-component-functions-in-wasmtime-cli | 2025-05-21 | domain-subframes ===
+Bytecode Alliance — Running WebAssembly (Wasm) Components From the Command Line
+Home
+About
+News
+Projects
+Membership
+GitHub
+Zulip
+Calendar
+Running WebAssembly (Wasm) Components From the Command Line
+May 21, 2025
+Tim McCallum
+Wasmtime’s 33.0.0 release supports invoking Wasm component exports directly from the command line with the new --invoke flag.
+This article walks through building a Wasm component in Rust and using wasmtime run --invoke to execute specific functions (enabling powerful workflows for scripting, testing, and integrating Wasm into modern development pipelines).
+The Evolution of Wasmtime’s CLI
+Wasmtime’s run subcommand has traditionally supported running Wasm modules as well as invoking that module’s exported function. However, with the evolution of the Wasm Component Model, this article focuses on a newer capability; creating a component that exports a function and then demonstrating how to invoke that component’s exported function.
+By the end of this article, you’ll be ready to create Wasm components and orchestrate their exported component functions to improve your workflow’s efficiency and promote reuse. Potential examples include:
+Shell Scripting: Embed Wasm logic directly into Bash or Python scripts for seamless automation.
+CI/CD Pipelines: Validate components in GitHub Actions, GitLab CI, or other automation tools without embedding them in host applications.
+Cross-Language Testing: Quickly verify that interfaces match across implementations in Rust, JavaScript, and Python.
+Debugging: Inspect exported functions during development with ease.
+Microservices: Chain components in serverless workflows, such as compress → encrypt → upload, leveraging Wasm’s modularity.
+Tooling & Dependencies
+If you want to follow along, please install:
+Rust (if you already have Rust installed, make sure you are on the latest version),
+cargo (if already installed, please make sure you are on the latest version),
+cargo component (if already installed, please make sure you are on the latest version), and
+wasmtime CLI (or use a precompiled binary). If already installed, ensure you are using v33.0.0 or newer.
+You can check versions using the following commands:
+$ rustc --version
+$ cargo --version
+$ cargo component --version
+$ wasmtime --version
+We must explicitly add the wasm32-wasip2 target. This ensures that our component adheres to WASI’s system interface for non-browser environments (e.g., file system access, sockets, random etc.):
+$ rustup target add wasm32-wasip2
+Creating a New Wasm Component With Rust
+Let’s start by creating a new Wasm library that we will later convert to a Wasm component using cargo component and the wasm32-wasip2 target:
+$ cargo component new --lib wasm_answer
+$ cd wasm_answer
+If you open the Cargo.toml file, you will notice that the cargo component command has automatically added some essential configurations.
+The wit-bindgen-rt dependency (with the ["bitflags"] feature) under [dependencies], and the crate-type = ["cdylib"] setting under the [lib] section.
+Your Cargo.toml should now include these entries (as shown in the example below):
+[package]
+name = "wasm_answer"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+wit-bindgen-rt = { version = "0.41.0", features = ["bitflags"] }
+[lib]
+crate-type = ["cdylib"]
+[package.metadata.component]
+package = "component:wasm-answer"
+[package.metadata.component.dependencies]
+The directory structure of the wasm_answer example is automatically scaffolded out for us by cargo component:
+$ tree wasm_answer
+wasm_answer
+├── Cargo.lock
+├── Cargo.toml
+├── src
+│   ├── bindings.rs
+│   └── lib.rs
+└── wit
+└── world.wit
+WIT
+If we open the wit/world.wit file, that cargo component created for us, we can see that cargo component generates a minimal world.wit that exports a raw function:
+package component:wasm-answer;
+/// An example world for the component to target.
+world example {
+export hello-world: func() -> string;
+}
+We can simply adjust the export line (as shown below):
+package component:wasm-answer;
+/// An example world for the component to target.
+world example {
+export get-answer: func() -> u32;
+}
+But, instead, let’s use an interface to export our function!
+While the above approach works, the recommended best practice is to wrap related functions inside an interface, which you then export from your world. This is more modular, extensible, and aligns with how the Wasm Interface Type (WIT) format is used in multi-function or real-world components. Let’s update the wit/world.wit file as follows:
+package component:wasm-answer;
+interface answer {
+get-answer: func() -> u32;
+}
+world example {
+export answer;
+}
+Next, we update our src/lib.rs file accordingly, by pasting in the following Rust code:
+#[allow(warnings)]
+mod bindings;
+use bindings::exports::component::wasm_answer::answer::Guest;
+struct Component;
+impl Guest for Component {
+fn get_answer() -> u32 {
+42
+}
+}
+bindings::export!(Component with_types_in bindings);
+Now, let’s create the Wasm component with our exported get_answer() function:
+$ cargo component build --target wasm32-wasip2
+Our newly generated .wasm file now lives at the following location:
+$ file target/wasm32-wasip2/debug/wasm_answer.wasm
+target/wasm32-wasip2/debug/wasm_answer.wasm: WebAssembly (wasm) binary module version 0x1000d
+We can also use the --release option which optimises builds for production:
+$ cargo component build --target wasm32-wasip2 --release
+If we check the sizes of the debug and release, we see a difference of 2.1M and 16K, respectively.
+Debug:
+$ du -mh target/wasm32-wasip2/debug/wasm_answer.wasm
+2.1M	target/wasm32-wasip2/debug/wasm_answer.wasm
+Release:
+$ du -mh target/wasm32-wasip2/release/wasm_answer.wasm
+16K	target/wasm32-wasip2/release/wasm_answer.wasm
+How Invoke Works: A Practical Example
+The wasmtime run command can take one positional argument and just run a .wasm or .wat file:
+$ wasmtime run foo.wasm
+$ wasmtime run foo.wat
+Invoke: Wasm Modules
+In the case of a Wasm module that exports a raw function directly, the run command accepts an optional --invoke argument, which is the name of an exported raw function (of the module) to run:
+$ wasmtime run --invoke initialize foo.wasm
+Invoke: Wasm Components
+In the case of a Wasm component that uses typed interfaces (defined in WIT, in concert with the Component Model), the run command now also accepts the optional --invoke argument for calling an exported function of a component.
+However, the calling of an exported function of a component uses WAVE(a human-oriented text encoding of Wasm Component Model values). For example:
+$ wasmtime run --invoke 'initialize()' foo.wasm
+You will notice the different syntax of initialize versus 'initialize()' when referring to a module versus a component, respectively.
+Back to our get-answer() example:
+$ wasmtime run --invoke 'get-answer()' target/wasm32-wasip2/debug/wasm_answer.wasm
+42
+You will notice that the above get-answer() function call does not pass in any arguments. Let’s discuss how to represent the arguments passed into function calls in a structured way (using WAVE).
+Wasm Value Encoding (WAVE)
+Transferring and invoking complex argument data via the command line is challenging, especially with Wasm components that use diverse value types. To simplify this, Wasm Value Encoding (WAVE) was introduced; offering a concise way to represent structured values directly in the CLI.
+WAVE provides a standard way to encode function calls and/or results. WAVE is a human-oriented text encoding of Wasm Component Model values; designed to be consistent with the WIT IDL format.
+Below are a few additional pointers for constructing your wasmtime run --invoke commands using WAVE.
+Quotes
+As shown above, the component’s exported function name and mandatory parentheses are contained in one set of single quotes, i.e., 'get-answer()':
+$ wasmtime run --invoke 'get-answer()' target/wasm32-wasip2/release/wasm_answer.wasm
+The result from our correctly typed command above is as follows:
+42
+Parentheses
+Parentheses after the exported function’s name are mandatory. The presence of the parenthesis () signifies function invocation, as opposed to the function name just being referenced. If your function takes a string argument, ensure that you contain your string in double quotes (inside the parentheses). For example:
+$ wasmtime run --invoke 'initialize("hello")' foo.wasm
+If your exported function takes more than one argument, ensure that each argument is separated using a single comma , as shown below:
+$ wasmtime run --invoke 'initialize("Pi", 3.14)' foo.wasm
+$ wasmtime run --invoke 'add(1, 2)' foo.wasm
+Recap: Wasm Modules versus Wasm Components
+Let’s wrap this article up with a recap to crystallize your knowledge.
+Earlier Wasmtime Run Support for Modules
+If we are not using the Component Model and just creating a module, we use a simple command like wasmtime run foo.wasm (without WAVE syntax). This approach typically applies to modules, which export a _start function, or reactor modules, which can optionally export the wasi:cli/run interface—standardized to enable consistent execution semantics.
+Example of running a Wasm module that exports a raw function directly:
+$ wasmtime run --invoke initialize foo.wasm
+Wasmtime Run Support for Components
+As Wasm evolves with the Component Model, developers gain fine-grained control over component execution and composition. Components using WIT can now be run with wasmtime run, using the optional --invoke argument to call exported functions (with WAVE).
+Example of running a Wasm component that exports a function:
+$ wasmtime run --invoke 'add(1, 2)' foo.wasm
+For more information, visit the cli-options section of the Wasmtime documentation.
+Benefits and Usefulness
+The addition of support for the run --invoke feature for components allows users to specify and execute exported functions from a Wasm component. This enables greater flexibility for testing, debugging, and integration. We now have the ability to perform the execution of arbitrary exported functions directly from the command line, this feature opens up a world of possibilities for integrating Wasm into modern development pipelines.
+This evolution from monolithic Wasm modules to composable, CLI-friendly components exemplifies the versatility and power of Wasm in real-world scenarios.
+Bylaws | IP Policy | Copyright © 2019-2023 the Bytecode Alliance contributors.
+
+=== ROW 64 | f003074 | https://github.com/WebAssembly/component-model/issues/525 | 2025-06-03 | domain-subframes ===
+Pre-Proposal: Wasm GC Support in the Canonical ABI
+
+---
+
+@fitzgen · 2025-06-03T19:23:21Z:
+# Pre-Proposal: Wasm GC Support in the Canonical ABI
+
+This issue proposes extensions to the Component Model's Canonical ABI for Wasm GC support and describes some of the motivation for particular choices. I am in the process of implementing these extensions in `wasm-tools` and `wasmtime`. My goals are to kick off discussion of how best to integrate GC and the canonical ABI, build consensus, and eventually get these extensions merged into the component model spec itself.
+
+## Emoji
+
+Most important things first, I propose that we use the 🛸 emoji (an unidentified flying object[^haha]) to represent the Wasm GC extension to the component model in the `Explainer.md`.
+
+[^haha]: *Object.* Haha -- get it?? Like GC objects. GET IT!? HAHA WHY AREN'T YOU LAUGHING?!?!?!?!?
+
+## The Problem of Choosing Which Core Type to Lower Into
+
+With the introduction of Wasm GC into the component model, a component type can lower to many different core types.
+
+Consider this `record`:
+
+```
+record point {
+    x: f32,
+    y: f32,
+}
+```
+
+The first choice is whether to lower this to linear memory or GC, so we've already entered the world of component-to-core type lowering being one-to-many, and therefore we must give components some way of choosing which version is desired.
+
+But let's assume we've somehow opted into using GC instead of linear memory. A naive translation of the `point` record into a core Wasm GC `struct` type might look something like this:
+
+```wat
+(type $point (struct (field f32) (field f32)))
+```
+
+Making the fields immutable means that these objects can be passed between components without copying. But if one component's "at rest" representation of a point is mutable, this is forcing the component itself to do a copy. And if both sides need mutability, then both sides are forced to copy, and we end up with two copies instead of the single copy we would otherwise get when using the linear memory version of the canonical ABI!
+
+Alternatively, we could make the fields mutable:
+
+```wat
+(type $point (struct (field (mut f32)) (field (mut f32))))
+```
+
+But now if our two components don't require mutability, the engine cannot pass these objects between them without copying because it cannot know that they won't actually be mutated after they're sent across the component boundary (at least, not without a prohibitively expensive global program analysis).
+
+Things get even worse when we consider `rec` groups. To recap, core Wasm types are deduplicated structurally at the granularity of whole `rec` groups. Therefore, two otherwise-identical types that appear in structurally-different rec groups are not the same types. Repetitions of otherwise-identical types in the same `rec` group are not the same types. In the following example, `$a` and `$b` are the same type, but they are different from `$c`, `$d`, and `$e`, which are all their own unique types:
+
+```wat
+;; Note: `$a` is defined within an implicit singleton `rec` group.
+(type $a (struct (field i32)))
+
+;; `$b` is the same type as `$a`, its `rec` group is just explicitly
+;; written out.
+(rec (type $b (struct (field i32))))
+
+;; `$c` is a distinct type from `$a` because its `rec` group is different.
+(rec (type $c (struct (field i32)))
+     (type (array i8)))
+
+;; `$d` and `$e` are distinct from `$a` because their `rec` group is
+;; different. They are distinct from each other because types are
+;; effectively nominal *within* a `rec` group.
+(rec (type $d (struct (field i32)))
+     (type $e (struct (field i32))))
+```
+
+If the "at rest" representation inside one of our components is in a non-singleton `rec` group, then the component is forced to copy from the canonical ABI `struct` into its "at rest" `struct` that is identical other than the `rec` group it is defined within.
+
+To summarize these observations:
+
+1. There are many core types that a single component type could lower into.
+2. Minimizing copying requires that the objects going into and coming out of the canonical ABI match the "at rest" representation inside each component.
+
+Therefore, in order to minimize copies, the canonical ABI should (as much as possible) avoid prescribing one particular canonical GC type representation for a given component type; components should be able to choose the core GC types that component types lower to.
+
+## New Canonical Options
+
+* We add a `gc` canonical option, which switches the canonical ABI over to GC mode from linear memory mode, when present.
+
+* To allow lowered component functions' types to match the component's inner core module's "at rest" representation as often as possible, we add a canonical option to specify the core function type used during function lowering:
+
+  ```wat
+  (canon lower (func $f) ... (core-type $my_core_function_type))
+  ```
+
+  The `core-type` option must be present if and only if the `gc` option is present.
+
+  When present, the component function's type and the given core function type are recursively traversed together and it is checked that component type can be lowered to the associated core type.
+
+  This allows components to configure which Wasm GC type lowering they desire, minimizing copies in the overall system.
+
+### Encoding
+
+* `(core-type <idx>)` canonical option:
+
+  ```
+  0x08 <idx:u32>`
+  ```
+
+* `gc` canonical option:
+
+  ```
+  0x09
+  ```
+
+## GC Type Lowerings
+
+We recurse over the component signature and for each argument and then each argument's type's nested fields and elements, we make sure that the corresponding part of the core signature (that was specified by the `(core-type ...)` canonical option) matches according to the following rules.
+
+We tweak some of the lowerings depending on whether we are lowering into either
+
+* a core value type (for direct arguments and returns), or
+* a struct field or array element storage type (for nested types like the `u8` in a `list<u8>`).
+
+The lowerings are summarized in the following table, more details follow after.
+
+| Component Type | Value Type | Storage Type |
+|----------------|------------|--------------|
+| `bool` | `i32` | `i8` |
+| `s8` | `i32` | `i8` |
+| `u8` | `i32` | `i8` |
+| `s16` | `i32` | `i16` |
+| `u16` | `i32` | `i16` |
+| `s32` | `i32` | -  |
+| `u32` | `i32` | -  |
+| `s64` | `i64` | -  |
+| `u64` | `i64` | -  |
+| `f32` | `f32` | -  |
+| `f64` | `f64` | -  |
+| `char` | `i32` | -  |
+| `string` when `string-encoding=utf8` | `(ref null? (array (mut? i8)))` | - |
+| `string` when `string-encoding=utf16` | `(ref null? (array (mut? i16)))` | - |
+| `string` when `string-encoding=latin1+utf16` | `(ref null? (array (mut? i8)))` | - |
+| `(record ...T)` | `(ref null? (struct ...(field (mut? T'))))` | - |
+| `(variant ...)` | `(ref null? (struct)` | - |
+| `(list T)` | `(ref null? (array (mut? T')))` | - |
+| `(tuple ...T)` | `(ref null? (struct ...(field (mut? T'))))` | - |
+| `(flags ...)` | `i32` | - |
+| `(enum ...)` | `i32` | - |
+| `(option ...)` | `(ref null? (struct))` | - |
+| `(result ...)` | `(ref null? (struct))` | - |
+| `(own ...)` | `externref` | - |
+| `(borrow ...)` | `externref` | - |
+| `(future ...)` | `externref` | - |
+| `(stream ...)` | `externref` | - |
+| `error-context` | `externref` | - |
+
+### `bool` and `{s,u}{8,16}`
+
+These types have different lowerings depending on whether we are lowering them to a value type (arguments and results) or a storage type (a field inside another component type). When lowered to a value type, these become `i32` values. When lowered to a storage type, these become `i8` (`bool`, `{s,u}8`) and `i16` values (`{s,u}16`).
+
+Example when lowering into values:
+
+```wat
+;; Component signature.
+(type $sig (func (param "x" u8)
+                 (param "y" s16)
+                 (param "z" bool)))
+
+;; Core signature.
+(core type $sig' (func (param i32 i32 i32)))
+```
+
+Example when lowering into storage types:
+
+```wat
+;; Component types.
+(type $tup (tuple bool s8 u16))
+
+;; A valid core type lowering of those component types.
+(core type $tup' (struct (field i8) (field i8) (field i16)))
+```
+
+### `{s,u}{32,64}`, `f{32,64}`, and `char`
+
+These component types are lowered to the same corresponding core type as in the linear memory version of the canonical ABI, regardless whether we are lowering into a value type or a storage type.
+
+### `string`
+
+`string` types are lowered to references to core `array`s of code points. When using the UTF-8 encoding, that means `(array i8)`. When using the UTF-16 encoding, that means `(array i16)`. The compact latin1 and UTF-16 hybrid encoding lowers to an array of the raw encoded bytes: `(array i8)`.
+
+The reference may be either nullable or non-nullable; calls will trap if the reference is null at runtime. The referenced type may be an arbitrary subtype of another `array` type and may be defined within an arbitrary `rec` group.
+
+```wat
+;; Component signature.
+(type $sig (func (param "s" string)))
+
+;; A valid core lowering, assuming UTF-8 encoding.
+(core type $string' (array i8))
+(core type $sig' (func (param (ref null $string'))))
+```
+
+### `record` and `tuple`
+
+Component `record` and `tuple` types lower to references to core `struct` types where the component type's fields are point-wise lowered into core storage types that become the core `struct`'s fields.
+
+The reference may be either nullable or non-nullable; calls will trap if the reference is null at runtime. The referenced type may be an arbitrary subtype of another `struct` type and may be defined within an arbitrary `rec` group.
+
+```wat
+;; Component types.
+(type $point (tuple s32 s32))
+(type $triangle (record (field "x" $point)
+                        (field "y" $point)
+                        (field "z" $point)))
+(type $sig (func (param "a" $triangle)))
+
+;; A valid core type lowering of those component types.
+(core type $point' (struct (field i32) (field i32)))
+(core type $triangle' (struct (field $x' (ref $point'))
+                              (field $y' (ref $point'))
+                              (field $z' (ref $point'))))
+(core type $sig' (func (param (ref $triangle'))))
+```
+
+> **Discussion:** I have not implemented width- or depth-subtyping for `record`s and `tuple`s, but it is intended that GC lowering can be straightforwardly extended to allow such subtyping in the future. We will, of course, need to take care to ensure that variance is sound.
+
+### `variant`
+
+Component `variant` types are matched against a reference to a `struct` type with no fields.
+
+The reference may be either nullable or non-nullable; calls will trap if the reference is null at runtime. The referenced type may be an arbitrary subtype of another `struct` type and may be defined within an arbitrary `rec` group.
+
+When passing a `case` value, the value must be an instance of a subtype of the specified core `struct` type. That subtype must have fields that correspond to the case's payload type lowered into a storage type, if any. All case subtypes must be defined in the same `rec` group, in the same order as the `variant`'s `case`s.
+
+```wat
+;; Component type and signature.
+
+(type $animal
+  (variant
+    (case $cat "cat" u32)
+    (case $dog "dog" u16)
+    (case $rabbit "rabbit" u16)))
+
+(type $sig (func (param "animal" $animal)))
+
+;; A valid core lowering of that component type and signature.
+
+(core type $animal' (sub (struct)))
+(core rec
+  (type $cat' (sub $animal' (struct (field (mut i32)))))
+  (type $dog' (sub $animal' (struct (field (mut i16)))))
+  (type $rabbit' (sub $animal' (struct (field (mut i16))))))
+
+(core type $sig' (param (ref $animal')))
+```
+
+> **Discussion:** The requirement that all `case` subtypes are defined in the same `rec` group allows discriminating between `case`s with structurally identical payloads.
+
+> **Discussion:** The way we define the exact shape of each `case` type above is less flexible than other GC lowerings, for example `record` lowerings, where an arbitrary type in an arbitrary `rec` group can be specified and the only requirement upon the specified type is that it structurally match the component type. The core `case` types cannot all be defined in the same `rec` group according the above rules, for example. Unlike other types, for sum types we don't have a core type in the `(core-type ...)` canonical option's specified core function type that the user can use to specify exactly which type a particular `case` of a `variant` should be lowered into. Therefore, we define the above rules prescribing the exact types of each lowered `case` value.
+>
+> An alternative approach would be to define a new canonical option that allows the user to specify the exact core types that each component `case` value is lowered into:
+>
+> ```wat
+> (case-core-type $my-component-case $my-core-type)
+> ```
+>
+> The `$my-component-case` would name a component `variant`'s `case` and `$my-core-type` would name a core `struct` type whose fields match the associated `case`'s payload's lowering and which is a subtype of the `struct` type that appears in the `(core-type ...)` canonical option's core function type's corresponding argument or nested type reference location.
+>
+> (`result` and `option` types would probably require defining additional canonical options as well, because they do not have name-able cases).
+>
+> It should be noted that this approach is still not quite as flexible as `record` lowering, because *all* instances of the `case` value would always be lowered to the same core type, where as two `record`s arguments in the same function call, for example, can be lowered to two different core `struct` types so long as they both structurally match. In practice, this constraint would probably not be onerous. The primary reason this approach was considered and rejected is its verbosity: every sum type in the transitive type reference closure would require specifying a `(case-core-type ...)` canonical option.
+
+### `list<T>`
+
+Component `list<T>` types are lowered to a reference to a core `array`. The `array`'s element type must match the lowering of `T` into a storage type.
+
+The reference may be either nullable or non-nullable; calls will trap if the reference is null at runtime. The referenced type may be an arbitrary subtype of another `struct` type and may be defined within an arbitrary `rec` group.
+
+```wat
+;; Component type.
+(type $bools (list bool))
+(type $sig (func (param "x" $bools)))
+
+;; A valid lowering to core types.
+(core type $bools' (array (mut i8)))
+(core type $sig' (func (param (ref null $bools'))))
+```
+
+### `flags` and `enum`
+
+Component `flags` and `enum` types are lowered in the same manner as in the linear memory version of the canonical ABI, regardless whether we are lowering into a value type or a storage type.
+
+### `option`
+
+Component `option` types are lowered to a reference to an empty core `struct` type. This `struct` type must not be `final`.
+
+The reference may be either nullable or non-nullable; calls will trap if the reference is null at runtime. The referenced type may be an arbitrary subtype of another `struct` type and may be defined within an arbitrary `rec` group.
+
+When passing a none value, the value must be an instance of a subtype of the specified core `struct` type which does not define any additional fields. This type must be defined as the first type in a `rec` group consisting of this type followed by the some value's type.
+
+When passing a some value, the value must be an instance of a subtype of the specified `struct` type that has a field containing `option`'s inner type lowered into a storage type. This type must be defined as the second type in a `rec` group consisting of the none value's type followed by the some value's type.
+
+If the value is not an instance of one of the two above subtypes, then the call will trap at runtime.
+
+```wat
+;; Component types.
+(type $opt (option u32))
+(type $sig (func (param "x" $opt)))
+
+;; A valid core type lowering.
+(core type $opt' (sub (struct)))
+(core rec
+  (type $opt'-none (sub $opt' (struct)))
+  (type $opt'-some (sub $opt' (struct (field (mut i32))))))
+(core type $sig' (func (param (ref null $opt'))))
+```
+
+> **Discussion:** Note that we do not represent `(option T)` component types with `(ref null T')` core types, where a null reference represents the none value and a non-null reference represents some values. There are two reasons for this:
+>
+> 1. Scalar types are heap types, so `(option u32)` could not become `(ref null u32)` because the latter is invalid. We would have to require the definition of a `(struct $s (field (mut u32)))` type and then lower to `(ref null $s)` instead. This adds undesirable special-casing to the lowering rules.
+>
+> 2. Using null references to represent none values is not composable. When dealing with `(option (option T))`, if null references represented none values, then a null value is be ambiguous: does it mean `none` or `some(none)`? This ambiguity and composability issue could be resolved with additional special-casing, similar to the previous point, but such special-casing implies additional undesirable complexity.
+
+### `result`
+
+Component `result` types are lowered to a reference to a core `struct` type without any fields. This `struct` type must not be `final`.
+
+The reference may be either nullable or non-nullable; calls will trap if the reference is null at runtime. The referenced type may be an arbitrary subtype of another `struct` type and may be defined within an arbitrary `rec` group.
+
+When passing a success value, the value must be an instance of a subtype of the specified `struct` type. This subtype must define fields corresponding to the lowering of the `result`'s success case into a storage type, if any. This type must be defined as the first core type in a `rec` group consisting ofthis subtype followed by the `result`'s error-case subtype.
+
+When passing an error value, the value must be an instance of a subtype of the specified core `struct` type. This subtype must define fields corresponding to the lowering of the `result`'s `error` case into a storage type, if any. This type must be defined as the second core type in a `rec` group consisting of the `result`'s success-case subtype followed by this subtype.
+
+If the value is not an instance of one of the two above subtypes, then the call will trap at runtime.
+
+```wat
+;; Component type.
+(type $res (result u32 (error bool)))
+(type $sig (func (param "x" $res)))
+
+;; A valid core type lowering.
+(core type $res' (sub (struct (field i8))))
+(core rec
+  (type $res'-success (sub $res' (struct (field i8) (field i32))))
+  (type $res'-error (sub $res' (struct (field i8) (field i8)))))
+(core type $sig' (func (param (ref null $res'))))
+```
+
+### `own`, `borrow`, `future`, `stream`, and `error-context`
+
+These component types are lowered into references to core `extern` heap types.
+
+The reference may be either nullable or non-nullable; calls will trap if the reference is null at runtime.
+
+```wat
+;; Component types and signature.
+
+(type $file (resource (rep i32)))
+(type $future-bool (future bool))
+(type $stream-u32 (stream u32))
+
+(type $sig (func (param "a" (own $file))
+                 (param "b" (borrow $file))
+                 (param "c" $future-bool)
+                 (param "d" $stream-u32)))
+
+;; A valid core type lowering.
+
+(core type $sig' (func (param (ref extern)
+                              (ref null extern)
+                              (ref extern)
+                              (ref null extern))))
+```
+
+
+---
+
+@fitzgen · 2025-06-03T19:23:38Z:
++cc @lukewagner @alexcrichton 
+
+---
+
+@fitzgen · 2025-06-03T20:25:28Z:
+Realization: we could actually remove the discriminants from sum types if we prescribe that the cases are all defined in the same `rec` group.
+
+I'll prototype this and update the OP once it is working in `wasm-tools`.
+
+---
+
+@fitzgen · 2025-06-03T20:42:41Z:
+> I'll prototype this and update the OP once it is working in `wasm-tools`.
+
+Done and done
+
+---
+
+@lukewagner · 2025-06-04T21:38:44Z:
+This is really exciting and I appreciate the clear writeup!  Also, I love the approach of maximally-deriving the ABI from the core function type; that's an elegant solution to an otherwise gross problem.  Overall, 👍 from me.
+
+A few small questions/suggestions:
+
+1. I'm probably misunderstanding the proposal, wasm-gc or both, but: for `variant` et al, your examples all put the supertype in a separate rec group than the case subtypes but I would think that this doesn't expose the semantic link between "the variant type" and "the case types" that you need to let the core function type tell the whole story.  E.g., iiuc, there's no "edge" in the type graph from `$animal'` to the rec group containing `$dog'`.  (The edge exists in the other direction, ofc, but that's many-to-1, so you couldn't talk about "the rec group that contains subtypes of this supertype".)  Instead, I would think that, since we're sortof hijacking rec groups in this scheme anyways, we'd say that variants have to refer to a `struct` type that is the first of its rec group and all the subsequent rec group members must be its cases; then the `typeidx` used in the core function type points to a rec group that points to the cases.
+
+2. While you're right about the reason that `option` can't represent `none` with `ref.null` in general, could we say that, when `option<T>` has a non-`null`-allowing `T`, `ref.null` represents `none`?  This is ad hoc and irregular, but we are licensed to do that in the CABI when it's a significant win and `option` is very common and I expect this optimization would to 95% of `option`s in practice.
+
+3. `result<T>` (no `E`) and `result` (no `T`) are also super common and I think perhaps worth optimizing.  Could the former use `null` for `error` and the latter return a (boolean) `i32` (making it no less efficient than `enum`, so that no one has the perverse incentive to use an `enum` for a `result` for perf reasons)?
+
+---
+
+@lukewagner · 2025-06-05T19:11:09Z:
+Two more follow-up thoughts:
+
+4. For the `latin1+utf16` string-encoding, there's the question of how to communicate the dynamic "is it Latin-1 or UTF-16?" boolean (which is packed with the length into an `i32` when using linear memory).  One idea is that you could take a page from how variants work and have the static type be `(ref null? array)` and dynamically accept/produce either `(ref (array i8))` or `(ref (array i16))`.
+5. Regarding `own`, `borrow`, `future` and `stream` (as well as waitable sets and async subtasks): one issue I just realized is that various `drop` built-ins trap under various conditions (`own` and `borrow` trap if there are any extant async import calls to which they were lent; the writable end of a `future` traps if dropped without having written a value; etc).  As a general rule, we try to avoid ever allowing user code of a safe language to hit a raw wasm trap, so somehow we need to figure out how the language runtime (running as wasm using the CABI) is able to avoid hitting these traps.  One option would be to extend the "drop if unreachable" semantics to be "drop if unreachable and the trapping conditions are met", but I'm thinking this will get tricky and subtle.  Another option is to force the wasm guest to root `externref`s during times when they would trap if they became unreachable, but this might end requiring the wasm guest to maintain a lot of parallel bookkeeping already maintained by the C-M, maybe adding non-trivial overhead.  So I wonder if a nice third option is to leave these types the same as with linear memory (`i32`s that need to be dropped), but introduce new canon built-ins that provide postmortem-notification analogous-to and polyfilled-via [`FinalizationRegistry`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry) and then allow the language runtime to use this primitive to Do The Right Thing itself.  Such a built-in could also be used for other guest-internal purposes (such as associating a linear-memory buffer that needs to be freed with a wasm-GC object).
+
+---
+
+@rossberg · 2025-06-06T09:39:34Z:
+A few drive-by comments:
+
+1. The even bigger reason that there are no canonical choices of type definitions to lower to are subtyping declarations, which the comment layer cannot guess.
+2. For the various small scalar types, a common target representation will be i31-ref (e.g., in any language with a uniform representation), so I think (i31 null? ref) should also be allowed as an alternative, for both value and/or storage type.
+3. For larger numeric types, various languages will probably need boxed representations to be able to process them, so perhaps it should be possible to map to those as well.
+4. I like @lukewagner's suggestion regarding variants.
+5.  It is rather unfortunate that the CM calls arrays "lists"...
+
+@lukewagner:
+> 2. While you're right about the reason that `option` can't represent `none` with `ref.null` in general, could we say that, when `option<T>` has a non-`null`-allowing `T`, `ref.null` represents `none`?  This is ad hoc and irregular, but we are licensed to do that in the CABI when it's a significant win and `option` is very common and I expect this optimization would to 95% of `option`s in practice.
+
+FWIW, I don't think it is gonna be even close to 95%. Languages with parametric polymorphism typically don't or can't do such a specialisation, because it would require costly runtime type passing and dispatch. That probably includes languages like Java with its Optional type.
+
+---
+
+@lukewagner · 2025-06-06T20:09:47Z:
+@rossberg
+
+>> While you're right about the reason that option can't represent none with ref.null in general, could we say that, when option<T> has a non-null-allowing T, ref.null represents none? This is ad hoc and irregular, but we are licensed to do that in the CABI when it's a significant win and option is very common and I expect this optimization would to 95% of options in practice.
+>
+> FWIW, I don't think it is gonna be even close to 95%. Languages with parametric polymorphism typically don't or can't do such a specialisation, because it would require costly runtime type passing and dispatch. That probably includes languages like Java with its Optional type.
+
+Ah, interesting point.  When I said "95%", I was talking about the percent of `option`s appearing in WIT interfaces, but also thinking about how `option`s are represented "at rest" in various languages is a good for regularity.
+
+Question: if a lowered function type lowers an `option` into a non-`eq` reference with an empty `struct` representing `none`, can the engine implement `none` with a single-per-type allocation (since the identity isn't observable via `eq` or mutation)?  If so, then the `null` optimization wouldn't even be that big of a win.
+
+---
+
+@rossberg · 2025-06-06T20:36:05Z:
+I would represent None as an i31 ref with value zero (or any random value). It is just an instance of a variant type, where runtimes typically represent nullary constructors as different tagged ints. Which, now that I mention it, is something the variant encoding should also support.
+
+Edit: Though null would equally work for option. What these languages generally can't do is unboxing Some.
+
+---
+
+@gertvv · 2025-06-09T18:52:21Z:
+This is awesome! As an outsider, the wording on variant types is confusing:
+
+> Component `variant` types are matched against a reference to a `struct` type with no fields.
+
+However the example defines a `(struct (field i32))` which looks like a tagged union, but this is not explicitly stated. Is this the correct interpretation? And if so, can the lowering choose to use a smaller (packed) int instead, like the linear memory ABI does?
+
+---
+
+@fitzgen · 2025-06-13T18:25:33Z:
+> This is awesome! As an outsider, the wording on variant types is confusing:
+> 
+> > Component `variant` types are matched against a reference to a `struct` type with no fields.
+> 
+> However the example defines a `(struct (field i32))` which looks like a tagged union, but this is not explicitly stated. Is this the correct interpretation? And if so, can the lowering choose to use a smaller (packed) int instead, like the linear memory ABI does?
+
+Ah I just forgot to update the example. There shouldn't be any `(field i32)` there. Will update the OP shortly.
+
+---
+
+@fitzgen · 2025-06-13T18:50:43Z:
+@lukewagner
+
+> 1\. I'm probably misunderstanding the proposal, wasm-gc or both, but: for `variant` et al, your examples all put the supertype in a separate rec group than the case subtypes but I would think that this doesn't expose the semantic link between "the variant type" and "the case types" that you need to let the core function type tell the whole story.  E.g., iiuc, there's no "edge" in the type graph from `$animal'` to the rec group containing `$dog'`.  (The edge exists in the other direction, ofc, but that's many-to-1, so you couldn't talk about "the rec group that contains subtypes of this supertype".)  Instead, I would think that, since we're sortof hijacking rec groups in this scheme anyways, we'd say that variants have to refer to a `struct` type that is the first of its rec group and all the subsequent rec group members must be its cases; then the `typeidx` used in the core function type points to a rec group that points to the cases.
+
+Because the shape of the cases' rec group is fully defined, there doesn't need to be an explicit link: the engine/fused adapter compiler can simply (re)define the cases' rec group and then rely on type canonicalization.
+
+This approach is slightly more flexible than keeping the base type in the same rec group as the cases, since it allows the base type to be defined in any rec group of the producer's choosing.
+
+> 2\. While you're right about the reason that `option` can't represent `none` with `ref.null` in general, could we say that, when `option<T>` has a non-`null`-allowing `T`, `ref.null` represents `none`?  This is ad hoc and irregular, but we are licensed to do that in the CABI when it's a significant win and `option` is very common and I expect this optimization would to 95% of `option`s in practice.
+>
+> 3\. `result<T>` (no `E`) and `result` (no `T`) are also super common and I think perhaps worth optimizing.  Could the former use `null` for `error` and the latter return a (boolean) `i32` (making it no less efficient than `enum`, so that no one has the perverse incentive to use an `enum` for a `result` for perf reasons)?
+
+I'm fine with ultimately doing this kind of thing, but I am not going to do it for now, in my current prototyping, and therefore I am not going to update the OP with it either (which I will try to keep in sync with my prototyping).
+
+As this extension settles and gets upstreamed into the spec, it should of course describe what we ultimately come to consensus on standardizing, and not what I just happen to have prototyped, but we can cross that bridge when we get to it.
+
+> For the `latin1+utf16` string-encoding, there's the question of how to communicate the dynamic "is it Latin-1 or UTF-16?" boolean (which is packed with the length into an `i32` when using linear memory). One idea is that you could take a page from how variants work and have the static type be `(ref null? array)` and dynamically accept/produce either `(ref (array i8))` or `(ref (array i16))`.
+
+Yeah, this makes sense and the OP reflects a misunderstanding on my part. Will update as soon as I fix my prototype.
+
+> Regarding `own`, `borrow`, `future` and `stream` (as well as waitable sets and async subtasks): one issue I just realized is that various `drop` built-ins trap under various conditions (`own` and `borrow` trap if there are any extant async import calls to which they were lent; the writable end of a `future` traps if dropped without having written a value; etc). As a general rule, we try to avoid ever allowing user code of a safe language to hit a raw wasm trap, so somehow we need to figure out how the language runtime (running as wasm using the CABI) is able to avoid hitting these traps. One option would be to extend the "drop if unreachable" semantics to be "drop if unreachable and the trapping conditions are met", but I'm thinking this will get tricky and subtle. Another option is to force the wasm guest to root `externref`s during times when they would trap if they became unreachable, but this might end requiring the wasm guest to maintain a lot of parallel bookkeeping already maintained by the C-M, maybe adding non-trivial overhead. So I wonder if a nice third option is to leave these types the same as with linear memory (`i32`s that need to be dropped), but introduce new canon built-ins that provide postmortem-notification analogous-to and polyfilled-via [`FinalizationRegistry`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry) and then allow the language runtime to use this primitive to Do The Right Thing itself. Such a built-in could also be used for other guest-internal purposes (such as associating a linear-memory buffer that needs to be freed with a wasm-GC object).
+
+Alternatively, we could continue to require explicit drop calls (as we do now for linear memory) rather than say that these things are implicitly dropped on finalization. If the `externref` becomes unreachable without the future/stream having been explicitly dropped, then the future/stream is never dropped. Language-specific bindings generators can wrap this stuff up similar to what they would have to do now when translating to the linear memory variant of the ABI (e.g. Python would use its `with` construct).
+
+Then, as a next step, we can introduce those canonical builtins for finalizers that allows them to Do The Right Thing.
+
+This approach is smaller and more incremental and crucially doesn't require finalizer support in implementations initially at all.
+
+---
+
+@fitzgen · 2025-06-13T19:02:24Z:
+@rossberg 
+
+> * For the various small scalar types, a common target representation will be i31-ref (e.g., in any language with a uniform representation), so I think (i31 null? ref) should also be allowed as an alternative, for both value and/or storage type.
+> 
+> * For larger numeric types, various languages will probably need boxed representations to be able to process them, so perhaps it should be possible to map to those as well.
+
+This gets at the philosophical question of how much duck typing we want to do. The proposal is doing some amount already with its matching of component types against many core types by their shape, but right now they always match against one shape modulo nullability, subtyping, and rec group. Allowing `i31ref` in various places is widening things such that we would match against multiple shapes. It seems to me like this could potentially be a slippery slope: How many shapes is enough? How do we decide whether a shape is worthy of matching against?
+
+I'm not saying I'm against adding support for `i31ref`, but I do think we should consider what design principles we want to follow in this CM+GC extension.
+
+It is also possible my concerns are overblown, and this is the only additional shape we will actually want to match against.
+
+---
+
+@gertvv · 2025-06-14T06:02:25Z:
+> > However the example defines a `(struct (field i32))` which looks like a tagged union, [...]
+> 
+> Ah I just forgot to update the example. There shouldn't be any `(field i32)` there. Will update the OP shortly.
+
+Does that mean the GC lowering doesn't *have* to have a tag field or does it mean that it *can't* have a tag field? Are there any good alternatives to a tag paired with `br_table` for testing cases (when there are many)?
+
+---
+
+@fitzgen · 2025-06-16T15:14:26Z:
+> Does that mean the GC lowering doesn't _have_ to have a tag field or does it mean that it _can't_ have a tag field?
+
+It cannot have a tag field.
+
+> Are there any good alternatives to a tag paired with `br_table` for testing cases (when there are many)?
+
+You would have to do a series of `br_on_cast[_fail]` instructions.
+
+-------------
+
+If we had actual sum types in the core Wasm type system, things would be easier here, but that was pushed out to a hypothetical post-MVP proposal so that consensus could build around the initial GC proposal and that could actually ship and all that. In the meantime, we have to do the best we can with the tools at our disposal.
+
+https://github.com/WebAssembly/gc/blob/main/proposals/gc/Post-MVP.md#variants
+
+---
+
+@rossberg · 2025-06-16T17:47:51Z:
+@fitzgen:
+> This gets at the philosophical question of how much duck typing we want to do. The proposal is doing some amount already with its matching of component types against many core types by their shape, but right now they always match against one shape modulo nullability, subtyping, and rec group.
+
+Fair enough, I agree that a broader discussion of design principles may be needed. The problem with GC types is that representation choices are less canonical and on top of that, extra copying implies the production of garbage, i.e., is potentially more costly than for linear memory. On the flipside, the use of explicit type choices gives more leeway to support variations.
+
+(Nit: I don't think this is related to duck typing, since the types are still explicitly declared, just with a larger set of coercions.)
+
+
+---
+
+@rossberg · 2025-06-16T17:52:11Z:
+> If we had actual sum types in the core Wasm type system
+
+FWIW, the benefit of making variants primitive at the representation level is reduced by custom descriptors. It is not clear what additional space/performance gain they could guarantee in comparison.
+
+---
+
+@fitzgen · 2025-06-16T18:35:42Z:
+> FWIW, the benefit of making variants primitive at the representation level is reduced by custom descriptors. It is not clear what additional space/performance gain they could guarantee in comparison.
+
+I'm not sure I follow how custom descriptors improve the story for sum types.
+
+The most immediate benefit that first-class sum types would give us over shoe-horning sum types into struct subtypes would be a `br_table`-like instruction for exhaustively matching on cases, instead of a series of `br_on_cast[_fail]` instructions. It is easy for compilers to emit good code for the former; doing the equivalent for the latter would be possible but certainly tricky and would require implementing new analyses and optimizations.
+
+I also imagine that optimizers like binaryen could also perform more optimizations when considering a closed-world set of sum type cases than when they are working with an open-world set of potential subtypes.
+
+---
+
+@rossberg · 2025-06-16T21:05:40Z:
+With custom descriptors you can e.g. store an integer tag in the descriptor to dispatch on with br_table, without wasting space in every variant. That doesn't easily save the consecutive cast, but gets you closer to ideal.
+
+Saving the cast would essentially require adding a case construct to Wasm, which would be quite a bit of machinery. Other than that, sum types do not offer a hell lot of relevant generic optimisations, at least not many that the producer couldn't do already.
+
+---
+
+@badeend · 2025-08-21T06:37:42Z:
+A resource's `(rep ..)` is currently limited to just `i32`s. Example from OP:
+```
+(type $file (resource (rep i32)))
+```
+
+Should this be updated to include GC types as well?
+```
+(type $file (resource (rep (struct (field i32)))))
+```
+
+---
+
+@tanishiking · 2025-11-08T14:13:00Z:
+Hi, having WasmGC support in the Canonical ABI sounds very interesting for WasmGC languages! Just raising a motivating problem with the current Canonical ABI + WasmGC languages:
+
+[Scala.js](https://github.com/scala-js/scala-js) supports Wasm generation using WasmGC, and [scala-wasm](https://github.com/scala-wasm/scala-wasm), which is a fork of Scala.js, has PoC support for the Component Model.
+
+Since all allocated values in our compiler are WasmGC objects, and the current canonical ABI requires most arguments/return values to be on linear memory, **we copy between WasmGC objects and linear memory at Component Model function call boundaries**. As a result, calling a Component Model function requires 2 additional copies between GC objects and linear memory (for arguments and return values). Similarly, when Scala defines and exports a Wasm Component function, 2 additional copies happens as well.
+
+To measure the overhead of these additional copies, we compared Component Model function calls between Rust (non-WasmGC) and Scala (WasmGC). We implement an identity function that takes a string of N bytes in both language, and measured the execution time when calling it through the Component Model.
+
+- `Rust <-> Rust` vs
+- `Scala <-> Scala`: 4 total copies happen (2 copies each in caller and callee between GC objects and linear memory)
+
+
+Input Size | Scala (Mean, ns) | Scala (Std Dev, ns) | Rust (Mean, ns) | Rust (Std Dev, ns)
+-- | -- | -- | -- | --
+10 | 945 | 320 | 184 | 50
+100 | 1,994 | 187 | 487 | 47
+1,000 | 22,269 | 748 | 3,573 | 212
+10,000 | 125,425 | 4,631 | 29,035 | 3,183
+
+And result shows that WasmGC + Component Model is approximately 4-6× slower than Rust across different input sizes.
+
+---
+
+By the way, this data was presented at the WebAssembly Workshop @ ICFP/SPLASH 2025.
+If you're interested, you can find the slides here: https://speakerdeck.com/tanishiking/implementing-and-evaluating-a-high-level-language-with-wasmgc-and-the-wasm-component-model-scalas-case
+
+---
+
+@tanishiking · 2026-02-20T04:51:52Z:
+Hi @fitzgen 
+Would you be open to sharing your prototype of the `wasmtime` / `wasm-tools` changes? I'd be happy to help build out the prototype and validate that the approach works well from the producer side 😃.
+In [scala-wasm](https://github.com/scala-wasm/scala-wasm), (uses WasmGC), we currently have to copy data between GC objects and linear memory when communicating with other components, and it's slow as mentioned in https://github.com/WebAssembly/component-model/issues/525#issuecomment-3506584992 so this proposal would be a significant improvement for us and other GC-based languages.
+
+
+
+---
+
+@fitzgen · 2026-02-23T23:07:20Z:
+@tanishiking everything I prototyped has landed, I don't think I have anything in personal branches. `wasmparser` has an implementation of this pre-proposal and `wasmtime` has the very beginning of an implementation.
+
+But I also haven't been pushing on this very much because (a) I've had other, high-priority things to do, and (b) the whole lazy value lowering work seems like it is going to redo a bunch of the canonical ABI and it perhaps makes sense to delay this effort to that time and/or synchronize with it.
+
+---
+
+@tanishiking · 2026-02-24T08:53:11Z:
+@fitzgen Thanks for update! I'll play around with the current implementations to see what'd be possible within the existing design!
+
+> But I also haven't been pushing on this very much because (a) I've had other, high-priority things to do, and (b) the whole lazy value lowering work seems like it is going to redo a bunch of the canonical ABI and it perhaps makes sense to delay this effort to that time and/or synchronize with it.
+
+Cool! I wasn't aware that [lazy value lowering](https://github.com/WebAssembly/component-model/issues/383) would be actively worked on. It would be great if the `validx` abstraction in lazy value lowering were designed to support not just `i32` pointer/index values but also GC reference values, similar to what this proposal does :)  And I absolutely agree that synchronizing with the lazy value lowering work makes sense :+1:
+
+
+---
+
+@SebastienGllmt · 2026-02-24T16:50:59Z:
+We have a project that also needs Wasm GC support in the component model to work effectively. I'd be happy to collaborate with anybody to get this over the finish line. My email + twitter are in my bio 🙏
+
+---
+
+@simolus3 · 2026-03-22T15:12:25Z:
+How would this interact with the async proposal, specifically the stackless ABI using callbacks? My understanding is that the caller passes a result pointer for an async call for that ABI. I assume a direct port of that to WasmGC might be for the caller to provide some kind of GCed "box" into which `task.return` would write the value?
+
+---
+
+@lukewagner · 2026-03-23T17:59:47Z:
+@simolus3 That sounds right to me.
+
+---
+
+@justinfagnani · 2026-04-22T21:03:26Z:
+Is there anything that interested parties can do to help this effort along?
+
+I'm making a new language for Wasm GC with planned component support built into the compiler, so this issue is at a very critical intersection of features for me.
+
+---
+
+@spotandjake · 2026-04-22T21:54:52Z:
+> Is there anything that interested parties can do to help this effort along?
+> 
+> I'm making a new language for Wasm GC with planned component support built into the compiler, so this issue is at a very critical intersection of features for me.
+
+Not quite sure on your exact question (hopefully, with more info can help you out there). I just wanted to mention that nothing stops you from copying your gc information into linear memory and using the regular component model as it is right now, the only real dissadvantages to this approach, are you have to copy the data which means walking your gc structs or creating converters somehow and you don't get support for finalizers so there isn't really a way to communicate to another component your done with a resource without manually calling free. 
+
+---
+
+@justinfagnani · 2026-04-23T00:47:06Z:
+@spotandjake yes, you can always copy data in and out of linear memory. This is what I do now.
+
+Like @tanishiking points out, for GC-to-GC languages calls, this results in 3 copies per call: 1 in the calling component from GC types to linear memory, 1 in the host from caller linear memory to receiver linear memory, and 1 in the receiver component from linear memory into GC types. Then 3 copies again for return values. And it's not just the copies, you need to include the code to map to and from linear memory, and an allocator.
+
+So this issue is critical for all Wasm GC languages that are used to write components.
+
+---
+
+@kevmoo · 2026-04-23T01:34:51Z:
+What @justinfagnani said! (Hi, @justinfagnani 👋 )
+
+=== ROW 65 | f003082 | https://github.com/bytecodealliance/wasmtime/pull/10924 | 2025-06-04 | domain-subframes ===
+Add intial porting of table_ops from arbitrary to mutatis
+
+---
+
+@khagankhan · 2025-06-04T19:38:43Z:
+<!--
+Please make sure you include the following information:
+
+- If this work has been discussed elsewhere, please include a link to that
+  conversation. If it was discussed in an issue, just mention "issue #...".
+
+- Explain why this change is needed. If the details are in an issue already,
+  this can be brief.
+
+Our development process is documented in the Wasmtime book:
+https://docs.wasmtime.dev/contributing-development-process.html
+
+Please ensure all communication follows the code of conduct:
+https://github.com/bytecodealliance/wasmtime/blob/main/CODE_OF_CONDUCT.md
+-->
+
+This is the initial (unofficial) porting of `table_ops` from `arbitrary` to `mutatis`.
+
+No new features are added. This is a direct port of the existing implementation using the `arbitrary` crate to the `mutatis` framework.
+
+Open to review and feedback.
+
+Initial work towards: bytecodealliance/wasmtime#10327  
+cc @ospencer @fitzgen
+
+
+
+---
+
+@github-actions[bot] · 2025-06-04T22:44:55Z:
+#### Subscribe to Label Action
+
+cc @fitzgen
+
+<details>
+This issue or pull request has been labeled: "fuzzing"
+
+Thus the following users have been cc'd because of the following labels:
+
+* fitzgen: fuzzing
+
+To subscribe or unsubscribe from this label, edit the <code>.github/subscribe-to-label.json</code> configuration file.
+
+[Learn more.](https://github.com/bytecodealliance/subscribe-to-label-action)
+</details>
+
+---
+
+@khagankhan · 2025-06-12T18:40:05Z:
+Thanks, @fitzgen! currently working on it. Will integrate your suggestions in the next commit.
+
+---
+
+@fitzgen · 2025-06-12T18:00:40Z:
+I think we won't need this helper anymore, given the `fixup` helper function I suggested in private communication.
+
+---
+
+@fitzgen · 2025-06-12T18:01:37Z:
+And this can become an arbitrary `insert` instead of `append` (which is a subset of an `insert` operation).
+
+---
+
+@fitzgen · 2025-06-12T18:05:46Z:
+Similarly, I think this function body will get cleaned up a ton with the `fixup` pass. Additionally, whenever possible we don't want to report mutations that we know will fail so if the ops are empty we shouldn't call `c.mutation(...)`. Putting these things together, I expect this will become something like:
+
+```rust
+if !ops.ops.is_empty() {
+    c.mutation(|ctx| {
+        let i = ctx.rng().gen_index(ops.ops.len()).unwrap();
+        ops.ops[i] = choose_random_op();
+        Ok(())
+    })?;
+}
+```
+
+---
+
+@fitzgen · 2025-06-12T18:07:49Z:
+And this can become something like
+
+```rust
+if !ops.ops.is_empty() {
+    c.mutation(|ctx| {
+        let i = ctx.rng().gen_index(ops.ops.len()).unwrap();
+        ops.ops.remove(i);
+        Ok(())
+    })?;
+}
+```
+
+---
+
+@fitzgen · 2025-06-12T18:10:44Z:
+And the `insert` mutation would be something like
+
+```rust
+c.mutation(|ctx| {
+    let i = ctx.rng().gen_index(ops.ops.len() + 1).unwrap();
+    ops.ops.insert(random_op());
+    Ok(())
+})?;
+```
+
+---
+
+@fitzgen · 2025-06-12T18:13:36Z:
+This is accidentally `O(n*n)` because the helper walks every op in every iteration of this loop. You'll want to have a local `stack` variable that is adjusted as ops are generated here.
+
+---
+
+@fitzgen · 2025-06-12T18:15:11Z:
+And rather than generating the max every time, it probably makes sense to do something like
+
+```rust
+for _ in ctx.rng().gen_index(MAX_OPS).unwrap() {
+   // ...
+}
+```
+
+---
+
+@fitzgen · 2025-06-12T18:16:02Z:
+And this can be `TableOps::default()` where the default is an empty set of ops, since we will generate new ops just below. There is no need to start with this prologue every time.
+
+---
+
+@fitzgen · 2025-06-12T18:21:02Z:
+Don't think this needs to be `pub` because I don't think it is used outside this module.
+
+---
+
+@fitzgen · 2025-06-12T18:21:08Z:
+Ditto.
+
+---
+
+@fitzgen · 2025-06-12T18:23:20Z:
+This macro should just be `TableOps::default()`, which can simply be derived on the type rather than written out.
+
+---
+
+@fitzgen · 2025-06-12T18:23:52Z:
+Here we would add `Default` next to `Debug`.
+
+---
+
+@fitzgen · 2025-06-12T18:25:18Z:
+I don't think we should need this, and can simply use an empty `TableOps::default()` instead, but if we did want to create this particular sequence in a bunch of places we should just use a function rather than a macro.
+
+---
+
+@fitzgen · 2025-06-12T18:26:58Z:
+Because the `TableOpsMutator` is the default, we don't actually need this test; it is redundant with `mutate_table_ops_with_default_mutator`.
+
+---
+
+@fitzgen · 2025-06-12T18:27:35Z:
+Reminder for this TODO.
+
+---
+
+@khagankhan · 2025-06-12T18:38:01Z:
+Yes! I am working on that and a `fixup` method results in much cleaner code.
+
+---
+
+@khagankhan · 2025-06-12T18:38:27Z:
+Right!!
+
+
+---
+
+@khagankhan · 2025-06-24T16:37:15Z:
+Removed.
+
+
+---
+
+@khagankhan · 2025-06-24T16:37:21Z:
+Added
+
+---
+
+@khagankhan · 2025-06-24T16:37:42Z:
+added new methods instead of macros
+
+---
+
+@khagankhan · 2025-06-24T16:37:50Z:
+Done
+
+---
+
+@khagankhan · 2025-06-24T16:38:09Z:
+Added new empty() method
+
+=== ROW 66 | f003126 | https://github.com/bevyengine/bevy/pull/19639 | 2025-06-14 | domain-subframes ===
+Adding TextOutline component to add outlining by upstreaming implemen…
+
+---
+
+@TotalKrill · 2025-06-14T14:31:05Z:
+Add Text Outline component to add text borders/outline to text nodes by upstreaming implementation from bevy_cobweb_ui
+
+![image](https://github.com/user-attachments/assets/55514bad-fe25-47c7-a43d-fb9c8ebf6ea6)
+
+
+fixes: #17076
+fixes: #7210
+
+
+---
+
+@hukasu · 2025-06-14T14:50:25Z:
+Can you add some screenshots for showcase? With and without the component
+
+I don't know if permission to upstream something is necessary, but have you talked with either someone from bevy and/or bevy_cobweb_ui?
+
+---
+
+@hukasu · 2025-06-14T14:52:50Z:
+Also have 2 different lines for the fixes, GitHub only linked to the first issue 
+
+---
+
+@alice-i-cecile · 2025-06-14T19:41:26Z:
+@UkoeHB are you okay if we upstream this?
+
+---
+
+@UkoeHB · 2025-06-14T20:19:38Z:
+@alice-i-cecile yes, no problem.
+
+---
+
+@UkoeHB · 2025-06-16T03:26:07Z:
+@TotalKrill I applied @ickshonpe's feedback: <https://github.com/UkoeHB/bevy_cobweb_ui/blob/main/src/ui_bevy/ui_ext/text_rendering.rs>
+
+Note we need to batch anti-aliased glyphs separate from non-anti-aliased glyphs since they have different colors.
+
+---
+
+@UkoeHB · 2025-06-16T03:29:23Z:
+> Outline width should be clamped to a relatively low max value.
+
+I don't like this, but you are probably right that it's necessary. With a UI scale of 6, on an M1 Mac (scale factor 2), with width 4, the lag penetrated my OS (laggy cursor even without the test app focused).
+
+---
+
+@ickshonpe · 2025-06-16T10:41:37Z:
+> > Outline width should be clamped to a relatively low max value.
+> 
+> I don't like this, but you are probably right that it's necessary. With a UI scale of 6, on an M1 Mac (scale factor 2), with width 4, the lag penetrated my OS (laggy cursor even without the test app focused).
+
+Yep it's very non-obvious that text outlines should be so expensive.
+
+We could make width into an enum even. Have thin, medium, and thick variants or something?
+
+---
+
+@TotalKrill · 2025-06-16T16:10:03Z:
+> We could make width into an enum even. Have thin, medium, and thick variants or something?
+
+I would argue that we could go with a clearer enum of Px1, Px2, Px3. Mostly because Px4 is so expensive as to be almost unusable. It would also quite clearly communicate the limitations of this implementation, while still allowing us to have it. 
+
+I imagine that for non-changing outlined text, this would be very usable anyway. 
+
+---
+
+@TotalKrill · 2025-06-16T17:04:46Z:
+Let me know what You think of this impl, I dont particulary like it, but it is very hard to miss the potential performance cost of using this feature.
+
+For my usecase to be able to read white text, on a mostly white background when viewed from certain angles, this will be very sufficient
+
+---
+
+@TotalKrill · 2025-06-17T16:04:42Z:
+Updated with your reference implementation, just adjusted for the changes from GlobalTransform -> UiGlobalTransform
+
+---
+
+@hukasu · 2025-06-17T23:03:08Z:
+can we get some screenshots for showcase?
+
+---
+
+@alice-i-cecile · 2025-06-18T05:21:29Z:
+Screenshots would be nice but not essential; just drop them in the PR description if you make some.
+
+---
+
+@hukasu · 2025-06-18T11:49:54Z:
+that is what i meant, the PR template usually has a `## Showcase` section
+
+---
+
+@hukasu · 2025-06-18T14:53:27Z:
+this PR is also only linked to one of the 2 issues listed on the post
+
+---
+
+@UkoeHB · 2025-06-18T20:34:47Z:
+Here is a better image for the showcase. Note that it was taken on a Mac, which has a 2.0 scale factor. Outlines will look different on non-Macs. The font size is 25 (default).
+<img width="197" alt="text_outline_ex" src="https://github.com/user-attachments/assets/810d3cef-b2dc-4f12-850f-c4c46b677f4a" />
+
+
+---
+
+@alice-i-cecile · 2025-06-19T00:48:28Z:
+>  i mean it's definitely well contained and the docs call out the limits but is hilariously inefficient. i'm generally in favor of making things possible so would be okay with it, but allowing this kind of code is definitely how you get death by a thousand cuts in terms of overall perf. at the same time, no one in here is going to pick this up anytime soon i think
+
+From @tychedelia [on Discord](https://discord.com/channels/691052431525675048/743663924229963868/1385058198821539971). I want SME buy-in on shipping this.
+
+---
+
+@alice-i-cecile · 2025-06-19T00:58:08Z:
+Could we use this as a basis for an offline font preprocessing feature? Could we use this flavor of algorithm to bake fonts with a fixed outline width / color once, and then allow users to import it into their game at normal performance?
+
+I'm *really* reluctant to merge something this slow and jank, even though I appreciate that it's better than it could have been.
+
+---
+
+@superdump · 2025-06-19T01:46:57Z:
+Does our glyph rendering not have any font styling capabilities? This solution, while functional, is really really inefficient.
+
+---
+
+@ickshonpe · 2025-06-19T09:25:27Z:
+When I first looked at this, I thought it wasn't great but better than nothing. But I'm feeling very negative about it now, even with all the improvements that have been made. As long as the glyphs are batched correctly there shouldn't be any performance issues for release builds, but debug builds can still  potentially get crushed by it. And even if we document the pitfalls, most users aren't going to carefully read the docs for text outlines. 
+
+There are still some remaining non-trivial bugs with this approach too:
+* Visual artifacts if you apply any scaling or rotation using the transform.
+* The outline isn't an outline. If you make a text node with a transparent text color and a white outline, you should see a "hollow" white outline. With this implementation though it's just going to be a mess.
+
+---
+
+@ickshonpe · 2025-06-19T09:53:15Z:
+> Could we use this as a basis for an offline font preprocessing feature? Could we use this flavor of algorithm to bake fonts with a fixed outline width / color once, and then allow users to import it into their game at normal performance?
+
+There might be less problems than with the multi-glyph outlines but it's still a very compromised approach. The changes in this PR are isolated at least and it doesn't add any extra complexity to the text and font management systems.
+
+Baking in the outline color is another performance footgun because it would generate an extra set of glyphs for each color and I pity the poor user stuck in purgatory with a pulsating text outline effect.
+
+We could generate the outlines as a second set of textures that get drawn behind the glyphs. The problem here is that either we generate a solid outline that sets the pixels behind the glyph opaque, breaking transparent text, or we leave a transparent gap behind the text and probably break anti-aliasing, scaling and rotation. 
+
+---
+
+@ickshonpe · 2025-06-19T10:18:18Z:
+> Does our glyph rendering not have any font styling capabilities? This solution, while functional, is really really inefficient.
+
+No, I thought about implementing something sdf and/or shader based myself but I'm not a rendering person and got too much work in progress already. A couple of people have expressed an interest on working on bevy's text rendering in discord before but nothing has come of it so far. 
+
+---
+
+@TotalKrill · 2025-06-20T10:39:26Z:
+I kind of feel that at least a small reason as to why this was closed could be warranted for future users who search for outlined text in bevy. 
+
+---
+
+@alice-i-cecile · 2025-06-20T16:42:41Z:
+> I kind of feel that at least a small reason as to why this was closed could be warranted for future users who search for outlined text in bevy.
+
+Good call! Ultimately, this was closed because it was too much of a performance footgun for us to widely promote, in addition to the bugs listed above by @ickshonpe. Ultimately I really think this needs a proper SDF font-rendering solution.
+
+That said, this is a good hacky solution for some applications, and future users should consider looking for third-party crates or adapting this code for their own projects if outlined text is something they desperately need (in small amounts).
+
+---
+
+@UkoeHB · 2025-06-22T23:08:15Z:
+The content of this PR was moved to the new [`bevy_slow_text_outline`](https://crates.io/crates/bevy_slow_text_outline) crate.
+
+---
+
+@UkoeHB · 2025-06-14T20:23:09Z:
+```suggestion
+/// Component for adding an outline around UI text.
+```
+
+---
+
+@UkoeHB · 2025-06-14T20:24:48Z:
+```suggestion
+title: UI Text Outline 
+```
+
+---
+
+@UkoeHB · 2025-06-14T20:25:01Z:
+```suggestion
+Support for text outline through adding a `TextOutline` component to an entity with a `Text` component.
+```
+
+---
+
+@ickshonpe · 2025-06-14T21:42:58Z:
+It's not obvious, but this has catastrophically awful worst case performance. 
+
+For example, suppose that a `Text` has three glyphs, each from a different font, and an outline width of 3. In the inner `PositionedGlyph`s loop the font texture atlas changes for each glyph, so a new batch is generated per glyph.  The inner loop is repeated 48 times, so 144 batches are produced for just three glyphs.
+
+Instead the `PositionedGlyph`s need to be iterated in the outer loop. Then all the outline sprites for each glyph will be batched together, at worst resulting in one batch per glyph.
+
+
+
+---
+
+@TotalKrill · 2025-06-15T20:11:51Z:
+Please have a look if I understood you correctly when you have a chance, I just moved the order of the iterations as I think you meant. 
+
+---
+
+@UkoeHB · 2025-06-15T20:22:19Z:
+```suggestion
+                    if text_layout_info.glyphs.get(i + 1).is_none_or(|info| {
+                        info.atlas_info.texture != atlas_info.texture
+                    }) {
+```
+I think it's safe to remove this, since span-bound text color is irrelevant. @ickshonpe what do you think?
+
+---
+
+@UkoeHB · 2025-06-15T20:23:23Z:
+Also, this `ExtractedUiNode` bit needs to be moved to the outer loop.
+
+---
+
+@TotalKrill · 2025-06-15T20:37:01Z:
+If i move the extraced_uinodes.push bit, I get strange artifacts in the output...
+
+---
+
+@UkoeHB · 2025-06-15T20:44:05Z:
+> If i move the extraced_uinodes.push bit, I get strange artifacts in the output...
+
+Only `extracted_uinodes.uinodes` should be in the outer loop (after the inner loop). The `.glyphs` needs to stay in the inner loop.
+
+---
+
+@TotalKrill · 2025-06-15T21:13:04Z:
+Yeah, thats what I tried, and that ended up giving me the artifacts, I am not quite sure as to why, but the output hints at me pushing the values wrongly somehow..
+
+```rust
+                    extracted_uinodes.glyphs.push(ExtractedGlyph {
+                        transform: Affine2::from_mat3(
+                            transform * Mat3::from_translation(*position),
+                        ),
+                        rect,
+                    });
+                } // offset y
+            } // offset x
+            if text_layout_info.glyphs.get(i + 1).is_none_or(|info| {
+                info.span_index != *span_index || info.atlas_info.texture != atlas_info.texture
+            }) {
+                start = end;
+                extracted_uinodes.uinodes.push(ExtractedUiNode {
+                    render_entity: commands.spawn(TemporaryRenderEntity).id(),
+                    stack_index: uinode.stack_index,
+                    color,
+                    image: atlas_info.texture.id(),
+                    clip: clip.map(|clip| clip.clip),
+                    extracted_camera_entity,
+                    rect,
+                    item: ExtractedUiItem::Glyphs { range: start..end },
+                    main_entity: entity.into(),
+                });
+            }
+            end += 1;
+        }
+```
+
+
+---
+
+@UkoeHB · 2025-06-15T21:49:24Z:
+Ah looks like `end += 1;` needs to be moved to the inner loop after pushing to `.glyphs`. And `start = end;` needs to move to the top of the outer loop. The conditional there should be moved to a separate bool variable since you'll have two blocks conditioned on it.
+
+---
+
+@UkoeHB · 2025-06-15T22:13:10Z:
+Ok I fixed it in `bevy_cobweb_ui`: <https://github.com/UkoeHB/bevy_cobweb_ui/blob/a3265e1c80a4b21cdd7cf8200e294f2a6712248e/src/ui_bevy/ui_ext/text_rendering.rs#L11>
+
+---
+
+@ickshonpe · 2025-06-15T23:27:20Z:
+> I think it's safe to remove this, since span-bound text color is irrelevant. @ickshonpe what do you think?
+
+Yep not needed.
+
+---
+
+@ickshonpe · 2025-06-15T23:30:59Z:
+```suggestion
+                        transform: transform * Affine2::from_translation(*position),
+```
+
+---
+
+@ickshonpe · 2025-06-15T23:35:01Z:
+I think multiplying the offset scale factor is probably wrong, it might cause gaps in the outline at higher scale factors even. The outline width needs to be scaled instead.
+
+
+---
+
+@ickshonpe · 2025-06-15T23:38:58Z:
+The offsets could be in a circular pattern instead, so the outline doesn't get distorted.
+
+---
+
+@UkoeHB · 2025-06-16T02:19:16Z:
+```suggestion
+        if !inherited_visibility.get() || uinode.is_empty() || outline.width == 0.0 {
+            continue;
+        }
+```
+
+---
+
+@ickshonpe · 2025-06-16T11:03:59Z:
+```suggestion
+                    if width * width < offset_x * offset_x + offset_y * offset_y {
+                        continue;
+                    }
+```
+
+This uses 21% less glyphs and the outlines mostly look much nicer:
+
+before:
+![sharp](https://github.com/user-attachments/assets/6925bdcb-aa5b-4d52-8f8d-3039182467a6)
+
+after:
+![rounded](https://github.com/user-attachments/assets/6d4c207b-2128-45e4-82bb-a4992f677acb)
+
+---
+
+@UkoeHB · 2025-06-16T20:45:49Z:
+```suggestion
+/// The width in pixels of a text outline.
+///
+/// The computation cost of the outline increases exponentially with width in the current implementation, so it is not recommended to use a width greater than 3.
+///
+/// Outline width is scaled like other parts of UI, so computation cost may unexpectedly increase when changing `UiScale`.
+```
+
+---
+
+@UkoeHB · 2025-06-17T18:29:51Z:
+```suggestion
+                            -0.5 * uinode.size() + offset,
+```
+It's been moved to the width now.
+
+---
+
+@hukasu · 2025-06-18T14:33:23Z:
+Could you replace this for `.expect` or `let Some(rect) = ... else { unreacheable!() };` to be more explicit
+
+=== ROW 67 | f003169 | https://github.com/esp-rs/esp-hal/pull/3687 | 2025-06-24 | domain-subframes ===
+Allow splitting control over modem clocks.
+
+---
+
+@Frostie314159 · 2025-06-24T13:26:21Z:
+## Thank you for your contribution!
+
+We appreciate the time and effort you've put into this pull request.
+To help us review it efficiently, please ensure you've gone through the following checklist:
+
+### Submission Checklist 📝
+- [x] I have updated existing examples or added new ones (if applicable).
+- [x] I have used `cargo xtask fmt-packages` command to ensure that all changed code is formatted correctly.
+- [x] My changes were added to the [`CHANGELOG.md`](https://github.com/esp-rs/esp-hal/blob/main/esp-hal/CHANGELOG.md) in the **_proper_** section.
+- [ ] I have added necessary changes to user code to the [Migration Guide](https://github.com/esp-rs/esp-hal/blob/main/esp-hal/MIGRATING-0.21.md).
+- [x] My changes are in accordance to the [esp-rs developer guidelines](https://github.com/esp-rs/esp-hal/blob/main/documentation/DEVELOPER-GUIDELINES.md)
+
+#### Extra:
+- [x] I have read the [CONTRIBUTING.md guide](https://github.com/esp-rs/esp-hal/blob/main/documentation/CONTRIBUTING.md) and followed its instructions.
+
+### Pull Request Details 📖
+
+#### Description
+This PR seeks to allow splitting the radio clock controller for all modems. Since I'm not sure what the best architectural choice is, due to the limited public knowledge on the clock tree of the modems, the first commit only contains a rough overview of the architecture.
+
+Closes https://github.com/esp-rs/esp-hal/issues/1447
+
+#### Testing
+
+
+
+---
+
+@Frostie314159 · 2025-06-24T13:38:53Z:
+I'd really appreciate feedback on the architecture.  I'll try to figure out more about the modem clock tree, from IDF.
+
+---
+
+@bugadani · 2025-06-24T13:48:20Z:
+> I'd really appreciate feedback on the architecture. 
+
+There's not much to give feedback on, this is fine as long as the different radio users use different clock bits. Although maybe it would be better to actually count the PHY users up and down.
+
+---
+
+@Frostie314159 · 2025-06-24T14:39:53Z:
+I'd see the use case for simply counting the refs, but one issue I see with it is, that unless we count the reference for each modem clock controller individually, just repeatedly calling the function to disable the PHY clock on one modem clock controller, would eventually disable the PHY clock, even if different modems still rely on it. 
+
+---
+
+@bugadani · 2025-06-24T14:44:00Z:
+> I'd see the use case for simply counting the refs, but one issue I see with it is, that unless we count the reference for each modem clock controller individually, just repeatedly calling the function to disable the PHY clock on one modem clock controller, would eventually disable the PHY clock, even if different modems still rely on it.
+
+Take a look at how peripheral clocks are kept alive, there is no safe way to drop more clocks than what was created with that pattern.
+
+---
+
+@Frostie314159 · 2025-06-24T15:18:21Z:
+Ah yeah, makes sense. I'll go and implement it that way.
+
+---
+
+@Frostie314159 · 2025-06-24T20:22:05Z:
+I have implemented all modem clock controllers and adjusted `esp-ieee802154` to use the split API. I can revert that if necessary. The issue I currently see, that after the peripherals, the PHY clock state will remain enabled, if previously set, even though no peripheral technically holds a reference to it. The question is, whether it really makes sense to have one interface for all, since no single driver would conceivably require access to multiple modems. I also renamed the `reset_mac` function to `reset_wifi_mac`, since there was absolutely no documentation, which MAC it's supposed to reset.
+
+---
+
+@Frostie314159 · 2025-06-25T13:13:36Z:
+I also think something like a clock guard struct would make sense. I'll try to implement something like that.
+
+---
+
+@Frostie314159 · 2025-06-25T23:45:53Z:
+I've made some major adjustments to the code, namely removing the `RadioClockController` entirely, moving the functionality to the peripheral structs, making `init_radio_clocks` a public function and added a function to unsafely reduce the PHY clock ref count for a modem. I integrated these changes with esp-hal and esp-ieee802154, and updated a handful of examples.
+
+---
+
+@Frostie314159 · 2025-07-02T12:48:15Z:
+What should I do about the migration guide? 
+
+---
+
+@bjoernQ · 2025-07-03T07:02:42Z:
+Kind of nitpick but all the comments like _stealing X is safe since it is passed into `init`_ are not correct since BT and WIFI are _not_ passed into `init` - I understand how these comments evolved here but it will be confusing to future readers
+
+---
+
+@bjoernQ · 2025-07-08T06:18:31Z:
+I think this looks really good - one last remaining nitpick:
+
+There are still some comments like "stealing .. is safe since it is passed into `init`" - no peripheral is passed to `init` anymore with this PR
+
+
+---
+
+@bugadani · 2025-07-08T17:23:51Z:
+Thanks a lot for this :)
+
+---
+
+@bugadani · 2025-06-24T13:42:27Z:
+You don't need the critical section around an atomic u8
+
+---
+
+@bugadani · 2025-06-24T13:44:57Z:
+It's the old ref count 🙃
+
+---
+
+@bugadani · 2025-06-24T13:45:17Z:
+As long as there is only one place where you can enable a particular clock at a time (i.e. it's not possible to enable wifi clocks twice), this is fine, but is that always ensured?
+
+---
+
+@bugadani · 2025-06-24T13:45:51Z:
+What you want here is an atomic fetch_or
+
+---
+
+@Frostie314159 · 2025-06-24T14:07:11Z:
+Sounds good, I'll add it.
+
+---
+
+@Frostie314159 · 2025-06-24T14:11:42Z:
+Looking at it now, that makes sense. 
+
+---
+
+@bugadani · 2025-06-24T14:37:33Z:
+There is a race condition here, if code enters `enable_phy` and another clock user enables its clock, the result is unpredictable.
+
+---
+
+@Frostie314159 · 2025-06-24T14:39:43Z:
+Should I use a critical section in this case?
+
+---
+
+@bugadani · 2025-06-25T05:06:47Z:
+Use `Cell<u8>` please. If you are in a critical section, these don't need to be atomic.
+
+---
+
+@bugadani · 2025-06-25T05:11:05Z:
+Move the unstable attribute to the methods, please.
+
+---
+
+@bugadani · 2025-06-25T05:11:15Z:
+```suggestion
+#[instability::unstable]
+impl ModemClockController for BtClockController<'_> {
+```
+
+---
+
+@bjoernQ · 2025-06-25T06:31:39Z:
+I guess this change is not intentional
+
+---
+
+@Frostie314159 · 2025-06-25T09:19:12Z:
+Nope it isn't. I was testing this with the zigbee network in our Hackerspace, which is on channel 11. I'll remove it.
+
+---
+
+@bugadani · 2025-06-25T13:18:42Z:
+Just looking at this, do we even want manual access to RCC? Since you already store the clock refcounts in a global static, why do we care about the clock controllers in the first place? What if we removed `RADIO_CLK` altogether?
+
+---
+
+@Frostie314159 · 2025-06-25T13:26:35Z:
+Makes sense, since if anyone could only control the clocks with the ClockGuard facade through a static API, then even in the worst case scenario no clock would ever be turned off, while another one relied on it. 
+The issue I see is with the MAC resets, since those can be potentially destructive. On the other hand, I don't really see, why more than one piece of code at a time would require control over a modem clock. So being able to give exclusive control over one modem to a piece of code, seems more logical, as it would also make the MAC (and technically BB) resets a non-issue.
+
+---
+
+@bugadani · 2025-06-25T13:29:48Z:
+I'd just implement all relevant code for the radio singletons, then only radio users could meddle with any of this. What do you think about that? (Whether it's a trait implementation, a driver that wraps them, or just inherent methods, it doesn't really matter, although the singletons should generally not actually implement logic...)
+
+---
+
+@Frostie314159 · 2025-06-25T13:33:32Z:
+So you mean remove the `RadioClockController` entirely, implement `ModemClockController` for the `WIFI`, `BT` and `IEEE802154` peripheral structs and keep the PHY clock ref count in place?
+
+---
+
+@bugadani · 2025-06-25T13:40:15Z:
+Roughly yes, but let's just say I'm trying to give you ideas, not necessarily a blueprint to follow.
+
+---
+
+@bugadani · 2025-06-27T08:03:44Z:
+Do you think we can also remove the RADIO_CLK peripheral?
+
+---
+
+@bugadani · 2025-06-27T08:06:52Z:
+Just a note for future improvement, this refcounter is now unnecessary, I think - we just need some way to tell if `decrease_phy_clock_ref_count` has reached 0.
+
+---
+
+@bugadani · 2025-06-27T08:07:55Z:
+I think I'd prefer checked_sub and a panic (not a simple `-` to save binary size when using defmt), to catch cases where we shouldn't decrease the refcount.
+
+---
+
+@Frostie314159 · 2025-06-27T09:23:44Z:
+I don't really see a reason why we should keep it, since it's not directly backed by hardware anyways.
+
+---
+
+@Frostie314159 · 2025-06-27T09:24:35Z:
+Yeah right, we only need one now.
+
+---
+
+@Frostie314159 · 2025-07-01T15:05:34Z:
+I've removed it with the latest commit.
+
+---
+
+@Frostie314159 · 2025-07-01T15:05:51Z:
+I've reduced it to one.
+
+---
+
+@Frostie314159 · 2025-07-01T15:06:19Z:
+I added an `expect` with an error message describing the problem.
+
+---
+
+@bugadani · 2025-07-02T10:38:16Z:
+Can you please avoid auto-formatting TOML files? It's not great :D
+
+---
+
+@Frostie314159 · 2025-07-02T10:42:50Z:
+Oh crap, yeah, I'll fix it. I haven't yet figured out how to disable the extension for neovim.
+
+---
+
+@bugadani · 2025-07-02T12:00:56Z:
+Let use the `unwrap!` macro here. You can still print a message, but it'll be defmt-formatted if that's enabled.
+
+---
+
+@bugadani · 2025-07-02T12:02:15Z:
+This function is not `unsafe`, so you don't need a `# Safety` comment. On the other hand, if this may panic, you need a `# Panics`. We also shouldn't really recomment using mem::forget here, as we explicitly say not to use it in the crate docs.
+
+---
+
+@bugadani · 2025-07-02T12:07:58Z:
+These comments no longer needs the parens, as peripherals are now always passed by value
+
+---
+
+@Frostie314159 · 2025-07-02T12:14:21Z:
+I can add a method for the PhyClockGuard, which forgets it. 
+
+---
+
+@bugadani · 2025-07-02T12:18:22Z:
+please don't, let's not encourage bad behaviour
+
+---
+
+@bugadani · 2025-07-02T12:49:18Z:
+Technically this isn't true anymore, this just track how many users keep the PHY clock alive :)
+
+---
+
+@bugadani · 2025-07-02T12:49:51Z:
+This is fine as a fact, although I'm not sure how much value this comment has in the source :)
+
+---
+
+@bugadani · 2025-07-02T12:50:20Z:
+This comment also seems outdated
+
+---
+
+@bugadani · 2025-07-02T12:51:22Z:
+Please mark all new public api with `instability::unstable`. Could this maybe be called automatically, without exposing a new function? Do we need a deinit counterpart when we're tearing down esp-wifi?
+
+---
+
+@bugadani · 2025-07-02T12:53:38Z:
+```suggestion
+    /// Decreases the PHY clock reference count for this modem ignoring currently alive [PhyClockGuard]s.
+```
+
+---
+
+@bugadani · 2025-07-02T12:54:35Z:
+```suggestion
+    /// This function panics if the PHY clock is inactive. If the ref count is lower than the number of alive [PhyClockGuard]s, dropping a guard can now panic.
+```
+
+---
+
+@bugadani · 2025-07-02T12:55:06Z:
+```suggestion
+    /// Reset the Wi-Fi MAC.
+```
+
+---
+
+@bjoernQ · 2025-07-03T07:11:15Z:
+I see why but it looks a bit fishy to me:
+
+It doesn't matter which of the peripherals we steal here since all we need it for is to inc/dec the phy-ref-count (and enable/disable it) - but I guess this pattern deserves more comments to not confuse future readers of this code
+
+---
+
+@Frostie314159 · 2025-07-03T13:42:42Z:
+I could also export the internal functions, but with `#[doc(hidden)]`.
+
+---
+
+@bjoernQ · 2025-07-04T07:05:36Z:
+I guess it's fine code wise. We should just have a comment why we use potentially unrelated peripherals (e.g. when using BT and we use WIFI here) and why that is fine
+
+WIFI and BT are also not passed into `init` - they are passed into `wifi::new` / `BleConnector::new` (we have a few of similar comments which are now not exactly correct)
+
+
+
+---
+
+@bugadani · 2025-07-07T15:57:08Z:
+I don't think this is valid syntax, you may need to use cfg_if or assign these to variables first. But I'd honestly just prefer type aliasing these peripherals and not introducing a new function just to wrap `steal`
+
+---
+
+@bugadani · 2025-07-07T16:07:09Z:
+Hmm apparently, maybe, the unsafe block makes this right 🤔
+
+---
+
+@MabezDev · 2025-07-08T07:56:04Z:
+One downside to this is that Ieee can now coexist with esp-wifi, but in reality they conflict. Long term I think the ieee driver probably needs to be folded into esp-wifi though.
+
+---
+
+@MabezDev · 2025-07-08T07:58:05Z:
+It's probably fine to continue like this, but could we get a comment somewhere in the ieee driver lib.rs that coex with esp-wifi isn't supported?
+
+---
+
+@Frostie314159 · 2025-07-08T12:38:50Z:
+Yeah, I'll add it. Once we have a unified crate for PHY init and coex, that may get better.
+
+---
+
+@Frostie314159 · 2025-07-08T14:22:00Z:
+I added some comments to the docs of `esp-ieee802154` and `esp-wifi`. LMK, if you think they are adequate.
+
+---
+
+@bugadani · 2025-07-08T15:39:41Z:
+A bit more nit picking, sorry, but these don't need to take `&mut self` - only a single peripheral singleton should exist at a time, so every reference is technically exclusive.
+
+---
+
+@Frostie314159 · 2025-07-08T16:51:37Z:
+🥲 i'll fix it, once I'm back at my laptop
+
+---
+
+@bugadani · 2025-07-08T17:23:45Z:
+actually, let's just keep this as is, the peripehrals are `Sync` currently and accepting `&self` would actually be a problem.
+
+=== ROW 68 | f003238 | https://qdrant.tech/blog/case-study-gooddata | 2025-07-09 | domain-subframes ===
+How GoodData turbocharged AI analytics with Qdrant
+Vector Space Stream: a research-first broadcast for engineers. Eight talks on compression, edge, hybrid search, and more. Sept 17. Tune in
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Solutions
+Use Cases
+RAG
+Recommendation Systems
+Advanced Search
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Certification
+Security
+Resources
+Benchmarks
+Blog
+Technical Articles
+Events
+Demos
+Startup Program
+Bug Bounty Program
+Company
+About us
+Customers
+Partners
+Careers
+Contact us
+Pricing
+Log in
+Start Free0
+How GoodData turbocharged AI analytics with Qdrant
+Daniel Azoulai·
+July 09, 2025
+Home
+/
+Blog
+/
+How GoodData turbocharged AI analytics with Qdrant
+On this page:
+GoodData’s Evolution into AI-Powered Analytics
+Scaling AI Capabilities to Meet Enterprise Demands
+Deploying Qdrant’s Scalable Vector Database
+Real-Time Performance and Scalability Gains
+Positioned for Advanced AI Growth
+Additional resources
+Share on X
+Share on LinkedIn
+GoodData’s Evolution into AI-Powered Analytics
+AI is redefining how people interact with data, pushing analytics platforms beyond static dashboards toward intelligent, conversational experiences. While traditionally recognized as a powerful BI platform, GoodData is laser-focused on accelerating both ’time to insight’ and ’time to solution’ by enhancing productivity for analysts and business users alike.
+What sets GoodData apart is its unique position in the market: a composable, API-first platform designed for teams that build data products, not just consume them. With deep support for white-labeled analytics, embedded use cases, and governed self-service at scale, GoodData delivers the flexibility modern organizations need. With AI being integrated across every layer of the platform, GoodData is helping their over 140,000 end customers move from traditional BI to intelligent, real-time decision-making.
+Scaling AI Capabilities to Meet Enterprise Demands
+Initially, GoodData’s prototype leveraging OpenAI faced scalability limitations. The initial version attempted to load GoodData’s entire semantic model into the AI context for every user query. This led to high compute costs, slow response times, and exceeded technical limits of large language models. Instead, directly embedding extensive semantic layers into LLM contexts proved costly, slow, and impractical.
+Jan Soubusta, Field CTO at GoodData, recalled:
+“Putting the whole semantic layer directly into an LLM was unsustainable. The response times ballooned, and we consistently hit context size limits.”
+This shift in approach was essential, as most GoodData customers work with complex data models, often spanning tens or even hundreds of datasets and metrics, unlike traditional desktop BI tools, which typically support a single user working with a single dataset at any given time.
+Deploying Qdrant’s Scalable Vector Database
+GoodData transitioned to a Retrieval-Augmented Generation (RAG) strategy, requiring a high-performance vector database. After exploring DuckDB and pgvector, GoodData chose Qdrant due to its high-availability architecture and superior performance.
+GoodData leveraged Qdrant’s official Helm chart, deploying smoothly in Kubernetes and efficiently managing near-real-time embedding updates, crucial for multilingual semantic layers.
+Real-Time Performance and Scalability Gains
+For enterprise customers embedding GoodData as whitelabeled analytics solutions, these improvements mean AI assistants can respond as quickly as a human analyst, responding with relevant metrics, dashboards, or insights in mere seconds.
+And adopting Qdrant brought significant benefits to empower GoodData’s AI assistant to do this, include:
+Embedding updates completed in seconds (hundreds to thousands per minute).
+Semantic search results returned within 100 milliseconds.
+AI assistant responses are maintained at approximately 5–10 seconds, with Qdrant’s latency overhead negligible.
+Jan emphasized performance efficiency:
+“The overhead from Qdrant is negligible; queries run in tens of milliseconds, making it ideal for real-time analytics applications.”
+Positioned for Advanced AI Growth
+This shift positions GoodData not just as a dashboard provider, but as a foundation for next-gen AI applications embedded directly into enterprise products. In the future, GoodData expects to add significant personalization via
+AI-powered data stories
+Turnkey agent-to-agent interfaces and orchestration
+GenAI- supported findops optimization
+Perceptive “always on” analytics.
+Qdrant provides GoodData a stable, scalable foundation for expanding into document-based semantic search and ontology management. With Qdrant, GoodData confidently supports complex, real-time AI use cases, enhancing end-user accessibility and productivity.
+Architecture to enable real-time monitoring and AI-driven search capabilities in Kubernetes environment.
+Additional resources
+GoodData live demo
+Free GoodData trial
+Qdrant Cloud signup
+Get Started with Qdrant FreeGet Started
+Products
+Qdrant Vector Search Engine
+Qdrant Cloud
+Qdrant Hybrid Cloud
+Qdrant Enterprise Solutions
+Qdrant Cloud Inference
+Qdrant Edge (Beta)
+Qdrant Serverless (Coming soon)
+Pricing
+Use Cases
+Advanced Search
+Recommendation Systems
+Retrieval Augmented Generation
+Data Analysis & Anomaly Detection
+AI Agents
+Industries
+E-commerce
+Legal Tech
+Hospitality & Travel
+HR Tech
+Healthcare Tech
+Developers
+Documentation
+Community
+GitHub
+Roadmap
+Change Log
+Status Page
+Certification
+Resources
+Blog
+Benchmarks
+Technical Articles
+Events
+Startup Program
+Demos
+Bug Bounty
+Company
+About Us
+Customers
+Partners
+Careers
+Contact Us
+Sign up for Qdrant updates
+We'll occasionally send you best practices for using vector data and similarity search, as well as product news.
+© 2026 Qdrant.
+Terms
+Privacy Policy
+Impressum
+Recruitment Privacy Policy
+Cookie ConsentUp!
+

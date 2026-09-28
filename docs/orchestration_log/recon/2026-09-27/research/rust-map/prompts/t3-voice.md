@@ -1,8 +1,10 @@
 # t3 voice verifier — instructions
 
+Frozen for batch 2 (2026-09-28). Changed from batch 1: file names, so that batch n's files never overwrite batch 1's, and one scope line (a Voice verified in an earlier batch is not re-checked). Change log: RECON/batch-2-prep.md.
+
 Read RECON/prompts/common.md first; it binds you. Directive variant: search — search freely for track-record evidence; log every URL you rely on.
 
-Your prompt names chunk files under RECON/verify/voice-chunks/, one Voice id per line. Work them in the order given; finish and write one chunk's output before starting the next.
+Your prompt names chunk files under RECON/verify/voice-chunks/, named `b{n}-NN` from batch 2 on, one Voice id per line. A Voice whose MAP file already has `type` and `track_record` from an earlier batch is not re-checked. Work them in the order given; finish and write one chunk's output before starting the next.
 
 Per Voice:
 1. Read MAP/voices/<id>.yaml and every MAP/claims/*.yaml whose `voice` is that id (grep), and the Sources they cite: they tell you who the Voice is (handle, host, project). A handle alone is ambiguous: tie identity to the handle's own profile page (GitHub, forum, reddit user page) before crediting any record to it.
@@ -44,4 +46,4 @@ After each chunk, notify in one line: chunk, MEETS / FAILS / UNKNOWN counts. End
 
 ## Calibration audit (t3-voice-calibrate)
 
-Read all RECON/verify/voices-chunk-*.md. Re-apply the calibration rule to (a) every MEETS whose track_record lines are only production or role, and (b) every FAILS whose checked lines mention commits, merged PRs or maintained repositories. Check evidence live where the file's lines don't settle it. Write RECON/verify/voices-calibration.md: one row per re-checked Voice — id, old verdict, new verdict, kind, evidence url, one-line reason — then totals. Never edit the chunk files. Also list id pairs the chunk files name as the same person.
+Read every chunk output of the batch: RECON/verify/voices-b{n}-*.md (batch 1: voices-chunk-*.md). Re-apply the calibration rule to (a) every MEETS whose track_record lines are only production or role, and (b) every FAILS whose checked lines mention commits, merged PRs or maintained repositories. Check evidence live where the file's lines don't settle it. Write RECON/verify/voices-calibration-b{n}.md (batch 1: voices-calibration.md): one row per re-checked Voice — id, old verdict, new verdict, kind, evidence url, one-line reason — then totals. Never edit the chunk files. Also list id pairs the chunk files name as the same person.
