@@ -2,10 +2,10 @@
 
 Compiled from batch 1's resolved research output (t5 compile, 2026-09-28;
 corrected the same day — source enrichment, date and quote fixes; a
-Voice-verification pass applied the same day after that). Every entry below
-is provisional: nothing in this map has passed grading. See
-`docs/opinion-map.md` for the map's architecture and `docs/subjects/rust.md`
-for Rust's scope.
+Voice-verification pass and then a Claim-verification pass applied the same
+day after that). Every entry below is provisional: nothing in this map has
+passed grading. See `docs/opinion-map.md` for the map's architecture and
+`docs/subjects/rust.md` for Rust's scope.
 
 ## What batch 1 covers
 
@@ -36,6 +36,28 @@ Combined with the 30 Claims already gapped `voice-unverified` at compile
 time (an explicit `[voice-unverified]` marker in the source), 58 Claims
 carry `voice-unverified` in total, 0 overlapping with `voice-below-bar`.
 
+## Claims, verified
+
+**664 of the 771 Claims** — every one except the 107 already gapped
+`voice-below-bar`, which stay unverified — **were checked against their
+Source on 2026-09-28** (quote and date fidelity; `RECON/verify/claims-final.csv`,
+`claims-adjudication.md`). 648 confirmed as-is; 16 were corrected:
+
+| what was wrong | count | fix |
+| --- | --- | --- |
+| date wrong | 8 | `date` corrected |
+| quote not verbatim (typo silently fixed, or a cut with no ellipsis) | 2 | quote removed, paraphrase untouched (already accurate) |
+| quote unfaithful (ASR-transcript garble, or two non-adjacent statements spliced by an ellipsis) | 5 | quote removed, paraphrase corrected |
+| paraphrase over-attributed the source | 1 | paraphrase corrected, quote kept (it was verbatim) |
+
+Every one of the 664 also carries `practiced: unknown` (this check was of
+quote/date fidelity to the Source, not of the Voice's own code). The 648
+confirmed Claims carry no per-Claim marker — `MAP/schema.yaml` has no
+status/check field for `claim`, so this statement is it. The 16 corrected
+ones carry a one-line note in `gap` (e.g. "verified 2026-09-28: date
+corrected"). Full row-by-row detail: `RECON/compile/compile-b1.md` §
+Claim-verification pass.
+
 ## Declared limits
 
 - **Coverage is far from saturated.** Chapman unseen-species estimate: 25.0%
@@ -52,12 +74,12 @@ carry `voice-unverified` in total, 0 overlapping with `voice-below-bar`.
 - **Position summaries** were picked between two candidate fills by lexical
   overlap with the Claims' own quoted words, not by a semantic read of all
   candidates (`fill/resolve-b1.md` § Summaries).
-- **Claims are unverified; Voices are now track-record-checked but not
-  Claim-checked.** No Tier-3 pass has fetched a Claim's own source to
-  confirm the quote/paraphrase/date; a separate Tier-3 pass has checked
-  each Voice's track record (see "Voices, by verdict" below).
-- **No grading has run.** No paired-cases or ITT check exists; `MAP/checks/`
-  is empty this batch.
+- **Checked is not graded.** 664 of 771 Claims had their quote/date checked
+  against the Source on 2026-09-28 (see "Claims, verified" above; the 107
+  `voice-below-bar` Claims are not checked and stay that way); Voices have a
+  track-record check (see "Voices, by verdict"). Neither is grading: no
+  paired-cases or ITT check exists anywhere; `MAP/checks/` is empty this
+  batch.
 
 ## Known issues (this compile)
 
