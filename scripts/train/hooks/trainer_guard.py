@@ -9,11 +9,14 @@ leaving the permission list's own decision (`allowlist.md`) in force.
 `allowlist.md`'s permission patterns already deny `Read`/`Glob` on `**/key/**` and `**/probe-*/**`,
 and allow `Bash` only for the logger and `cargo check`/`cargo test` — solid for a straight call, but
 two gaps a pattern alone can't close (P1 eval v0.1 "Remaining findings", allowlist.md § Open points):
-a prefix pattern like `cargo test*` still admits shell chaining after it (`cargo test; cat key/x`),
-and a permission pattern can't pin a command's cwd. This hook closes both, denies a Bash command
-that names a `key`/`probe-*` path segment even with no chaining (belt-and-suspenders on top of the
-permission deny, for the same path a chained command could still reach), and denies a `Read`/`Glob`
-call on such a path directly (a second check on top of the permission list, not a replacement).
+a prefix pattern like `cargo test*` still admits shell chaining after it (`cargo test; cat key/x`,
+`cargo test --manifest-path ... $(cat .../key/x)`, a second line), and a permission pattern can't
+pin a command's cwd. This hook closes both: `;`, `&&`, `||`, `|`, `>`, `<`, a backtick, `$(`, and a
+literal newline (a second line in one Bash call) are all denied outright, regardless of what
+precedes them; a Bash command naming a `key`/`probe-*` path segment is denied even with none of
+those present (belt-and-suspenders on top of the permission deny, for the same path a chained
+command could still reach); and a `Read`/`Glob` call on such a path is denied directly (a second
+check on top of the permission list, not a replacement).
 """
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ import json
 import re
 import sys
 
-CHAIN_TOKENS = [";", "&&", "||", "|", ">", "<", "`", "$("]
+CHAIN_TOKENS = [";", "&&", "||", "|", ">", "<", "`", "$(", "\n"]
 
 
 def decision(verdict: str, reason: str) -> dict:

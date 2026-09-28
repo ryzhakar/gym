@@ -24,7 +24,7 @@ def verdict(tool_name: str, tool_input: dict, cwd: str = CRATE, crate: str = CRA
     return trainer_guard.check(tool_name, tool_input, cwd, crate)
 
 
-@pytest.mark.parametrize("token", [";", "&&", "||", "|", ">", "<", "`", "$("])
+@pytest.mark.parametrize("token", [";", "&&", "||", "|", ">", "<", "`", "$(", "\n"])
 def test_chained_bash_command_is_denied(token: str) -> None:
     command = f"cargo test --manifest-path {CRATE}/Cargo.toml {token} cat {CRATE}/../items/u01/key/x"
     result = verdict("Bash", {"command": command})
@@ -37,6 +37,25 @@ def test_bash_naming_a_key_path_is_denied_even_without_chaining() -> None:
     assert result is not None
     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "key" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_the_exact_reported_command_substitution_gap_is_denied() -> None:
+    """team lead, 2026-09-28: `cargo test --manifest-path training/rust/u01/Cargo.toml
+    $(cat training/rust/items/u01/key/x)` — a command substitution smuggling a key/ read."""
+    command = "cargo test --manifest-path training/rust/u01/Cargo.toml $(cat training/rust/items/u01/key/x)"
+    result = verdict("Bash", {"command": command})
+    assert result is not None
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_a_second_line_with_no_key_reference_is_still_denied() -> None:
+    """A bare newline (two Bash statements in one call) is denied on its own — not only when the
+    second line happens to reference key/, which would let a key-free second command through."""
+    command = "cargo test --manifest-path training/rust/u01/Cargo.toml\nrm -rf /tmp/whatever"
+    result = verdict("Bash", {"command": command})
+    assert result is not None
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "chaining" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_bash_naming_a_probe_path_is_denied() -> None:
