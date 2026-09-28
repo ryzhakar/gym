@@ -479,6 +479,78 @@ Dropped; no content lost, since "same" restated nothing.
 | Claim missing `date` | 70 | unchanged |
 | Claim date not ISO | 70 | unchanged |
 
+
+## Claim-verification pass (lead ruling, 2026-09-28)
+
+Applied `RECON/verify/claims-final.csv` (664 rows — every Claim except the
+107 already gapped `voice-below-bar`, which stay unverified per the lead
+ruling) and `RECON/verify/claims-adjudication.md` (the audit that produced
+it: an automated quote-fragment check against the source cache plus a
+manual recheck of every flagged/noted row and a 10% random sample; 0/31
+sampled CONFIRMED rows disagreed on recheck). Script:
+`docs/orchestration_log/recon/2026-09-27/research/rust-map/compile/verify_claims.py`.
+
+### Verdicts (664 rows)
+
+| verdict | count | action taken |
+| --- | --- | --- |
+| CONFIRMED | 648 | no per-Claim gap note (see README: this whole pass is stated there instead) |
+| DATE-WRONG | 8 | `date` set to `corrected_date`; `gap` gets "date corrected" |
+| UNFAITHFUL | 8 | quote and/or paraphrase corrected (below); `gap` gets a note |
+
+Every one of the 664 also gets `practiced: unknown` — the CSV's own
+column, uniformly "unknown" for every row (this pass checked quote/date
+fidelity against the Source, not whether the Voice's own code follows the
+Claim). `corrected_locator` (9 rows, 8 of them already-CONFIRMED — a
+locator refinement, not a verdict change) and `corrected_date` present on
+10 already-CONFIRMED rows (re-affirming a date already correct in `MAP`,
+so a no-op write) were applied the same way regardless of verdict.
+
+### The 8 UNFAITHFUL rows, by what changed
+
+- **2 quote dropped, paraphrase untouched** (`a-sa14-f005079-c2`,
+  `a-sa14-f005079-c6`): the quote silently trimmed or "corrected" a typo
+  with no ellipsis marking the cut; the paraphrase was independently
+  accurate and is kept.
+- **5 quote dropped, paraphrase corrected** (`a-sa21-f011069-c1`,
+  `a-sa24-f011220-c1`, `a-sa25-f011413-c1`, `a-sa25-f011413-c6`,
+  `a-saL2-f011092-c1`): an auto-caption transcript garble presented as a
+  clean quote, or an ellipsis splicing two non-adjacent statements —
+  quote removed, paraphrase rewritten to what the source actually
+  supports.
+- **1 quote kept (verbatim), paraphrase corrected**
+  (`a-sa15-f005821-c1`): the ARM64/x86-64 portions of the quote check out
+  exactly; the paraphrase over-attributed the source's stated reason for
+  a separate WASM finding. Quote stays; paraphrase corrected.
+
+### Schema note on where the check itself is recorded
+
+`MAP/schema.yaml` has no `status`/checks field on `claim` for this kind of
+check (the `check` kind's enum — `fill-position, fill-tag, paired-cases,
+itt, merge, judge` — has no "claim-verify" value either). Per lead ruling,
+no field was added: the 648 CONFIRMED rows carry no per-Claim marker at
+all (stated once, batch-wide, in `MAP/README.md` instead); the 16
+non-CONFIRMED rows get a one-line note in `gap`, which is the only
+free-text field `claim` has.
+
+### Validator run
+
+**417 FAIL** (unchanged from the previous pass) — this pass touched
+`locator`, `date` (only where already valid ISO or newly corrected to a
+valid ISO value), `quote`, `paraphrase`, `practiced` and `gap`; none of
+the fields the validator was already failing on. By rule:
+
+| cause | count |
+| --- | --- |
+| Voice missing `type` | 88 |
+| Voice missing `track_record` | 86 |
+| Voice `track_record` has no url (rule 6) | 86 |
+| Source missing `date` | 6 |
+| Position missing `tag` | 9 |
+| Question missing `domains` | 2 |
+| Claim missing `date` | 70 |
+| Claim date not ISO | 70 |
+
 Full output verbatim follows.
 
 ```
