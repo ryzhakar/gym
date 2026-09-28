@@ -117,7 +117,8 @@ def read_workspace_members(root: Path) -> list[str]:
 
 def settings_from_command(command: str) -> dict:
     tokens = shlex.split(command)
-    return json.loads(tokens[tokens.index("--settings") + 1])
+    settings_path = Path(tokens[tokens.index("--settings") + 1])
+    return json.loads(settings_path.read_text(encoding="utf-8"))
 
 
 def test_launch_command_carries_the_full_allowlist() -> None:
@@ -144,9 +145,13 @@ def test_launch_command_carries_the_full_allowlist() -> None:
     assert not any(pattern == "Bash(*)" for pattern in allow)
 
     hook = settings["hooks"]["PreToolUse"][0]
-    assert hook["matcher"] == "Bash"
-    assert str(session.BASH_GUARD) in hook["hooks"][0]["command"]
+    assert hook["matcher"] == "Bash|Read|Glob"
+    assert str(session.TRAINER_GUARD) in hook["hooks"][0]["command"]
     assert f"--crate {crate}" in hook["hooks"][0]["command"]
+
+    # the settings file itself exists, generated fresh (not committed, same as the crate tree)
+    tokens = shlex.split(command)
+    assert Path(tokens[tokens.index("--settings") + 1]).is_file()
 
 
 def pattern_matches(pattern: str, path: str) -> bool:
@@ -212,5 +217,9 @@ def test_open_session_prints_a_launch_command_with_the_deny_rule(
     )
     session.open_session(items_root=isolated_paths / "items")
     out = capsys.readouterr().out
-    assert session.KEY_DENY_PATTERN in out
     assert "--permission-mode dontAsk" in out
+    assert "--settings" in out
+    command_text = out[out.index("start the trainer:\n") + len("start the trainer:\n") :].strip()
+    tokens = shlex.split(command_text)
+    settings = json.loads(Path(tokens[tokens.index("--settings") + 1]).read_text(encoding="utf-8"))
+    assert session.KEY_DENY_PATTERN in settings["permissions"]["deny"]

@@ -38,7 +38,7 @@ from record_schema import ROOT, TIMESTAMP_FORMAT, file_path  # noqa: E402
 
 TRAINING_ROOT = ROOT / "training/rust"
 DEFAULT_ITEMS_ROOT = ROOT / "training/rust/items"  # decided: team lead, 2026-09-28
-BASH_GUARD = ROOT / "scripts/train/bash_guard.py"
+TRAINER_GUARD = ROOT / "scripts/train/hooks/trainer_guard.py"
 
 # The trainer's own session's permission rules (team lead, 2026-09-28), read from
 # docs/orchestration_log/recon/2026-09-28/trainer/agent/allowlist.md — this is that spec's
@@ -59,8 +59,10 @@ def unit_paths(unit: str) -> tuple[str, str, str]:
 
 def permission_settings(unit: str) -> dict:
     """`allowlist.md` § Allow/Deny, substituted for `unit`: a `--settings` payload, `permissions` plus
-    the `bash_guard.py` `PreToolUse` hook for what a permission pattern alone cannot pin (chaining
-    after a `cargo check*`/`cargo test*` prefix; a command's cwd — allowlist.md § Open points 1, 3)."""
+    the `trainer_guard.py` `PreToolUse` hook for what a permission pattern alone cannot pin (chaining
+    after a `cargo check*`/`cargo test*` prefix; a command's cwd — allowlist.md § Open points 1, 3),
+    matched against `Bash|Read|Glob` as a second, hook-level check on top of the Read/Glob deny
+    patterns below (P1 eval v0.1, "Remaining findings" — belt-and-suspenders, not a replacement)."""
     unit_dir, crate, record = unit_paths(unit)
     allow = [
         f"Read({unit_dir}/attempt.md)",
@@ -92,11 +94,11 @@ def permission_settings(unit: str) -> dict:
         "hooks": {
             "PreToolUse": [
                 {
-                    "matcher": "Bash",
+                    "matcher": "Bash|Read|Glob",
                     "hooks": [
                         {
                             "type": "command",
-                            "command": f"uv run python {BASH_GUARD} --crate {shlex.quote(crate)}",
+                            "command": f"uv run python {TRAINER_GUARD} --crate {shlex.quote(crate)}",
                             "timeout": 5,
                         }
                     ],
@@ -110,20 +112,41 @@ def new_session_id() -> str:
     return datetime.now().strftime(TIMESTAMP_FORMAT)
 
 
+def write_settings_file(unit: str) -> Path:
+    """The unit's permission settings, generated fresh on every launch (never committed, same as the
+    crate tree it sits beside): `--settings` takes a path or inline JSON (`claude --help`) — a file
+    keeps the printed launch command short and lets the settings be inspected before the trainer runs."""
+    _unit_dir, crate, _record = unit_paths(unit)
+    path = Path(crate) / ".trainer-settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(permission_settings(unit), indent=2), encoding="utf-8")
+    return path
+
+
 def trainer_launch_command(unit: str) -> str:
-    """The trainer hand-off command: the unit's permission settings inline (`--settings`), plus
-    `dontAsk` so a call outside them is refused outright, never put to the learner (no lock-out
-    exists otherwise — fable-plan.md § 5 sessions.assistant_closed). The trailing prompt carries the
-    session id, unit id, item directory and record tail the trainer's own definition expects."""
+    """The trainer hand-off command: the unit's permission settings in a generated file (`--settings
+    <path>`), plus `dontAsk` so a call outside them is refused outright, never put to the learner (no
+    lock-out exists otherwise — fable-plan.md § 5 sessions.assistant_closed). The trailing prompt
+    carries the session id, unit id, item directory and record tail the trainer's own definition
+    expects."""
     unit_dir, _crate, record = unit_paths(unit)
     session_id = new_session_id()
-    settings = json.dumps(permission_settings(unit), separators=(",", ":"))
+    settings_path = write_settings_file(unit)
     prompt = (
         f"session {session_id}; unit {unit}; items {unit_dir}; record {record}\n"
         "sessions tail:\n" + "\n".join(record_tail("sessions")) + "\n"
         "items tail:\n" + "\n".join(record_tail("items"))
     )
-    parts = ["claude", "--agent", "rust-trainer", "--permission-mode", "dontAsk", "--settings", settings, prompt]
+    parts = [
+        "claude",
+        "--agent",
+        "rust-trainer",
+        "--permission-mode",
+        "dontAsk",
+        "--settings",
+        str(settings_path),
+        prompt,
+    ]
     return " ".join(shlex.quote(part) for part in parts)
 
 
