@@ -425,6 +425,60 @@ mid-pass bug fix should never be assumed to reflect regression: the
 1,354 → 427 comparison is the one that matters, taken pass-to-pass on
 correct data.
 
+
+### gh api → browsable url (lead ruling, 2026-09-28, small unit)
+
+The 10 MEETS Voices above whose only track_record evidence cited a `gh api`
+command (no browsable url) were rewritten: each command replaced by the
+url it reads, same evidence otherwise. Transcription only — no new
+evidence, no verdict change.
+
+| voice | gh api command (or bare reference) | rewritten url |
+| --- | --- | --- |
+| bjoernq | "esp-rs/esp-hal" (bare repo mention, no command) | https://github.com/esp-rs/esp-hal |
+| jamesmunns | `gh api orgs/embassy-rs/members` | https://github.com/orgs/embassy-rs/people |
+| jessebraham | `gh api orgs/esp-rs/members` | https://github.com/orgs/esp-rs/people |
+| laggui | `gh api orgs/tracel-ai/members` | https://github.com/orgs/tracel-ai/people |
+| ssokolow | `gh api search/code?q=ssokolow+repo:rust-lang/this-week-in-rust` | https://github.com/search?q=ssokolow+repo%3Arust-lang%2Fthis-week-in-rust&type=code |
+| stefan-baumgartner (track_record) | `gh api users/ddprrt/repos` | https://github.com/ddprrt?tab=repositories |
+| stefan-baumgartner (influence) | `gh api search/code?q=rust-vs-javascript-typescript+repo:rust-lang/this-week-in-rust` | https://github.com/search?q=rust-vs-javascript-typescript+repo%3Arust-lang%2Fthis-week-in-rust&type=code |
+| vaultwarden-maintainers-dani-garcia-vaultwarden | `gh api repos/dani-garcia/vaultwarden` | https://github.com/dani-garcia/vaultwarden |
+| warre-snaet | `gh api search/code?q=intelligent-disease-detection+repo:rust-lang/this-week-in-rust` | https://github.com/search?q=intelligent-disease-detection+repo%3Arust-lang%2Fthis-week-in-rust&type=code |
+| yanshay | `gh api repos/yanshay/spoolease` | https://github.com/yanshay/spoolease |
+| yatekii | `gh api search/commits?q=repo:probe-rs/probe-rs+author:Yatekii` | https://github.com/probe-rs/probe-rs/commits?author=Yatekii |
+
+Mapping used: `gh api users/X` → `https://github.com/X` (`users/X/repos` →
+that profile's repositories tab); `gh api repos/O/R...` →
+`https://github.com/O/R...`; `gh api orgs/O/members` →
+`https://github.com/orgs/O/people` (GitHub's own member-listing page);
+`gh api search/code?q=...` / `search/commits?q=...` → GitHub's search UI
+for the same query, except where the command's own stated result (a
+specific repo, a specific author's commits) has a more direct browsable
+page — used for yatekii (a repo's commits filtered by author) rather than
+a generic search link.
+
+Same-run cleanup: fixed a dedupe gap from the previous pass — 4 merged-away
+duplicate ids whose calibration row was the bare word "same" (not "same as
+`<id>`", which the dedupe already caught) were still contributing a
+content-free `evidence: same` line to their canonical voice
+(`jamesmunns`, `hannah-wang-ben-yang-and-fisher-darling`, `ramfox` ×2).
+Dropped; no content lost, since "same" restated nothing.
+
+### Validator run
+
+**417 FAIL** (was 427), by rule:
+
+| cause | count | change |
+| --- | --- | --- |
+| Voice missing `type` | 88 | unchanged |
+| Voice missing `track_record` | 86 | unchanged |
+| Voice `track_record` has no url (rule 6) | 86 | −10 (the 10 patched voices) |
+| Source missing `date` | 6 | unchanged |
+| Position missing `tag` | 9 | unchanged |
+| Question missing `domains` | 2 | unchanged |
+| Claim missing `date` | 70 | unchanged |
+| Claim date not ISO | 70 | unchanged |
+
 Full output verbatim follows.
 
 ```
@@ -767,7 +821,6 @@ FAIL  maps/rust/voices/alonely0.yaml  no track_record line with a url
 FAIL  maps/rust/voices/andrei-alexandrescu-creator-of-d.yaml  no track_record line with a url
 FAIL  maps/rust/voices/anthonygrondin.yaml  no track_record line with a url
 FAIL  maps/rust/voices/badeend.yaml  no track_record line with a url
-FAIL  maps/rust/voices/bjoernq.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bogdan-petru.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bruce-perens.yaml  no track_record line with a url
 FAIL  maps/rust/voices/bsder.yaml  no track_record line with a url
@@ -789,9 +842,7 @@ FAIL  maps/rust/voices/ian-whitney-blog-post-rust-via-its-core-values-cited.yaml
 FAIL  maps/rust/voices/im-lunex.yaml  no track_record line with a url
 FAIL  maps/rust/voices/inactive-user.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jackdk.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jamesmunns.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jasn-armstrng.yaml  no track_record line with a url
-FAIL  maps/rust/voices/jessebraham.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jumpnbrownweasel.yaml  no track_record line with a url
 FAIL  maps/rust/voices/justin-handville.yaml  no track_record line with a url
 FAIL  maps/rust/voices/jvcmarcenes.yaml  no track_record line with a url
@@ -800,7 +851,6 @@ FAIL  maps/rust/voices/khimru.yaml  no track_record line with a url
 FAIL  maps/rust/voices/kibwen.yaml  no track_record line with a url
 FAIL  maps/rust/voices/kingcol13.yaml  no track_record line with a url
 FAIL  maps/rust/voices/kristoff.yaml  no track_record line with a url
-FAIL  maps/rust/voices/laggui.yaml  no track_record line with a url
 FAIL  maps/rust/voices/lake.yaml  no track_record line with a url
 FAIL  maps/rust/voices/lewis.yaml  no track_record line with a url
 FAIL  maps/rust/voices/lilnasy.yaml  no track_record line with a url
@@ -827,9 +877,7 @@ FAIL  maps/rust/voices/simolus3.yaml  no track_record line with a url
 FAIL  maps/rust/voices/skifire13.yaml  no track_record line with a url
 FAIL  maps/rust/voices/smarcd.yaml  no track_record line with a url
 FAIL  maps/rust/voices/softmaximalist-pr-author-burn-contributor.yaml  no track_record line with a url
-FAIL  maps/rust/voices/ssokolow.yaml  no track_record line with a url
 FAIL  maps/rust/voices/st0rmbtw.yaml  no track_record line with a url
-FAIL  maps/rust/voices/stefan-baumgartner.yaml  no track_record line with a url
 FAIL  maps/rust/voices/summer-rs-project-github-com-spring-rs-spring-rs-readme-now.yaml  no track_record line with a url
 FAIL  maps/rust/voices/superdump.yaml  no track_record line with a url
 FAIL  maps/rust/voices/tapghoul.yaml  no track_record line with a url
@@ -841,16 +889,12 @@ FAIL  maps/rust/voices/totalkrill.yaml  no track_record line with a url
 FAIL  maps/rust/voices/unidentified-reviewer.yaml  no track_record line with a url
 FAIL  maps/rust/voices/urben1680.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vangata-ve.yaml  no track_record line with a url
-FAIL  maps/rust/voices/vaultwarden-maintainers-dani-garcia-vaultwarden.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vitalyd.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vorpal.yaml  no track_record line with a url
 FAIL  maps/rust/voices/vri.yaml  no track_record line with a url
 FAIL  maps/rust/voices/wandbrandon.yaml  no track_record line with a url
-FAIL  maps/rust/voices/warre-snaet.yaml  no track_record line with a url
 FAIL  maps/rust/voices/wofo-quoting-the-dropshot-projects-own-stated-design-goal.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yakira-neko.yaml  no track_record line with a url
-FAIL  maps/rust/voices/yanshay.yaml  no track_record line with a url
-FAIL  maps/rust/voices/yatekii.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yawaramin.yaml  no track_record line with a url
 FAIL  maps/rust/voices/yinho999.yaml  no track_record line with a url
 FAIL  maps/rust/voices/ysalitrynskyi.yaml  no track_record line with a url
@@ -883,5 +927,5 @@ per stratum (domain):
 claims confirmed (resolved to a Position): 769 / 771
 voices: 374
 
-map: 427 FAIL
+map: 417 FAIL
 ```

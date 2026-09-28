@@ -282,7 +282,7 @@ def dedupe_track_list(items):
     out = []
     for it in items:
         ev = (it.get("evidence") or "").strip().lower()
-        if not it.get("url") and (ev.startswith("same as") or ev.startswith("duplicate") or "duplicate of" in ev or ev == ""):
+        if not it.get("url") and (ev.startswith("same as") or ev.startswith("duplicate") or "duplicate of" in ev or ev in ("", "same", "same.")):
             continue  # pure cross-reference to another cluster member; adds nothing once merged
         key = (it.get("kind"), it.get("url"), ev)
         if key in seen:
@@ -320,6 +320,68 @@ for fvid in final_voice_ids:
         issues.append(("voice-merge", f"{sorted(m for m in members if m != base)} merged into '{fvid}' (same person; RECON/verify/voices-calibration.md and, for dominaezzz/jkelleyrtp/kornel/nazmul-idris clusters, the chunk files' own same-person notes)"))
 
 issues.append(("final-voice-count", f"{len(merged_voice)} Voice ids after {len(chunk_records) - len(merged_voice)} merged away"))
+
+# ---------------------------------------------------------------------------
+# 5b. Lead ruling: rewrite the 10 MEETS Voices whose only track_record
+# citation was a `gh api` command (no browsable url) as the url that command
+# reads. Transcription only — same evidence, no new claim, just the command
+# turned into the page a person can open. Hardcoded per voice (a handful of
+# cases, each individually checked), not a generic command parser.
+# ---------------------------------------------------------------------------
+
+GH_API_URL_PATCH = {
+    "bjoernq": {"track_record": [
+        dict(kind="production", evidence="esp-rs/esp-hal is Espressif's own chip HAL; @espressif company field",
+             url="https://github.com/esp-rs/esp-hal", date=None),
+    ]},
+    "jamesmunns": {"track_record": [
+        dict(kind="role", evidence="embassy-rs org membership (single-project org)",
+             url="https://github.com/orgs/embassy-rs/people", date=None),
+    ]},
+    "jessebraham": {"track_record": [
+        dict(kind="role", evidence="esp-rs org membership (single-project org)",
+             url="https://github.com/orgs/esp-rs/people", date=None),
+    ]},
+    "laggui": {"track_record": [
+        dict(kind="role", evidence="tracel-ai org membership (single-project org)",
+             url="https://github.com/orgs/tracel-ai/people", date=None),
+    ]},
+    "ssokolow": {"track_record": [
+        dict(kind="book/post", evidence="referenced/linked in This Week in Rust across at least 3 separate issues (2017-06-27, 2019-09-03, 2019-12-10)",
+             url="https://github.com/search?q=ssokolow+repo%3Arust-lang%2Fthis-week-in-rust&type=code", date="2026-09-28"),
+    ]},
+    "stefan-baumgartner": {
+        "track_record": [
+            dict(kind="course", evidence='runs multiple named Rust training repos — "microservice-rust-workshop" (26 stars), "idiomatic-rust-workshop", "rust-fundamentals-training-april-2022", "rust-course-jku-2023-2024" (a university course), "refactoring-rust-tutorial"',
+                 url="https://github.com/ddprrt?tab=repositories", date="2026-09-28"),
+        ],
+        "influence": [
+            dict(kind=None, evidence="his JetBrains guest post on Rust vs. JS/TS was picked up in This Week in Rust (1 hit)",
+                 url="https://github.com/search?q=rust-vs-javascript-typescript+repo%3Arust-lang%2Fthis-week-in-rust&type=code", date="2026-09-28"),
+        ],
+    },
+    "vaultwarden-maintainers-dani-garcia-vaultwarden": {"track_record": [
+        dict(kind="production/crate-dependents", evidence="Vaultwarden is a widely deployed Rust Bitwarden-compatible server with 68,245 GitHub stars, built on the Rocket web framework",
+             url="https://github.com/dani-garcia/vaultwarden", date="2026-09-28"),
+    ]},
+    "warre-snaet": {"track_record": [
+        dict(kind="post", evidence='"Building a 24MB Offline AI with Rust + Burn" was linked from This Week in Rust (2026-01-28 issue)',
+             url="https://github.com/search?q=intelligent-disease-detection+repo%3Arust-lang%2Fthis-week-in-rust&type=code", date=None),
+    ]},
+    "yanshay": {"track_record": [
+        dict(kind="production", evidence='ships "SpoolEase," a real 3D-printing filament-management hardware product (NFC/RFID console + scale) built in Rust, 554 GitHub stars',
+             url="https://github.com/yanshay/spoolease", date="2026-09-28"),
+    ]},
+    "yatekii": {"track_record": [
+        dict(kind="role/crate-dependents", evidence="creator of probe-rs, a real embedded ARM/RISC-V debugging toolset (2,953 GitHub stars), with 1,066 commits authored",
+             url="https://github.com/probe-rs/probe-rs/commits?author=Yatekii", date=None),
+    ]},
+}
+
+for fvid, patch in GH_API_URL_PATCH.items():
+    for field, items in patch.items():
+        merged_voice[fvid][field] = items
+    issues.append(("gh-api-url-rewrite", f"voice '{fvid}': gh api command citation(s) rewritten as the browsable url the command reads."))
 
 # ---------------------------------------------------------------------------
 # 6. Write MAP/voices/: one file per final id, delete every merged-away/renamed
