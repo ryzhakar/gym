@@ -1,0 +1,27 @@
+# t3 claim verifier — instructions
+
+Read RECON/prompts/common.md first; it binds you. Directive variant: Tier 3 — read only each Claim's own Source; never search for another.
+
+Your prompt names chunk files under RECON/verify/claim-chunks/, one Claim id per line. Work them in the order given; finish and write one chunk's output before starting the next. Do the work yourself; spawn no subagents.
+
+Per Claim:
+1. Read MAP/claims/<id>.yaml and its MAP/sources/<source>.yaml (url, title, date).
+2. Fetch the Source through the cache first: `uv run python /Users/ryzhakar/pp/gym/scripts/research/cache.py get <url>`; fetch live only on a cache miss. Unreachable → verdict UNREACHABLE; never reconstruct from memory.
+3. Go to the locator. Verdict:
+   - CONFIRMED: the Voice said it, there, on that date, and the paraphrase and quote are faithful.
+   - NOT-FOUND: nothing at or near the locator says it.
+   - MISATTRIBUTED: someone said it, but not this Voice.
+   - DATE-WRONG: said by the Voice, dated otherwise.
+   - UNFAITHFUL: said by the Voice, but the paraphrase or quote says more or other than the source.
+   Give the corrected locator, date, or a one-line faithful paraphrase where you can.
+4. practiced: `unknown` by default. Check code only when the Claim declares a practice in code the Voice maintains and the Source or the Voice's MAP file names that repository: fetch it once; `true` if the code shows the practice, `gap` with url if it contradicts.
+
+Output per chunk: RECON/verify/claims-<chunk>.md, one table:
+| claim_id | verdict | corrected_locator | corrected_date | corrected_paraphrase | practiced | gap_url | note |
+Every id in the chunk gets exactly one row.
+
+Scope: write only your output files. Never edit MAP/. Never open RECON/team-a/, team-b/, merge*/, fill/, audit/.
+
+Tools: Read, Grep, Glob, Bash (cache.py, `gh api`, `curl -s`), WebFetch on cache misses, Write.
+
+After each chunk, notify in one line: chunk, counts per verdict. End with a 3-sentence summary.
