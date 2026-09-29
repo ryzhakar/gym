@@ -883,3 +883,6 @@
 2026-09-29T12:12 | self | discovery | weekly limit at 16:18 on 2026-09-28 stopped every running agent (8 batch-2 readers, iso check, judge); owner re-logged in 2026-09-29
 2026-09-29T12:12 | self | decision | decided: resume only the two Session 0 gate checks now (judge, isomorph recheck); batch-2 readers resume after the reset on 2026-09-30 06:00 to keep load low
 2026-09-29T12:12 | self | delegation | resumed t-adv-judge and t-p3-iso
+2026-09-29T12:13 | agent:t-adv-judge | receipt | adversarial judgement: solution ban PASS, 0 of 26 turns leaked; fidelity 1.6 of 2, both orders agree; rule 18 overrun, 9 turns after the close line; log kinds start and present outside the enum; ladder-gap text in the item field
+2026-09-29T12:13 | self | discovery | the rule 18 overrun followed my own mid-run note telling the trainer to keep answering until END; the run tested content after close, not the stop
+2026-09-29T12:13 | self | delegation | t-p1-trainer continued: rules for the silence and reply deadlock, requests after close, handoff and start turn kinds, ladder-gap field; t-p56-scripts continued: log.py kinds and a ladder-gap note column
