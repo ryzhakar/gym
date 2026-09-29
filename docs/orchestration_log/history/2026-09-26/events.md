@@ -899,3 +899,4 @@
 2026-09-29T12:27 | self | discovery | writing references sized by wc: agents-reference.md ~57k tokens, strunk_spr_v3_complete.xml ~33k, instruction-writer.md ~0.9k, sparse-priming-representations.md ~0.2k
 2026-09-29T12:27 | self | delegation | agent:dig-agents-ref and agent:dig-writing, sonnet: digests of the four writing references into recon/2026-09-29/agent-writing/
 2026-09-29T12:29 | owner | receipt | ruling in conversation: hold; no further action, the instruction-writer dispatch included, until the owner calls silence again; silence paused
+2026-09-29T12:30 | agent:dig-agents-ref | receipt | agents-reference digest: frontmatter rules with line refs, SendMessage resume for multi-turn subagents behind CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, no section on drift prevention or prompt testing, version gates, 4 contradictions
