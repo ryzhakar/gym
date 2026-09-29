@@ -30,3 +30,12 @@ Session start ran bind, init and the two research tasks in parallel, on the owne
 - Trainer: Fable planned the program; a Rust trainer v0.1–v0.2 was built and passed an adversarial run, then erased by owner ruling. Fable then wrote gym-trainer from primary sources under instruction-writer governance: CS-general, summoned by the manager, running unaided probes and tracking skill. The session launcher and allowlist were dropped as cruft.
 - Rulings this span: questions in the tool; no owner questions or escalations; silence mode; opus only at knowledge bottlenecks; maps live as work in progress; resume agents, never relaunch; trainer CS-general; trainer stack stop-yapping and cargo-cult-science.
 - Failures: an opus burst burned the weekly limit; repeated silence breaches and no-op checks; cd drift; claims about own context made without checking.
+
+## Close — 2026-09-29T17:58
+
+HEAD    50df81c (dirty: .claude/work-silently)
+state   teaching research complete on sources: evidence map v3
+        maps/rust v0.1 provisional; batch 2 extracted slices 01-15 per team, rest held (rust-map/STATE.md)
+        gym-trainer CS-general in .claude/agents/, runs probes and tracks skill, owns the training-session scripts
+open    sessions row has no writer; trainer_guard.py unwired; subagents load CLAUDE.md (deferred item); commits local, none pushed
+next    bind, memento:init; the owner's next task

@@ -949,3 +949,4 @@
 2026-09-29T17:58 | owner | receipt | ruling in conversation: different subjects likely need different tools; the remaining training-session-time scripts (probe.py, log.py, record_schema.py, check_record.py, trainer_guard.py) are the trainer's to own
 2026-09-29T17:58 | self | decision | the training/rust and cargo-test hardcoding is no longer an orchestrator defect; per-subject tooling belongs to the trainer (owner ruling 2026-09-29)
 2026-09-29T17:58 | owner | receipt | ruling in conversation: that ruling belongs to the last session; reconciled by removing the stray 2026-09-29 span and re-closing this span
+2026-09-29T17:58 | self | span-event | close; HEAD 50df81c (dirty: docs/orchestration_log/history/2026-09-26/session.md, .claude/work-silently); next: bind, memento:init; the owner's next task
