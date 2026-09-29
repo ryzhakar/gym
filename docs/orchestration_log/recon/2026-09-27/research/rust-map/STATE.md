@@ -13,7 +13,7 @@
 
 Evidence minimum met: 4 Questions. Single-Position Questions: 275. Coverage: Chapman unseen 25–49%, Chao1 31–76% per stratum (merge-v3/estimate/closure-b1.md). English only. No fairness grading (paired cases, ITT) yet: waits for a stable Question set (slice-1-review.md § 5).
 
-## Batch 2: prepared, extraction stopped at the weekly limit (2026-09-28 16:18)
+## Batch 2: prepared, extraction partial (stopped at the weekly limit 2026-09-28 16:18, resumed and held by owner ruling 2026-09-29)
 
 Prep (batch-2-prep.md): frozen prompts; class-balanced sampler; swift-interop off-subject rows dropped; zh conference-talk anchor rows redrawn; all rows cached. Draw: 285 rows per team (en 90, zh 158, uk 20, de 17), 132 shared; bundled into 28 slices (team a, 273 readable rows) and 33 slices (team b, 275).
 
