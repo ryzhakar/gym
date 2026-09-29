@@ -917,3 +917,5 @@
 2026-09-29T16:58 | owner | receipt | question-tool answers: tooling questioned (what problems it solves for the agent); the manager (orchestrator) is the user's entrypoint and summons the trainer, which minds training only, never administration; resume the resumable Rust agents, launch nothing new for Rust this span, document the research state precisely; trainer stack stop-yapping and cargo-cult-science
 2026-09-29T16:58 | self | decision | gym-trainer stack written to .manifestos.yaml subagents (owner ruling 2026-09-29); purposes decided from the trainer plan's stated reasons
 2026-09-29T16:58 | self | decision | Rust state documented in rust-map/STATE.md; the 7 resumable readers resume after the weekly reset, no new Rust launches this span (owner ruling 2026-09-29)
+2026-09-29T17:00 | owner | receipt | in conversation: agents-reference dates from April 2026; the frontmatter answer needs current sources
+2026-09-29T17:00 | self | delegation | agent:cc-guide-frontmatter, claude-code-guide: current agent frontmatter fields and CLAUDE.md loading for subagents and teammates, checked against the installed v2.1.284 bundle
