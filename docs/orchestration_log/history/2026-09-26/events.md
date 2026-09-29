@@ -902,3 +902,5 @@
 2026-09-29T12:30 | agent:dig-agents-ref | receipt | agents-reference digest: frontmatter rules with line refs, SendMessage resume for multi-turn subagents behind CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, no section on drift prevention or prompt testing, version gates, 4 contradictions
 2026-09-29T12:30 | owner | receipt | in conversation: once digests land, map which part governs what; a learning-style digest by the agent that sourced the texts is allowed
 2026-09-29T12:30 | self | delegation | scout-learning-mode continued: digest of the learning-mode texts, governing parts, harness-bound versus portable
+2026-09-29T12:31 | agent:dig-writing | receipt | writing digest: instruction-writer is opus with 6 tools, self-binds first-principles, ETHOS and Strunk, runs a 7-step edit loop; SPR governs artifact form; strunk_spr_v3 is a 10-section prose gate with a Clarity > Accuracy > Economy > Vigor > Correctness order
+2026-09-29T12:31 | agent:scout-learning-mode | receipt | learning-mode digest: governing lines per style and plugin, harness-bound versus portable split, overlaps
