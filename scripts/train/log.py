@@ -5,11 +5,17 @@ Refuses a `timestamp=...` argument — the clock stamps it, never hand-typed (ev
 and any row the schema in `record_schema.py` does not admit: an unknown field, a missing field, or a
 value the column's shape rejects. Refuses a timestamp older than the file's last row.
 
-`turn --session <id> --n <n> --kind <k> --item <i> --request <hint|answer|explain|none>` is an
-alias for `turns` in the trainer's own flag form (rust-trainer.md rule 36's literal invocation,
-`allowlist.md`'s Bash allow pattern) — `--request none` maps to the blank `request_kind` a
-trainer-initiated turn carries. `minute` is never a flag: the trainer has no clock (rule 11); this
-script computes it as the minutes elapsed since `--session`'s own timestamp.
+`turn --session <id> --n <n> --kind <k> --item <i> --request <hint|answer|explain|none>
+[--note "<text>"]` is an alias for `turns` in the trainer's own flag form (rust-trainer.md v0.2
+rule 38's literal invocation, `allowlist.md`'s Bash allow pattern) — `kind` accepts `start` and
+`present` (v0.2) alongside the v0.1 set, and `ladder-gap` in place of a `feedback` turn whose note
+reads `ladder gap: <item> after level <n>` (v0.1 rule 23, promoted in v0.2). `--note` is required
+for `--kind ladder-gap` and otherwise omitted entirely — rule 38's own words, "required for
+ladder-gap, otherwise absent" — defaulting to blank when left out (`record_schema.ROW_CHECKS`
+refuses a non-blank note on any other kind). Any flag value of exactly `none` also maps to the
+column's blank string, for a trainer that passes one explicitly instead of omitting it.
+`minute` is never a flag: the trainer has no clock (rule 11); this script computes it as the minutes
+elapsed since `--session`'s own timestamp.
 """
 from __future__ import annotations
 
@@ -19,9 +25,16 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from record_schema import FILES, TIMESTAMP_FIELD, TIMESTAMP_FORMAT, file_path  # noqa: E402
+from record_schema import FILES, ROW_CHECKS, TIMESTAMP_FIELD, TIMESTAMP_FORMAT, file_path  # noqa: E402
 
-TURN_FLAG_COLUMNS = {"session": "session", "n": "n", "kind": "kind", "item": "item", "request": "request_kind"}
+TURN_FLAG_COLUMNS = {
+    "session": "session",
+    "n": "n",
+    "kind": "kind",
+    "item": "item",
+    "request": "request_kind",
+    "note": "note",
+}
 
 
 def parse_fields(argv: list[str]) -> dict[str, str]:
@@ -37,8 +50,9 @@ def parse_fields(argv: list[str]) -> dict[str, str]:
 
 
 def parse_turn_flags(argv: list[str]) -> dict[str, str]:
-    """`--session id --n 1 --kind hint-1 --item x --request hint` → `turns` columns, `--request none` blank.
-    Never a `--minute`: `turn_fields` computes it."""
+    """`--session id --n 1 --kind hint-1 --item x --request hint --note none` → `turns` columns —
+    any value of exactly `none` maps to that column's blank string. Never a `--minute`: `turn_fields`
+    computes it."""
     fields: dict[str, str] = {}
     tokens = list(argv)
     while tokens:
@@ -51,14 +65,17 @@ def parse_turn_flags(argv: list[str]) -> dict[str, str]:
         value = tokens.pop(0)
         if column in fields:
             sys.exit(f"refused, '{column}' given twice")
-        fields[column] = "" if column == "request_kind" and value == "none" else value
+        fields[column] = "" if value == "none" else value
     return fields
 
 
 def turn_fields(argv: list[str]) -> dict[str, str]:
     """`parse_turn_flags` plus `minute`: elapsed minutes since `--session`'s own timestamp, this
-    script's clock, never the trainer's (rule 11 — the trainer has no clock)."""
+    script's clock, never the trainer's (rule 11 — the trainer has no clock). `--note` defaults to
+    blank when the trainer omits it entirely (rule 38: "required for ladder-gap, otherwise absent")
+    — only `ladder-gap` needs to pass it."""
     fields = parse_turn_flags(argv)
+    fields.setdefault("note", "")
     session_id = fields.get("session", "")
     try:
         session_start = datetime.strptime(session_id, TIMESTAMP_FORMAT)
@@ -88,6 +105,10 @@ def build_row(name: str, fields: dict[str, str]) -> dict[str, str]:
         error = check(row[column])
         if error:
             sys.exit(f"refused, {name}.{column} {error}: {row[column]!r}")
+    for row_check in ROW_CHECKS.get(name, []):
+        error = row_check(row)
+        if error:
+            sys.exit(f"refused, {name} row {error}: {row}")
     return row
 
 

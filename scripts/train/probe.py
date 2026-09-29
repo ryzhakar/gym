@@ -106,17 +106,29 @@ def run_cargo_test(crate_dir: Path) -> tuple[bool, float]:
     return failed == 0, passed / (passed + failed)
 
 
+def session_path_segment(session_id: str) -> str:
+    """`session_id` (`YYYY-MM-DDTHH:MM`) made safe as a filesystem path component. A colon in a
+    crate's absolute path breaks `cargo test` on macOS: `cargo` puts that path in
+    `$DYLD_FALLBACK_LIBRARY_PATH`, which uses `:` as its own list separator, and a real dry run
+    (2026-09-29, P6) hit exactly this — `error: failed to join paths from
+    '$DYLD_FALLBACK_LIBRARY_PATH' together` — the first time a real, colon-bearing session id
+    reached a real `cargo test` rather than a test's own harmless `"sess-1"`-style stand-in. Every
+    `:` becomes `-`; never parsed back into a timestamp, only ever compared for equality by whoever
+    builds the same path again (`session.unit_paths` does, via this same function)."""
+    return session_id.replace(":", "-")
+
+
 def stage_item(source_dir: Path, session_id: str, unit: str, kind: str) -> Path:
     """Copy `source_dir`'s stub crate into
-    `training/rust/work/<session_id>/<unit>/<kind>/<source_dir.name>/` — the learner edits and is
-    graded there, never in `source_dir` itself (team lead ruling, 2026-09-28). Re-staging the same
-    problem in the same session starts from the stub again.
+    `training/rust/work/<session_id, path-safe>/<unit>/<kind>/<source_dir.name>/` — the learner
+    edits and is graded there, never in `source_dir` itself (team lead ruling, 2026-09-28).
+    Re-staging the same problem in the same session starts from the stub again.
 
     `kind` (`"probe"` here, `"practice"` in `session.py`) keeps the two staging areas apart under
     one unit: the trainer's permission grant is scoped to `.../<unit>/practice/` alone (team lead
     ruling, 2026-09-28), and a probe item staged in the same session under `.../<unit>/probe/` must
     never fall inside that grant by a naming coincidence — rule 19, the trainer never sees a probe."""
-    work_dir = WORK_ROOT / session_id / unit / kind / source_dir.name
+    work_dir = WORK_ROOT / session_path_segment(session_id) / unit / kind / source_dir.name
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.parent.mkdir(parents=True, exist_ok=True)

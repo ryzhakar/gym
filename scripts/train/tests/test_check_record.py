@@ -84,3 +84,26 @@ def test_main_exits_0_when_all_clean(isolated_record_dir: Path) -> None:
     for name in record_schema.FILES:
         write(isolated_record_dir, name, [])
     assert check_record.main() == 0
+
+
+def test_ladder_gap_turn_with_a_blank_note_is_a_fail(isolated_record_dir: Path) -> None:
+    write(isolated_record_dir, "turns", ["2026-09-28T10:00,2026-09-28T09:55,1,ladder-gap,unit-1-unshown,5.00,,"])
+    findings = check_record.check_file("turns")
+    assert len(findings) == 1
+    assert "note is required" in findings[0]
+
+
+def test_non_ladder_gap_turn_with_a_note_is_a_fail(isolated_record_dir: Path) -> None:
+    write(isolated_record_dir, "turns", ["2026-09-28T10:00,2026-09-28T09:55,1,hint-1,unit-1-attempt,5.00,hint,should not be here"])
+    findings = check_record.check_file("turns")
+    assert len(findings) == 1
+    assert "note must be empty" in findings[0]
+
+
+def test_ladder_gap_turn_with_a_note_is_clean(isolated_record_dir: Path) -> None:
+    write(
+        isolated_record_dir,
+        "turns",
+        ['2026-09-28T10:00,2026-09-28T09:55,1,ladder-gap,unit-1-unshown,5.00,,"ladder gap: unit-1-unshown"'],
+    )
+    assert check_record.check_file("turns") == []

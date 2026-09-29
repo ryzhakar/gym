@@ -1,8 +1,9 @@
 """Validate every file of the Rust trainer's learner record against `record_schema.py`.
 
 Usage: `uv run python scripts/train/check_record.py`. One line per finding; exit 1 on any FAIL.
-Checks: the header matches the schema; every cell passes its column's validator; timestamps
-never go backward within a file.
+Checks: the header matches the schema; every cell passes its column's validator; every row passes
+its file's whole-row rules, if any (`record_schema.ROW_CHECKS`); timestamps never go backward
+within a file.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from record_schema import FILES, TIMESTAMP_FIELD, file_path  # noqa: E402
+from record_schema import FILES, ROW_CHECKS, TIMESTAMP_FIELD, file_path  # noqa: E402
 
 
 def check_file(name: str) -> list[str]:
@@ -37,6 +38,10 @@ def check_file(name: str) -> list[str]:
             error = check(record[column])
             if error:
                 findings.append(f"FAIL  {where}  {name}.{column} {error}: {record[column]!r}")
+        for row_check in ROW_CHECKS.get(name, []):
+            error = row_check(record)
+            if error:
+                findings.append(f"FAIL  {where}  {name} row {error}: {record}")
         timestamp = record[TIMESTAMP_FIELD]
         if timestamp < previous_timestamp:
             findings.append(f"FAIL  {where}  time {timestamp} goes back from {previous_timestamp}")

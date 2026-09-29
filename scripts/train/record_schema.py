@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 Validator = Callable[[str], "str | None"]
+RowCheck = Callable[[dict[str, str]], "str | None"]
 
 ROOT = Path(__file__).resolve().parents[2]
 RECORD_DIR = ROOT / "training/rust/record"
@@ -47,6 +48,12 @@ def iso_date(value: str) -> "str | None":
 
 def nonempty(value: str) -> "str | None":
     return None if value.strip() else "empty"
+
+
+def free_text(_value: str) -> "str | None":
+    """Any string, including empty — shape unconstrained; `csv.writer` quotes it, `csv.DictReader`
+    unquotes it. Whether it's required is a row-level rule (`ROW_CHECKS`), not a column shape."""
+    return None
 
 
 def bool_token(value: str) -> "str | None":
@@ -139,10 +146,16 @@ FILES: dict[str, dict[str, Validator]] = {
         TIMESTAMP_FIELD: timestamp_token,
         "session": nonempty,  # the session row's own timestamp
         "n": int_at_least(1),
-        "kind": enum("hint-1", "hint-2", "hint-3", "question", "feedback", "instruction", "answer"),
+        # start/present: v0.2 turn kinds (team lead, 2026-09-28) — a unit's opening turn, and the
+        # trainer presenting an item's text; ladder-gap: promoted from a magic `feedback` note
+        # string (trainer.md v0.1 rule 23) to its own kind, `note` now carrying that text properly.
+        "kind": enum(
+            "hint-1", "hint-2", "hint-3", "question", "feedback", "instruction", "answer", "start", "present", "ladder-gap"
+        ),
         "item": nonempty,
         "minute": float_at_least(0),
         "request_kind": maybe(enum("hint", "answer", "explain")),  # blank when the trainer initiated
+        "note": free_text,  # required for kind ladder-gap, blank otherwise — see ROW_CHECKS
     },
     "confidence": {
         TIMESTAMP_FIELD: timestamp_token,
@@ -156,4 +169,21 @@ FILES: dict[str, dict[str, Validator]] = {
         "unit": nonempty,
         "due_date": iso_date,
     },
+}
+
+
+def note_required_iff_ladder_gap(row: dict[str, str]) -> "str | None":
+    has_note = bool(row["note"].strip())
+    if row["kind"] == "ladder-gap" and not has_note:
+        return "note is required when kind is 'ladder-gap'"
+    if row["kind"] != "ladder-gap" and has_note:
+        return "note must be empty unless kind is 'ladder-gap'"
+    return None
+
+
+# Whole-row rules a column's own validator can't express, since it never sees another column
+# (team lead, 2026-09-28: turns.note's requiredness depends on turns.kind). Applied after every
+# per-column check in that file passes; a file with no entry here has none.
+ROW_CHECKS: dict[str, list[RowCheck]] = {
+    "turns": [note_required_iff_ladder_gap],
 }

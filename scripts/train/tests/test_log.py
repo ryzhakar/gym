@@ -133,7 +133,10 @@ def test_turn_fields_refuses_a_malformed_session_id() -> None:
 def test_turn_alias_round_trips_through_build_and_append(turns_csv: Path) -> None:
     session_id = datetime.now().strftime(record_schema.TIMESTAMP_FORMAT)
     fields = log.turn_fields(
-        ["--session", session_id, "--n", "1", "--kind", "hint-1", "--item", "unit-1-attempt", "--request", "hint"]
+        [
+            "--session", session_id, "--n", "1", "--kind", "hint-1", "--item", "unit-1-attempt",
+            "--request", "hint", "--note", "none",
+        ]
     )
     row = log.build_row("turns", fields)
     log.append_row("turns", row)
@@ -156,6 +159,8 @@ def test_main_turn_alias_appends_to_turns_csv(turns_csv: Path) -> None:
             "unit-1-reuse-1",
             "--request",
             "none",
+            "--note",
+            "none",
         ]
     )
     with turns_csv.open(encoding="utf-8", newline="") as handle:
@@ -165,4 +170,63 @@ def test_main_turn_alias_appends_to_turns_csv(turns_csv: Path) -> None:
     assert rows[0]["kind"] == "feedback"
     assert rows[0]["item"] == "unit-1-reuse-1"
     assert rows[0]["request_kind"] == ""
+    assert rows[0]["note"] == ""
     assert float(rows[0]["minute"]) == pytest.approx(1.0, abs=1.0)  # --session truncates to the minute
+
+
+@pytest.mark.parametrize("kind", ["start", "present", "hint-2", "instruction"])
+def test_v02_and_v01_kinds_are_all_accepted(turns_csv: Path, kind: str) -> None:
+    session_id = datetime.now().strftime(record_schema.TIMESTAMP_FORMAT)
+    fields = log.turn_fields(
+        ["--session", session_id, "--n", "1", "--kind", kind, "--item", "unit-1-attempt", "--request", "none", "--note", "none"]
+    )
+    row = log.build_row("turns", fields)  # no SystemExit
+    assert row["kind"] == kind
+
+
+def test_note_defaults_to_blank_when_the_flag_is_omitted_entirely() -> None:
+    """rule 38: `--note` is "required for ladder-gap, otherwise absent" — the trainer leaves it out
+    of the invocation for every other kind, it doesn't pass `--note none`."""
+    session_id = datetime.now().strftime(record_schema.TIMESTAMP_FORMAT)
+    fields = log.turn_fields(
+        ["--session", session_id, "--n", "1", "--kind", "hint-1", "--item", "unit-1-attempt", "--request", "hint"]
+    )
+    assert fields["note"] == ""
+    row = log.build_row("turns", fields)  # no SystemExit over a missing 'note'
+    assert row["note"] == ""
+
+
+def test_ladder_gap_without_a_note_is_refused(turns_csv: Path) -> None:
+    session_id = datetime.now().strftime(record_schema.TIMESTAMP_FORMAT)
+    fields = log.turn_fields(
+        [
+            "--session", session_id, "--n", "1", "--kind", "ladder-gap", "--item", "unit-1-unshown",
+            "--request", "none", "--note", "none",
+        ]
+    )
+    with pytest.raises(SystemExit, match="note is required"):
+        log.build_row("turns", fields)
+
+
+def test_ladder_gap_with_a_note_is_accepted(turns_csv: Path) -> None:
+    session_id = datetime.now().strftime(record_schema.TIMESTAMP_FORMAT)
+    fields = log.turn_fields(
+        [
+            "--session", session_id, "--n", "1", "--kind", "ladder-gap", "--item", "unit-1-unshown",
+            "--request", "none", "--note", "ladder gap: unit-1-unshown",
+        ]
+    )
+    row = log.build_row("turns", fields)
+    assert row["note"] == "ladder gap: unit-1-unshown"
+
+
+def test_a_non_ladder_gap_kind_with_a_note_is_refused(turns_csv: Path) -> None:
+    session_id = datetime.now().strftime(record_schema.TIMESTAMP_FORMAT)
+    fields = log.turn_fields(
+        [
+            "--session", session_id, "--n", "1", "--kind", "hint-1", "--item", "unit-1-attempt",
+            "--request", "hint", "--note", "should not be here",
+        ]
+    )
+    with pytest.raises(SystemExit, match="note must be empty"):
+        log.build_row("turns", fields)

@@ -218,6 +218,24 @@ def test_stage_item_copies_to_work_root_leaving_the_source_untouched(tmp_path: P
     assert snapshot(source) == before  # copying never touches the source
 
 
+def test_session_path_segment_strips_colons() -> None:
+    assert probe.session_path_segment("2026-09-29T12:20") == "2026-09-29T12-20"
+    assert ":" not in probe.session_path_segment("2026-09-29T12:20")
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_stage_item_with_a_real_session_id_survives_cargo_test(tmp_path: Path) -> None:
+    """Regression test for a real dry-run failure (2026-09-29, P6): a colon-bearing session id
+    used literally as a path component breaks `cargo test` on macOS (`$DYLD_FALLBACK_LIBRARY_PATH`
+    uses `:` as its own separator) — `stage_item` must sanitize it before building the path."""
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    work_dir = probe.stage_item(unit_dir / "probe-a" / "p1", "2026-09-29T12:20", "unit-1", kind="probe")
+    assert ":" not in str(work_dir)
+    passed, continuous = probe.run_cargo_test(work_dir)
+    assert passed is True
+    assert continuous == pytest.approx(1.0)
+
+
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
 def test_run_probe_leaves_items_byte_identical(tmp_path: Path) -> None:
     """The learner edits the staged copy, never `items/` itself (team lead ruling, 2026-09-28)."""

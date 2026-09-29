@@ -57,7 +57,7 @@ def unit_paths(unit: str, session_id: str) -> tuple[str, str, str]:
     session's staged practice copies — team lead ruling, 2026-09-28: the trainer never reads
     `items/`'s own reuse-1/reuse-2/unshown/attempt crates, only what's staged), RECORD — absolute."""
     unit_dir = str(ROOT / "training/rust/items" / unit)
-    crate = str(probe.WORK_ROOT / session_id / unit / PRACTICE_STAGE_KIND)
+    crate = str(probe.WORK_ROOT / probe.session_path_segment(session_id) / unit / PRACTICE_STAGE_KIND)
     record = str(record_schema.RECORD_DIR)
     return unit_dir, crate, record
 
@@ -245,7 +245,7 @@ def gap_days_since_last_session() -> float:
 
 
 def close_session(
-    minutes: float,
+    minutes: int,
     units: list[str],
     trainer_model: str,
     probe_minutes: float,
@@ -283,7 +283,7 @@ def main(argv: list[str]) -> int:
     p_open.add_argument("--items-root", type=Path, default=DEFAULT_ITEMS_ROOT)
 
     p_close = sub.add_parser("close")
-    p_close.add_argument("--minutes", type=float, required=True)
+    p_close.add_argument("--minutes", type=int, required=True)  # sessions.minutes is int_at_least(0)
     p_close.add_argument("--units", required=True, help="';'-separated unit ids practiced this session")
     p_close.add_argument("--trainer-model", required=True)
     p_close.add_argument("--probe-minutes", type=float, required=True)

@@ -65,6 +65,20 @@ def test_close_writes_session_and_queue_rows() -> None:
     assert kinds["next_unit"]["unit"] == "unit-2"
 
 
+def test_main_close_parses_minutes_as_an_integer() -> None:
+    """Regression test for a real dry-run failure (2026-09-29, P6): `argparse`'s `--minutes` was
+    `type=float`, so `--minutes 45` produced `"45.0"`, which `sessions.minutes` (`int_at_least`)
+    refused. Every earlier test called `close_session` directly with a Python `int`, so this only
+    showed up going through the actual CLI."""
+    session.main(
+        [
+            "session.py", "close", "--minutes", "45", "--units", "unit-1", "--trainer-model", "opus",
+            "--probe-minutes", "8", "--assistant-closed", "true", "--interruptions", "0", "--next-unit", "unit-2",
+        ]
+    )
+    assert read_rows("sessions")[0]["minutes"] == "45"
+
+
 def test_open_with_no_due_probe_hands_off_to_the_next_unit(isolated_paths: Path, capsys: pytest.CaptureFixture) -> None:
     session.close_session(
         minutes=45,
