@@ -939,3 +939,4 @@
 2026-09-29T17:15 | self | delegation | t-writer continued: skill stopped; probing and tracking restored to gym-trainer surgically
 2026-09-29T17:15 | agent:t-p56-scripts | receipt | dropped session.py, its tests and allowlist.md; probe.py staging simplified; 79 tests pass; record checks 0 FAIL
 2026-09-29T17:17 | agent:t-writer | receipt | run-training-session skill written before the stop landed (messages crossed); its runtime defects noted: sessions row stamped at close, training/rust hardcoded in record_schema and probe.py, cargo-only grading, trainer_guard unwired; the queued stop deletes the skill and restores probing and tracking to the trainer
+2026-09-29T17:18 | agent:r2-xb-2 | receipt | batch 2 team b slices 14-15 done: 16 sources, 18 Questions, 23 Claims; r2-xb-2 assignment complete
