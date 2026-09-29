@@ -51,3 +51,7 @@ Demoted 2026-09-26: "demote self-location for a planned stage and/or gate to a p
 "Interface details are settled later, in design iteration on real data." Deferred to that iteration: "controls, what each click opens, and phone behavior." (SPEC.md, 2026-09-25)
 
 Pick up once the data layer holds real Questions.
+
+## Stop subagents loading CLAUDE.md
+
+CLAUDE.md has orchestrator-specific instructions. Subagents consume them unintentionally.
