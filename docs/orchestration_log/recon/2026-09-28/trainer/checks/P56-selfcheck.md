@@ -412,3 +412,116 @@ record: 0 FAIL
 
 Same test count as before (74): this was a deletion of dead assertions and dead production code
 together, not a net-new test.
+
+## `log.py`'s `turn` kinds and `note` field (team lead, 2026-09-29)
+
+`record_schema.py`'s `turns.kind` enum gained `start`, `present`, `ladder-gap` alongside the v0.1
+set. Added a `note` column (`free_text`: any string, including empty — its requiredness isn't a
+column-shape question). `note` is required (non-blank) for `kind == "ladder-gap"` and refused as
+non-blank for every other kind — a rule no single column's own validator can express, since it never
+sees another column's value. Added `record_schema.ROW_CHECKS`, a new, small mechanism: whole-row
+rules applied after every per-column check passes, keyed by file name (only `turns` has one so far).
+Wired into both `log.py`'s `build_row` and `check_record.py`'s `check_file`, so a malformed row is
+refused at write time and a hand-edited one is still caught by the checker.
+
+`log.py`'s `turn` CLI alias gained a `--note` flag. Read rust-trainer.md v0.2 rule 38's own words
+before wiring it up — "`--note` is required for `ladder-gap`, otherwise absent" — so a non-ladder-gap
+turn is expected to *omit* the flag, not pass `--note none`; `turn_fields` now defaults `note` to
+blank when the flag is missing entirely (an explicit `--note none` still works too, for a trainer
+that passes one anyway — the earlier "any flag value of exactly `none` maps to blank" rule, kept).
+Regenerated `training/rust/record/turns.csv`'s header straight from the schema (it was still
+header-only — nothing to migrate).
+
+`training/rust/record/turns.csv`: `timestamp,session,n,kind,item,minute,request_kind,note`.
+
+14 new/changed tests across `test_log.py` and `test_check_record.py`: all v0.1/v0.2 kinds accepted;
+`ladder-gap` without a note refused (both at write time and by the checker); a non-`ladder-gap` kind
+with a note refused (both); `ladder-gap` with a note accepted and clean; `--note none` maps to
+blank; **`--note` omitted entirely also defaults to blank** (the actual v0.2 invocation shape, not
+just the `none`-flag one — caught by reading rule 38's exact wording rather than assuming symmetry
+with `--request`).
+
+## Trainer v0.2 installed (team lead, 2026-09-29)
+
+`trainer.md` already showed `# rust-trainer v0.2` when checked — copied verbatim to
+`.claude/agents/rust-trainer.md` (diffed identical after the copy).
+
+## P6 dry run, end to end (team lead, 2026-09-29)
+
+Live repo, real `u01-own-move-borrow`, real record files — not an isolated tmp copy, per the ask.
+Backed up all five record CSVs and a full `sha256` manifest of `training/rust/items/` before
+touching anything, so both could be verified byte-identical (record: reverted; items/: never
+touched) and restored exactly afterward.
+
+**Setup**: appended a `queue.csv` row (`kind=next_unit, unit=u01-own-move-borrow`) via `log.py` so
+`session.py open` would pick u01 as the next unit.
+
+**Step 1 — `session.py open`, a fresh sonnet playing the learner.** Dispatched a fresh `sonnet`
+subagent with an explicit, doubled-down instruction not to execute the printed
+`claude --agent rust-trainer ...` line under any circumstance — only to run `session.py open`, read
+the output as a learner would, and quote that line back verbatim. It complied exactly: ran the
+command, reported `due delayed probes run: none`, `next unit: u01-own-move-borrow`, and the full
+launch command (embedding a real `.trainer-settings.json` path and the session/unit/items/record
+prompt), and did not invoke it. Its own first-impression note, worth relaying: the printed "sessions
+tail"/"items tail" sections show only bare CSV headers with no "no history yet" framing, and the
+same header text appears a second time inside the launch prompt's quoted argument — by design (the
+trainer gets its own copy of the tail as initial context), but it reads as a doubled, unexplained
+artifact to a first-time viewer. Not fixed here — a copy/documentation clarity issue, not a
+correctness one; flagging for whoever owns the launch prompt's wording next.
+
+**Real bug found: a colon in a session id breaks `cargo test` on macOS.** The fresh sonnet's real
+`session_id` (`2026-09-29T12:20`, from `session.new_session_id()`) got used literally as a
+`training/rust/work/` directory name. Every previous test used a harmless stand-in (`"sess-1"`)
+that never contains a colon, so this never showed up before a real dry run used a real id. Cargo
+puts the crate's own absolute path into `$DYLD_FALLBACK_LIBRARY_PATH` before invoking the linker,
+and that env var uses `:` as its list separator — `error: failed to join paths from
+'$DYLD_FALLBACK_LIBRARY_PATH' together`. Confirmed in isolation first (a bare `cargo init` in a
+`:`-containing directory reproduces it, nothing else involved). Fixed with `probe.session_path_segment`,
+replacing every `:` with `-` before it's ever used as a path component; wired into both
+`probe.stage_item` and `session.unit_paths`/`permission_settings` (which builds the same path
+independently for `CRATE`) so the two can't drift apart again. Two new tests, including a real
+`cargo test` regression test reproducing the exact failure and confirming the fix.
+
+**Step 2 — `probe.py` on u01 `probe-a`, a scripted correct answer.** Wrote real, correct Rust fixes
+for all three stub items (`p1-board`: read the max before pushing, not after; `p2-summary`: borrow
+the lines instead of consuming them; `p3-shift`: borrow the offset per iteration instead of moving
+it, without making `Point` `Copy` — `probe-a/p3-shift` has since grown a `tests/structure.rs` that
+fails to compile if `Point` becomes `Copy`, read and respected). First attempt (pre-fix) correctly
+graded all three `false, 0.0` — the colon bug, not a scoring bug, confirmed by inspecting the staged
+files directly (the edits *did* land; grading just couldn't run `cargo test` at all). Second attempt,
+after the path fix: all three graded `true, 1.0000`, logged as six real `items.csv` rows total (three
+failed attempts, three corrected ones).
+
+**Step 3 — `session.py close`.** Hit the `--minutes` argparse bug in the same pass (see below);
+fixed, then closed cleanly: one `sessions.csv` row, a `delayed_probe` queue row for u01 due in 7
+days, a `next_unit` row for a scratch placeholder unit.
+
+**Second real bug found: `--minutes` parsed as a float.** `argparse`'s `--minutes` was `type=float`;
+`--minutes 45` produced `"45.0"`, which `sessions.minutes` (`int_at_least`) refused outright. Every
+existing test called `close_session()` directly with a Python `int` literal, never through `main()`
+with a string argument, so this never surfaced before a real CLI invocation. Fixed: `type=int`,
+matching the schema (`--probe-minutes` stays `float`, matching `probe_minutes`'s own column). One
+new regression test going through `session.main()` itself, not `close_session()` directly.
+
+**Step 4 — confirmed.** `check_record.py` → `record: 0 FAIL` throughout. `training/rust/items/`'s
+full `sha256` manifest identical before vs. after every step (probe grading and practice staging
+both operate on `training/rust/work/` copies only). Record showed exactly what was expected: 1
+session row, 6 item rows (3 failed + 3 corrected), 3 queue rows (the setup row, the delayed-probe
+row, the next-unit row).
+
+**Step 5 — reverted.** All five record CSVs restored to their exact pre-dry-run byte content (all
+were header-only before and after — this dry run is the first thing to have written real rows to
+them at all). Removed the scratch `training/rust/work/` tree. `check_record.py` confirmed clean
+again post-revert.
+
+```
+$ uv run pytest scripts/train/tests
+============================== 88 passed in 7.77s ==============================
+$ uv run python scripts/train/check_record.py    # after the revert
+record: 0 FAIL
+```
+
+Two real, previously-undetected bugs found and fixed by actually running the system end to end
+rather than only through unit tests with harmless stand-in values — both are exactly the kind of
+gap a dry run exists to catch (a real session id, a real CLI invocation, both avoided by every
+existing test's own convenience shortcuts).
