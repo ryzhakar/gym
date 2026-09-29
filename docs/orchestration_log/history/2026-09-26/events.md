@@ -919,3 +919,4 @@
 2026-09-29T16:58 | self | decision | Rust state documented in rust-map/STATE.md; the 7 resumable readers resume after the weekly reset, no new Rust launches this span (owner ruling 2026-09-29)
 2026-09-29T17:00 | owner | receipt | in conversation: agents-reference dates from April 2026; the frontmatter answer needs current sources
 2026-09-29T17:00 | self | delegation | agent:cc-guide-frontmatter, claude-code-guide: current agent frontmatter fields and CLAUDE.md loading for subagents and teammates, checked against the installed v2.1.284 bundle
+2026-09-29T17:02 | agent:cc-guide-frontmatter | receipt | current docs and bundle v2.1.284: 16 frontmatter fields, none stops CLAUDE.md; CLAUDE.md loads under --agent and for agent-team teammates; Agent-tool subagents unconfirmed; only a global CLAUDE_CODE_DISABLE_CLAUDE_MDS env var scopes it
