@@ -929,3 +929,6 @@
 2026-09-29T17:12 | agent:r2-xa-4 | receipt | batch 2 team a slices 10-12 done: 13 sources, 12 Questions, 37 Claims
 2026-09-29T17:12 | agent:r2-xa-2 | receipt | batch 2 team a slices 05-06 done: 11 sources, 7 Questions, 7 Claims
 2026-09-29T17:13 | agent:t-writer | receipt | surgical update: 1432 tokens (was 1677), 8 tags; trainer summoned by the manager, logs its turns only; probe running and queue closing removed; delayed probe read as outcome kept; grounds updated for changed lines
+2026-09-29T17:14 | owner | receipt | in conversation: administration the trainer lost must go somewhere if relevant
+2026-09-29T17:14 | self | decision | decided: training administration (session open, due delayed probes, unaided probes, trainer summons, close with queue and spacing) becomes a project skill the manager runs, written by the same writer under skill-creation
+2026-09-29T17:14 | self | delegation | t-writer continued: manager's training-administration skill under .claude/skills/
