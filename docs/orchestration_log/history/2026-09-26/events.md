@@ -921,3 +921,4 @@
 2026-09-29T17:00 | self | delegation | agent:cc-guide-frontmatter, claude-code-guide: current agent frontmatter fields and CLAUDE.md loading for subagents and teammates, checked against the installed v2.1.284 bundle
 2026-09-29T17:02 | agent:cc-guide-frontmatter | receipt | current docs and bundle v2.1.284: 16 frontmatter fields, none stops CLAUDE.md; CLAUDE.md loads under --agent and for agent-team teammates; Agent-tool subagents unconfirmed; only a global CLAUDE_CODE_DISABLE_CLAUDE_MDS env var scopes it
 2026-09-29T17:03 | self | discovery | probe: a haiku agent spawned from this session (agent teams on) had gym's CLAUDE.md in context, session-start sequence included; so every spawn path here loads the charter
+2026-09-29T17:09 | owner | receipt | deferral added by the owner: stop subagents loading CLAUDE.md, whose orchestrator-specific instructions they consume unintentionally
