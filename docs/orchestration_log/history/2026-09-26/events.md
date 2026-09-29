@@ -928,3 +928,4 @@
 2026-09-29T17:12 | agent:r2-xb-4 | receipt | batch 2 team b slices 10-12 done: 3 sources, 8 Questions, 10 Claims; the LWN thread thin by rule 9
 2026-09-29T17:12 | agent:r2-xa-4 | receipt | batch 2 team a slices 10-12 done: 13 sources, 12 Questions, 37 Claims
 2026-09-29T17:12 | agent:r2-xa-2 | receipt | batch 2 team a slices 05-06 done: 11 sources, 7 Questions, 7 Claims
+2026-09-29T17:13 | agent:t-writer | receipt | surgical update: 1432 tokens (was 1677), 8 tags; trainer summoned by the manager, logs its turns only; probe running and queue closing removed; delayed probe read as outcome kept; grounds updated for changed lines
