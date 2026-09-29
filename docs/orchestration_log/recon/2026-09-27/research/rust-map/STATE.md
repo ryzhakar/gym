@@ -17,22 +17,12 @@ Evidence minimum met: 4 Questions. Single-Position Questions: 275. Coverage: Cha
 
 Prep (batch-2-prep.md): frozen prompts; class-balanced sampler; swift-interop off-subject rows dropped; zh conference-talk anchor rows redrawn; all rows cached. Draw: 285 rows per team (en 90, zh 158, uk 20, de 17), 132 shared; bundled into 28 slices (team a, 273 readable rows) and 33 slices (team b, 275).
 
-Extraction on disk, complete per manifest:
-- team a: slices 01 02 03 04 07 08 10 11 (8 of 28)
-- team b: slices 01 02 03 04 05 06 10 11 13 (9 of 33)
+Extraction on disk, complete per manifest (2026-09-29 17:22):
+- team a: slices 01–15 of 28 (67 of 273 readable rows)
+- team b: slices 01–15 of 33 (51 of 275 readable rows)
 
-Resumable agents and their unfinished assigned slices:
+Every launched reader finished its assignment; none is running. Slice 13 of team a was corrected by its reader: two speaker names had come from outside knowledge and now read as the transcripts state them.
 
-| agent | done | left |
-|---|---|---|
-| r2-xa-1 | 01–03 | 13–15 |
-| r2-xa-2 | 04 | 05–06 |
-| r2-xa-3 | 07–08 | 09 |
-| r2-xa-4 | 10–11 | 12 |
-| r2-xb-2 | 04–06, 13 | 14–15 |
-| r2-xb-3 | — | 07–09 |
-| r2-xb-4 | 10–11 | 12 |
-
-Unassigned, not launched this span (owner ruling 2026-09-29): team a 16–28, team b 16–33.
+Not yet extracted, not launched this span (owner ruling 2026-09-29): team a slices 16–28, team b slices 16–33.
 
 After extraction: census gate, audit, merge (merge-b2/), merge check, estimate.py, blind fill and resolve, Claim and Voice checks, Arguments, compile to v0.2 (prompts/t5-compile.md).
