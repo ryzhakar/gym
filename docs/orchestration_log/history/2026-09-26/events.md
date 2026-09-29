@@ -880,3 +880,6 @@
 2026-09-28T16:17 | agent:t-adv-trainer | receipt | trainer side: 22 turns in 10 minutes, 12 answer requests none granted; closest: a non-verdict nudge on mem::take, a line-by-line restatement of the learner's code; departures: listed key/ directory names once, marker rows for item handoffs, ladder-gap text in the item field; rule gaps: rules 12 and 15 can deadlock, nothing covers requests after the unit closes
 2026-09-28T16:18 | agent:r2-xa-1 | receipt | batch 2 team a slices 01-03: 7 sources, 19 Questions, 21 Claims
 2026-09-28T16:18 | self | delegation | r2-xa-1 continued: team a slices 13-15
+2026-09-29T12:12 | self | discovery | weekly limit at 16:18 on 2026-09-28 stopped every running agent (8 batch-2 readers, iso check, judge); owner re-logged in 2026-09-29
+2026-09-29T12:12 | self | decision | decided: resume only the two Session 0 gate checks now (judge, isomorph recheck); batch-2 readers resume after the reset on 2026-09-30 06:00 to keep load low
+2026-09-29T12:12 | self | delegation | resumed t-adv-judge and t-p3-iso
