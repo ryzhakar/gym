@@ -942,3 +942,4 @@
 2026-09-29T17:18 | agent:r2-xb-2 | receipt | batch 2 team b slices 14-15 done: 16 sources, 18 Questions, 23 Claims; r2-xb-2 assignment complete
 2026-09-29T17:19 | agent:t-writer | receipt | skill deleted; probing and tracking restored to gym-trainer: 1883 tokens, 10 tags, unaided probes through probe.py run by the learner in their own terminal, item and confidence rows, mastery gate, spacing queue; the sessions row is now written by no one
 2026-09-29T17:21 | agent:t-writer | receipt | unit choice from due rows added to gym-trainer (revisit, else next_unit, else first unpracticed, type differing from the last); 1944 tokens; one duplicated definition of type left in place
+2026-09-29T17:22 | agent:r2-xa-1 | receipt | batch 2 team a slice 14 done: 6 sources, 10 Questions, 11 Claims; slice 13 corrected in place: two speaker names had come from outside knowledge, now as the transcripts state them; slice 15 under way
