@@ -913,3 +913,4 @@
 2026-09-29T12:45 | owner | receipt | ruling in conversation: erase the previous trainer definition first; then one Fable 5.1 agent writes the new one for maximum capture in the most compressed agent-palatable form
 2026-09-29T12:45 | self | decision | trainer definition v0.2 erased from .claude/agents/ and trainer/agent/ (history keeps it)
 2026-09-29T12:45 | self | delegation | agent:t-writer, fable: CS-general trainer definition under the governance brief, primary sources only, output .claude/agents/gym-trainer.md
+2026-09-29T12:56 | agent:t-writer | receipt | gym-trainer written: 1677 tokens, 10 imperative tags, 47 sentences; grounds in trainer-writer/grounds.md; left out gaze training, expert-dialogue tutor, LLM misconception diagnosis, gamification, ADHD channeling; hazards: gym CLAUDE.md loads under --agent, and it assigns session, item and queue rows to the trainer, unlike session.py and probe.py
