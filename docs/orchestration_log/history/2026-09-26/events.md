@@ -900,3 +900,5 @@
 2026-09-29T12:27 | self | delegation | agent:dig-agents-ref and agent:dig-writing, sonnet: digests of the four writing references into recon/2026-09-29/agent-writing/
 2026-09-29T12:29 | owner | receipt | ruling in conversation: hold; no further action, the instruction-writer dispatch included, until the owner calls silence again; silence paused
 2026-09-29T12:30 | agent:dig-agents-ref | receipt | agents-reference digest: frontmatter rules with line refs, SendMessage resume for multi-turn subagents behind CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, no section on drift prevention or prompt testing, version gates, 4 contradictions
+2026-09-29T12:30 | owner | receipt | in conversation: once digests land, map which part governs what; a learning-style digest by the agent that sourced the texts is allowed
+2026-09-29T12:30 | self | delegation | scout-learning-mode continued: digest of the learning-mode texts, governing parts, harness-bound versus portable
