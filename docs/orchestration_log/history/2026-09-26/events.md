@@ -893,3 +893,4 @@
 2026-09-29T12:23 | self | delegation | agent:scout-learning-mode, sonnet: locate and extract verbatim the harness's Learning output style and any learning-mode plugin text; output recon/2026-09-29/learning-mode/
 2026-09-29T12:25 | agent:t-p56-scripts | receipt | dry run end to end: open, probe on u01 probe-a with scripted fixes graded 1.0, close; found and fixed a colon in session paths breaking cargo on macOS and float minutes refused; items byte-identical; record reverted; trainer v0.2 installed; 88 tests pass
 2026-09-29T12:25 | self | decision | Session 0 ready: trainer v0.2 installed, items checked, dry run passed
+2026-09-29T12:27 | agent:scout-learning-mode | receipt | learning-mode texts extracted verbatim: built-in Learning and Explanatory styles from cli.js v2.1.284, plugin learning-output-style (claude-plugins-official) with its SessionStart hook text; standalone explanatory plugin not on disk
