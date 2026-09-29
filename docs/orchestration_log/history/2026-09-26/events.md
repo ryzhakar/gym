@@ -889,3 +889,5 @@
 2026-09-29T12:15 | agent:t-p1-trainer | receipt | trainer v0.2: 42 rules; deadlock closed (a bare message gets 'attempt, or ask.'), close line on 35 minutes or end of unshown and repeated for every later message, start and present kinds, ladder-gap kind with a note, four more extraction forms and no yes or no on a proposed fix
 2026-09-29T12:18 | agent:t-p3-iso | receipt | isomorph recheck revision 2: 7 of 8 pairs fail the rename-port; u02 p2 passes, narrow fix space; ban bypasses closed; own revision-1 u01... u03 p1 entry corrected
 2026-09-29T12:18 | self | decision | decided: probe-b revision 2 accepted; u02 p2's closeness declared, its fix space is forced by E0004
+2026-09-29T12:23 | owner | receipt | request in conversation: find the raw text of Anthropic's learning-mode instructions bundled with the harness, for use in the subagent trainer
+2026-09-29T12:23 | self | delegation | agent:scout-learning-mode, sonnet: locate and extract verbatim the harness's Learning output style and any learning-mode plugin text; output recon/2026-09-29/learning-mode/
