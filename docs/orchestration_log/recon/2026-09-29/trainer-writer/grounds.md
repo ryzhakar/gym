@@ -19,8 +19,9 @@ Companion to `.claude/agents/gym-trainer.md`. The body carries no claim ids (ski
 |---|---|---|
 | open-the-session | Read the session inputs the manager hands over… | owner ruling 2026-09-29 (the manager, gym's main session, is the learner's entrypoint and summons the trainer); task: subject, commands, paths are runtime inputs; the input list mirrors `record_schema.FILES` and `log.py turn --session` |
 | | Ask the manager for a missing input… | first-principles: no invented inputs |
-| | Mind the training; never administration… | owner ruling 2026-09-29: trainer minds training only; session, item, confidence, probe and queue rows, scheduling and probes are the manager's; probes run with the trainer absent |
-| | Read the record tail for hint history and baselines, set difficulty and hint timing from its probe rows… | N3-r4-08/09 (hint history predicts help need); N1-r7-08, N1-r7-04 (self-report is not learning); rulings 114, 120 (early measurement in training; adapt to specific students); `items.kind baseline` |
+| | Mind the training; never the summoning | owner ruling 2026-09-29, corrected the same day: probing and tracking are teaching; the manager keeps only being the learner's entrypoint and summoning the trainer |
+| | Read the record tail for hint history, baselines and open probes… | N3-r4-08/09 (hint history predicts help need); N1-r7-08, N1-r7-04 (self-report is not learning); ruling 114 (early measurement in training); `items.kind baseline`; `queue.kind delayed_probe` |
+| | Run a due `delayed_probe` before the unit's practice | N1-r1-09 (the delay is part of the instrument); `record_schema.FILES["queue"]`; owner correction 2026-09-29 |
 | | Log the unit's opening as `start` | `record_schema.py` turns.kind `start`; `log.py` docstring |
 | log-every-turn | Log each turn… `log.py turn …` | `log.py` `turn` alias, flags, `--request`; N7-r3-02 (answer-vs-hint count moves with the unaided test; map: "log every assistant turn as answer-request vs hint") |
 | | Take the timestamp and minute from the printed row | `log.py`: refuses hand-typed timestamp, computes `minute` |
@@ -52,8 +53,18 @@ Companion to `.claude/agents/gym-trainer.md`. The body carries no claim ids (ski
 | | close with a fresh isomorphic item; never the solution to the item at hand | N1-r1-01 design (probe items paired to practice items); harm evidence |
 | give-feedback | on the learner's own code… after an attempt or a test run | Learning/Explanatory: insight "specific to the code you just wrote, rather than general programming concepts"; timing has no verified value (N3-r1-04, N3-r7-05 UNVERIFIABLE) so one timing is chosen and held, per `synthesis/first-protocol.md` |
 | | Leave the artifact as written | N7-r7-03/04 (LLM writing aid: product up, learner flat) |
-| | Read the unit's delayed probe as its outcome; never practice score, confidence or felt progress | N1-r1-01 (assistant removed, held-out items); N1-r1-09 (delay is part of the instrument); N1-r6-05/06 (immediate and 2-week rankings reverse); N1-r4-10, N7-r1-09, N1-r7-08, N1-r7-04, N1-r6-09; ruling 104 (learned = unaided and lasting); owner ruling 2026-09-29 (the probe is the manager's, trainer absent) |
 | | Point at probe results; never at feedback on past self-judgments | N1-r4-01/02, N4-r6-05, N1-r3-11 (calibration feedback null, worse on correct cases); N4-r2-10 |
+| run-the-probe | Run a probe on isomorphic unseen items, `immediate` and `delayed` ≥7 days, through `probe.py` | N1-r1-01 (assistant removed, held-out items paired to practice items); N1-r1-09 (delay is part of the instrument); N1-r6-05/06 (immediate and 2-week rankings reverse, so both run); ruling 104 (learned = unaided and lasting); `probe.py` (ISOMORPH_OF probe-a/probe-b, KIND_OF, cap, grading, one `items` row per problem) |
+| | confidence 0–4 per probe item, logged, never read as learning | `record_schema.FILES["confidence"]` (quarantined; never joined to an axis); N1-r7-04 (practice worsens calibration), N1-r7-08 (self-perception ran opposite to the exam in both AI arms), N1-r4-01/02, N4-r6-05 |
+| | learner runs the script in their own terminal; never from your shell | `probe.py` `wait=input()` waits on stdin, which a tool shell does not supply; `sessions.assistant_closed` (the learner attests; no lock-out exists, map substrate fact) |
+| | Leave grading to the script; never open a `key/` path | `probe.py` docstring (presentation never opens `key/`; grading copies held-out tests, runs them, removes them; team lead ruling 2026-09-28); N7-r2-01 (the LLM default is early reveal) |
+| | write nothing mid-probe | N1-r1-01; N7-r1-09 (assisted overstates unaided) |
+| | pass and fraction of tests passed from the logged rows | `run_cargo_test`; N1-r3-01 (threshold and continuous instruments give different curves); N1-r6-07 (a knowledge check misses what a performance measure catches) |
+| | delayed probe is the outcome; never practice score or felt progress | N1-r4-10, N1-r6-06, N7-r1-09, N1-r7-08, N1-r6-09 |
+| | passed immediate probe closes the unit, failed one returns it to practice on unshown items; never on the clock | N1-r6-06 (simulation-based mastery learning ahead at 2 weeks; one RCT n=30); N2-r3-05 UNVERIFIABLE (criterion-gated units); `items/README.md` (`unshown/`) |
+| | Queue a `revisit` on a failed delayed probe | N2-r1-01 (spacing to the retention target); `queue.kind revisit` |
+| close-the-unit | queue `delayed_probe` ≥7 days, `revisit` at a gap growing with the retention wanted (a month for half a year), `next_unit` of another type | N1-r1-09 (317 experiments: the optimal gap rises with the retention interval); N2-r1-01 (≥1 month for ≥6-month retention); N2-r7-03/04 (gain at equal total study time); N2-r1-02, N2-r7-01 (interleaving); `record_schema.FILES["queue"]`; map: spacing untested on a real learner under a computed interval, so seven days is the instrument's floor and the month is the meta-analysis's cell |
+| | next unit's difficulty and hint timing from the probe record | rulings 114, 120 (early measurement in training; adapt to specific students) |
 
 ## Choices the evidence did not make
 
@@ -61,4 +72,7 @@ Companion to `.claude/agents/gym-trainer.md`. The body carries no claim ids (ski
 - `hint-1` gated on an attempt: Liu's hint users ≈ control is cross-sectional; the gate is the attempt-first member applied to the first hint.
 - "In words" for the canonical approach: PS-I studies show canonical solutions to the same problem after attempts; the body forbids pasting runnable code for the learner's item because the LLM default (N7-r2-01) is early reveal and the harm mechanism is copying.
 - Break note: N6-r5-03/04 is a lab result at the scale of seconds; implementation intentions for resuming (N6-r4-01…-04) are SURVEYED S2.
-- Removed on the owner's 2026-09-29 ruling, now the manager's: probe running and scoring (N1-r3-01 threshold plus continuous; `items` rows), confidence logging (`confidence` rows), spacing and the `queue` rows (N2-r1-01, N2-r7-03/04), the mastery gate at the immediate probe (N1-r6-06).
+- Mastery gate at the immediate probe: one RCT, n=30, medical procedural skill.
+- Revisit gap "a month for half a year": Cepeda's lab verbal-recall cell applied to a CS skill; no learner outcome under any computed interval.
+- Confidence per probe item rather than per unit: follows `confidence.item_id`.
+- The `sessions` row (minutes, gap_days, trainer_model, probe_minutes, assistant_closed, interruptions) is written by neither the trainer nor the manager's summoning; unassigned after the 2026-09-29 correction.
