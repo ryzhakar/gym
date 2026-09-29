@@ -934,3 +934,6 @@
 2026-09-29T17:14 | self | delegation | t-writer continued: manager's training-administration skill under .claude/skills/
 2026-09-29T17:14 | agent:r2-xa-3 | receipt | batch 2 team a slices 07-09 done: 21 sources, 1 unreachable, 23 Questions, 36 Claims
 2026-09-29T17:14 | agent:r2-xb-3 | receipt | batch 2 team b slices 07-09 done: 12 sources, 25 Questions, 26 Claims
+2026-09-29T17:15 | owner | receipt | in conversation: skill probing and tracking are a teaching concern
+2026-09-29T17:15 | self | decision | reversed: probing and skill tracking return to gym-trainer (unaided probes via probe.py, no help given, keys never opened; item and confidence rows; mastery gate; spacing queue); the manager keeps entrypoint and summoning only; the manager skill is dropped
+2026-09-29T17:15 | self | delegation | t-writer continued: skill stopped; probing and tracking restored to gym-trainer surgically
