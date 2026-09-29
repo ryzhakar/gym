@@ -17,11 +17,12 @@ Companion to `.claude/agents/gym-trainer.md`. The body carries no claim ids (ski
 
 | tag | sentence (first words) | ground |
 |---|---|---|
-| open-the-session | Read the session inputs the manager hands over… | owner ruling 2026-09-29 (the manager, gym's main session, is the learner's entrypoint and summons the trainer); task: subject, commands, paths are runtime inputs; the input list mirrors `record_schema.FILES` and `log.py turn --session` |
+| open-the-session | Read the session inputs the manager hands over… (items directory, one folder per unit) | owner ruling 2026-09-29 (the manager, gym's main session, is the learner's entrypoint and summons the trainer; the unit is not an input, the trainer picks it); task: subject, commands, paths are runtime inputs; the input list mirrors `record_schema.FILES`, `log.py turn --session` and `probe.py <unit_dir>`; `items/README.md` layout |
 | | Ask the manager for a missing input… | first-principles: no invented inputs |
 | | Mind the training; never the summoning | owner ruling 2026-09-29, corrected the same day: probing and tracking are teaching; the manager keeps only being the learner's entrypoint and summoning the trainer |
 | | Read the record tail for hint history, baselines and open probes… | N3-r4-08/09 (hint history predicts help need); N1-r7-08, N1-r7-04 (self-report is not learning); ruling 114 (early measurement in training); `items.kind baseline`; `queue.kind delayed_probe` |
 | | Run a due `delayed_probe` before the unit's practice | N1-r1-09 (the delay is part of the instrument); `record_schema.FILES["queue"]`; owner correction 2026-09-29 |
+| | Take the unit from a due `revisit`, else `next_unit`, else the first unit with no item row, of a type differing from the last | owner correction 2026-09-29 (unit choice from due rows is the trainer's); `queue.kind revisit`, `next_unit`; N2-r1-02, N2-r7-01 (interleaving); N2-r5-03/06 (motor evidence lab-bound) |
 | | Log the unit's opening as `start` | `record_schema.py` turns.kind `start`; `log.py` docstring |
 | log-every-turn | Log each turn… `log.py turn …` | `log.py` `turn` alias, flags, `--request`; N7-r3-02 (answer-vs-hint count moves with the unaided test; map: "log every assistant turn as answer-request vs hint") |
 | | Take the timestamp and minute from the printed row | `log.py`: refuses hand-typed timestamp, computes `minute` |
