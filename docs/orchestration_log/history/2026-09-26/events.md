@@ -910,3 +910,6 @@
 2026-09-29T12:41 | agent:dig-evidence-map | receipt | evidence map digest: 2498 words, map read in full, ledger matches; tensions: three O=2 grades clash with the map's own key, cost-of-offloading both candidate and not a method, a stale N7 audit line
 2026-09-29T12:43 | owner | receipt | ruling in conversation: the trainer body may use XML for compression, with shallow nesting only where the nesting carries meaning; no comments or other cruft, per skill-creation
 2026-09-29T12:44 | owner | receipt | ruling in conversation: ETHOS.md is an earlier version of skill-creation; skill-creation stands in for it wherever instruction-writer names ETHOS
+2026-09-29T12:45 | owner | receipt | ruling in conversation: erase the previous trainer definition first; then one Fable 5.1 agent writes the new one for maximum capture in the most compressed agent-palatable form
+2026-09-29T12:45 | self | decision | trainer definition v0.2 erased from .claude/agents/ and trainer/agent/ (history keeps it)
+2026-09-29T12:45 | self | delegation | agent:t-writer, fable: CS-general trainer definition under the governance brief, primary sources only, output .claude/agents/gym-trainer.md
