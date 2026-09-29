@@ -922,3 +922,6 @@
 2026-09-29T17:02 | agent:cc-guide-frontmatter | receipt | current docs and bundle v2.1.284: 16 frontmatter fields, none stops CLAUDE.md; CLAUDE.md loads under --agent and for agent-team teammates; Agent-tool subagents unconfirmed; only a global CLAUDE_CODE_DISABLE_CLAUDE_MDS env var scopes it
 2026-09-29T17:03 | self | discovery | probe: a haiku agent spawned from this session (agent teams on) had gym's CLAUDE.md in context, session-start sequence included; so every spawn path here loads the charter
 2026-09-29T17:09 | owner | receipt | deferral added by the owner: stop subagents loading CLAUDE.md, whose orchestrator-specific instructions they consume unintentionally
+2026-09-29T17:11 | owner | receipt | rulings in conversation: surgical updates only to gym-trainer.md; drop session.py and all launch cruft; resume the Rust readers now; close the span once the Rust work lands
+2026-09-29T17:11 | self | delegation | resumed now: r2-xa-1..4, r2-xb-2..4 on their unfinished slices; resume cron e07eeac9 cancelled
+2026-09-29T17:11 | self | delegation | t-writer continued: surgical update, trainer logs turns only, summoned by the manager; t-p56-scripts continued: drop session.py, launch generation, allowlist.md
