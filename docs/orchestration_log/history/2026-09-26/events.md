@@ -937,3 +937,4 @@
 2026-09-29T17:15 | owner | receipt | in conversation: skill probing and tracking are a teaching concern
 2026-09-29T17:15 | self | decision | reversed: probing and skill tracking return to gym-trainer (unaided probes via probe.py, no help given, keys never opened; item and confidence rows; mastery gate; spacing queue); the manager keeps entrypoint and summoning only; the manager skill is dropped
 2026-09-29T17:15 | self | delegation | t-writer continued: skill stopped; probing and tracking restored to gym-trainer surgically
+2026-09-29T17:15 | agent:t-p56-scripts | receipt | dropped session.py, its tests and allowlist.md; probe.py staging simplified; 79 tests pass; record checks 0 FAIL
