@@ -891,3 +891,5 @@
 2026-09-29T12:18 | self | decision | decided: probe-b revision 2 accepted; u02 p2's closeness declared, its fix space is forced by E0004
 2026-09-29T12:23 | owner | receipt | request in conversation: find the raw text of Anthropic's learning-mode instructions bundled with the harness, for use in the subagent trainer
 2026-09-29T12:23 | self | delegation | agent:scout-learning-mode, sonnet: locate and extract verbatim the harness's Learning output style and any learning-mode plugin text; output recon/2026-09-29/learning-mode/
+2026-09-29T12:25 | agent:t-p56-scripts | receipt | dry run end to end: open, probe on u01 probe-a with scripted fixes graded 1.0, close; found and fixed a colon in session paths breaking cargo on macOS and float minutes refused; items byte-identical; record reverted; trainer v0.2 installed; 88 tests pass
+2026-09-29T12:25 | self | decision | Session 0 ready: trainer v0.2 installed, items checked, dry run passed
