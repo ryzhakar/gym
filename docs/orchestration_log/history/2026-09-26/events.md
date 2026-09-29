@@ -894,3 +894,7 @@
 2026-09-29T12:25 | agent:t-p56-scripts | receipt | dry run end to end: open, probe on u01 probe-a with scripted fixes graded 1.0, close; found and fixed a colon in session paths breaking cargo on macOS and float minutes refused; items byte-identical; record reverted; trainer v0.2 installed; 88 tests pass
 2026-09-29T12:25 | self | decision | Session 0 ready: trainer v0.2 installed, items checked, dry run passed
 2026-09-29T12:27 | agent:scout-learning-mode | receipt | learning-mode texts extracted verbatim: built-in Learning and Explanatory styles from cli.js v2.1.284, plugin learning-output-style (claude-plugins-official) with its SessionStart hook text; standalone explanatory plugin not on disk
+2026-09-29T12:27 | owner | receipt | ruling in conversation: agent definitions are written by executing instruction-writer.md with agents-reference.md, strunk_spr_v3_complete.xml and sparse-priming-representations.md; the trainer becomes CS-specific (gym-specific), not Rust-specific, for now; the orchestrator reads none of them directly
+2026-09-29T12:27 | self | decision | the trainer definition is rewritten CS-specific under the owner's writing instructions (owner ruling 2026-09-29)
+2026-09-29T12:27 | self | discovery | writing references sized by wc: agents-reference.md ~57k tokens, strunk_spr_v3_complete.xml ~33k, instruction-writer.md ~0.9k, sparse-priming-representations.md ~0.2k
+2026-09-29T12:27 | self | delegation | agent:dig-agents-ref and agent:dig-writing, sonnet: digests of the four writing references into recon/2026-09-29/agent-writing/
