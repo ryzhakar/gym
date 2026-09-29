@@ -20,3 +20,13 @@ state   memento set up and ratified 2026-09-26; records lint clean
         no trainer yet
 open    none: no tripwires, no delegations; commits local, none pushed
 next    bind, memento:init; then both research tasks in parallel, the best way of teaching and Rust (docs/user_deferred_items.md)
+
+## Span 2026-09-26T23:11 → 2026-09-29
+
+Session start ran bind, init and the two research tasks in parallel, on the owner's 2026-09-26 ruling.
+
+- Teaching research: Fable planned it; surveys ran to round 8 across seven needs with verification and saturation audits; the owner declared it complete on sources. Output: evidence map v3 (926 sources, 464 claims, 135 verified).
+- Rust map: frame of 13,331 rows; batch 1 read by two blind teams, merged to 401 Questions, blind double fill, Claim and Voice verification, Arguments; maps/rust v0.1 committed provisional. Batch 2 prepared (frozen prompts, class-balanced draw) and extracted to slices 01–15 per team; the rest is held by owner ruling. State: recon/2026-09-27/research/rust-map/STATE.md.
+- Trainer: Fable planned the program; a Rust trainer v0.1–v0.2 was built and passed an adversarial run, then erased by owner ruling. Fable then wrote gym-trainer from primary sources under instruction-writer governance: CS-general, summoned by the manager, running unaided probes and tracking skill. The session launcher and allowlist were dropped as cruft.
+- Rulings this span: questions in the tool; no owner questions or escalations; silence mode; opus only at knowledge bottlenecks; maps live as work in progress; resume agents, never relaunch; trainer CS-general; trainer stack stop-yapping and cargo-cult-science.
+- Failures: an opus burst burned the weekly limit; repeated silence breaches and no-op checks; cd drift; claims about own context made without checking.

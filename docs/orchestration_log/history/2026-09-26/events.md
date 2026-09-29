@@ -945,3 +945,4 @@
 2026-09-29T17:22 | agent:r2-xa-1 | receipt | batch 2 team a slice 14 done: 6 sources, 10 Questions, 11 Claims; slice 13 corrected in place: two speaker names had come from outside knowledge, now as the transcripts state them; slice 15 under way
 2026-09-29T17:23 | agent:r2-xa-1 | receipt | batch 2 team a slice 15 done: 1 source, nothing new; r2-xa-1 assignment complete
 2026-09-29T17:23 | self | discovery | batch 2 extraction stands at slices 01-15 per team (team a 67 of 273 rows, team b 51 of 275); no reader running; STATE.md updated
+2026-09-29T17:24 | self | discovery | waking-cause audit: heartbeat cron 6dc3aaed is session-only and points at no running work; no readers or writers running; the next span is the owner's summons
