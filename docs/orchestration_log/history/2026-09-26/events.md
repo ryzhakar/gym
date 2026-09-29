@@ -908,3 +908,4 @@
 2026-09-29T12:35 | owner | receipt | in conversation: the evidence map is the central document the agent definition adapts; a digest of it is wanted
 2026-09-29T12:35 | self | delegation | agent:dig-evidence-map, opus: digest of teaching evidence-map-v3 for adapting it into a CS-general trainer definition; output recon/2026-09-29/agent-writing/digest-evidence-map.md
 2026-09-29T12:41 | agent:dig-evidence-map | receipt | evidence map digest: 2498 words, map read in full, ledger matches; tensions: three O=2 grades clash with the map's own key, cost-of-offloading both candidate and not a method, a stale N7 audit line
+2026-09-29T12:43 | owner | receipt | ruling in conversation: the trainer body may use XML for compression, with shallow nesting only where the nesting carries meaning; no comments or other cruft, per skill-creation
