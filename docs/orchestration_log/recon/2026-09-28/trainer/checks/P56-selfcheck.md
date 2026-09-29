@@ -525,3 +525,73 @@ Two real, previously-undetected bugs found and fixed by actually running the sys
 rather than only through unit tests with harmless stand-in values — both are exactly the kind of
 gap a dry run exists to catch (a real session id, a real CLI invocation, both avoided by every
 existing test's own convenience shortcuts).
+
+## `session.py` and its launch cruft, dropped (owner ruling, via team lead, 2026-09-29)
+
+The manager summons the trainer as a subagent directly — nothing runs `claude --agent ...`, so the
+generated `--settings` file, the printed launch command, and the whole permission/allowlist model
+`session.py` built around them are gone. `log.py`, `record_schema.py`, `check_record.py`, `probe.py`
+(with its own staging, kept) and `scripts/train/hooks/trainer_guard.py` (kept, wiring now whoever's
+job it is outside this file) stay; only session.py-only code came out of them.
+
+### Files deleted
+
+- `scripts/train/session.py`
+- `scripts/train/tests/test_session.py`
+- `docs/orchestration_log/recon/2026-09-28/trainer/agent/allowlist.md`
+
+### Every function (and its module-level constants) removed with `session.py`
+
+`unit_paths`, `permission_settings`, `new_session_id`, `write_settings_file`,
+`trainer_launch_command`, `stage_practice_items`, `completed_delayed_probe_units`,
+`due_delayed_probes`, `next_unit`, `record_tail`, `open_session`, `gap_days_since_last_session`,
+`close_session`, `main` (session.py's own CLI entry point) — plus the module constants
+`PRACTICE_ITEM_NAMES`, `DEFAULT_ITEMS_ROOT`, `TRAINER_GUARD`, `PRACTICE_STAGE_KIND`,
+`KEY_DENY_PATTERN`. (`ensure_unit_crate`/`workspace_path`/`read_members`/`write_workspace` and
+`TRAINING_ROOT` were already removed in the previous "dead scaffold" pass, so they weren't in the
+file to remove again here.)
+
+### Every test removed with `test_session.py`
+
+`test_close_writes_session_and_queue_rows`, `test_main_close_parses_minutes_as_an_integer`,
+`test_open_with_no_due_probe_hands_off_to_the_next_unit`,
+`test_open_stages_the_next_units_practice_items_leaving_items_byte_identical`,
+`test_open_runs_a_due_delayed_probe_then_hands_off`, `test_launch_command_carries_the_full_allowlist`,
+`test_a_read_of_any_key_path_is_denied_by_the_pattern`,
+`test_launch_command_scopes_the_hook_to_the_named_unit_only`,
+`test_open_session_prints_a_launch_command_with_the_deny_rule`.
+
+### What came out of the files that stayed
+
+- **`probe.py`**: `stage_item` lost its `kind` parameter and the `<kind>/` path segment
+  (`training/rust/work/<session_id>/<unit>/<item>/`, not `.../<unit>/probe/<item>/`). `kind`
+  existed for exactly one reason — keeping `probe.py`'s own probe-staging apart from
+  `session.py`'s practice-staging under the same session and unit, so the trainer's `CRATE/**`
+  grant could never accidentally reach a probe's staged copy (rule 19). With practice-staging gone,
+  there is nothing left to disambiguate against, so the parameter and segment were simplified away
+  rather than kept as a needless required argument every caller has to satisfy for a collision that
+  no longer exists. Two call sites and two tests updated to match.
+- **`log.py`**: one comment's citation of `allowlist.md`'s Bash pattern removed (the substantive
+  point — this is rule 38's literal invocation — kept).
+- **`scripts/train/hooks/trainer_guard.py`**: its module docstring and `cwd_is_under`'s docstring
+  no longer describe `session.py`'s specific launch mechanism or cite `allowlist.md` by name; the
+  hook's own behavior (what it checks, why) is unchanged — nothing in its logic existed solely for
+  `session.py`, so nothing but prose moved.
+
+### Verified clean
+
+```
+$ uv run pytest scripts/train/tests
+============================== 79 passed in 8.09s ==============================
+$ uv run python scripts/train/check_record.py
+record: 0 FAIL
+$ uv run python scripts/check_records.py     # the outer, repo-wide memento check
+records: 0 FAIL
+```
+
+Swept `scripts/train/` for every remaining mention of `allowlist.md`, `session.py`,
+`trainer_launch_command`, `permission_settings`, `write_settings_file`, `PRACTICE_STAGE_KIND`,
+`stage_practice_items` after the edits: none found. `.claude/memento-map.md` and the outer
+`check_records.py`'s pointer check don't reference either deleted path (`docs/orchestration_log/recon/`
+paths and `.claude/agents/*.md` both sit outside what that checker scans), so neither deletion needed
+a corresponding map or pointer fix.

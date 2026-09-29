@@ -7,8 +7,8 @@ value the column's shape rejects. Refuses a timestamp older than the file's last
 
 `turn --session <id> --n <n> --kind <k> --item <i> --request <hint|answer|explain|none>
 [--note "<text>"]` is an alias for `turns` in the trainer's own flag form (rust-trainer.md v0.2
-rule 38's literal invocation, `allowlist.md`'s Bash allow pattern) — `kind` accepts `start` and
-`present` (v0.2) alongside the v0.1 set, and `ladder-gap` in place of a `feedback` turn whose note
+rule 38's literal invocation) — `kind` accepts `start` and `present` (v0.2) alongside the v0.1 set,
+and `ladder-gap` in place of a `feedback` turn whose note
 reads `ladder gap: <item> after level <n>` (v0.1 rule 23, promoted in v0.2). `--note` is required
 for `--kind ladder-gap` and otherwise omitted entirely — rule 38's own words, "required for
 ladder-gap, otherwise absent" — defaulting to blank when left out (`record_schema.ROW_CHECKS`

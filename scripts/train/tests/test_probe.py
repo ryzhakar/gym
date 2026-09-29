@@ -211,9 +211,9 @@ def test_stage_item_copies_to_work_root_leaving_the_source_untouched(tmp_path: P
     source = unit_dir / "probe-a" / "p1"
     before = snapshot(source)
 
-    work_dir = probe.stage_item(source, "sess-1", "unit-1", kind="probe")
+    work_dir = probe.stage_item(source, "sess-1", "unit-1")
 
-    assert work_dir == probe.WORK_ROOT / "sess-1" / "unit-1" / "probe" / "p1"
+    assert work_dir == probe.WORK_ROOT / "sess-1" / "unit-1" / "p1"
     assert snapshot(work_dir) == before
     assert snapshot(source) == before  # copying never touches the source
 
@@ -229,7 +229,7 @@ def test_stage_item_with_a_real_session_id_survives_cargo_test(tmp_path: Path) -
     used literally as a path component breaks `cargo test` on macOS (`$DYLD_FALLBACK_LIBRARY_PATH`
     uses `:` as its own separator) — `stage_item` must sanitize it before building the path."""
     unit_dir = make_unit_dir(tmp_path, "unit-1")
-    work_dir = probe.stage_item(unit_dir / "probe-a" / "p1", "2026-09-29T12:20", "unit-1", kind="probe")
+    work_dir = probe.stage_item(unit_dir / "probe-a" / "p1", "2026-09-29T12:20", "unit-1")
     assert ":" not in str(work_dir)
     passed, continuous = probe.run_cargo_test(work_dir)
     assert passed is True
@@ -244,7 +244,7 @@ def test_run_probe_leaves_items_byte_identical(tmp_path: Path) -> None:
     before = snapshot(items_root)
 
     def learner_edits_the_staged_copy() -> None:
-        staged = probe.WORK_ROOT / "sess-1" / "unit-1" / "probe" / "p1" / "src" / "lib.rs"
+        staged = probe.WORK_ROOT / "sess-1" / "unit-1" / "p1" / "src" / "lib.rs"
         assert staged.read_text(encoding="utf-8") == LIB_RS_PASSING  # the copy started from the stub
         staged.write_text(LIB_RS_PARTIAL, encoding="utf-8")  # a real edit, distinct from the original
 

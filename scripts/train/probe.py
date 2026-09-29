@@ -9,10 +9,10 @@ across all of them (each problem's own `spec.md` says so: "10 minutes for p1, p2
 one `items` row logged per problem. `key/<which>/<problem>/` mirrors every problem path and holds the
 held-out tests; presentation (`item_text`) never opens or prints anything under a `key/` path
 component, anywhere. Grading is the one place that does read `key/` — P3-selfcheck "Found during the
-check" #3, decided by the team lead 2026-09-28: the no-key rule binds the trainer session
-(`allowlist.md`), not this script's own grading step. Grading only ever *copies* the held-out test
-files into the learner's problem directory, runs the tests, and removes exactly what it copied in —
-it never prints a key file's content, on any path, at any point.
+check" #3, decided by the team lead 2026-09-28: the no-key rule binds the trainer's own session, not
+this script's grading step. Grading only ever *copies* the held-out test files into the learner's
+problem directory, runs the tests, and removes exactly what it copied in — it never prints a key
+file's content, on any path, at any point.
 
 `training/rust/items/` stays read-only in use (team lead ruling, 2026-09-28): the learner never
 edits a committed stub directly. Before presenting or grading, every problem crate is copied to
@@ -114,21 +114,16 @@ def session_path_segment(session_id: str) -> str:
     '$DYLD_FALLBACK_LIBRARY_PATH' together` — the first time a real, colon-bearing session id
     reached a real `cargo test` rather than a test's own harmless `"sess-1"`-style stand-in. Every
     `:` becomes `-`; never parsed back into a timestamp, only ever compared for equality by whoever
-    builds the same path again (`session.unit_paths` does, via this same function)."""
+    builds the same path again."""
     return session_id.replace(":", "-")
 
 
-def stage_item(source_dir: Path, session_id: str, unit: str, kind: str) -> Path:
+def stage_item(source_dir: Path, session_id: str, unit: str) -> Path:
     """Copy `source_dir`'s stub crate into
-    `training/rust/work/<session_id, path-safe>/<unit>/<kind>/<source_dir.name>/` — the learner
-    edits and is graded there, never in `source_dir` itself (team lead ruling, 2026-09-28).
-    Re-staging the same problem in the same session starts from the stub again.
-
-    `kind` (`"probe"` here, `"practice"` in `session.py`) keeps the two staging areas apart under
-    one unit: the trainer's permission grant is scoped to `.../<unit>/practice/` alone (team lead
-    ruling, 2026-09-28), and a probe item staged in the same session under `.../<unit>/probe/` must
-    never fall inside that grant by a naming coincidence — rule 19, the trainer never sees a probe."""
-    work_dir = WORK_ROOT / session_path_segment(session_id) / unit / kind / source_dir.name
+    `training/rust/work/<session_id, path-safe>/<unit>/<source_dir.name>/` — the learner edits and
+    is graded there, never in `source_dir` itself (team lead ruling, 2026-09-28). Re-staging the
+    same problem in the same session starts from the stub again."""
+    work_dir = WORK_ROOT / session_path_segment(session_id) / unit / source_dir.name
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -194,7 +189,7 @@ def run_probe(
     unit = unit_dir.name
     directory = probe_dir(unit_dir, which)
     problems = list_problem_dirs(directory)
-    staged = [stage_item(problem, session_id, unit, kind="probe") for problem in problems]
+    staged = [stage_item(problem, session_id, unit) for problem in problems]
     for work_dir in staged:
         print(item_text(work_dir))
         print()

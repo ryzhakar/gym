@@ -1,22 +1,21 @@
 """PreToolUse hook: the trainer session's second backstop against a solution-ban breach (T8; P1 eval v0.1, "Remaining findings").
 
-Usage (wired by `session.py`'s launch command via a generated `--settings` file, not run by hand): a
-Claude Code `PreToolUse` hook matching `Bash|Read|Glob`, `uv run python
-scripts/train/hooks/trainer_guard.py --crate <CRATE>`. Reads the hook's JSON on stdin, writes one
+Usage: a Claude Code `PreToolUse` hook matching `Bash|Read|Glob`, `uv run python
+scripts/train/hooks/trainer_guard.py --crate <CRATE>` — `CRATE` the trainer's own staged working
+directory, whoever is wiring up the trainer's session. Reads the hook's JSON on stdin, writes one
 `hookSpecificOutput` line on stdout when it denies; prints nothing and exits 0 when it doesn't,
-leaving the permission list's own decision (`allowlist.md`) in force.
+leaving the trainer's own tool permissions in force.
 
-`allowlist.md`'s permission patterns already deny `Read`/`Glob` on `**/key/**` and `**/probe-*/**`,
-and allow `Bash` only for the logger and `cargo check`/`cargo test` — solid for a straight call, but
-two gaps a pattern alone can't close (P1 eval v0.1 "Remaining findings", allowlist.md § Open points):
-a prefix pattern like `cargo test*` still admits shell chaining after it (`cargo test; cat key/x`,
-`cargo test --manifest-path ... $(cat .../key/x)`, a second line), and a permission pattern can't
-pin a command's cwd. This hook closes both: `;`, `&&`, `||`, `|`, `>`, `<`, a backtick, `$(`, and a
-literal newline (a second line in one Bash call) are all denied outright, regardless of what
-precedes them; a Bash command naming a `key`/`probe-*` path segment is denied even with none of
-those present (belt-and-suspenders on top of the permission deny, for the same path a chained
-command could still reach); and a `Read`/`Glob` call on such a path is denied directly (a second
-check on top of the permission list, not a replacement).
+A permission pattern alone can deny `Read`/`Glob` on `**/key/**` and `**/probe-*/**`, and allow
+`Bash` only for the logger and `cargo check`/`cargo test` — solid for a straight call, but two gaps
+it can't close on its own (P1 eval v0.1 "Remaining findings"): a prefix pattern like `cargo test*`
+still admits shell chaining after it (`cargo test; cat key/x`, `cargo test --manifest-path ...
+$(cat .../key/x)`, a second line), and a permission pattern can't pin a command's cwd. This hook
+closes both: `;`, `&&`, `||`, `|`, `>`, `<`, a backtick, `$(`, and a literal newline (a second line
+in one Bash call) are all denied outright, regardless of what precedes them; a Bash command naming
+a `key`/`probe-*` path segment is denied even with none of those present (belt-and-suspenders, for
+the same path a chained command could still reach); and a `Read`/`Glob` call on such a path is
+denied directly (a second check on top of the permission list, not a replacement).
 """
 from __future__ import annotations
 
@@ -50,9 +49,9 @@ def command_denied_segment(command: str) -> "str | None":
 
 
 def cwd_is_under(cwd: str, crate: str) -> bool:
-    """Whether `cwd` is `crate` itself or somewhere inside it — `crate` (team lead ruling, 2026-09-28:
-    the staged practice work dir) holds several sibling crates (attempt/, reuse-1/, reuse-2/,
-    unshown/), so `cargo test` runs with cwd at whichever one is current, never at `crate` itself."""
+    """Whether `cwd` is `crate` itself or somewhere inside it — `crate` may hold several sibling
+    crates (e.g. attempt/, reuse-1/, reuse-2/, unshown/), so `cargo test` runs with cwd at whichever
+    one is current, never at `crate` itself."""
     crate_norm, cwd_norm = crate.rstrip("/"), cwd.rstrip("/")
     return cwd_norm == crate_norm or cwd_norm.startswith(crate_norm + "/")
 
