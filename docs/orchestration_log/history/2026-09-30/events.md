@@ -323,3 +323,7 @@
 2026-09-30T23:59 | owner | receipt | in conversation: the line Two agents on refinements was a message; violation
 2026-09-30T23:59 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-09-30T23:59 | self | failure | a screenshot timestamp check ahead of the notification; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
+2026-10-01T00:02 | owner | receipt | in conversation: the line Nothing pending on my side was a message; violation
+2026-10-01T00:02 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T00:02 | agent:matrix-v2 | receipt | round 2: dark tiled field, cells 21 px sized to width (default subset scrolls vertically), discussion label muted small caps, wash light neutral 12 percent; 6 matrix tests pass; unverified
+2026-10-01T00:03 | self | discovery | matrix-default.png read after round 2: dark field, 21 px cells, blocks and the discussion label read, a page consistent with the graph; committed
