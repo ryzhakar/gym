@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from gym.map.cluster import cocluster
+
 PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#7B3F61"]
 
 
@@ -114,44 +116,45 @@ def build_matrix(
         cell["color"] = color_index[(cell["q"], cell["position"])]
         cell["checked"] = "checked" in claims[cell["claim"]]
 
-    # --- default subset: iterate the two filters to a fixed point (a bipartite
-    # 2-core): a literal single pass (the prototype's reading) can leave a
-    # question in the subset whose only qualifying voices get filtered out by
-    # the voice-side rule, or a voice whose only qualifying questions get
-    # dropped by the question-side rule. Repeat both filters, each time
-    # restricted to the survivors of the other side, until neither set moves.
-    all_questions = set(question_voices)
-    all_voices = {vid for cells in question_voices.values() for vid in cells}
-    cur_questions, cur_voices = all_questions, all_voices
-    while True:
-        q_voices_live: dict[str, set[str]] = defaultdict(set)
-        q_positions_live: dict[str, set[str]] = defaultdict(set)
-        for cell in matrix_cells:
-            if cell["v"] in cur_voices:
-                q_voices_live[cell["q"]].add(cell["v"])
-                q_positions_live[cell["q"]].add(cell["position"])
-        next_questions = {
-            qid
-            for qid in cur_questions
-            if len(q_voices_live.get(qid, ())) >= 2 and len(q_positions_live.get(qid, ())) >= 2
-        }
-        v_questions_live: dict[str, set[str]] = defaultdict(set)
-        for cell in matrix_cells:
-            if cell["q"] in next_questions:
-                v_questions_live[cell["v"]].add(cell["q"])
-        next_voices = {
-            vid for vid in cur_voices if len(v_questions_live.get(vid, ())) >= 2
-        }
-        if next_questions == cur_questions and next_voices == cur_voices:
-            break
-        cur_questions, cur_voices = next_questions, next_voices
+    # --- two-way co-clustering (owner ruling 2026-09-30): Voices are similar
+    # by their stances on Questions, Questions are similar by the Voices
+    # taking stances on them. cocluster() runs its own 2-core thin filter
+    # (min_row_degree=2, min_col_degree=2), which supersedes the matrix's
+    # former standalone bipartite-fixed-point filter: the default view is
+    # now exactly cocluster()'s non-thin core, and row_order/col_order
+    # already carry the clustered order with thin rows/cols appended last.
+    cluster_cells: dict[tuple[str, str], str] = {
+        (cell["q"], cell["v"]): cell["position"] for cell in matrix_cells
+    }
+    clustering = cocluster(cluster_cells)
 
-    candidate_questions, candidate_voices = cur_questions, cur_voices
+    thin_row_set = set(clustering.thin_rows)
+    thin_col_set = set(clustering.thin_cols)
+    candidate_questions = {q for q in clustering.row_order if q not in thin_row_set}
+    candidate_voices = {v for v in clustering.col_order if v not in thin_col_set}
     default_cells = [
         cell
         for cell in matrix_cells
         if cell["q"] in candidate_questions and cell["v"] in candidate_voices
     ]
+
+    clustering_payload = {
+        "row_order": clustering.row_order,
+        "col_order": clustering.col_order,
+        "thin_rows": clustering.thin_rows,
+        "thin_cols": clustering.thin_cols,
+        "k": clustering.k,
+        "blocks": [
+            {
+                "rows": b.row_group,
+                "cols": b.col_group,
+                "fill_ratio": b.fill_ratio,
+                "agreement": b.dominant_position_agreement,
+                "cells_present": b.cells_present,
+            }
+            for b in clustering.blocks
+        ],
+    }
 
     # --- claims payload: only claims actually referenced (chosen + history) ---
     referenced_claims: set[str] = set()
@@ -214,6 +217,7 @@ def build_matrix(
             "questions": sorted(candidate_questions),
             "voices": sorted(candidate_voices),
         },
+        "clustering": clustering_payload,
         "problems": dict(problems),
         "stats": {
             "cells_total": len(matrix_cells),
@@ -243,16 +247,18 @@ MATRIX_CSS = r"""
   text.lbl:hover { fill: #000; text-decoration: underline; }
   text.lbl.dragging { opacity: 0.4; }
   text.lbl.pulse-row { fill: #a13a2f; font-weight: 700; }
+  .block-outline { fill: none; stroke: #1c1b1a; stroke-width: 2; pointer-events: stroke; }
+  .block-outline.block-discussion { stroke: #a13a2f; stroke-dasharray: 5,3; }
+  text.block-label { fill: #a13a2f; font-size: 10px; font-weight: 700; pointer-events: none; }
 """
 
 
 MATRIX_JS = r"""
-  var CELL = 18, LABEL_W = 320, HEAD_H = 170;
+  var CELL = 18, LABEL_W = 320, HEAD_H = 170, GAP = 26;
   var showAll = false;
   var rowOrder = [], colOrder = [];
   var revealed = {};
   var cellIndex = {};
-  var voiceNumber = {};
 
   function key(q, v) { return q + "\u0001" + v; }
 
@@ -264,23 +270,26 @@ MATRIX_JS = r"""
     }
   }
 
+  // Row/column order comes straight from cocluster()'s output: row_order /
+  // col_order already carry the clustered groups first, thin rows/cols
+  // appended last (src/gym/map/cluster.py). The default view is the
+  // non-thin core (that ordering minus its trailing thin_rows/thin_cols);
+  // "show all" is the full ordering, core then thin, rendered with a gap
+  // between them (see rowY/colX in render()).
   function currentQuestions() {
-    return showAll ? Object.keys(DATA.questions).sort() : DATA.default_subset.questions.slice().sort();
+    var c = DATA.clustering;
+    if (showAll) return c.row_order.slice();
+    return c.row_order.slice(0, c.row_order.length - c.thin_rows.length);
   }
   function currentVoices() {
-    return showAll ? Object.keys(DATA.voices).sort() : DATA.default_subset.voices.slice().sort();
+    var c = DATA.clustering;
+    if (showAll) return c.col_order.slice();
+    return c.col_order.slice(0, c.col_order.length - c.thin_cols.length);
   }
 
   function resetOrders() {
     rowOrder = currentQuestions();
     colOrder = currentVoices();
-    // Anonymous Voice numbers are assigned once, here, from this initial
-    // column order, and never recomputed by doReorder or a drag swap — so a
-    // number stays with its Voice for the rest of this page load (or until
-    // the subset itself changes, which is a fresh load of a different
-    // column set).
-    voiceNumber = {};
-    for (var i = 0; i < colOrder.length; i++) voiceNumber[colOrder[i]] = i + 1;
   }
 
   function axisMaps(rows, cols) {
@@ -390,7 +399,11 @@ MATRIX_JS = r"""
 
   function voiceLabel(vid) {
     if (revealed[vid]) return DATA.voices[vid].name;
-    return "Voice " + (voiceNumber.hasOwnProperty(vid) ? voiceNumber[vid] : "?");
+    // DATA.voice_number is the one numbering for the whole page (assigned
+    // in load.py over all Voices, sorted by id) -- the same numbers the
+    // Graph panel's Claim list shows, so a Voice reads the same number in
+    // both views.
+    return "Voice " + (DATA.voice_number.hasOwnProperty(vid) ? DATA.voice_number[vid] : "?");
   }
 
   function showClaimPanel(qid, vid) {
@@ -589,8 +602,24 @@ MATRIX_JS = r"""
     buildCellIndex();
     var svg = document.getElementById("matrix");
     svg.innerHTML = "";
-    var w = LABEL_W + colOrder.length * CELL + 20;
-    var h = HEAD_H + rowOrder.length * CELL + 20;
+
+    // Thin rows/cols only ever appear at the trailing end of rowOrder /
+    // colOrder (cocluster()'s own convention, kept by currentQuestions /
+    // currentVoices above): coreRowCount/coreColCount mark where the core
+    // ends and the parked thin rows/cols begin. In the default (non-"show
+    // all") view there are none, so the gap collapses to zero and rowY/colX
+    // degrade to the old plain i*CELL/j*CELL.
+    var thinRowN = showAll ? DATA.clustering.thin_rows.length : 0;
+    var thinColN = showAll ? DATA.clustering.thin_cols.length : 0;
+    var coreRowCount = rowOrder.length - thinRowN;
+    var coreColCount = colOrder.length - thinColN;
+    var rowGap = thinRowN > 0 ? GAP : 0;
+    var colGap = thinColN > 0 ? GAP : 0;
+    function rowY(i) { return HEAD_H + i * CELL + (i >= coreRowCount ? rowGap : 0); }
+    function colX(j) { return LABEL_W + j * CELL + (j >= coreColCount ? colGap : 0); }
+
+    var w = LABEL_W + colOrder.length * CELL + colGap + 20;
+    var h = HEAD_H + rowOrder.length * CELL + rowGap + 20;
     svg.setAttribute("width", w);
     svg.setAttribute("height", h);
     svg.setAttribute("viewBox", "0 0 " + w + " " + h);
@@ -602,18 +631,28 @@ MATRIX_JS = r"""
       return;
     }
 
-    // background = "no claim" colour for the whole grid
-    svg.appendChild(svgEl("rect", {
-      x: LABEL_W, y: HEAD_H, width: colOrder.length * CELL, height: rowOrder.length * CELL,
-      fill: "#dedad3"
-    }));
+    // background = "no claim" colour, one rect per (row band x col band) so
+    // the gap between the core and the parked thin rows/cols stays visibly
+    // empty rather than reading as more "no claim" cells.
+    function bgBand(rowStart, rowCount, colStart, colCount) {
+      if (rowCount <= 0 || colCount <= 0) return;
+      svg.appendChild(svgEl("rect", {
+        x: colX(colStart), y: rowY(rowStart),
+        width: colCount * CELL, height: rowCount * CELL,
+        fill: "#dedad3"
+      }));
+    }
+    bgBand(0, coreRowCount, 0, coreColCount);
+    bgBand(0, coreRowCount, coreColCount, thinColN);
+    bgBand(coreRowCount, thinRowN, 0, coreColCount);
+    bgBand(coreRowCount, thinRowN, coreColCount, thinColN);
 
     // column headers (rotated) + drag/click hit area
     for (var ci = 0; ci < colOrder.length; ci++) {
       var vid = colOrder[ci];
-      var x = LABEL_W + ci * CELL + CELL / 2;
+      var x = colX(ci) + CELL / 2;
       var hit = svgEl("rect", {
-        x: LABEL_W + ci * CELL, y: 0, width: CELL, height: HEAD_H,
+        x: colX(ci), y: 0, width: CELL, height: HEAD_H,
         class: "hit", "data-axis": "col", "data-id": vid
       });
       svg.appendChild(hit);
@@ -630,9 +669,9 @@ MATRIX_JS = r"""
     // row headers + hit area
     for (var ri = 0; ri < rowOrder.length; ri++) {
       var qid = rowOrder[ri];
-      var y = HEAD_H + ri * CELL + CELL / 2 + 4;
+      var y = rowY(ri) + CELL / 2 + 4;
       var hitR = svgEl("rect", {
-        x: 0, y: HEAD_H + ri * CELL, width: LABEL_W, height: CELL,
+        x: 0, y: rowY(ri), width: LABEL_W, height: CELL,
         class: "hit", "data-axis": "row", "data-id": qid
       });
       svg.appendChild(hitR);
@@ -653,7 +692,7 @@ MATRIX_JS = r"""
         var c = cellIndex[key(rowOrder[i], colOrder[j])];
         if (!c) continue;
         shownCount++;
-        var cx = LABEL_W + j * CELL, cy = HEAD_H + i * CELL;
+        var cx = colX(j), cy = rowY(i);
         var rect = svgEl("rect", {
           x: cx + 1, y: cy + 1, width: CELL - 2, height: CELL - 2,
           fill: DATA.palette[c.color - 1] || "#999",
@@ -680,6 +719,51 @@ MATRIX_JS = r"""
             cx: cx + 4, cy: cy + CELL - 5, r: 2.4, class: "undated-marker"
           }));
         }
+      }
+    }
+
+    // block outlines: cocluster()'s diagonal blocks, one outline per
+    // (row_group, col_group) pair sharing a label. A block's bounding box
+    // is read off the *current* rowOrder/colOrder positions of its members
+    // (min..max on each axis), so it stays correct through a manual drag,
+    // not just the default clustered order. fill_ratio and agreement go in
+    // the hover tooltip; agreement under 0.75 draws dashed and labelled
+    // "discussion" per the 2026-09-30 brief.
+    var rowPos = {}, colPos = {};
+    for (var pi = 0; pi < rowOrder.length; pi++) rowPos[rowOrder[pi]] = pi;
+    for (var pj = 0; pj < colOrder.length; pj++) colPos[colOrder[pj]] = pj;
+    var blocks = DATA.clustering.blocks;
+    for (var bi = 0; bi < blocks.length; bi++) {
+      var blk = blocks[bi];
+      if (!blk.rows.length || !blk.cols.length) continue;
+      var rIdxs = [], cIdxs = [];
+      for (var bri = 0; bri < blk.rows.length; bri++) {
+        if (rowPos.hasOwnProperty(blk.rows[bri])) rIdxs.push(rowPos[blk.rows[bri]]);
+      }
+      for (var bci = 0; bci < blk.cols.length; bci++) {
+        if (colPos.hasOwnProperty(blk.cols[bci])) cIdxs.push(colPos[blk.cols[bci]]);
+      }
+      if (!rIdxs.length || !cIdxs.length) continue;
+      var rMin = Math.min.apply(null, rIdxs), rMax = Math.max.apply(null, rIdxs);
+      var cMin = Math.min.apply(null, cIdxs), cMax = Math.max.apply(null, cIdxs);
+      var discussion = blk.agreement < 0.75;
+      var outline = svgEl("rect", {
+        x: colX(cMin), y: rowY(rMin),
+        width: (cMax - cMin + 1) * CELL, height: (rMax - rMin + 1) * CELL,
+        class: "block-outline" + (discussion ? " block-discussion" : "")
+      });
+      var bt = svgEl("title", {});
+      bt.textContent = "Block: " + blk.rows.length + " Questions × " + blk.cols.length +
+        " Voices — fill " + Math.round(blk.fill_ratio * 100) + "%, agreement " +
+        Math.round(blk.agreement * 100) + "%" + (discussion ? " (discussion)" : "");
+      outline.appendChild(bt);
+      svg.appendChild(outline);
+      if (discussion) {
+        var lbl = svgEl("text", {
+          x: colX(cMin) + 3, y: rowY(rMin) + 11, class: "block-label"
+        });
+        lbl.textContent = "discussion";
+        svg.appendChild(lbl);
       }
     }
 
@@ -741,13 +825,16 @@ MATRIX_JS = r"""
       "dashed border = provisional (unverified Voice, never fidelity-checked). " +
       "A ring marks an undated pick (no dated Claim to sort by); a filled dot marks a cell " +
       "where the Voice changed Position over time \u2014 click for the history. " +
-      "Column names stay anonymous until clicked. Voice numbers here are column numbers " +
-      "of this subset; the Graph numbers Voices over the whole map, so the two differ.";
+      "Column names stay anonymous until clicked; Voice numbers are the same here as in " +
+      "the Graph panel. Rows and columns are co-clustered (Dhillon spectral co-clustering) " +
+      "into blocks, outlined \u2014 dashed and labelled \"discussion\" where the block's Voices " +
+      "agree on a stance under 75% of the time. Thin rows/columns (too few Claims to " +
+      "cluster) are parked past the gap in \u201cShow all\u201d.";
   }
 
   function jumpToMatrixRow(qid) {
     setView("matrix");
-    if (!showAll && DATA.default_subset.questions.indexOf(qid) === -1) {
+    if (!showAll && DATA.clustering.thin_rows.indexOf(qid) !== -1) {
       setMatrixScope(true);
     } else {
       render();

@@ -153,9 +153,11 @@ def walk_payload(
 
     Voices are numbered once here, over the sorted voice ids, so a number
     is a property of the map rather than of whatever the page happens to be
-    showing. The Matrix numbers its columns separately, from its own
-    subset's column order (see matrix.py) -- the two numberings are not the
-    same and the page says so.
+    showing. Returned as `voice_number` and also exposed at the top level of
+    the page's data (page.py); the Matrix reads that same mapping for its
+    column labels (owner ruling 2026-09-30: one stable number per Voice for
+    the whole page, shared with the Graph panel) rather than numbering its
+    own subset's column order.
     """
     args_by_position: dict[str, list[str]] = defaultdict(list)
     for aid, a in arguments.items():
@@ -226,4 +228,5 @@ def walk_payload(
         "positions": positions_out,
         "voice_names": {vid: (v.get("name") or vid) for vid, v in voices.items()},
         "domains": {did: (d.get("text") or did) for did, d in domains.items()},
+        "voice_number": voice_number,
     }
