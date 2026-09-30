@@ -251,3 +251,4 @@
 2026-09-30T22:58 | self | delegation | agent:graph-map continued: canvas fits to the width left of an open panel so no label renders under it
 2026-09-30T22:59 | self | commitment | on graph-map's clip fix landing: run tests, commit, then the page reaches the owner as the report his message asked for: the build command, the two review verdict files, the screenshots
 2026-09-30T22:59 | self | delegation | agent:u02-summons-prep, sonnet, background: tomorrow's summons file from the template with live status, u02 item bank verified by cargo in scratch; output recon/2026-10-01/train/u02-readiness.md; wait bounded by heartbeat feb9bb57
+2026-09-30T23:00 | self | failure | two working-tree checks made while waiting on graph-map, answers unchanged; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
