@@ -103,3 +103,6 @@
 2026-09-30T17:08 | agent:gym-trainer | receipt | b5-iter clock started 17:08
 2026-09-30T17:11 | agent:gym-trainer | receipt | b5-iter ended 22 seconds past cap, cargo ran before the prediction (target/ present), recorded; b6-enum presented at 17:11
 2026-09-30T17:12 | agent:gym-trainer | receipt | b5 record corrected: target/ came from rust-analyzer's cargo check on open, program not run, no violation
+2026-09-30T17:14 | agent:gym-trainer | receipt | b6-enum clock started 17:13
+2026-09-30T17:14 | self | discovery | agent:tests-map-core stalled: transcript unchanged since 17:08:30, no test file written, no pytest process; stopped at 17:14 and relaunched from the same prompt file
+2026-09-30T17:14 | self | delegation | agent:tests-map-core-2, sonnet, background: relaunch of the estimate and check_map tests from the same prompt, writing files incrementally; wait bounded by heartbeat eed4185b
