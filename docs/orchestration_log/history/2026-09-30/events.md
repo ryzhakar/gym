@@ -295,3 +295,5 @@
 2026-09-30T23:34 | self | decision | decided: the 2100-token budget for the trainer definition was a guess and is dropped, 2779 stands; the colon guard goes to the baseline-command agent, owner of train/cli.py now
 2026-09-30T23:35 | self | delegation | agent:baseline-command continued: audit findings 7 and 9 (probe grade input() blocking, shared elapsed minutes) fixed or shown fixed; finding 11 (u01 probe-a items authored as renames) held for an items pass
 2026-09-30T23:35 | self | decision | decided: finding 12 (a procedure kind) goes to baseline-command; findings 10 (b3-result cap) and 11 (u01 probe-a as renames) are left: both baseline and probe-a items are consumed by the one learner, so a fix buys nothing; noted for any future learner
+2026-09-30T23:37 | owner | receipt | in conversation: the line Three agents still working was a message; violation
+2026-09-30T23:37 | self | failure | status line on a harness prompt; every such prompt gets an empty turn; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
