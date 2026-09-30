@@ -344,3 +344,4 @@
 2026-10-01T00:15 | self | discovery | review3-05 read: pinned edges are heavy white spokes, far neighbour labels pile up top-right; sent to graph-map for revision 6
 2026-10-01T00:17 | owner | receipt | in conversation: the line Revision 6 covers the clip was a message; violation
 2026-10-01T00:17 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T00:17 | self | span-event | close; HEAD da39057 (dirty: docs/orchestration_log/history/2026-09-30/session.md, src/gym/map/site/graph.py, .claude/work-silently); next: bind, memento:init; on revision 6: test, commit, one more cold review; on its pass the page reaches the owner as the report his order asked for; on the owner's go: gym train open, summon gym-trainer

@@ -36,3 +36,12 @@ next    bind, memento:init; on the owner's go: gym train open training/rust --le
 
 The owner ordered quality pushed on every axis with the manager reading images itself. Read: islands packed in rings, cross-edge noise, header prose, a Matrix on a light theme with clipped labels and empty block boxes, detached clusters as decorative rings. Dispatched: graph revision 4 (opus), Matrix v2, CLI ergonomics (committed aa8a054), map data gaps from cached evidence (committed f5e6971, check 417 to 394), a first-session audit and the trainer v4 it produced (committed 2c8e3a3), baseline stage and grade commands with the audit's tooling fixes. Session limit hit 23:37, three agents resumed at 23:51. Silence breaches continued on harness prompts; a failure entry names the reflex.
 
+
+## Close — 2026-10-01T00:17
+
+HEAD    da39057 (dirty: src/gym/map/site/graph.py, .claude/work-silently)
+state   map at revision 5 committed 2be2270, Matrix round 2 b12e416; third review a to d PASS, e FAIL on the clip under the panel; revision 6 running (clip root fix, names anchored, pinned edges softer)
+        app: CLI ergonomics aa8a054, baseline commands ed3b481, trainer v4 2c8e3a3, data gaps f5e6971 (check 394)
+        silence holds; twenty-four status-line breaches recorded, mechanism named in failures.md
+open    waits: agent:graph-map revision 6; heartbeat feb9bb57 session-only; u02 session on the owner's go, summons at recon/2026-10-01/prompts/summons-u02.md
+next    bind, memento:init; on revision 6: test, commit, one more cold review; on its pass the page reaches the owner as the report his order asked for; on the owner's go: gym train open, summon gym-trainer
