@@ -100,3 +100,5 @@
 2026-09-30T17:07 | agent:review-tests | receipt | review-tests.md: 129 of 131 tests assert real behaviour, two smoke; estimate.py closure math and check_map.py's schema gate carry no tests; four live-data skipif tests never skip on a clean checkout because that data is committed despite the gitignore; unverified
 2026-09-30T17:07 | self | discovery | 1094 files under docs/orchestration_log/recon/2026-09-27/ are tracked in git although .gitignore lists recon/: the research extractions, verify results and bundles the map's Claims rest on; the schema calls recon disposable; untracking them would discard evidence, keeping them contradicts the schema; the owner's decision, not taken here
 2026-09-30T17:07 | self | delegation | agent:tests-map-core, sonnet, background: tests for estimate.py closure math and check_map.py rules; output recon/2026-09-30/app/tests-map-core-report.md; wait bounded by heartbeat eed4185b
+2026-09-30T17:08 | agent:gym-trainer | receipt | b5-iter clock started 17:08
+2026-09-30T17:11 | agent:gym-trainer | receipt | b5-iter ended 22 seconds past cap, cargo ran before the prediction (target/ present), recorded; b6-enum presented at 17:11
