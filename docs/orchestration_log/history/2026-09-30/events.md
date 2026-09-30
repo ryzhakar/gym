@@ -339,3 +339,5 @@
 2026-10-01T00:14 | agent:map-review-3 | receipt | map-review-3.md: a to d PASS; e FAIL on one item: right-edge labels clip under the open panel again (hot patch, JS inte), reached via search; hulls apart, themes matched, Matrix density and type ship-ready; unverified
 2026-10-01T00:14 | self | delegation | agent:graph-map continued: clip regression on the search path, root fix, tests on search and hull names
 2026-10-01T00:14 | self | delegation | agent:graph-map, revision 6 also: island names anchored on a coloured strip or deeper into the glow
+2026-10-01T00:14 | owner | receipt | in conversation: the line Revision 6 in flight was a message; violation
+2026-10-01T00:14 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
