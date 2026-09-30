@@ -46,22 +46,20 @@ def close_session(
     interruptions: int,
     assistant_closed: str,
     next_step: str,
+    probe_minutes: "float | None" = None,
 ) -> str:
     rows = read_events(events_path(subject_dir, session_id))
     state = summarize_state(rows)
     open_items = "none" if assistant_closed == "yes" and interruptions == 0 else f"interruptions={interruptions} assistant_closed={assistant_closed}"
-    line = append_event(
-        subject_dir,
-        session_id,
-        "manager",
-        "close",
-        {
-            "minutes": str(minutes),
-            "units": units,
-            "interruptions": str(interruptions),
-            "assistant_closed": assistant_closed,
-        },
-    )
+    fields = {
+        "minutes": str(minutes),
+        "units": units,
+        "interruptions": str(interruptions),
+        "assistant_closed": assistant_closed,
+    }
+    if probe_minutes is not None:
+        fields["probe_minutes"] = str(probe_minutes)
+    line = append_event(subject_dir, session_id, "manager", "close", fields)
     timestamp = line.split(" | ", 1)[0]
     block = close_block(state, open_items, next_step, timestamp)
     path = session_md_path(subject_dir, session_id)

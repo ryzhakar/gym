@@ -83,11 +83,18 @@ def test_validate_fields_reports_a_bad_number() -> None:
     assert error is not None and "not a number" in error
 
 
-def test_validate_fields_tolerates_an_unknown_extra_field() -> None:
-    """Only a missing required field or a bad value on a required or recognized optional field
-    present is refused; a truly unrecognized extra field is never rejected here."""
+def test_validate_fields_refuses_an_unknown_extra_field() -> None:
+    """Team lead ruling (2026-09-30): an unrecognized field name is refused, `note` excepted — the
+    old behaviour (silently tolerating it) let a real bug through: `gym train log ... probe-item
+    ... continuous=0.5` used to write and round-trip a field this schema never declared."""
     error = validate_fields("attempt", {"unit": "u1", "item": "x", "result": "pass", "minutes": "5", "extra": "z"})
-    assert error is None
+    assert error is not None and "unknown field(s)" in error and "extra" in error
+
+
+def test_validate_fields_still_allows_note_on_any_kind() -> None:
+    """`note` is the one exception to the unknown-field refusal: legal free text on any kind,
+    required only by `ladder-gap`."""
+    assert validate_fields("present", {"unit": "u1", "item": "x", "note": "an aside"}) is None
 
 
 def test_ladder_gap_requires_a_nonempty_note() -> None:
@@ -163,5 +170,34 @@ def test_probe_item_fraction_outside_0_to_1_is_refused() -> None:
 
 def test_fraction_is_not_recognized_on_a_kind_other_than_probe_item() -> None:
     """`fraction` is `probe-item`'s own optional field, not global like `request` — an unrelated
-    kind carrying it is carrying an ordinary unrecognized extra field, never validated or refused."""
-    assert validate_fields("attempt", {"unit": "u1", "item": "x", "result": "pass", "minutes": "5", "fraction": "9"}) is None
+    kind carrying it is refused as an unknown field for that kind."""
+    error = validate_fields("attempt", {"unit": "u1", "item": "x", "result": "pass", "minutes": "5", "fraction": "9"})
+    assert error is not None and "unknown field(s)" in error and "fraction" in error
+
+
+def test_probe_item_refuses_the_old_ad_hoc_continuous_field() -> None:
+    """The exact bug reported: `gym train log ... probe-item ... continuous=0.5` used to be
+    accepted, `continuous` never having been declared anywhere in this schema (only `fraction`
+    is `probe-item`'s own optional field, since the second-pass rename)."""
+    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    error = validate_fields("probe-item", {**required, "continuous": "0.5"})
+    assert error is not None and "unknown field(s)" in error and "continuous" in error
+
+
+def test_close_accepts_an_optional_probe_minutes_field() -> None:
+    """Team lead ruling (2026-09-30): `close` may optionally carry `probe_minutes`, a
+    non-negative number — the one old `sessions.csv` column this schema gives a home to."""
+    required = {"minutes": "30", "units": "u1", "interruptions": "0", "assistant_closed": "yes"}
+    assert validate_fields("close", {**required, "probe_minutes": "8.5"}) is None
+    assert validate_fields("close", {**required, "probe_minutes": "0"}) is None
+
+
+def test_close_probe_minutes_below_0_is_refused() -> None:
+    required = {"minutes": "30", "units": "u1", "interruptions": "0", "assistant_closed": "yes"}
+    error = validate_fields("close", {**required, "probe_minutes": "-1"})
+    assert error is not None and "below 0" in error
+
+
+def test_close_probe_minutes_is_not_recognized_on_an_unrelated_kind() -> None:
+    error = validate_fields("attempt", {"unit": "u1", "item": "x", "result": "pass", "minutes": "5", "probe_minutes": "8"})
+    assert error is not None and "unknown field(s)" in error and "probe_minutes" in error

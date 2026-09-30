@@ -196,6 +196,10 @@ GLOBAL_OPTIONAL_FIELDS: dict[str, Validator] = {
 # An optional field recognized for one specific kind only.
 KIND_OPTIONAL_FIELDS: dict[str, dict[str, Validator]] = {
     "probe-item": {"fraction": float_in(0.0, 1.0)},
+    # Team lead ruling (2026-09-30): `close` may optionally carry `probe_minutes`, a non-negative
+    # number — the one old `sessions.csv` column (`record_schema.py`'s `probe_minutes`,
+    # `float_at_least(0)` there too) this schema gives a home to.
+    "close": {"probe_minutes": float_at_least(0)},
 }
 
 
@@ -245,10 +249,14 @@ def parse_fields(rest: str) -> dict[str, str]:
 
 
 def validate_fields(kind: str, fields: dict[str, str]) -> "str | None":
-    """The reason `fields` fails `kind`'s required set or an optional field's own value check, or
-    `None`. An extra field beyond a kind's required set is never refused for merely being present —
-    only a missing required field, or a bad value on a required or a recognized optional field that
-    is present, is refused."""
+    """The reason `fields` fails `kind`'s required set, an optional field's own value check, or an
+    unknown field, or `None`. Team lead ruling (2026-09-30): a field name that is neither one of
+    `kind`'s required fields nor a recognized optional field (`GLOBAL_OPTIONAL_FIELDS`,
+    `KIND_OPTIONAL_FIELDS`) is refused outright — `note` is the one exception, legal free text on
+    any kind whether or not that kind requires it. Before this ruling an unrecognized extra field
+    was silently tolerated (a real instance: `gym train log ... probe-item ... continuous=0.5`
+    wrote a line that round-tripped, `continuous` never having been a field this schema ever
+    declared — only `fraction` is `probe-item`'s own optional field)."""
     required = KINDS[kind]
     missing = [name for name in required if name not in fields]
     if missing:
@@ -263,4 +271,8 @@ def validate_fields(kind: str, fields: dict[str, str]) -> "str | None":
             error = check(fields[name])
             if error:
                 return f"{kind}.{name} {error}: {fields[name]!r}"
+    known = set(required) | set(optional) | {"note"}
+    unknown = sorted(name for name in fields if name not in known)
+    if unknown:
+        return f"unknown field(s) for {kind}: {', '.join(unknown)}"
     return None

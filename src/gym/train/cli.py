@@ -67,10 +67,13 @@ def close_command(
     interruptions: int = typer.Option(..., "--interruptions"),
     assistant_closed: str = typer.Option(..., "--assistant-closed"),
     next_step: str = typer.Option(..., "--next"),
+    probe_minutes: Optional[float] = typer.Option(None, "--probe-minutes"),
 ) -> None:
     """Append a close block to session.md and log the close event."""
     typer.echo(
-        close_module.close_session(subject_dir, session_id, minutes, units, interruptions, assistant_closed, next_step)
+        close_module.close_session(
+            subject_dir, session_id, minutes, units, interruptions, assistant_closed, next_step, probe_minutes
+        )
     )
 
 

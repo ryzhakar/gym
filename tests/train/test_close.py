@@ -63,3 +63,29 @@ def test_close_session_summarizes_probe_and_queue_events(opened_session: tuple[P
     assert "1/1 probe item(s) passed" in session_text
     assert "queued delayed_probe:u1@2026-10-07" in session_text
     assert "open    interruptions=1 assistant_closed=no" in session_text
+
+
+def test_close_session_accepts_the_optional_probe_minutes_field(opened_session: tuple[Path, str]) -> None:
+    """Team lead ruling (2026-09-30): `close` may optionally carry `probe_minutes`, a
+    non-negative number — the old `sessions.csv` column this schema had no home for until now."""
+    subject_dir, session_id = opened_session
+    line = close_session(
+        subject_dir, session_id, minutes=30, units="u1", interruptions=0, assistant_closed="yes",
+        next_step="u2", probe_minutes=8.5,
+    )
+    assert "probe_minutes=8.5" in line
+
+
+def test_close_session_omits_probe_minutes_when_not_given(opened_session: tuple[Path, str]) -> None:
+    subject_dir, session_id = opened_session
+    line = close_session(subject_dir, session_id, minutes=30, units="u1", interruptions=0, assistant_closed="yes", next_step="u2")
+    assert "probe_minutes" not in line
+
+
+def test_close_session_refuses_a_negative_probe_minutes(opened_session: tuple[Path, str]) -> None:
+    subject_dir, session_id = opened_session
+    with pytest.raises(SystemExit, match="below 0"):
+        close_session(
+            subject_dir, session_id, minutes=30, units="u1", interruptions=0, assistant_closed="yes",
+            next_step="u2", probe_minutes=-1.0,
+        )
