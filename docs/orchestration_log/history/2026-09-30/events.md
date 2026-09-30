@@ -95,3 +95,4 @@
 2026-09-30T17:01 | self | failure | silence broken by end-of-turn status lines since 16:09; same entry as history/2026-09-30/failures.md 'Silence broken by status lines'
 2026-09-30T17:02 | agent:convert-session | receipt | probe_minutes carried onto close; live dry run on 5 rows and synthetic fixture 0 FAIL; converter final, run --write at the session's end; unverified
 2026-09-30T17:03 | agent:gym-trainer | receipt | b4-traits clock started 17:03
+2026-09-30T17:06 | agent:review-fidelity | receipt | review-fidelity.md: map, research, records drift-free on every success path, old and new run side by side on live data; two admitted exit-code changes (map sample --cells 2 to 1, records event missing-arg 1 to 2), one syntax change (map estimate --audit-pass); nothing else above cosmetic error text; unverified
