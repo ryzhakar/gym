@@ -456,10 +456,10 @@ def test_rule7_passes_on_baseline(tmp_path: Path) -> None:
 
 
 def test_live_rust_map_declared_gap_count() -> None:
-    # measured 2026-09-30 via `uv run gym map check --map maps/rust`: 417 FAIL.
+    # measured 2026-09-30 via `uv run gym map check --map maps/rust`: 394 FAIL after the 2026-09-30 gap pass.
     # A change to this number should be a deliberate map edit, not a silent regression.
     findings = run_checks(ROOT / "maps" / "rust")
-    assert len(findings) == 417
+    assert len(findings) == 394
 
 
 def test_main_exit_code_matches_findings(tmp_path: Path) -> None:
