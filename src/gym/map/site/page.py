@@ -193,7 +193,7 @@ def _page_html(data_json: str) -> str:
   </span>
   <span id="graph-controls">
     <button id="btn-colour">Colour: community</button>
-    <button id="btn-fit">Fit all</button>
+    <button id="btn-fit">Fit</button>
   </span>
   <span id="matrix-controls" style="display:none">
     <button id="btn-scope">Default subset</button>

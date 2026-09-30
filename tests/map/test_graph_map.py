@@ -192,6 +192,42 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         base_labels = page.evaluate("() => window.__gym.visibleLabels()")
         assert base_labels > 0
 
+        # the detached clusters start off the frame; their legend row is the
+        # switch, and it says which way it will go
+        row = page.inner_text("#glegend .row")
+        assert "detached in" in row and row.strip().endswith("show"), row
+        body_only = page.inner_text("#stat")
+        page.eval_on_selector("#glegend .row", "el => el.click()")
+        page.wait_for_timeout(250)
+        assert page.inner_text("#glegend .row").strip().endswith("hide")
+        with_islands = page.inner_text("#stat")
+        assert body_only != with_islands
+        print("stat, body only:", body_only, "| with clusters:", with_islands)
+        page.eval_on_selector("#glegend .row", "el => el.click()")
+        page.wait_for_timeout(250)
+        assert page.inner_text("#stat") == body_only
+
+        # a label is its Concept: clicking the name pins the dot
+        shown = page.eval_on_selector_all(
+            "#glabels .glabel",
+            "els => els.filter(e => e.style.display === 'block')"
+            ".map(e => e.textContent)",
+        )
+        assert shown, "the opening frame names some Concepts"
+        page.eval_on_selector_all(
+            "#glabels .glabel",
+            "els => { const e = els.find(x => x.style.display === 'block');"
+            " const r = e.getBoundingClientRect();"
+            " e.dispatchEvent(new PointerEvent('pointerdown',"
+            " {bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2})); }",
+        )
+        page.mouse.up()
+        page.wait_for_selector("#panel.open")
+        assert page.inner_text("#panel-body h2") == shown[0]
+        print("label click:", shown[0], "->", page.evaluate("() => window.__gym.pinned()"))
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(150)
+
         # hover: the Concept and its neighbours are named, the rest dims
         assert page.evaluate("() => window.__gym.hover('unsafe')")
         page.wait_for_timeout(120)

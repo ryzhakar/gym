@@ -266,7 +266,11 @@ GRAPH_CSS = r"""
   #gscene .gnode circle { stroke: rgba(10,12,16,.85); stroke-width: 1; }
   #gscene .gnode { cursor: pointer; }
   #glabels { pointer-events: none; }
-  #glabels .glabel { font-size: 11px; fill: #ccd4df; pointer-events: none;
+  /* A label sits over the canvas, so a click on the name used to land on
+     nothing. The layer stays transparent to the pointer and each label takes
+     it back, acting as its own Concept. */
+  #glabels .glabel { font-size: 11px; fill: #ccd4df; pointer-events: auto;
+    cursor: pointer;
     paint-order: stroke; stroke: #0e1116; stroke-width: 3px;
     stroke-linejoin: round; display: none; }
   #glabels .glabel.near { fill: #ffffff; font-size: 12px; font-weight: 600; }
@@ -496,10 +500,10 @@ GRAPH_JS = r"""
     }
   }
 
-  function runLayout(ids, edgeList, ticks, seed, gravity) {
+  function runLayout(ids, edgeList, ticks, seed, gravity, sideOverride) {
     if (!ids.length) return;
     if (ids.length === 1) { gx[ids[0]] = 0; gy[ids[0]] = 0; return; }
-    var side = Math.sqrt(ids.length * 1500) + 90;
+    var side = sideOverride || Math.sqrt(ids.length * 1500) + 90;
     seedNodes(ids, seed, side);
     simulate(ids, edgeList, ticks, side, gravity);
     relaxCollisions(ids, 60);
@@ -666,17 +670,26 @@ GRAPH_JS = r"""
     }
   }
 
+  // The detached clusters fill concentric rings just outside the body,
+  // stepping out whenever one ring is full, so 125 of them stay a band rather
+  // than one enormous circle.
   function ringDiscs(units, inner) {
     if (!units.length) return;
-    var total = 0;
-    for (var i = 0; i < units.length; i++) total += units[i].r + 26;
-    var radius = Math.max(inner, total / (Math.PI * 2));
-    var acc = 0;
-    for (var j = 0; j < units.length; j++) {
-      acc += units[j].r + 26;
-      var ang = (acc / total) * Math.PI * 2;
-      units[j].cx = Math.cos(ang) * (radius + units[j].r);
-      units[j].cy = Math.sin(ang) * (radius + units[j].r);
+    var radius = inner, ang = 0, maxR = 0, i = 0, guard = 0;
+    while (i < units.length && guard++ < 4000) {
+      var u = units[i];
+      var step = 2 * Math.atan2(u.r + 12, Math.max(radius + u.r, 1));
+      if (ang > 0 && ang + step > Math.PI * 2) {
+        radius += maxR * 2 + 40;
+        ang = 0; maxR = 0;
+        continue;
+      }
+      var mid = ang + step / 2;
+      u.cx = Math.cos(mid) * (radius + u.r);
+      u.cy = Math.sin(mid) * (radius + u.r);
+      ang += step;
+      if (u.r > maxR) maxR = u.r;
+      i++;
     }
   }
 
@@ -705,7 +718,11 @@ GRAPH_JS = r"""
         var comps = componentsOf(members);
         comps.sort(function (a, b) { return b.length - a.length || a[0] - b[0]; });
         for (var z = 0; z < comps.length; z++) {
-          runLayout(comps[z], edgesWithin(comps[z]), 110, 9001 + z, 0.03);
+          // A detached cluster of two dots does not need the spacing a
+          // community of 132 needs; at the default side, 125 of them
+          // ringed the body at four times its own radius.
+          runLayout(comps[z], edgesWithin(comps[z]), 110, 9001 + z, 0.03,
+                    Math.sqrt(comps[z].length) * 26 + 20);
           fringe.push({ ids: comps[z], r: recentre(comps[z]), comm: comm });
         }
       } else {
@@ -774,6 +791,7 @@ GRAPH_JS = r"""
       gLabelEl[i] = lbl;
       gLabelLayer.appendChild(lbl);
       bindNode(g, i);
+      bindNode(lbl, i);
     }
     placeAll();
   }
@@ -798,15 +816,13 @@ GRAPH_JS = r"""
     updateLabels();
   }
 
-  // The 123 detached clusters ring the body and would squeeze it into a
-  // third of the canvas, so the opening frame is the connected body. Every
-  // Concept is still drawn and still reachable -- "Fit all" pulls back to
-  // the whole picture, and a scroll out gets there too.
-  function fitView(all) {
+  // The frame is whatever is on: hiding a community and refitting gives the
+  // rest of the map the whole canvas.
+  function fitView() {
     var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
     for (var a = 0; a < activeNode.length; a++) {
       var i = activeNode[a];
-      if (!all && G.islands_comm !== null && G.comm[i] === G.islands_comm && activeNode.length > 400) continue;
+      if (commOff[G.comm[i]]) continue;
       if (gx[i] < minx) minx = gx[i];
       if (gy[i] < miny) miny = gy[i];
       if (gx[i] > maxx) maxx = gx[i];
@@ -1100,7 +1116,7 @@ GRAPH_JS = r"""
       runLayout(activeNode, activeEdge, 420, 4242);
     }
     buildScene();
-    fitView(depth > 0);
+    fitView();
     if (centre >= 0 && inActive[centre]) {
       pinNode(centre, false);
       // In a local view the neighbourhood *is* the subject, so the dimming
@@ -1338,13 +1354,22 @@ GRAPH_JS = r"""
         sw.style.background = row.color;
         d.appendChild(sw);
         var t = document.createElement("span");
-        t.textContent = (colorMode === "community" ? row.name + " (" + row.size + ")" : row.text);
+        if (colorMode !== "community") {
+          t.textContent = row.text;
+        } else if (row.islands) {
+          t.textContent = row.size + " detached in " + G.stats.island_clusters +
+            " clusters, " + (commOff[idx] ? "show" : "hide");
+        } else {
+          t.textContent = row.name + " (" + row.size + ")";
+        }
         d.appendChild(t);
         if (colorMode === "community") {
           d.addEventListener("click", function () {
             commOff[idx] = !commOff[idx];
             applyCommunityFilter();
             renderLegend();
+            // Switching the detached clusters on is a request to see them.
+            if (row.islands) fitView();
           });
         }
         el.appendChild(d);
@@ -1420,14 +1445,18 @@ GRAPH_JS = r"""
   function updateStat() {
     var hiddenNodes = 0;
     for (var a = 0; a < activeNode.length; a++) if (commOff[G.comm[activeNode[a]]]) hiddenNodes++;
-    var drawn = activeEdge.length;
-    if (!localDepth) {
-      drawn = 0;
-      for (var b = 0; b < activeEdge.length; b++) if (G.backbone[activeEdge[b]]) drawn++;
+    // Both halves count only what is on: hiding a community takes its lines
+    // out of the total as well as out of the drawn count.
+    var drawn = 0, held = 0;
+    for (var b = 0; b < activeEdge.length; b++) {
+      var e = activeEdge[b];
+      if (commOff[G.comm[G.e_a[e]]] || commOff[G.comm[G.e_b[e]]]) continue;
+      held++;
+      if (localDepth || G.backbone[e]) drawn++;
     }
     document.getElementById("stat").textContent =
       (activeNode.length - hiddenNodes) + " Concepts, " + drawn + " of " +
-      activeEdge.length + " edges drawn" +
+      held + " edges drawn" +
       (localDepth ? " · local depth " + localDepth : "") +
       " · layout " + layoutMs + " ms";
   }
@@ -1436,10 +1465,14 @@ GRAPH_JS = r"""
     return "Concept graph — " + G.stats.nodes + " canonical Concepts, " +
       G.stats.edges + " edges. An edge holds every Question touching both its " +
       "Concepts; thickness and brightness are that count (heaviest here: " +
-      G.stats.max_weight + "). Colour is community, found by Louvain on the " +
-      "weighted graph; grey are the " + G.stats.island_clusters + " clusters " +
-      "with no line to the rest. The Colour button recolours by the Domain " +
-      "most of a Concept's Questions are live in. " +
+      G.stats.max_weight + "). The opening frame draws the backbone -- every " +
+      "edge of two Questions or more, each Concept's two strongest, and the " +
+      "strongest crossings of every community pair -- and the rest come back " +
+      "on a hover, on a pin, and in full in a local view. Colour is community, " +
+      "found by Louvain on the weighted graph; the " + G.stats.island_clusters +
+      " clusters with no line to the rest start off the frame and their legend " +
+      "row switches them on. The Colour button recolours by the Domain most of " +
+      "a Concept's Questions are live in. " +
       "Hover isolates a Concept and its neighbours, click pins it and opens " +
       "its Questions, a click on a line opens the Questions that line stands for.";
   }
@@ -1452,11 +1485,16 @@ GRAPH_JS = r"""
     if (graphReady) return;
     graphReady = true;
     setActive(allNodeIds);
+    // The 125 detached clusters ring the body and squeezed it into a third of
+    // the canvas. They leave the opening frame; their legend row switches
+    // them back on and refits (team-lead, 2026-09-30, from the cold review).
+    if (G.islands_comm !== null) commOff[G.islands_comm] = true;
     var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
     layoutTwoLevel(activeNode, activeEdge);
     var t1 = (window.performance && performance.now) ? performance.now() : Date.now();
     layoutMs = Math.round(t1 - t0);
     buildScene();
+    applyCommunityFilter();
     fitView();
     renderLegend();
     setupSearch();
@@ -1472,7 +1510,7 @@ GRAPH_JS = r"""
     window.__gym.activeNodes = function () { return activeNode.length; };
     window.__gym.pinned = function () { return pinned < 0 ? null : G.ids[pinned]; };
     window.__gym.localDepth = function () { return localDepth; };
-    window.__gym.fit = function () { fitView(false); };
+    window.__gym.fit = function () { fitView(); };
     window.__gym.zoom = function (f) { vk = Math.max(0.05, Math.min(12, vk * f)); applyTransform(); };
     window.__gym.hover = function (name) {
       for (var i = 0; i < GN; i++) if (G.ids[i] === name) { gNodeEl[i].dispatchEvent(new MouseEvent("mouseenter")); return true; }
@@ -1531,12 +1569,7 @@ GRAPH_JS = r"""
     recolour();
     renderLegend();
   });
-  var fitAll = false;
-  document.getElementById("btn-fit").addEventListener("click", function () {
-    fitAll = !fitAll;
-    this.textContent = fitAll ? "Fit body" : "Fit all";
-    fitView(fitAll);
-  });
+  document.getElementById("btn-fit").addEventListener("click", function () { fitView(); });
 
   document.addEventListener("keydown", function (ev) {
     if (ev.key !== "Escape" || currentView !== "graph") return;
