@@ -127,6 +127,6 @@ ground  owner ruling 2026-09-30
 when    writing anything an agent or the owner reads
 do      the fewest tokens that carry the instruction; prompts state inputs, task, output, scope
 never   yapping in agent-facing text; a restated context; a preamble
-why     "as little token spend on your part as possible. no yapping in agent-facing communication. clarity ≠ verbosity."
+why     "as little token spend on your part as possible. no yapping in agent-facing communication. clarity ≠ verbosity."; "maximum achievement per token."
 ground  owner ruling 2026-09-30
 

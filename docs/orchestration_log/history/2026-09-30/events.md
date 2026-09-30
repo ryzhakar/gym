@@ -212,3 +212,4 @@
 2026-09-30T21:51 | owner | decision | in conversation: even fewer tool calls; a wake with nothing to advance ends with no call; agent ends come by notification, never by looking
 2026-09-30T21:52 | owner | decision | in conversation: as little token spend as possible; no yapping in agent-facing communication, clarity is not verbosity
 2026-09-30T21:53 | self | commitment | directives silence-holds and token-thrift written under a new Communication heading; memento.yaml directive headings amended, replacing [commit, records, code, owner, training] with the same plus communication, on the owner rulings 2026-09-30
+2026-09-30T21:53 | owner | decision | in conversation: maximum achievement per token; added to token-thrift
