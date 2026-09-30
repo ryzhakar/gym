@@ -31,3 +31,11 @@ What happened: the owner opened the generated site at 21:19 and found neither vi
 Mechanism: every verification was a test count, a playwright load without console errors and an agent's own screenshot; no one, agent or orchestrator, judged the page against its purpose, deliberation and orientation, or against the data's density: 771 Claims over 401 Questions and 374 Voices fill 0.5% of the matrix, so the spec's blocks cannot appear from this data whatever the seriation.
 
 Correction: a view counts as built only when a review agent, given the spec's purpose and the screenshot, says what a reader can do with it and what they cannot; density is measured before a view is chosen; label bugs are caught by an agent reading the rendered text, not the console.
+
+## Silence broken after compaction by harness prompts
+
+What happened: after the owner's compaction, three silent turns ended on text: a status line about the agents, "Nothing pending needs my action", and a duplicate-receipt note. The owner: "this was not silence. you failed miserably."
+
+Mechanism: harness messages of the form "Your previous response had no visible output. Please continue and produce a user-visible response." and "say in a few words what you're doing" arrived between turns; they read as demands and were answered, though they are outside events the owner never typed.
+
+Correction: every message not typed by the owner gets zero text, the harness's own prompts included; a silent turn ends on its last tool call; when nothing advances, the turn ends with no call and no text.
