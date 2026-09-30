@@ -279,3 +279,4 @@
 2026-09-30T23:27 | owner | receipt | in conversation: the line Six agents running was a message; violation
 2026-09-30T23:27 | self | failure | status line on a harness prompt, the pattern repeats each time a harness prompt arrives with no work pending; the turn must end with no call and no text; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
 2026-09-30T23:27 | self | discovery | map-islands-shown.png: the shown detached clusters ring the body as dotted circles at three times its radius; sent to graph-map: a compact grey band below the body instead
+2026-09-30T23:28 | self | failure | a report-listing check with no notification behind it; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
