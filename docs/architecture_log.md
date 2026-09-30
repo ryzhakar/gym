@@ -31,3 +31,12 @@ FROM → TO:     five CSV tables under training/rust/record/ written by scripts/
 WHY:           owner ruling 2026-09-30: a training session has its own record and events, the tables dropped; the learner does no administration
 INVALIDATES:   every reader of training/rust/record/*.csv; every summons naming scripts/train/; probe minutes as one shared elapsed time
 EVIDENCE:      commits 7f22d78, 5692800, 3067135, d7f00ba, fa8cab9, d788cd2, 35b3f23; 192 tests pass; session 2026-09-30T15:40 converted, `gym train check training/rust` 0 FAIL
+
+## 2026-09-30 — The Concept graph becomes the map's front door
+
+KIND:          computed
+FROM → TO:     Concepts drawn as an undifferentiated hairball from Question-Concept links, 1447 Concepts with duplicates, Concept-Concept edges 0 of 1447 → canonical Concepts (1372 after 75 merges marked `merged_into`) as nodes, an edge between two Concepts holding every Question touching both, weight the count, Louvain communities named by hubs, hover isolation, pinned panels, local views; the Matrix co-clustered two ways by a spectral module
+WHY:           owner rulings 2026-09-30: the Concept graph is the map itself, Obsidian-style, readable at a glance; edges hold co-touching Questions; Concepts deduplicated; the Matrix clusters Voices by stances and Questions by Voices
+INVALIDATES:   every Concept count before the dedup; the Graph v0 and v01 renders under recon/2026-09-30/frontend/; any reading of the Matrix that treated its order as arbitrary
+EVIDENCE:      commits 9602197, bb0d915, 44cc092; 252 tests pass
+

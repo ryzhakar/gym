@@ -230,3 +230,4 @@
 2026-09-30T22:36 | self | commitment | site package committed after 252 tests passed and the page built here; reviewer judges it from screenshots and a live walk before the owner sees it
 2026-09-30T22:36 | self | delegation | agent:map-review, sonnet, background: cold-reader judgment against the acceptance test in opinion-map § Form; output recon/2026-09-30/frontend/map-review.md; wait bounded by heartbeat feb9bb57
 2026-09-30T22:36 | self | delegation | agent:matrix-wire, sonnet, background: co-clustering wired into the Matrix view, blocks outlined, thin parked, stable Voice numbers shared with the Graph; output recon/2026-09-30/frontend/matrix-wire-report.md; wait bounded by heartbeat feb9bb57
+2026-09-30T22:36 | self | change | architecture log: The Concept graph becomes the map's front door, commits 9602197, bb0d915, 44cc092
