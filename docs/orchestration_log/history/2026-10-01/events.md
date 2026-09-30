@@ -29,3 +29,4 @@
 2026-10-01T00:48 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T00:48 | agent:graph-map | receipt | revision 9: plates 65 percent with border above the topmost hub, fallback below, largest islands first; tests assert no hub and no label under a plate; eleven names, none overlapping; 94 map tests; unverified
 2026-10-01T00:49 | self | discovery | map-default.png after revision 9 read: plates legible, hubs and labels clear, names next to their islands; committed as the final cosmetic
+2026-10-01T00:49 | self | span-event | close; HEAD 12f0898 (dirty: docs/orchestration_log/history/2026-10-01/session.md, .claude/work-silently); next: bind, memento:init; on the owner's go: gym train open training/rust --learner arthur --trainer-model <model>, fill the id into the summons, summon gym-trainer; else the owner's next task
