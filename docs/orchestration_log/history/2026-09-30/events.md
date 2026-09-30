@@ -174,3 +174,8 @@
 2026-09-30T21:16 | owner | receipt | in conversation: asked whether the map of concepts is a connected graph; answered: Concepts connect only through Questions, Concept-to-Concept edges 0 of 1447, two routes offered, none started
 2026-09-30T21:17 | agent:install-u03-reuse-3 | receipt | u03 reuse-3 installed with key and hints entry; stub fails, solution passes 3 visible and 5 held-out; open: the attempt-first form names two reuse items, nothing tells a session to run three; unverified
 2026-09-30T21:17 | self | delegation | agent:items-readme-layout, haiku, background: items README layout line names reuse-N and further probe sides
+2026-09-30T21:17 | agent:items-readme-layout | receipt | items README layout line updated for reuse-N and further probe sides; unverified
+2026-09-30T21:18 | agent:install-u01-probe-c | receipt | u01 probe-c installed with keys: p1-greenhouse, p2-queue-cycle, p3-cart-summary; stubs fail with the designed errors, solutions pass all key tests without cloning; unverified
+2026-09-30T21:20 | owner | receipt | in conversation, with two screenshots: the site is unusable in both views and not to the spec the manager claimed to follow
+2026-09-30T21:20 | self | failure | site shipped on tests and console checks, never on use: Matrix a scatter without blocks, Graph a hairball with description text as Value and Domain labels; same entry as history/2026-09-30/failures.md 'A site shipped on tests and console checks, never on use'
+2026-09-30T21:20 | self | discovery | density: 771 Claims over 401 Questions by 374 Voices fills 0.5 percent of the matrix; 149 Questions hold 2 or more Voices; the spec's blocks need Voices sharing Positions on shared Questions, which this data rarely holds

@@ -23,3 +23,11 @@ What happened: at 19:18 a Bash call set `E="uv run gym records event"` and calle
 Mechanism: an alias-by-variable under zsh, and a heredoc splitting one chain into two.
 
 Correction: full commands, never a variable holding one; one chain per Bash call, and a heredoc ends the call; the missed steps were redone at once and the events written.
+
+## A site shipped on tests and console checks, never on use
+
+What happened: the owner opened the generated site at 21:19 and found neither view usable: the Matrix a scatter of 115 lone cells with no blocks, colours meaning nothing across rows; the Graph a hairball whose Value and Domain nodes carry their description text as labels and whose Concepts carry none. Four builds had been reported "verified" and committed.
+
+Mechanism: every verification was a test count, a playwright load without console errors and an agent's own screenshot; no one, agent or orchestrator, judged the page against its purpose, deliberation and orientation, or against the data's density: 771 Claims over 401 Questions and 374 Voices fill 0.5% of the matrix, so the spec's blocks cannot appear from this data whatever the seriation.
+
+Correction: a view counts as built only when a review agent, given the spec's purpose and the screenshot, says what a reader can do with it and what they cannot; density is measured before a view is chosen; label bugs are caught by an agent reading the rendered text, not the console.
