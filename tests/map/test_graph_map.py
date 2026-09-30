@@ -306,7 +306,6 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         assert page.evaluate(overflow) == [], page.evaluate(overflow)
         assert page.inner_text("#panel-body h2")
         print("right-edge pin:", edge_concept, "canvas", wide, "->", narrow)
-        page.screenshot(path=str(SHOTS / "map-pinned.png"))
 
         page.keyboard.press("Escape")
         page.wait_for_timeout(400)
@@ -314,6 +313,78 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
             "() => document.getElementById('graph').getBoundingClientRect().width"
         ) == wide
         assert page.evaluate(overflow) == []
+
+        # A pinned Concept's lines take its island's colour, softly, and a pin
+        # names its twelve strongest neighbours rather than all of them.
+        page.keyboard.press("Escape")
+        page.evaluate("() => window.__gym.fit()")
+        page.wait_for_timeout(200)
+        page.evaluate("() => window.__gym.click('unsafe')")
+        page.wait_for_selector("#panel.open")
+        page.wait_for_timeout(300)
+        node_colour = page.evaluate("() => window.__gym.nodeColour('unsafe')")
+        spokes = page.evaluate("""() => {
+          const out = {n: 0, white: 0, wrong: 0, widths: {}};
+          document.querySelectorAll('#gscene .gedge.hl').forEach(e => {
+            out.n++;
+            const st = e.style.stroke;
+            if (/#f2f5f8|rgb\(242, 245, 248\)|white/i.test(st)) out.white++;
+            out.widths[e.style.strokeWidth] = 1;
+          });
+          return out;
+        }""")
+        assert spokes["n"] > 0
+        assert spokes["white"] == 0, spokes
+        assert list(spokes["widths"]) == ["1.5"], spokes
+        opacity = page.eval_on_selector(
+            "#gscene .gedge.hl", "el => getComputedStyle(el).strokeOpacity"
+        )
+        assert abs(float(opacity) - 0.6) < 0.01, opacity
+        pinned_named = page.eval_on_selector_all(
+            "#glabels .glabel.near",
+            "els => els.filter(e => e.style.display === 'block').length",
+        )
+        assert 1 < pinned_named <= 13, pinned_named
+        assert page.evaluate(overflow) == [], page.evaluate(overflow)
+        page.screenshot(path=str(SHOTS / "map-pinned.png"))
+        print("pinned spokes:", spokes["n"], "colour", node_colour,
+              "opacity", opacity, "| named:", pinned_named)
+
+        # a hover names every neighbour, which is where the rest are
+        assert page.evaluate("() => window.__gym.hover('unsafe')")
+        page.wait_for_timeout(200)
+        hover_named = page.eval_on_selector_all(
+            "#glabels .glabel.near",
+            "els => els.filter(e => e.style.display === 'block').length",
+        )
+        assert hover_named > pinned_named, (hover_named, pinned_named)
+        print("hover names:", hover_named, "against a pin's", pinned_named)
+        page.evaluate("() => window.__gym.unhover()")
+        page.keyboard.press("Escape")
+        page.evaluate("() => window.__gym.fit()")
+        page.wait_for_timeout(200)
+
+        # every island name drawn sits on a strip of its own island's colour
+        strips = page.evaluate("""() => {
+          const out = [];
+          document.querySelectorAll('#ghullnames .ghullname').forEach(t => {
+            if (t.style.display !== 'block') return;
+            const c = t.getAttribute('data-comm');
+            const s = document.querySelector(
+              '#ghullnames .ghullstrip[data-comm="' + c + '"]');
+            const tr = t.getBoundingClientRect();
+            const sr = s ? s.getBoundingClientRect() : null;
+            out.push({
+              named: !!s && s.style.display === 'block',
+              colour: s ? s.getAttribute('fill') === t.getAttribute('fill') : false,
+              covers: !!sr && sr.left <= tr.left + 1 && sr.right >= tr.right - 1
+            });
+          });
+          return out;
+        }""")
+        assert strips, "island names are drawn"
+        assert all(x["named"] and x["colour"] and x["covers"] for x in strips), strips
+        print("island names on a strip of their own colour:", len(strips))
 
         # The reviewer's path is search, not a click, and it clipped where a
         # click did not: the search centres the view, so a Concept can end up

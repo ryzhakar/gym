@@ -265,6 +265,7 @@ GRAPH_CSS = r"""
   #gscene .gedge.nb.hl { display: block; }
   #ghulls .ghull { filter: url(#hullsoft); opacity: .1; pointer-events: none; }
   #ghullnames { pointer-events: none; }
+  #ghullnames .ghullstrip { opacity: .2; display: none; }
   #ghullnames .ghullname { font-variant: small-caps;
     letter-spacing: .1em; opacity: .75; paint-order: stroke;
     stroke: #0e1116; stroke-width: 3px; stroke-linejoin: round; }
@@ -286,7 +287,10 @@ GRAPH_CSS = r"""
      its label reads as a word floating over nothing. */
   #gscene.focus .gnode.hl circle { stroke: #ffffff; stroke-width: 1.6;
     paint-order: stroke; }
-  #gscene.focus .gedge.hl { stroke-opacity: .95 !important; stroke: #f2f5f8; }
+  /* A pinned Concept's lines were heavy white spokes that took the frame.
+     They carry the pinned island's own colour now, at 60% and 1.5px, set
+     inline because the colour is the island's. */
+  #gscene.focus .gedge.hl { stroke-opacity: .6 !important; }
   #gscene .gnode.pinned circle { stroke: #ffffff; stroke-width: 2.5; }
   #gscene .gnode.off { display: none; }
   #gscene .gedge.off { display: none; }
@@ -938,13 +942,15 @@ GRAPH_JS = r"""
       var cx = 0, cy = 0;
       for (var h = 0; h < hull.length; h++) { cx += hull[h][0]; cy += hull[h][1]; }
       cx /= hull.length; cy /= hull.length;
-      var pad = 30, expanded = [], topY = Infinity, hminx = Infinity, hmaxx = -Infinity;
+      var pad = 30, expanded = [], topY = Infinity, botY = -Infinity;
+      var hminx = Infinity, hmaxx = -Infinity;
       for (var e2 = 0; e2 < hull.length; e2++) {
         var vx2 = hull[e2][0] - cx, vy2 = hull[e2][1] - cy;
         var len = Math.sqrt(vx2 * vx2 + vy2 * vy2) || 1;
         var px = hull[e2][0] + vx2 / len * pad, py = hull[e2][1] + vy2 / len * pad;
         expanded.push([px, py]);
         if (py < topY) topY = py;
+        if (py > botY) botY = py;
         if (px < hminx) hminx = px;
         if (px > hmaxx) hmaxx = px;
       }
@@ -956,7 +962,7 @@ GRAPH_JS = r"""
       });
       gHullLayer.appendChild(path);
       hullOf[comm] = {
-        cx: cx, topY: topY, minx: hminx, maxx: hmaxx,
+        cx: cx, topY: topY, botY: botY, minx: hminx, maxx: hmaxx,
         color: G.communities[comm].color
       };
     }
@@ -967,11 +973,17 @@ GRAPH_JS = r"""
     gHullNameLayer.innerHTML = "";
     for (var c in hullOf) {
       if (!hullOf.hasOwnProperty(c)) continue;
+      // A strip of the island's own colour behind the name, so it reads as
+      // anchored in the glow rather than floating on its dim upper fringe.
+      var strip = svgEl("rect", { class: "ghullstrip", rx: "4", "data-comm": c });
+      strip.setAttribute("fill", hullOf[c].color);
+      gHullNameLayer.appendChild(strip);
       var t = svgEl("text", { class: "ghullname", "text-anchor": "middle", "data-comm": c });
       t.textContent = G.communities[+c].name;
       t.setAttribute("fill", hullOf[c].color);
       gHullNameLayer.appendChild(t);
       hullOf[c].el = t;
+      hullOf[c].strip = strip;
     }
   }
 
@@ -1009,7 +1021,11 @@ GRAPH_JS = r"""
       if (!hullOf.hasOwnProperty(c)) continue;
       var h = hullOf[c];
       if (!h.el) continue;
-      if (commOff[+c]) { h.el.style.display = "none"; continue; }
+      if (commOff[+c]) {
+        h.el.style.display = "none";
+        if (h.strip) h.strip.style.display = "none";
+        continue;
+      }
       var name = G.communities[+c].name;
       var left = h.minx * vk + vx, right = h.maxx * vk + vx;
       var room = right - left - 16;
@@ -1022,16 +1038,25 @@ GRAPH_JS = r"""
         var sz = Math.min(NAME_MAX, NAME_MAX * room / at11);
         if (sz >= NAME_MIN) { chosen = opts[o]; size = sz; widest = at11 * sz / NAME_MAX; break; }
       }
-      if (!chosen) { h.el.style.display = "none"; continue; }
+      if (!chosen) {
+        h.el.style.display = "none";
+        if (h.strip) h.strip.style.display = "none";
+        continue;
+      }
       var half = widest / 2;
       var sx = h.cx * vk + vx;
-      var top = h.topY * vk + vy + size + 5;
+      // Into the glow, not on its fringe -- but a tenth, not a fifth: at a
+      // fifth the strip sat on top of the island's own dots, which the
+      // review's other half of the ask rules out.
+      var anchorY = h.topY + (h.botY - h.topY) * 0.1;
+      var top = anchorY * vk + vy + size;
       if (sx - half < left + 8) sx = left + 8 + half;
       if (sx + half > right - 8) sx = right - 8 - half;
       var blockH = chosen.length * (size + 2);
       if (sx - half < ins.left || sx + half > r.width - ins.right ||
           top < ins.top || top + blockH > r.height - ins.bottom) {
         h.el.style.display = "none";
+        if (h.strip) h.strip.style.display = "none";
         continue;
       }
       h.el.innerHTML = "";
@@ -1045,7 +1070,15 @@ GRAPH_JS = r"""
       }
       h.el.setAttribute("font-size", size.toFixed(1));
       h.el.style.display = "block";
-      boxes.push({ x: sx - half, y: top - size - 2, w: half * 2, h: blockH + 4 });
+      var box = { x: sx - half - 6, y: top - size - 3, w: half * 2 + 12, h: blockH + 6 };
+      if (h.strip) {
+        h.strip.setAttribute("x", box.x.toFixed(1));
+        h.strip.setAttribute("y", box.y.toFixed(1));
+        h.strip.setAttribute("width", box.w.toFixed(1));
+        h.strip.setAttribute("height", box.h.toFixed(1));
+        h.strip.style.display = "block";
+      }
+      boxes.push(box);
     }
     return boxes;
   }
@@ -1302,10 +1335,22 @@ GRAPH_JS = r"""
   function updateLabels() {
     var r = gsvg.getBoundingClientRect();
     onScreenCount = 0;
+    // A hover names every neighbour. A pin names the twelve strongest --
+    // eighty names at once piled into the corner of the frame and said
+    // nothing; the rest are one hover away.
     var neigh = null;
     if (hovered >= 0) {
       neigh = {};
       for (var h = 0; h < gAdj[hovered].length; h++) neigh[other(gAdj[hovered][h], hovered)] = true;
+    } else if (pinned >= 0) {
+      var ranked = gAdj[pinned].slice().sort(function (p, q) {
+        return edgeWeight(q) - edgeWeight(p) ||
+               G.deg[other(q, pinned)] - G.deg[other(p, pinned)];
+      });
+      neigh = {};
+      for (var h2 = 0; h2 < Math.min(ranked.length, 12); h2++) {
+        neigh[other(ranked[h2], pinned)] = true;
+      }
     }
     var cands = [];
     for (var a = 0; a < activeNode.length; a++) {
@@ -1323,7 +1368,10 @@ GRAPH_JS = r"""
       if (i === pinned || i === hovered) pri = 0;
       else if (neigh && neigh[i]) pri = 1;
       else if (alwaysSet[i]) pri = 2;
-      else if (G.deg[i] * vk >= 26) pri = 3;
+      // While one Concept is isolated, the names the zoom has earned are
+      // noise: they were what piled into the corner of a pinned frame. The
+      // highest-degree Concepts stay, dimmed, as context.
+      else if (!neigh && G.deg[i] * vk >= 26) pri = 3;
       else continue;
       var sx = gx[i] * vk + vx, sy = gy[i] * vk + vy;
       if (sx < -60 || sy < -20 || sx > r.width + 60 || sy > r.height + 20) continue;
@@ -1388,7 +1436,13 @@ GRAPH_JS = r"""
   var hlNodes = [], hlEdges = [];
   function clearHighlight() {
     for (var a = 0; a < hlNodes.length; a++) if (gNodeEl[hlNodes[a]]) gNodeEl[hlNodes[a]].classList.remove("hl");
-    for (var b = 0; b < hlEdges.length; b++) if (gEdgeEl[hlEdges[b]]) gEdgeEl[hlEdges[b]].classList.remove("hl");
+    for (var b = 0; b < hlEdges.length; b++) {
+      var eel = gEdgeEl[hlEdges[b]];
+      if (!eel) continue;
+      eel.classList.remove("hl");
+      eel.style.stroke = "";
+      eel.style.strokeWidth = "";
+    }
     hlNodes = []; hlEdges = [];
     gscene.classList.remove("focus");
   }
@@ -1398,10 +1452,13 @@ GRAPH_JS = r"""
     gscene.classList.add("focus");
     hlNodes.push(i);
     if (gNodeEl[i]) gNodeEl[i].classList.add("hl");
+    var hlColour = nodeColor(i);
     for (var a = 0; a < gAdj[i].length; a++) {
       var e = gAdj[i][a];
       if (!gEdgeEl[e] || !inActive[other(e, i)]) continue;
       gEdgeEl[e].classList.add("hl");
+      gEdgeEl[e].style.stroke = hlColour;
+      gEdgeEl[e].style.strokeWidth = "1.5";
       hlEdges.push(e);
       var o = other(e, i);
       if (gNodeEl[o]) { gNodeEl[o].classList.add("hl"); hlNodes.push(o); }
