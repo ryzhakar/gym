@@ -19,3 +19,11 @@ Predict-output items: the learner's only file is `prediction.txt`. Its test runs
 
 - `probe-b/`: written by a second author from `docs/orchestration_log/recon/2026-09-28/trainer/specs/<unit>-probe-b-spec.md`.
 - Hints for probes and baseline: none. Both are unaided.
+
+## Tools allowed to the learner
+
+Owner ruling 2026-09-30, made in the first session.
+
+- Baseline and probe items: `cargo build`, `cargo test`, `cargo check`, `rustc --explain`, bacon, rust-analyzer diagnostics and its quick fixes. Forbidden: clippy, documentation, web search, any LLM, AI completion.
+- Practice items: the same, plus the standard library docs and the Rust Book. Any LLM and AI completion stay forbidden.
+- rust-analyzer's `cargo check` on open leaves a `target/` directory; that is not a run of the program.
