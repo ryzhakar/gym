@@ -4,11 +4,11 @@ What gym's built parts are and do. Measured 2026-09-30 unless dated otherwise.
 
 ## The gym app
 
-One Typer application, package `src/gym/`, entry point `uv run gym`. Groups: `gym map` (check, census, sample, frame, estimate, site), `gym train` (open, log, probe, close, status, check), `gym research` (books, bundle, cache, search, sendback), `gym records` (event, close, check). Tests under `tests/`: 172 pass (measured 2026-09-30 17:21). Decided 2026-09-30, see docs/architecture_log.md.
+One Typer application, package `src/gym/`, entry point `uv run gym`. Groups: `gym map` (check, census, sample, frame, estimate, site, concepts dedup), `gym train` (open, log, probe, close, status, check), `gym research` (books, bundle, cache, search, sendback), `gym records` (event, close, check). Tests under `tests/`: 252 pass (measured 2026-09-30 22:36). Decided 2026-09-30, see docs/architecture_log.md.
 
 ## The map site
 
-`uv run gym map site <map-path> --out <html>` generates one self-contained HTML page from a map's data layer: no server, framework, CDN or stored state. Views: the Matrix (rows Questions, columns Voices anonymous until clicked, cells the Position held, Reorder by greedy nearest neighbour, drag) and the Graph (Questions, Concepts, Domains, Values on the edges the data holds; Concept-Concept edges 0 of 1447 on 2026-09-30). Default Matrix subset iterates to a fixed point: 41 Questions by 43 Voices, 115 of 698 cells (measured 2026-09-30). A Claim renders checked when it carries `checked`, provisional otherwise; 664 of 771 Rust Claims carry it (measured 2026-09-30).
+`uv run gym map site <map-path> --out <html>` generates one self-contained HTML page from a map's data layer: no server, framework, CDN or stored state. Front door: the Concept graph, canonical Concepts (1372 on 2026-09-30, `merged_into` marking 75 merged) as nodes sized by the Questions touching them, an edge between two Concepts holding every Question touching both (4837 edges, 4793 of weight 1, measured 2026-09-30), Louvain communities named by hubs, hover isolation, pinned panel with the Concept's Questions, local views at depth 1 and 2, search. Second view: the Matrix, rows Questions and columns Voices anonymous until clicked, co-clustered by `src/gym/map/cluster.py` (spectral, Dhillon 2001; on Rust k=5 blocks over 62 Questions and 51 Voices, measured 2026-09-30). A Claim renders checked when it carries `checked`, provisional otherwise; 664 of 771 Rust Claims carry it (measured 2026-09-30). Decided 2026-09-30, see docs/architecture_log.md.
 
 ## Training records
 
