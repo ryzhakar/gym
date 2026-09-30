@@ -265,7 +265,7 @@ GRAPH_CSS = r"""
   #gscene .gedge.nb.hl { display: block; }
   #ghulls .ghull { filter: url(#hullsoft); opacity: .1; pointer-events: none; }
   #ghullnames { pointer-events: none; }
-  #ghullnames .ghullname { font-size: 10.5px; font-variant: small-caps;
+  #ghullnames .ghullname { font-variant: small-caps;
     letter-spacing: .1em; opacity: .75; paint-order: stroke;
     stroke: #0e1116; stroke-width: 3px; stroke-linejoin: round; }
   #gscene .gnode circle { stroke: rgba(10,12,16,.85); stroke-width: 1; }
@@ -328,54 +328,54 @@ GRAPH_CSS = r"""
     color: var(--ink-dim); margin: 20px 0 8px; }
   .chiprow { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
   .chip { display: inline-block; font-size: 12px; line-height: 1.5; padding: 0 8px;
-    border-radius: 3px; background: #f1eee8; color: #4a453f; white-space: nowrap;
+    border-radius: 3px; background: #232b38; color: #b4c0cf; white-space: nowrap;
     max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-  .chip-count { background: #e8eef4; color: #2c4459; }
-  .chip-island { background: #efeaf4; color: #4a3d57; }
-  .chip-domain { background: #e6efe9; color: #2f4d3a; }
-  .chip-value { background: #f5efe2; color: #57472c; }
-  .chip-fact { background: #e4edf3; color: #274456; }
-  .chip-tradeoff { background: #f1ebf7; color: #48385a; }
-  .chip-taste { background: #f8f1e0; color: #5a4a26; }
-  .chip-untagged { background: #eeeced; color: #5a565a; }
+  .chip-count { background: #1b2a3a; color: #9cc2e4; }
+  .chip-island { background: #262039; color: #c0b0e2; }
+  .chip-domain { background: #172c23; color: #8ecfa8; }
+  .chip-value { background: #2d2617; color: #d9c08d; }
+  .chip-fact { background: #16293a; color: #a8c8e4; }
+  .chip-tradeoff { background: #271d38; color: #c4b0e4; }
+  .chip-taste { background: #2f2717; color: #dfc98f; }
+  .chip-untagged { background: #242a33; color: #9aa5b3; }
   #panel .tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 0; }
   #panel .tools button { font-size: 12px; padding: 4px 8px; border-radius: 3px; }
   .qlist { margin: 0; }
   .qline { font-size: 13px; line-height: 1.45; margin: 0 0 4px; padding: 4px 0 4px 12px;
     cursor: pointer; color: var(--ink); border-left: 2px solid var(--border); }
-  .qline:hover, .qline:focus { border-left-color: var(--ink); background: #faf8f4;
+  .qline:hover, .qline:focus { border-left-color: var(--ink); background: var(--panel-raise);
     outline: none; }
-  .qline.kbd { border-left-color: var(--ink); background: #f2efe9; }
+  .qline.kbd { border-left-color: var(--ink); background: #26303e; }
   .qentry { border-left: 2px solid var(--ink); padding: 4px 0 8px 12px; margin: 0 0 12px; }
   .qtitle { font-size: 15px; line-height: 1.35; font-weight: 600; cursor: pointer; }
-  .qtitle:hover { color: #000; }
+  .qtitle:hover { color: #ffffff; }
   .pos { margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--border);
-    border-radius: 4px; }
+    border-radius: 4px; background: var(--panel-raise); }
   .possum { font-size: 13px; line-height: 1.45; margin: 4px 0 0; }
   .arg { font-size: 12px; line-height: 1.45; margin: 8px 0 0; padding-left: 8px;
-    border-left: 2px solid #e6e1d8; }
+    border-left: 2px solid var(--border); }
   .argside { font-weight: 600; margin-right: 4px; }
-  .arg-for .argside { color: #2a7a3f; }
-  .arg-against .argside { color: #a13a2f; }
+  .arg-for .argside { color: #6fcf8f; }
+  .arg-against .argside { color: #ee8d7f; }
   .claims { margin: 4px 0 0; }
   .claim { font-size: 12px; line-height: 1.5; margin: 8px 0 0; }
   .claimhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
   .claim .voice { font: inherit; font-weight: 600; padding: 0; border: 0; background: none;
     color: var(--ink); cursor: pointer; text-decoration: underline dotted; }
-  .claim .voice:hover { color: #000; background: none; }
+  .claim .voice:hover { color: #ffffff; background: none; }
   .claimmeta { color: var(--ink-dim); }
   .claimpara { margin: 4px 0 0; }
-  .quote { margin: 4px 0 0; padding: 4px 0 4px 8px; border-left: 2px solid #e6e1d8;
-    color: #6b6560; font-style: italic; }
+  .quote { margin: 4px 0 0; padding: 4px 0 4px 8px; border-left: 2px solid var(--border);
+    color: var(--ink-dim); font-style: italic; }
   .srcline { margin: 4px 0 0; }
   .nblist { display: flex; flex-wrap: wrap; gap: 4px; }
   .gchip { font: inherit; font-size: 12px; line-height: 1.5; padding: 0 8px;
-    border-radius: 3px; border: 1px solid var(--border); background: #fff;
+    border-radius: 3px; border: 1px solid var(--border); background: var(--panel-raise);
     color: var(--ink); cursor: pointer; }
-  .gchip:hover { background: #f1eee8; }
-  .gchip.kbd { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .gchip:hover { background: #26303e; }
+  .gchip.kbd { background: var(--ink); color: #11151c; border-color: var(--ink); }
   .gchip .w { color: var(--ink-dim); margin-left: 8px; }
-  .gchip.kbd .w { color: #cfcac2; }
+  .gchip.kbd .w { color: #3b4655; }
 """
 
 
@@ -694,7 +694,10 @@ GRAPH_JS = r"""
     for (var i = 0; i < ids.length; i++) { gx[ids[i]] += dx; gy[ids[i]] += dy; }
   }
 
-  var DISC_GAP = 44;
+  // Two hulls must never touch. Each is its island's points plus 30, so
+  // the gap between two packed discs has to clear both pads with room to
+  // spare for the names that sit inside them.
+  var DISC_GAP = 96;
 
   function packDiscs(units, interW) {
     var n = units.length;
@@ -935,13 +938,15 @@ GRAPH_JS = r"""
       var cx = 0, cy = 0;
       for (var h = 0; h < hull.length; h++) { cx += hull[h][0]; cy += hull[h][1]; }
       cx /= hull.length; cy /= hull.length;
-      var pad = 30, expanded = [], topY = Infinity;
+      var pad = 30, expanded = [], topY = Infinity, hminx = Infinity, hmaxx = -Infinity;
       for (var e2 = 0; e2 < hull.length; e2++) {
         var vx2 = hull[e2][0] - cx, vy2 = hull[e2][1] - cy;
         var len = Math.sqrt(vx2 * vx2 + vy2 * vy2) || 1;
         var px = hull[e2][0] + vx2 / len * pad, py = hull[e2][1] + vy2 / len * pad;
         expanded.push([px, py]);
         if (py < topY) topY = py;
+        if (px < hminx) hminx = px;
+        if (px > hmaxx) hmaxx = px;
       }
       var path = svgEl("path", {
         class: "ghull",
@@ -950,7 +955,10 @@ GRAPH_JS = r"""
         "data-comm": comm
       });
       gHullLayer.appendChild(path);
-      hullOf[comm] = { cx: cx, topY: topY, color: G.communities[comm].color };
+      hullOf[comm] = {
+        cx: cx, topY: topY, minx: hminx, maxx: hmaxx,
+        color: G.communities[comm].color
+      };
     }
   }
 
@@ -967,27 +975,74 @@ GRAPH_JS = r"""
     }
   }
 
+  // The name belongs to its island, so it is set inside the hull just under
+  // its top edge -- never floating in the gap between two islands, which is
+  // where a name placed above the shape ends up. An island's name is three
+  // Concepts, which rarely fits a hull on one line, so it is allowed to break
+  // between them; if even the narrowest arrangement will not fit at 8px the
+  // name is dropped rather than hung outside its own shape.
+  var NAME_CHAR = 0.62, NAME_MAX = 11, NAME_MIN = 8;
+
+  function nameLayouts(name) {
+    var parts = name.split(" \u00b7 ");
+    if (parts.length < 2) return [[name]];
+    if (parts.length === 2) return [[name], [parts[0], parts[1]]];
+    return [
+      [name],
+      [parts[0], parts[1] + " \u00b7 " + parts[2]],
+      [parts[0] + " \u00b7 " + parts[1], parts[2]],
+      [parts[0], parts[1], parts[2]]
+    ];
+  }
+
+  function longestLine(lines) {
+    var n = 0;
+    for (var i = 0; i < lines.length; i++) if (lines[i].length > n) n = lines[i].length;
+    return n;
+  }
+
   function updateHullNames() {
     var r = gsvg.getBoundingClientRect();
+    var ins = canvasInsets();
     var boxes = [];
     for (var c in hullOf) {
       if (!hullOf.hasOwnProperty(c)) continue;
       var h = hullOf[c];
       if (!h.el) continue;
       if (commOff[+c]) { h.el.style.display = "none"; continue; }
-      var sx = h.cx * vk + vx, sy = h.topY * vk + vy - 9;
-      if (sy < 12 || sy > r.height - 8) { h.el.style.display = "none"; continue; }
-      // A name never runs off the canvas, under the side panel, or under the
-      // legend, which floats over the left of the map.
-      var half = G.communities[+c].name.length * 3.2;
-      var leftLimit = canvasInsets().left;
-      if (sx + half > r.width - 8) sx = r.width - 8 - half;
-      if (sx - half < leftLimit) sx = leftLimit + half;
-      if (half * 2 > r.width - leftLimit - 8) { h.el.style.display = "none"; continue; }
-      h.el.setAttribute("x", sx.toFixed(1));
-      h.el.setAttribute("y", sy.toFixed(1));
+      var name = G.communities[+c].name;
+      var left = h.minx * vk + vx, right = h.maxx * vk + vx;
+      var room = right - left - 16;
+      var opts = nameLayouts(name), chosen = null, size = 0;
+      for (var o = 0; o < opts.length; o++) {
+        var fits = room / (longestLine(opts[o]) * NAME_CHAR);
+        var sz = Math.min(NAME_MAX, fits);
+        if (sz >= NAME_MIN) { chosen = opts[o]; size = sz; break; }
+      }
+      if (!chosen) { h.el.style.display = "none"; continue; }
+      var half = longestLine(chosen) * size * NAME_CHAR / 2;
+      var sx = h.cx * vk + vx;
+      var top = h.topY * vk + vy + size + 5;
+      if (sx - half < left + 8) sx = left + 8 + half;
+      if (sx + half > right - 8) sx = right - 8 - half;
+      var blockH = chosen.length * (size + 2);
+      if (sx - half < ins.left || sx + half > r.width - ins.right ||
+          top < ins.top || top + blockH > r.height - ins.bottom) {
+        h.el.style.display = "none";
+        continue;
+      }
+      h.el.innerHTML = "";
+      for (var li = 0; li < chosen.length; li++) {
+        var ts = svgEl("tspan", {
+          x: sx.toFixed(1),
+          y: (top + li * (size + 2)).toFixed(1)
+        });
+        ts.textContent = chosen[li];
+        h.el.appendChild(ts);
+      }
+      h.el.setAttribute("font-size", size.toFixed(1));
       h.el.style.display = "block";
-      boxes.push({ x: sx - half, y: sy - 11, w: half * 2, h: 14 });
+      boxes.push({ x: sx - half, y: top - size - 2, w: half * 2, h: blockH + 4 });
     }
     return boxes;
   }
@@ -1383,14 +1438,40 @@ GRAPH_JS = r"""
       if (commOff[G.comm[G.e_a[e]]] || commOff[G.comm[G.e_b[e]]]) continue;
       var d;
       if (G.bridge[e] === 1) {
-        // sampled along the curve, since the chord is not what is drawn
+        // Sampled along the curve, since the chord is not what is drawn.
+        // Eight samples were too coarse once the islands moved apart and the
+        // curves grew: a click sitting exactly on a long curve fell between
+        // two samples and picked nothing. The bounding box rejects almost
+        // every edge first, so the finer sampling costs nothing.
+        var ax = gx[G.e_a[e]], ay = gy[G.e_a[e]];
+        var bx2 = gx[G.e_b[e]], by2 = gy[G.e_b[e]];
+        var qc = edgeControl(e);
+        var loX = Math.min(ax, bx2, qc.x) - tol, hiX = Math.max(ax, bx2, qc.x) + tol;
+        var loY = Math.min(ay, by2, qc.y) - tol, hiY = Math.max(ay, by2, qc.y) + tol;
+        if (wx < loX || wx > hiX || wy < loY || wy > hiY) continue;
+        // Sampling alone is not enough: a crossing can be 1700 units long,
+        // so even fifty samples sit further apart than the click tolerance
+        // and a click exactly on the curve falls between two of them. A
+        // coarse scan finds the neighbourhood, then a ternary search closes
+        // on the true nearest point.
         d = Infinity;
-        for (var t2 = 0; t2 <= 1.0001; t2 += 0.125) {
-          var pt = edgePointAt(e, t2);
+        var bestT = 0;
+        for (var k2 = 0; k2 <= 24; k2++) {
+          var tt = k2 / 24, pt = edgePointAt(e, tt);
           var sdx = pt.x - wx, sdy = pt.y - wy;
-          var sd = Math.sqrt(sdx * sdx + sdy * sdy);
-          if (sd < d) d = sd;
+          var sd = sdx * sdx + sdy * sdy;
+          if (sd < d) { d = sd; bestT = tt; }
         }
+        var lo = Math.max(0, bestT - 1 / 24), hi = Math.min(1, bestT + 1 / 24);
+        for (var it2 = 0; it2 < 40; it2++) {
+          var m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+          var p1 = edgePointAt(e, m1), p2 = edgePointAt(e, m2);
+          var d1 = (p1.x - wx) * (p1.x - wx) + (p1.y - wy) * (p1.y - wy);
+          var d2 = (p2.x - wx) * (p2.x - wx) + (p2.y - wy) * (p2.y - wy);
+          if (d1 < d2) hi = m2; else lo = m1;
+        }
+        var pf = edgePointAt(e, (lo + hi) / 2);
+        d = Math.sqrt((pf.x - wx) * (pf.x - wx) + (pf.y - wy) * (pf.y - wy));
       } else {
         var x1 = gx[G.e_a[e]], y1 = gy[G.e_a[e]], x2 = gx[G.e_b[e]], y2 = gy[G.e_b[e]];
         var ddx = x2 - x1, ddy = y2 - y1;

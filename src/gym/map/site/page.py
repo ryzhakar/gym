@@ -24,10 +24,13 @@ BASE_CSS = r"""
   :root {
     --bg: #12161d;
     --canvas: #0e1116;
-    --panel-bg: #ffffff;
-    --ink: #1c1b1a;
-    --ink-dim: #6b6560;
-    --border: #d8d3cb;
+    /* The panel is the same surface as the canvas now. Two surfaces, one
+       dark and one light, read as two applications side by side. */
+    --panel-bg: #141922;
+    --ink: #dde3ec;
+    --ink-dim: #8b96a6;
+    --border: #2a3340;
+    --panel-raise: #1b2230;
     --chrome: #161b23;
     --chrome-ink: #dfe5ee;
     --chrome-dim: #8b96a6;
@@ -48,9 +51,10 @@ BASE_CSS = r"""
     background: #1e2531; color: var(--chrome-ink); border-radius: 4px; cursor: pointer; }
   button:hover { background: #28313f; }
   button.active { background: var(--chrome-ink); color: #11151c; border-color: var(--chrome-ink); }
-  #panel button { border-color: var(--border); background: #fff; color: var(--ink); }
-  #panel button:hover { background: #efece6; }
-  #panel button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  #panel button { border-color: var(--border); background: var(--panel-raise);
+    color: var(--ink); }
+  #panel button:hover { background: #26303e; }
+  #panel button.active { background: var(--ink); color: #11151c; border-color: var(--ink); }
   /* What the view means is read once and then in the way. It folds behind
      the "i" button and the canvas takes the height back. */
   #note { display: none; padding: 8px 16px 12px; font-size: 12px; line-height: 1.5;
@@ -63,34 +67,37 @@ BASE_CSS = r"""
     border: 1px solid rgba(255,255,255,.18); }
   #wrap { display: flex; flex: 1 1 auto; min-height: 0; }
   #panel { width: 380px; flex: 0 0 380px; border-left: 1px solid var(--chrome-line);
-    background: var(--panel-bg); overflow-y: auto; padding: 16px; display: none; }
+    background: var(--panel-bg); color: var(--ink); overflow-y: auto; padding: 16px;
+    display: none; }
   #panel.open { display: block; }
   #panel h2 { font-size: 14px; margin: 0 0 6px; }
   #panel .close { float: right; cursor: pointer; color: var(--ink-dim); border: none;
     background: none; font-size: 16px; padding: 0 4px; }
   #panel .q-context { font-size: 12px; color: var(--ink-dim); margin-bottom: 10px; }
   #panel .badge { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 10px;
-    border: 1px solid var(--border); margin-right: 4px; color: var(--ink); }
-  #panel .badge.checked { background: #e4f3e9; border-color: #9cc9ac; }
-  #panel .badge.provisional { background: #f3ece4; border-color: #cbb290; }
-  #panel .badge.undated { background: #eeeeee; border-color: #b9b9b9; }
+    border: 1px solid var(--border); margin-right: 4px; color: var(--ink);
+    background: var(--panel-raise); }
+  #panel .badge.checked { background: #14301f; border-color: #2c5c3d; color: #a9dcbc; }
+  #panel .badge.provisional { background: #2f2617; border-color: #5a4a2b; color: #dcc59a; }
+  #panel .badge.undated { background: #232a34; border-color: #3a4552; color: #aab4c1; }
   #panel .badge.voice-chip { cursor: pointer; }
-  #panel .badge.voice-chip:hover { background: #efece6; }
-  #panel .badge.tag-fact { background: #e4edf3; }
-  #panel .badge.tag-tradeoff { background: #f3ecf9; }
-  #panel .badge.tag-taste { background: #f9f3e4; }
+  #panel .badge.voice-chip:hover { background: #26303e; }
+  #panel .badge.tag-fact { background: #16293a; color: #a8c8e4; }
+  #panel .badge.tag-tradeoff { background: #271d38; color: #c4b0e4; }
+  #panel .badge.tag-taste { background: #2f2717; color: #dfc98f; }
   #panel blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--border);
-    font-style: italic; color: #4a453f; }
+    font-style: italic; color: var(--ink-dim); }
   #panel .field { margin: 9px 0; }
   #panel .field .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
     color: var(--ink-dim); }
-  #panel a { color: #1a5fb4; }
+  #panel a { color: #7fb2ff; }
+  #panel a:hover { color: #a8ccff; }
   #panel .pos-block { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
-    margin: 10px 0; }
-  #panel .arg { margin: 6px 0 6px 4px; padding-left: 8px; border-left: 2px solid #e3ded4;
+    margin: 10px 0; background: var(--panel-raise); }
+  #panel .arg { margin: 6px 0 6px 4px; padding-left: 8px; border-left: 2px solid var(--border);
     font-size: 12.5px; }
-  #panel .arg .side-for { color: #2a7a3f; font-weight: 600; }
-  #panel .arg .side-against { color: #a13a2f; font-weight: 600; }
+  #panel .arg .side-for { color: #6fcf8f; font-weight: 600; }
+  #panel .arg .side-against { color: #ee8d7f; font-weight: 600; }
   #panel .hist-item { font-size: 12px; margin: 3px 0; color: var(--ink-dim); }
   #panel .nbr-chip { margin: 2px 3px 2px 0; display: inline-block; }
 """
