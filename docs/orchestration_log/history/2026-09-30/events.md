@@ -243,3 +243,4 @@
 2026-09-30T22:50 | self | failure | another status line ended a silent turn; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
 2026-09-30T22:50 | agent:graph-map | receipt | graph revision: communities laid out as packed discs, backbone 1880 of 4837 edges at the opening frame, 13 hubs capped and damped, crossings brighter; self-read: three islands and their bridges namable; cost: position inside a community is packing, not structure; settle 236 ms; 88 map tests; unverified
 2026-09-30T22:50 | self | delegation | agent:map-review-2, sonnet, background: second cold-reader pass over Graph, Matrix and the Voice-number link; output recon/2026-09-30/frontend/map-review-2.md; wait bounded by heartbeat feb9bb57
+2026-09-30T22:51 | agent:matrix-wire | receipt | follow-up: voice_numbering(voices) in load.py, called by both views; page.py two additive lines; graph.py untouched; 254 tests pass; unverified
