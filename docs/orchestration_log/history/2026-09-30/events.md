@@ -102,3 +102,4 @@
 2026-09-30T17:07 | self | delegation | agent:tests-map-core, sonnet, background: tests for estimate.py closure math and check_map.py rules; output recon/2026-09-30/app/tests-map-core-report.md; wait bounded by heartbeat eed4185b
 2026-09-30T17:08 | agent:gym-trainer | receipt | b5-iter clock started 17:08
 2026-09-30T17:11 | agent:gym-trainer | receipt | b5-iter ended 22 seconds past cap, cargo ran before the prediction (target/ present), recorded; b6-enum presented at 17:11
+2026-09-30T17:12 | agent:gym-trainer | receipt | b5 record corrected: target/ came from rust-analyzer's cargo check on open, program not run, no violation
