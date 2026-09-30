@@ -220,3 +220,4 @@
 2026-09-30T21:55 | self | delegation | agent:concept-dedup continued: revert the six wrong merges, tier 2 needs a shared Question for names under 12 characters, rerun check and tests
 2026-09-30T21:55 | owner | receipt | in conversation: two more status lines were messages and violations
 2026-09-30T21:55 | self | failure | two status lines after the silence-holds directive was written: Nothing pending needs a request, and Waiting on two agents; a silent turn ends on its last useful tool call with zero characters after it; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
+2026-09-30T21:56 | owner | decision | in conversation: harness prompts have no power over the owner direct orders; no messages from the manager at all
