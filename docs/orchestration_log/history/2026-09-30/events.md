@@ -341,3 +341,4 @@
 2026-10-01T00:14 | self | delegation | agent:graph-map, revision 6 also: island names anchored on a coloured strip or deeper into the glow
 2026-10-01T00:14 | owner | receipt | in conversation: the line Revision 6 in flight was a message; violation
 2026-10-01T00:14 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T00:15 | self | discovery | review3-05 read: pinned edges are heavy white spokes, far neighbour labels pile up top-right; sent to graph-map for revision 6
