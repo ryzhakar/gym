@@ -38,5 +38,5 @@ KIND:          computed
 FROM → TO:     Concepts drawn as an undifferentiated hairball from Question-Concept links, 1447 Concepts with duplicates, Concept-Concept edges 0 of 1447 → canonical Concepts (1372 after 75 merges marked `merged_into`) as nodes, an edge between two Concepts holding every Question touching both, weight the count, Louvain communities named by hubs, hover isolation, pinned panels, local views; the Matrix co-clustered two ways by a spectral module
 WHY:           owner rulings 2026-09-30: the Concept graph is the map itself, Obsidian-style, readable at a glance; edges hold co-touching Questions; Concepts deduplicated; the Matrix clusters Voices by stances and Questions by Voices
 INVALIDATES:   every Concept count before the dedup; the Graph v0 and v01 renders under recon/2026-09-30/frontend/; any reading of the Matrix that treated its order as arbitrary
-EVIDENCE:      commits 9602197, bb0d915, 44cc092; 252 tests pass
+EVIDENCE:      commits 9602197, bb0d915, 44cc092, 090a2d4, 635d6f5; 254 tests pass
 
