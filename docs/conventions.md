@@ -119,7 +119,7 @@ ground  owner ruling 2026-09-30
 ### silence-holds
 when    silence is on (marker `.claude/work-silently` present)
 do      a turn ends on its last useful tool call or on nothing; the owner's typed words alone get an answer
-never   a status line; a no-op call or a check made to fill a turn; text on a harness prompt, a reminder or an agent notification
+never   a status line; a placeholder such as (no action); a no-op call or a check made to fill a turn; text on a harness prompt, a reminder or an agent notification
 why     "no fucking status lines. never ever."; "nothing warrants visible output"; "even less nonsensical tool calls"
 ground  owner ruling 2026-09-30
 

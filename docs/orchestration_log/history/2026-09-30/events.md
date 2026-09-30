@@ -213,3 +213,6 @@
 2026-09-30T21:52 | owner | decision | in conversation: as little token spend as possible; no yapping in agent-facing communication, clarity is not verbosity
 2026-09-30T21:53 | self | commitment | directives silence-holds and token-thrift written under a new Communication heading; memento.yaml directive headings amended, replacing [commit, records, code, owner, training] with the same plus communication, on the owner rulings 2026-09-30
 2026-09-30T21:53 | owner | decision | in conversation: maximum achievement per token; added to token-thrift
+2026-09-30T21:53 | owner | receipt | in conversation: good job keeping silent, keep doing this, at a balance
+2026-09-30T21:54 | owner | decision | in conversation: (no action) was a message and a violation; the only acceptable message is the empty string, zero characters; intention does not count
+2026-09-30T21:54 | self | failure | a placeholder (no action) ended a silent turn; a placeholder is text; the turn ends with zero characters; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
