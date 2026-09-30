@@ -314,3 +314,7 @@
 2026-09-30T23:57 | self | discovery | map-default.png and map-pinned.png read: a real map now, islands with hulls and names, structure inside; left: island names float away from their hulls (semver at the top edge, unsafe between islands), green and blue islands touch at the centre-right, the pinned view's panel is light on a dark app
 2026-09-30T23:57 | self | delegation | agent:graph-map continued: island names anchored inside their hull's top edge, a dark panel matching the canvas, islands kept apart
 2026-09-30T23:57 | self | discovery | map-local2.png read: the local view around async runtimes reads like Obsidian, neighbours grouped by colour, Questions and neighbours in the panel; no change asked
+2026-09-30T23:58 | owner | receipt | in conversation: the line Three agents on refinements was a message; violation
+2026-09-30T23:58 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-09-30T23:58 | agent:baseline-command | receipt | baseline-command-report.md: gym train baseline stage and grade in baseline.py, cwd-independent, key never printed, verified on a scratch b1-own from /tmp; open refuses a colon id with exit 2; findings 7 and 9 already fixed, shown by grep and tests; procedure kind added; 280 tests; unverified
+2026-09-30T23:58 | self | commitment | baseline commands committed after the train tests passed here
