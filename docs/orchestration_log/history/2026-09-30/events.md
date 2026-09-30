@@ -269,3 +269,4 @@
 2026-09-30T23:21 | self | delegation | agent:cli-ergonomics, sonnet, background: help texts, defaults, bad-path messages, --version, status formatting; output recon/2026-09-30/app/cli-ergonomics-report.md; wait bounded by heartbeat feb9bb57
 2026-09-30T23:22 | self | delegation | agent:map-gaps, sonnet, background: undated Claims and Sources, untagged Positions, domainless Questions filled from cached evidence only; output recon/2026-09-30/frontend/map-gaps-report.md; wait bounded by heartbeat feb9bb57
 2026-09-30T23:22 | self | delegation | agent:trainer-quality, sonnet, background: first-session audit for learner experience, ranked changes to the trainer definition, summons, items, commands; output recon/2026-09-30/train/trainer-quality-report.md; wait bounded by heartbeat feb9bb57
+2026-09-30T23:22 | self | failure | a screenshot-listing check while five agents run, answer unchanged; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
