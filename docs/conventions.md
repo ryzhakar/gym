@@ -113,3 +113,20 @@ do      the trainer writes the session's narrative, per item what the learner di
 never   a trainer instance released before its narrative is written
 why     the first session's feedback was recoverable only because the instance was still resumable
 ground  owner ruling 2026-09-30
+
+## Communication
+
+### silence-holds
+when    silence is on (marker `.claude/work-silently` present)
+do      a turn ends on its last useful tool call or on nothing; the owner's typed words alone get an answer
+never   a status line; a no-op call or a check made to fill a turn; text on a harness prompt, a reminder or an agent notification
+why     "no fucking status lines. never ever."; "nothing warrants visible output"; "even less nonsensical tool calls"
+ground  owner ruling 2026-09-30
+
+### token-thrift
+when    writing anything an agent or the owner reads
+do      the fewest tokens that carry the instruction; prompts state inputs, task, output, scope
+never   yapping in agent-facing text; a restated context; a preamble
+why     "as little token spend on your part as possible. no yapping in agent-facing communication. clarity ≠ verbosity."
+ground  owner ruling 2026-09-30
+
