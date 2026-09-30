@@ -811,6 +811,12 @@ GRAPH_JS = r"""
     updateLabels();
   }
 
+  // True while the view is exactly what fitView last produced. Any wheel,
+  // drag or centring clears it, so a width change re-fits the opening frame
+  // but never throws away a reader's own zoom.
+  var viewIsFitted = false;
+  var lastCanvasW = 0;
+
   function applyTransform() {
     gscene.setAttribute("transform", "translate(" + vx + "," + vy + ") scale(" + vk + ")");
     updateLabels();
@@ -835,7 +841,31 @@ GRAPH_JS = r"""
     vk = Math.max(Math.min(vk, 4), 0.05);
     vx = r.width / 2 - (minx + maxx) / 2 * vk;
     vy = r.height / 2 - (miny + maxy) / 2 * vk;
+    lastCanvasW = r.width;
     applyTransform();
+    viewIsFitted = true;
+  }
+
+  // Opening the side panel narrows the canvas. Without this the transform
+  // and the labels stayed sized to the wider box, and a label near the right
+  // edge was cut in half by the panel.
+  function onCanvasResize() {
+    if (!gscene) return;
+    var r = gsvg.getBoundingClientRect();
+    if (!r.width || Math.abs(r.width - lastCanvasW) < 1) return;
+    var delta = r.width - lastCanvasW;
+    lastCanvasW = r.width;
+    if (viewIsFitted) {
+      fitView();
+    } else {
+      vx += delta / 2;
+      applyTransform();
+    }
+  }
+  if (window.ResizeObserver) {
+    new ResizeObserver(onCanvasResize).observe(gsvg);
+  } else {
+    window.addEventListener("resize", onCanvasResize);
   }
 
   // Labels are drawn in screen space, outside the zoom transform, so text
@@ -879,14 +909,27 @@ GRAPH_JS = r"""
       else continue;
       var sx = gx[i] * vk + vx, sy = gy[i] * vk + vy;
       if (sx < -60 || sy < -20 || sx > r.width + 60 || sy > r.height + 20) continue;
-      cands.push({ i: i, pri: pri, x: sx + gr[i] * vk + 3, y: sy + 3, el: el });
+      cands.push({ i: i, pri: pri, sx: sx, sy: sy + 3, el: el });
     }
     cands.sort(function (p, q) { return p.pri - q.pri || G.deg[q.i] - G.deg[p.i] || p.i - q.i; });
+    // A label sits to the right of its dot, unless that would put it past the
+    // canvas -- where the side panel is -- in which case it flips to the left.
+    // Nothing is ever drawn under the panel: a label that fits on neither side
+    // is not drawn at all.
     var placed = [], shown = 0;
     for (var c = 0; c < cands.length && shown < LABEL_BUDGET; c++) {
       var k = cands[c];
       var fs = k.pri <= 1 ? 12 : 11;
-      var box = { x: k.x, y: k.y - fs, w: G.labels[k.i].length * fs * 0.55, h: fs + 3 };
+      var w = G.labels[k.i].length * fs * 0.55;
+      var rad = gr[k.i] * vk;
+      var anchor = "start", tx = k.sx + rad + 3, left = tx;
+      if (tx + w > r.width - 4) {
+        anchor = "end";
+        tx = k.sx - rad - 3;
+        left = tx - w;
+        if (left < 4) continue;
+      }
+      var box = { x: left, y: k.sy - fs, w: w, h: fs + 3 };
       var clash = false;
       for (var q2 = 0; q2 < placed.length; q2++) {
         var o = placed[q2];
@@ -896,8 +939,9 @@ GRAPH_JS = r"""
       }
       if (clash && k.pri > 0) continue;
       placed.push(box);
-      k.el.setAttribute("x", k.x.toFixed(1));
-      k.el.setAttribute("y", k.y.toFixed(1));
+      k.el.setAttribute("x", tx.toFixed(1));
+      k.el.setAttribute("y", k.sy.toFixed(1));
+      k.el.setAttribute("text-anchor", anchor);
       if (k.pri <= 1) k.el.classList.add("near");
       k.el.style.display = "block";
       shown++;
@@ -978,6 +1022,7 @@ GRAPH_JS = r"""
     vx = mx - (mx - vx) * (nk / vk);
     vy = my - (my - vy) * (nk / vk);
     vk = nk;
+    viewIsFitted = false;
     applyTransform();
   }, { passive: false });
 
@@ -987,6 +1032,7 @@ GRAPH_JS = r"""
     function onMove(m) {
       if (Math.abs(m.clientX - sx) + Math.abs(m.clientY - sy) > 3) moved = true;
       vx = ox + (m.clientX - sx); vy = oy + (m.clientY - sy);
+      viewIsFitted = false;
       applyTransform();
     }
     function onUp(u) {
@@ -1048,6 +1094,7 @@ GRAPH_JS = r"""
     vk = Math.max(vk, minZoom || 1.4);
     vx = r.width / 2 - gx[i] * vk;
     vy = r.height / 2 - gy[i] * vk;
+    viewIsFitted = false;
     applyTransform();
   }
 
@@ -1511,7 +1558,23 @@ GRAPH_JS = r"""
     window.__gym.pinned = function () { return pinned < 0 ? null : G.ids[pinned]; };
     window.__gym.localDepth = function () { return localDepth; };
     window.__gym.fit = function () { fitView(); };
-    window.__gym.zoom = function (f) { vk = Math.max(0.05, Math.min(12, vk * f)); applyTransform(); };
+    window.__gym.zoom = function (f) {
+      vk = Math.max(0.05, Math.min(12, vk * f));
+      viewIsFitted = false;
+      applyTransform();
+    };
+    // The visible Concept furthest to the right: the one whose label the side
+    // panel used to cut in half.
+    window.__gym.rightmost = function () {
+      var best = -1, bestX = -Infinity;
+      for (var a = 0; a < activeNode.length; a++) {
+        var i = activeNode[a];
+        if (commOff[G.comm[i]]) continue;
+        var x = gx[i] * vk + vx;
+        if (x > bestX) { bestX = x; best = i; }
+      }
+      return best < 0 ? null : G.ids[best];
+    };
     window.__gym.hover = function (name) {
       for (var i = 0; i < GN; i++) if (G.ids[i] === name) { gNodeEl[i].dispatchEvent(new MouseEvent("mouseenter")); return true; }
       return false;

@@ -257,7 +257,47 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         assert "NEIGHBOURS BY SHARED QUESTIONS" in panel.upper()
         q_lines = page.eval_on_selector_all("#panel-body .qline", "els => els.length")
         assert q_lines > 0
+
+        # The side panel narrows the canvas. Nothing may be drawn under it:
+        # a hub at the right edge used to have its name cut mid-word.
+        overflow = """() => {
+          const svg = document.getElementById('graph').getBoundingClientRect();
+          const bad = [];
+          document.querySelectorAll('#glabels .glabel').forEach(e => {
+            if (e.style.display !== 'block') return;
+            const r = e.getBoundingClientRect();
+            if (r.right > svg.right + 1 || r.left < svg.left - 1) bad.push(e.textContent);
+          });
+          return bad;
+        }"""
+        page.keyboard.press("Escape")
+        page.evaluate("() => window.__gym.fit()")
+        page.wait_for_timeout(200)
+        assert page.evaluate(overflow) == []
+        wide = page.evaluate("() => document.getElementById('graph').getBoundingClientRect().width")
+
+        edge_concept = page.evaluate("() => window.__gym.rightmost()")
+        assert edge_concept
+        assert page.evaluate("(n) => window.__gym.click(n)", edge_concept)
+        page.wait_for_selector("#panel.open")
+        page.wait_for_timeout(400)
+        narrow = page.evaluate("() => document.getElementById('graph').getBoundingClientRect().width")
+        assert narrow < wide, (narrow, wide)
+        assert page.evaluate(overflow) == [], page.evaluate(overflow)
+        assert page.inner_text("#panel-body h2")
+        print("right-edge pin:", edge_concept, "canvas", wide, "->", narrow)
         page.screenshot(path=str(SHOTS / "map-pinned.png"))
+
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(400)
+        assert page.evaluate(
+            "() => document.getElementById('graph').getBoundingClientRect().width"
+        ) == wide
+        assert page.evaluate(overflow) == []
+
+        assert page.evaluate("() => window.__gym.click('async-runtimes')")
+        page.wait_for_selector("#panel.open")
+        page.wait_for_timeout(200)
 
         # a Question line opens the whole entry: Positions, Arguments, Claims.
         # Every line is opened, because Arguments and Claims exist only where
