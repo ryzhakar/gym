@@ -298,3 +298,8 @@
 2026-09-30T23:37 | owner | receipt | in conversation: the line Three agents still working was a message; violation
 2026-09-30T23:37 | self | failure | status line on a harness prompt; every such prompt gets an empty turn; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
 2026-09-30T23:51 | self | discovery | session limit hit 23:37: graph-map at step 7 of revision 4, matrix-v2 at the block wash contrast, baseline-command reading inputs; limit reset; all three resumed via SendMessage
+2026-09-30T23:54 | owner | receipt | in conversation: the line Three agents resumed was a message; violation
+2026-09-30T23:54 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-09-30T23:54 | agent:matrix-v2 | receipt | matrix-v2-report.md: dark theme, 280 px label column with ellipsis and hover, fitted headers and cells, thin gap labelled, 6 percent block wash, hover bands; undated ring marker and discussion label contrast fixed; 94 map tests; screenshots matrix-default, matrix-showall, matrix-row-hover, matrix-cell-panel; still weak: faint wash, 12 px cells, header hit-box; unverified
+2026-09-30T23:55 | self | discovery | matrix-default.png read: a clear step up, labels whole, blocks read; the grid field is a light beige island on the dark page, cells are 12 px in a 900 px wide grid on a 1600 px canvas, the wash barely shows
+2026-09-30T23:55 | self | delegation | agent:matrix-v2 continued: dark grid field, cells sized to the width, wash 12 percent
