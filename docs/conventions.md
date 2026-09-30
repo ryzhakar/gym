@@ -45,6 +45,13 @@ never   a hand-typed timestamp or close block
 why     the clock and git stamp them, and a malformed line is refused at write time
 ground  owner ruling 2026-09-26 (competera's scripts port as a deterministic value-add)
 
+### memento-by-orchestrator
+when    memento work: pat-down, events, span closes, record edits
+do      the orchestrator reads and writes the records itself, through scripts/event.py, scripts/close_span.py and direct edits
+never   a record read or write delegated to an agent; a second carve-out from agentic-delegation's file prohibition
+why     "memento is the sole exception: orchestrator keeps their records themselves"
+ground  owner ruling 2026-09-30
+
 ## Code
 
 ### python-via-uv

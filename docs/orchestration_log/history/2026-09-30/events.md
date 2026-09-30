@@ -7,3 +7,6 @@
 2026-09-30T14:06 | self | discovery | gap: no record of kind fact (docs/capabilities.md) or change (docs/architecture_log.md) exists; the map has no row for either, consistent; the charter carries no autoload line for change, so the first change entry needs a map row and an autoload line
 2026-09-30T14:06 | self | discovery | pat-down settled: project gym, owner Arthur Ryzhak; Goal 1 gym standing active; open work from the 2026-09-29 close: sessions row has no writer, trainer_guard.py unwired, subagents load CLAUDE.md; no open waits, no live tripwires, no agents running
 2026-09-30T14:06 | self | commitment | heartbeat laid: recurring cron 406b53f6 at :07, :27, :47; session-only, expires in 7 days; prompt stands alone, silence paused per owner ruling 2026-09-29T12:29
+2026-09-30T14:13 | owner | decision | task, in the question tool: training starts today; while the owner trains, the orchestrator drives map frontend work; sync on that work first
+2026-09-30T14:13 | owner | decision | ruling, in the question tool: memento is the sole exception to agentic-delegation's file prohibition; the orchestrator keeps its records itself
+2026-09-30T14:13 | self | commitment | directive memento-by-orchestrator written to docs/conventions.md under Records; ground owner ruling 2026-09-30
