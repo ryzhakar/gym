@@ -83,3 +83,9 @@
 2026-09-30T16:43 | agent:gym-trainer | receipt | b2-life ended; b3-result presented at 16:42
 2026-09-30T16:50 | agent:train-group | receipt | parser replaced: quote_value and shlex parse_fields, known_fields_for gone; hazard set whitespace, quotes, backslash; id shape reconfirmed; 127 tests pass; unverified
 2026-09-30T16:51 | self | delegation | trainer-definition-v3 continued: draft revised for quoted values, request as an optional field, fraction, hyphen ids; convert-session continued: route through open_session again and re-run
+2026-09-30T16:52 | agent:trainer-definition-v3 | receipt | draft revised to match HEAD 5692800: quoted values, one-line hint turns with request=, fraction, hyphen ids; claims executed on a scratch subject; new open problem: probe-item still accepts a stale continuous= field; applied at the session's end; unverified
+2026-09-30T16:53 | agent:convert-session | receipt | converter routes open through open_session again (clock frozen to the row's time); gap_days across two hyphen ids verified; live dry run on 4 rows and synthetic fixture 0 FAIL; probe_minutes still dropped from close; unverified
+2026-09-30T16:53 | self | decision | decided: close gains an optional probe_minutes field in the schema; the converter carries it once the schema has it
+2026-09-30T16:55 | agent:train-group | receipt | unknown fields refused at write and by check, note excepted; 129 tests pass; probe_minutes on close still pending; unverified
+2026-09-30T16:56 | agent:gym-trainer | receipt | b3-result ended six minutes past the cap, noted in the record; b4-traits presented at 16:56
+2026-09-30T16:58 | agent:train-group | receipt | close accepts optional probe_minutes with --probe-minutes; 135 tests pass; gap_days and attempts/delay_days columns of the old CSVs remain unmapped; unverified
