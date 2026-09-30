@@ -228,6 +228,75 @@ def test_graph_node_and_edge_counts_match_a_direct_pass_over_maps_rust(
     assert len(graph["edges"]) == edge_count
 
 
+def test_graph_default_subset_includes_domains_and_values(tmp_path: Path) -> None:
+    """v1 default-subset rule: Concepts of degree >=3, their Questions, and
+    every Domain/Value those Questions link to -- independently re-derived
+    from the YAML (not via gym.map.site.build_graph_data) and checked
+    against the built page's embedded data. v0's rule stopped at the
+    Questions, so no Domain or Value ever appeared without "Show all"."""
+    map_dir = ROOT / "maps" / "rust"
+    questions = _load_yaml_kind(map_dir, "questions")
+    positions = _load_yaml_kind(map_dir, "positions")
+    arguments = _load_yaml_kind(map_dir, "arguments")
+    concepts = _load_yaml_kind(map_dir, "concepts")
+    domains = _load_yaml_kind(map_dir, "domains")
+    values = _load_yaml_kind(map_dir, "values")
+
+    degree: dict[str, float] = defaultdict(float)
+    q_concepts: dict[str, set[str]] = defaultdict(set)
+    q_domains: dict[str, set[str]] = defaultdict(set)
+    for qid, q in questions.items():
+        for cid in q.get("concepts") or []:
+            if cid in concepts:
+                degree[f"concept:{cid}"] += 1
+                q_concepts[qid].add(cid)
+        for did in q.get("domains") or []:
+            if did in domains:
+                q_domains[qid].add(did)
+
+    pos_to_question = {pid: p.get("question") for pid, p in positions.items()}
+    q_values: dict[str, set[str]] = defaultdict(set)
+    for a in arguments.values():
+        qid = pos_to_question.get(a.get("position"))
+        if qid not in questions:
+            continue
+        for vid in a.get("values") or []:
+            if vid in values:
+                q_values[qid].add(vid)
+
+    expected_default_concepts = {cid for cid in concepts if degree.get(f"concept:{cid}", 0) >= 3}
+    expected_default_questions = {
+        qid for qid, cids in q_concepts.items() if cids & expected_default_concepts
+    }
+    expected_default_domains = {
+        did for qid in expected_default_questions for did in q_domains.get(qid, ())
+    }
+    expected_default_values = {
+        vid for qid in expected_default_questions for vid in q_values.get(qid, ())
+    }
+
+    out = tmp_path / "index.html"
+    build_site(map_dir, out)
+    data = _load_data(out)
+    graph = data["graph"]
+    node_by_id = {n["id"]: n for n in graph["nodes"]}
+    default_ids = set(graph["default_subset"])
+
+    got_by_kind: dict[str, set[str]] = defaultdict(set)
+    for nid in default_ids:
+        n = node_by_id[nid]
+        got_by_kind[n["kind"]].add(n["raw"])
+
+    assert got_by_kind["concept"] == expected_default_concepts
+    assert got_by_kind["question"] == expected_default_questions
+    assert got_by_kind["domain"] == expected_default_domains
+    assert got_by_kind["value"] == expected_default_values
+    assert len(default_ids) == graph["counts"]["nodes_default"]
+    # v1's own contribution: every Domain and every Value appears, unlike v0.
+    assert expected_default_domains == set(domains)
+    assert expected_default_values == set(values)
+
+
 def test_graph_view_switch_and_node_click_opens_panel() -> None:
     from playwright.sync_api import sync_playwright
 

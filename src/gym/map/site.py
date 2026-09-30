@@ -108,12 +108,20 @@ def build_graph_data(
         (n["raw"] for n in nodes.values() if n["kind"] == "concept" and n["degree"] >= 3)
     )
     default_concepts = set(nid("concept", cid) for cid in concept_ids_by_degree)
-    default_nodes = set(default_concepts)
+    # Concepts of degree >=3, their Questions (Concept's only neighbour kind
+    # today, via question-concept edges), and every Domain/Value those same
+    # Questions link to (via question-domain/question-value edges) -- a third
+    # hop past the v0 rule, which stopped at the Questions and left every
+    # Domain and Value out of the default view.
+    default_questions: set[str] = set()
     for e in edges:
-        if e["source"] in default_concepts:
-            default_nodes.add(e["target"])
-        if e["target"] in default_concepts:
-            default_nodes.add(e["source"])
+        if e["kind"] == "question-concept" and e["target"] in default_concepts:
+            default_questions.add(e["source"])
+    default_domains_values: set[str] = set()
+    for e in edges:
+        if e["kind"] in ("question-domain", "question-value") and e["source"] in default_questions:
+            default_domains_values.add(e["target"])
+    default_nodes = default_concepts | default_questions | default_domains_values
 
     return {
         "nodes": list(nodes.values()),
@@ -1163,6 +1171,16 @@ HTML_TEMPLATE = r"""<!doctype html>
         disp[edge.source].x -= fx2; disp[edge.source].y -= fy2;
         disp[edge.target].x += fx2; disp[edge.target].y += fy2;
       }
+      // Fringe nodes: v0 hard-clamped x/y into [20, W-20], which pinned many
+      // low-degree nodes dead on that boundary line (dense vertical columns
+      // in the screenshot). Replaced with a centering force (pulls every
+      // node toward the canvas center each iteration) plus a soft boundary
+      // spring (pushes a node back in proportional to how far past the
+      // margin it sits) -- never a hard min/max, so nothing is pinned; a
+      // node can still sit outside the margin between iterations if pushed
+      // there, but is always eased back rather than snapped to a line.
+      var BOUNDARY_MARGIN = 20;
+      var BOUNDARY_SPRING = 0.12;
       for (var c = 0; c < n; c++) {
         var id = nodeIds[c];
         var p = pos[id], d = disp[id];
@@ -1170,10 +1188,18 @@ HTML_TEMPLATE = r"""<!doctype html>
         var capped = Math.min(dlen, temp);
         p.x += (d.x / dlen) * capped;
         p.y += (d.y / dlen) * capped;
-        p.x += (GRAPH_W / 2 - p.x) * 0.002;
-        p.y += (GRAPH_H / 2 - p.y) * 0.002;
-        p.x = Math.max(20, Math.min(GRAPH_W - 20, p.x));
-        p.y = Math.max(20, Math.min(GRAPH_H - 20, p.y));
+        p.x += (GRAPH_W / 2 - p.x) * 0.01;
+        p.y += (GRAPH_H / 2 - p.y) * 0.01;
+        if (p.x < BOUNDARY_MARGIN) {
+          p.x += (BOUNDARY_MARGIN - p.x) * BOUNDARY_SPRING;
+        } else if (p.x > GRAPH_W - BOUNDARY_MARGIN) {
+          p.x -= (p.x - (GRAPH_W - BOUNDARY_MARGIN)) * BOUNDARY_SPRING;
+        }
+        if (p.y < BOUNDARY_MARGIN) {
+          p.y += (BOUNDARY_MARGIN - p.y) * BOUNDARY_SPRING;
+        } else if (p.y > GRAPH_H - BOUNDARY_MARGIN) {
+          p.y -= (p.y - (GRAPH_H - BOUNDARY_MARGIN)) * BOUNDARY_SPRING;
+        }
       }
     }
     return pos;
