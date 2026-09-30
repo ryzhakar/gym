@@ -1,14 +1,23 @@
-"""gym train probe: present a unit's probe items, time the attempt against the shared cap, grade
-each item against its key, log one `probe-item` event per problem.
+"""gym train probe: stage a unit's probe problems, then grade them against their keys, one
+`probe-item` event per problem.
 
-Moved whole from `scripts/train/probe.py` (untouched, still live), keeping every rule that script
-enforced: `immediate` reads `probe-a/`, `delayed` reads `probe-b/`; one cap shared across every
-problem crate in the probe; a `key/` path is never opened or printed for display, only read at
-grading time, by copying its held-out test files in, running `cargo test`, and always removing
-exactly what was copied; a build failure grades as a full miss, never a script abort; the session's
-colon-bearing id is sanitized before it becomes a path component (`cargo test`'s
-`$DYLD_FALLBACK_LIBRARY_PATH` breaks on a literal `:` on macOS). The one change: the write target
-is a `probe-item` event under the session's own `events.md`, not an `items` CSV row.
+Split in two, on the team lead's ruling (2026-09-30), replacing an earlier single interactive
+command that waited on stdin: `gym train probe stage` copies every problem crate to its work path
+and logs a `probe-start` event (the time, and the list of problems staged); `gym train probe grade`
+re-reads that event — refusing outright if none exists for this unit and probe side in this
+session — grades each staged problem against its key, computes elapsed minutes from the
+`probe-start` event's own timestamp to now, and logs one `probe-item` event per problem. No
+interactive wait anywhere; the two commands are two separate, ordinary invocations, run whenever
+the caller is ready for each.
+
+Every other rule from the original, single-command version (itself moved whole from
+`scripts/train/probe.py`, untouched, still live) is kept: `immediate` reads `probe-a/`, `delayed`
+reads `probe-b/`; a `key/` path is never opened or printed for display, only read at grading time,
+by copying its held-out test files in, running `cargo test`, and always removing exactly what was
+copied; a build failure grades as a full miss, never a script abort; the session's id is sanitized
+before it becomes a path component (`cargo test`'s `$DYLD_FALLBACK_LIBRARY_PATH` breaks on a
+literal `:` on macOS — moot in practice now that `gym train open` only ever produces a hyphen-shaped
+id, but kept as a defensive second layer).
 """
 from __future__ import annotations
 
@@ -16,13 +25,12 @@ import re
 import shutil
 import subprocess
 import sys
-import time
+from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
-from gym.train.events import append_event
+from gym.train.events import append_event, events_path, read_events
+from gym.train.schema import TIMESTAMP_FORMAT
 
-CAP_MINUTES_DEFAULT = 10.0
 ISOMORPH_OF = {"immediate": "probe-a", "delayed": "probe-b"}
 
 
@@ -133,40 +141,65 @@ def grade_item(problem_dir: Path, key_problem_dir: Path) -> tuple[bool, float]:
             path.unlink(missing_ok=True)
 
 
-def run_probe(
-    subject_dir: Path,
-    unit_dir: Path,
-    which: str,
-    session_id: str,
-    cap_minutes: float = CAP_MINUTES_DEFAULT,
-    wait: Callable[[], None] = lambda: input(),
-    clock: Callable[[], float] = time.monotonic,
-) -> list[dict[str, str]]:
+def run_stage(subject_dir: Path, unit_dir: Path, which: str, session_id: str) -> dict:
+    """Copy every problem crate for `which` into its work path and log one `probe-start` event
+    naming them, in staged order. Returns `{'line', 'problem_names', 'staged'}`; prints each
+    staged path (never the item text — presentation is no longer this command's job)."""
     unit = unit_dir.name
     work_root = subject_dir / "work"
     directory = probe_dir(unit_dir, which)
     problems = list_problem_dirs(directory)
     staged = [stage_item(problem, work_root, session_id, unit) for problem in problems]
+    problem_names = [problem.name for problem in problems]
+    line = append_event(
+        subject_dir, session_id, "tool:probe", "probe-start",
+        {"unit": unit, "which": which, "problems": ",".join(problem_names)},
+    )
     for work_dir in staged:
-        print(item_text(work_dir))
-        print()
-    print(f"cap: {cap_minutes:g} min total for {len(problems)} item(s). Press Enter once your answers are in place.")
-    start = clock()
-    wait()
-    elapsed_minutes = (clock() - start) / 60
-    if elapsed_minutes > cap_minutes:
-        print(f"over the {cap_minutes:g}-minute cap: {elapsed_minutes:.1f} min")
+        print(work_dir)
+    return {"line": line, "problem_names": problem_names, "staged": staged}
+
+
+def latest_probe_start(subject_dir: Path, session_id: str, unit: str, which: str) -> "dict[str, str] | None":
+    """The most recent `probe-start` event for `unit`/`which` in this session, or `None`."""
+    rows = read_events(events_path(subject_dir, session_id))
+    matches = [row for row in rows if row["event_kind"] == "probe-start" and row["unit"] == unit and row["which"] == which]
+    return matches[-1] if matches else None
+
+
+def run_grade(
+    subject_dir: Path,
+    unit_dir: Path,
+    which: str,
+    session_id: str,
+    now: "datetime | None" = None,
+) -> list[dict[str, str]]:
+    """Grade every problem `gym train probe stage` staged for `unit_dir`/`which` in this session,
+    against its key, and log one `probe-item` event each. Refuses outright if no `probe-start`
+    event exists for this unit and probe side in this session. `minutes` is elapsed time from that
+    `probe-start` event's own clock stamp to `now` (or `datetime.now()`), shared across every
+    problem — the same "one cap for the whole probe" semantics the original single command had,
+    now measured across two separate invocations instead of one wait."""
+    unit = unit_dir.name
+    start_row = latest_probe_start(subject_dir, session_id, unit, which)
+    if start_row is None:
+        sys.exit(f"refused, no probe-start event for unit {unit!r}, which {which!r}, in session {session_id}")
+    started = datetime.strptime(start_row["timestamp"], TIMESTAMP_FORMAT)
+    elapsed_minutes = ((now or datetime.now()) - started).total_seconds() / 60
+    work_root = subject_dir / "work"
     rows: list[dict[str, str]] = []
-    for problem, work_dir in zip(problems, staged):
-        passed, fraction = grade_item(work_dir, key_dir_for(unit_dir, which, problem.name))
+    for problem_name in start_row["problems"].split(","):
+        work_dir = work_root / session_path_segment(session_id) / unit / problem_name
+        passed, fraction = grade_item(work_dir, key_dir_for(unit_dir, which, problem_name))
         fields = {
             "unit": unit,
             "which": which,
-            "problem": problem.name,
+            "problem": problem_name,
             "result": "pass" if passed else "fail",
             "minutes": f"{elapsed_minutes:.2f}",
             "fraction": f"{fraction:.4f}",
         }
         line = append_event(subject_dir, session_id, "tool:probe", "probe-item", fields)
         rows.append({"line": line, **fields})
+        print(f"{problem_name}: {fields['result']} ({fraction:.2f})")
     return rows

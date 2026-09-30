@@ -1,7 +1,9 @@
 """Tests for gym.train.probe, ported from scripts/train/tests/test_probe.py onto the events layout:
 several problem crates per probe, graded one at a time with `cargo test --no-fail-fast`, held-out
 tests copied in from `key/` at grading time and removed after — `key/` itself never opened or
-printed for display. The write target is now a `probe-item` event, not an `items` CSV row.
+printed for display. The write target is a `probe-item` event, not an `items` CSV row.
+`stage`/`grade` (team lead ruling, 2026-09-30) replace a single interactive command that waited on
+stdin between presenting the items and grading them.
 
 Run: `uv run pytest tests/train/test_probe.py`. Needs `cargo` on PATH for the grading tests.
 """
@@ -9,12 +11,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from gym.train import probe
 from gym.train.events import read_events
+from gym.train.schema import TIMESTAMP_FORMAT
 
 CARGO_MISSING = shutil.which("cargo") is None
 
@@ -189,12 +193,57 @@ def test_grade_item_grades_a_build_failure_as_a_full_miss_and_still_cleans_up(tm
     assert not (problem_dir / "tests" / "heldout.rs").exists()
 
 
+def test_run_stage_logs_a_probe_start_event_and_stages_every_problem(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+
+    result = probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+
+    assert result["problem_names"] == ["p1", "p2"]
+    assert all(work_dir.is_dir() for work_dir in result["staged"])
+    assert "probe-start" in result["line"]
+
+    logged = read_events(subject_dir / "sessions" / "sess-1" / "events.md")
+    starts = [row for row in logged if row["event_kind"] == "probe-start"]
+    assert len(starts) == 1
+    assert starts[0]["unit"] == "unit-1" and starts[0]["which"] == "immediate"
+    assert starts[0]["problems"] == "p1,p2"
+
+
+def test_run_stage_prints_the_staged_paths_not_the_item_text(tmp_path: Path, subject_dir: Path, capsys: pytest.CaptureFixture) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    out = capsys.readouterr().out
+    assert str(subject_dir / "work" / "sess-1" / "unit-1" / "p1") in out
+    assert "Edit: src/lib.rs" not in out  # no item text, per the team lead's spec
+
+
+def test_latest_probe_start_returns_none_when_nothing_staged(subject_dir: Path) -> None:
+    assert probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate") is None
+
+
+def test_latest_probe_start_returns_the_most_recent_matching_event(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    probe.run_stage(subject_dir, unit_dir, "delayed", "sess-1")  # a different `which`, no match
+
+    row = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
+
+    assert row is not None and row["which"] == "immediate"
+
+
+def test_run_grade_refuses_without_a_matching_probe_start_event(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    with pytest.raises(SystemExit, match="no probe-start event"):
+        probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
+
+
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
-def test_run_probe_logs_one_probe_item_event_per_problem_even_on_a_compile_failure(tmp_path: Path, subject_dir: Path) -> None:
+def test_run_grade_logs_one_probe_item_event_per_problem_even_on_a_compile_failure(tmp_path: Path, subject_dir: Path) -> None:
     unit_dir = make_unit_dir(tmp_path, "unit-1")
     (unit_dir / "probe-a" / "p1" / "src" / "lib.rs").write_text("this does not compile(", encoding="utf-8")
 
-    rows = probe.run_probe(subject_dir, unit_dir, "immediate", "sess-1", wait=lambda: None, clock=lambda: 0.0)
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert len(rows) == 2
     by_problem = {row["problem"]: row for row in rows}
@@ -209,25 +258,31 @@ def test_run_probe_logs_one_probe_item_event_per_problem_even_on_a_compile_failu
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
-def test_run_probe_warns_over_cap(tmp_path: Path, subject_dir: Path, capsys: pytest.CaptureFixture) -> None:
+def test_run_grade_computes_minutes_from_the_probe_start_events_own_timestamp(tmp_path: Path, subject_dir: Path) -> None:
     unit_dir = make_unit_dir(tmp_path, "unit-1")
-    clock_values = iter([0.0, 900.0])
-    probe.run_probe(subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, wait=lambda: None, clock=lambda: next(clock_values))
-    assert "over the 10-minute cap" in capsys.readouterr().out
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    # the probe-start event was just stamped with the real clock; graded "now" is 5 minutes later
+    started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
+    real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=real_start + timedelta(minutes=5))
+
+    assert all(float(row["minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
-def test_run_probe_leaves_items_byte_identical(tmp_path: Path, subject_dir: Path) -> None:
-    """The learner edits the staged copy, never the items directory itself."""
+def test_stage_then_grade_leaves_items_byte_identical(tmp_path: Path, subject_dir: Path) -> None:
+    """The learner edits the staged copy, between the two commands, never the items directory
+    itself."""
     items_root = tmp_path / "items"
     unit_dir = make_unit_dir(items_root, "unit-1")
     before = (unit_dir / "probe-a" / "p1" / "src" / "lib.rs").read_bytes()
 
-    def learner_edits_the_staged_copy() -> None:
-        staged = subject_dir / "work" / "sess-1" / "unit-1" / "p1" / "src" / "lib.rs"
-        assert staged.read_text(encoding="utf-8") == LIB_RS_PASSING
-        staged.write_text(LIB_RS_PARTIAL, encoding="utf-8")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    staged = subject_dir / "work" / "sess-1" / "unit-1" / "p1" / "src" / "lib.rs"
+    assert staged.read_text(encoding="utf-8") == LIB_RS_PASSING
+    staged.write_text(LIB_RS_PARTIAL, encoding="utf-8")  # the learner's own edit, in the work path
 
-    probe.run_probe(subject_dir, unit_dir, "immediate", "sess-1", wait=learner_edits_the_staged_copy, clock=lambda: 0.0)
+    probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert (unit_dir / "probe-a" / "p1" / "src" / "lib.rs").read_bytes() == before

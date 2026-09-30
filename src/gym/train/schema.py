@@ -94,6 +94,15 @@ def iso_date(value: str) -> "str | None":
     return None
 
 
+def csv_list(value: str) -> "str | None":
+    """A comma-joined list of nonempty names, e.g. `p1-board,p2-summary,p3-shift` — `probe-start`'s
+    own `problems` field."""
+    parts = value.split(",")
+    if not value or any(not part.strip() for part in parts):
+        return "not a comma-separated list of names"
+    return None
+
+
 # Every kind's required fields, in the order the task prompt gives them. A kind not listed here is
 # unknown. `note` never appears as a required field except for `ladder-gap`, the one kind the
 # trainer's own procedure (gym-trainer.md's <respond-to-a-request>) requires a note on.
@@ -165,6 +174,14 @@ KINDS: dict[str, dict[str, Validator]] = {
         "unit": nonempty,
         "item": nonempty,
         "value": enum("0", "1", "2", "3", "4"),
+    },
+    # Team lead ruling (2026-09-30): `gym train probe` split into `stage`/`grade`, no interactive
+    # wait; `stage` logs this event instead of presenting item text — the time it stamps is what
+    # `grade` measures elapsed minutes from, and `problems` is the ordered list `grade` re-grades.
+    "probe-start": {
+        "unit": nonempty,
+        "which": enum("immediate", "delayed"),
+        "problems": csv_list,
     },
     "probe-item": {
         "unit": nonempty,

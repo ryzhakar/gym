@@ -17,6 +17,13 @@ from gym.train import status as status_module
 from gym.train.log import log_event
 
 app = typer.Typer(help="Training sessions: per-session events, logging, probing, status, checks.")
+probe_app = typer.Typer(help="Stage a unit's probe problems, then grade them once ready — no interactive wait.")
+app.add_typer(probe_app, name="probe")
+
+
+def _validate_which(which: str) -> None:
+    if which not in ("immediate", "delayed"):
+        raise typer.BadParameter("must be 'immediate' or 'delayed'", param_hint="which")
 
 
 @app.command("open")
@@ -42,20 +49,29 @@ def log_command(
     typer.echo(log_event(subject_dir, session_id, actor, kind, fields or []))
 
 
-@app.command("probe")
-def probe_command(
+@probe_app.command("stage")
+def probe_stage_command(
     unit_dir: Path = typer.Argument(...),
     which: str = typer.Argument(..., help="immediate|delayed"),
     session: str = typer.Option(..., "--session"),
-    cap_minutes: float = typer.Option(probe_module.CAP_MINUTES_DEFAULT, "--cap-minutes"),
 ) -> None:
-    """Present a unit's probe items, grade against key/, log one probe-item event per problem."""
-    if which not in ("immediate", "delayed"):
-        raise typer.BadParameter("must be 'immediate' or 'delayed'", param_hint="which")
+    """Copy the unit's probe problems to the work path and log a probe-start event; prints the staged paths."""
+    _validate_which(which)
     subject_dir = unit_dir.resolve().parent.parent
-    rows = probe_module.run_probe(subject_dir, unit_dir, which, session, cap_minutes)
-    for row in rows:
-        typer.echo(f"logged: {row['line']}")
+    probe_module.run_stage(subject_dir, unit_dir, which, session)
+
+
+@probe_app.command("grade")
+def probe_grade_command(
+    unit_dir: Path = typer.Argument(...),
+    which: str = typer.Argument(..., help="immediate|delayed"),
+    session: str = typer.Option(..., "--session"),
+) -> None:
+    """Grade every staged problem against its key and log one probe-item event each; refuses if
+    nothing was staged for this unit and side in this session."""
+    _validate_which(which)
+    subject_dir = unit_dir.resolve().parent.parent
+    probe_module.run_grade(subject_dir, unit_dir, which, session)
 
 
 @app.command("close")
