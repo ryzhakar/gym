@@ -246,3 +246,4 @@
 2026-09-30T22:51 | agent:matrix-wire | receipt | follow-up: voice_numbering(voices) in load.py, called by both views; page.py two additive lines; graph.py untouched; 254 tests pass; unverified
 2026-09-30T22:51 | self | discovery | graph.py carries uncommitted edits for the detached toggle and label clicks, the second batch sent to graph-map; its notification for that batch is pending, review-2 judges the working tree
 2026-09-30T22:57 | self | failure | a git log call made to fill a turn; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
+2026-09-30T22:58 | agent:graph-map | receipt | second batch: 490 detached Concepts in 125 clusters off the opening frame behind a legend toggle, 878 connected drawn by default; labels act as their Concept for hover, click, drag; 88 map tests; screenshot map-islands-shown.png; unverified
