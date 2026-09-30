@@ -306,3 +306,4 @@
 2026-09-30T23:55 | self | discovery | matrix-cell-panel.png read: the Claim panel is clean, Question, Voice, checked and tag chips, Position, paraphrase, quote, Source, date, checked line; no change asked
 2026-09-30T23:55 | owner | receipt | in conversation: the line Nothing to add was a message; violation
 2026-09-30T23:55 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-09-30T23:56 | self | failure | a status check of the working tree with three agents mid-edit, nothing decided by it; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
