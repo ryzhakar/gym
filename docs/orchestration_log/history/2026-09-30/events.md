@@ -304,3 +304,5 @@
 2026-09-30T23:55 | self | discovery | matrix-default.png read: a clear step up, labels whole, blocks read; the grid field is a light beige island on the dark page, cells are 12 px in a 900 px wide grid on a 1600 px canvas, the wash barely shows
 2026-09-30T23:55 | self | delegation | agent:matrix-v2 continued: dark grid field, cells sized to the width, wash 12 percent
 2026-09-30T23:55 | self | discovery | matrix-cell-panel.png read: the Claim panel is clean, Question, Voice, checked and tag chips, Position, paraphrase, quote, Source, date, checked line; no change asked
+2026-09-30T23:55 | owner | receipt | in conversation: the line Nothing to add was a message; violation
+2026-09-30T23:55 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
