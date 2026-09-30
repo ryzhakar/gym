@@ -13,3 +13,7 @@ One Typer application, package `src/gym/`, entry point `uv run gym`. Groups: `gy
 ## Training records
 
 `gym train` keeps one directory per session, `training/<subject>/sessions/<id>/`, holding `events.md` (one line per event, `time | actor | kind | key=value …`, kinds and required fields in `src/gym/train/schema.py`) and `session.md` (heading, then a close block). `status` derives the queue, unit history and confidence from all sessions' events; `check` lints them. Session ids are colon-free, `YYYY-MM-DDTHH-MM`, since a colon in a path breaks cargo on macOS (found 2026-09-30). The session of 2026-09-30 ran on the earlier CSV tables and was converted into this layout on 2026-09-30; the tables and the old scripts are gone. `probe stage` copies a unit's probe problems and records the start; `probe grade` grades them against the key tests and writes per-problem minutes, total minutes and the cap verdict.
+
+## The trainer
+
+`.claude/agents/gym-trainer.md`, version of 2026-09-30: summoned by the manager with the summons at `training/summons-template.md` filled in; holds every tool, with the key/ and workspace bans as rules in its text; may summon agents of its own for anything but the conversation with the learner; logs every turn through `gym train log`, runs probes through `gym train probe stage` and `grade`, and writes the session narrative into the session record before it returns. The learner's tool allowance per item kind stands in `training/rust/items/README.md`.
