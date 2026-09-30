@@ -94,3 +94,4 @@
 2026-09-30T17:01 | owner | receipt | in conversation: 'you were instructed to work in silence.'
 2026-09-30T17:01 | self | failure | silence broken by end-of-turn status lines since 16:09; same entry as history/2026-09-30/failures.md 'Silence broken by status lines'
 2026-09-30T17:02 | agent:convert-session | receipt | probe_minutes carried onto close; live dry run on 5 rows and synthetic fixture 0 FAIL; converter final, run --write at the session's end; unverified
+2026-09-30T17:03 | agent:gym-trainer | receipt | b4-traits clock started 17:03
