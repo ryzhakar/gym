@@ -265,7 +265,7 @@ GRAPH_CSS = r"""
   #gscene .gedge.nb.hl { display: block; }
   #ghulls .ghull { filter: url(#hullsoft); opacity: .1; pointer-events: none; }
   #ghullnames { pointer-events: none; }
-  #ghullnames .ghullstrip { opacity: .2; display: none; }
+  #ghullnames .ghullstrip { opacity: .2; display: none; stroke-width: 1; }
   #ghullnames .ghullname { font-variant: small-caps;
     letter-spacing: .1em; opacity: .75; paint-order: stroke;
     stroke: #0e1116; stroke-width: 3px; stroke-linejoin: round; }
@@ -961,8 +961,45 @@ GRAPH_JS = r"""
         "data-comm": comm
       });
       gHullLayer.appendChild(path);
+      // The centroid of the densest third of the island: for each member,
+      // how many others sit within a radius set by the island's own size;
+      // the top third by that count, averaged. It lands in the island's core
+      // rather than at the middle of its outline, which for an island with a
+      // long thin arm is not the same place.
+      var probe = Math.max(40, (hmaxx - hminx) * 0.18);
+      var counts = [];
+      for (var d1 = 0; d1 < members.length; d1++) {
+        var n1 = members[d1], near = 0;
+        for (var d2 = 0; d2 < members.length; d2++) {
+          if (d1 === d2) continue;
+          var ddx2 = gx[n1] - gx[members[d2]], ddy2 = gy[n1] - gy[members[d2]];
+          if (ddx2 * ddx2 + ddy2 * ddy2 <= probe * probe) near++;
+        }
+        counts.push({ i: n1, n: near });
+      }
+      counts.sort(function (a2, b2) { return b2.n - a2.n || a2.i - b2.i; });
+      var take = Math.max(1, Math.round(counts.length / 3));
+      var dx3 = 0, dy3 = 0, denseTop = Infinity;
+      for (var d3 = 0; d3 < take; d3++) {
+        var dn = counts[d3].i;
+        dx3 += gx[dn]; dy3 += gy[dn];
+        if (gy[dn] - gr[dn] < denseTop) denseTop = gy[dn] - gr[dn];
+      }
+      // The plate has to clear the island's hubs, not just its dense third:
+      // a hub can sit above that third, and four of them did -- API design,
+      // feature flags, encapsulation, ecosystem maturity went under a plate.
+      // Only the hubs whose x range the plate can actually cross matter.
+      var hubTop = denseTop, hubBot = dy3 / take;
+      for (var d4 = 0; d4 < members.length; d4++) {
+        var hn = members[d4];
+        if (!(G.deg[hn] > HUB_CUT || alwaysSet[hn])) continue;
+        if (gy[hn] - gr[hn] < hubTop) hubTop = gy[hn] - gr[hn];
+        if (gy[hn] + gr[hn] > hubBot) hubBot = gy[hn] + gr[hn];
+      }
       hullOf[comm] = {
-        cx: cx, topY: topY, botY: botY, minx: hminx, maxx: hmaxx,
+        cx: cx, cy: cy, denseX: dx3 / take, denseY: dy3 / take,
+        denseTop: denseTop, hubTop: hubTop, hubBot: hubBot,
+        topY: topY, botY: botY, minx: hminx, maxx: hmaxx,
         color: G.communities[comm].color
       };
     }
@@ -995,6 +1032,20 @@ GRAPH_JS = r"""
   // name is dropped rather than hung outside its own shape.
   var NAME_CHAR = 0.62, NAME_MAX = 11, NAME_MIN = 8;
 
+  // Three placements, two of them tried side by side and kept for the
+  // record (map-names-a.png, map-names-b.png):
+  //   "a"  hull centroid, near-solid plate of the island's colour, near-black
+  //        type, the dots running under it
+  //   "b"  centroid of the island's densest third, translucent strip, type in
+  //        the island's colour
+  //   "c"  a's plate at b's anchor -- what ships. a is legible and b is in
+  //        the right place; a's centroid put the green island's name in the
+  //        gap next to the lime island, and b's translucent strip lost its
+  //        fight with the dots under it on four islands.
+  var namePlacement = "c";
+  function nameIsPlate() { return namePlacement !== "b"; }
+  function nameAtDenseCore() { return namePlacement !== "a"; }
+
   function nameLayouts(name) {
     var parts = name.split(" \u00b7 ");
     if (parts.length < 2) return [[name]];
@@ -1017,8 +1068,13 @@ GRAPH_JS = r"""
     var r = gsvg.getBoundingClientRect();
     var ins = canvasInsets();
     var boxes = [];
-    for (var c in hullOf) {
-      if (!hullOf.hasOwnProperty(c)) continue;
+    // Largest island first, so the big ones get their preferred position and
+    // the small ones move around them.
+    var order = [];
+    for (var ck in hullOf) if (hullOf.hasOwnProperty(ck)) order.push(+ck);
+    order.sort(function (a, b) { return a - b; });
+    for (var oi = 0; oi < order.length; oi++) {
+      var c = order[oi];
       var h = hullOf[c];
       if (!h.el) continue;
       if (commOff[+c]) {
@@ -1044,17 +1100,48 @@ GRAPH_JS = r"""
         continue;
       }
       var half = widest / 2;
-      var sx = h.cx * vk + vx;
-      // Into the glow, not on its fringe -- but a tenth, not a fifth: at a
-      // fifth the strip sat on top of the island's own dots, which the
-      // review's other half of the ask rules out.
-      var anchorY = h.topY + (h.botY - h.topY) * 0.1;
-      var top = anchorY * vk + vy + size;
+      var blockLines = chosen.length;
+      var anchorX, anchorY, top;
+      if (nameAtDenseCore()) {
+        anchorX = h.denseX; anchorY = h.denseY;
+      } else {
+        anchorX = h.cx; anchorY = h.cy;
+      }
+      var sx = anchorX * vk + vx;
+      var blockH = blockLines * (size + 2);
       if (sx - half < left + 8) sx = left + 8 + half;
       if (sx + half > right - 8) sx = right - 8 - half;
-      var blockH = chosen.length * (size + 2);
-      if (sx - half < ins.left || sx + half > r.width - ins.right ||
-          top < ins.top || top + blockH > r.height - ins.bottom) {
+      if (sx - half < ins.left || sx + half > r.width - ins.right) {
+        h.el.style.display = "none";
+        if (h.strip) h.strip.style.display = "none";
+        continue;
+      }
+      // Above the island's topmost hub if there is room, below its lowest
+      // one if there is not, and never on another island's plate.
+      var tries;
+      if (nameAtDenseCore()) {
+        tries = [
+          h.hubTop * vk + vy - 10 - blockH + size,
+          h.hubBot * vk + vy + 10 + size
+        ];
+      } else {
+        tries = [anchorY * vk + vy - blockH / 2 + size];
+      }
+      top = null;
+      for (var ti = 0; ti < tries.length; ti++) {
+        var cand = tries[ti];
+        if (cand - size - 4 < ins.top ||
+            cand - size + blockH + 4 > r.height - ins.bottom) continue;
+        var candBox = { x: sx - half - 7, y: cand - size - 4, w: half * 2 + 14, h: blockH + 8 };
+        var clash = false;
+        for (var bi = 0; bi < boxes.length; bi++) {
+          var ob = boxes[bi];
+          if (candBox.x < ob.x + ob.w && candBox.x + candBox.w > ob.x &&
+              candBox.y < ob.y + ob.h && candBox.y + candBox.h > ob.y) { clash = true; break; }
+        }
+        if (!clash) { top = cand; break; }
+      }
+      if (top === null) {
         h.el.style.display = "none";
         if (h.strip) h.strip.style.display = "none";
         continue;
@@ -1069,9 +1156,13 @@ GRAPH_JS = r"""
         h.el.appendChild(ts);
       }
       h.el.setAttribute("font-size", size.toFixed(1));
+      h.el.setAttribute("fill", nameIsPlate() ? "#11151c" : h.color);
+      h.el.style.strokeWidth = nameIsPlate() ? "0" : "";
       h.el.style.display = "block";
-      var box = { x: sx - half - 6, y: top - size - 3, w: half * 2 + 12, h: blockH + 6 };
+      var box = { x: sx - half - 7, y: top - size - 4, w: half * 2 + 14, h: blockH + 8 };
       if (h.strip) {
+        h.strip.style.opacity = nameIsPlate() ? "0.65" : "";
+        h.strip.style.stroke = nameIsPlate() ? h.color : "none";
         h.strip.setAttribute("x", box.x.toFixed(1));
         h.strip.setAttribute("y", box.y.toFixed(1));
         h.strip.setAttribute("width", box.w.toFixed(1));
@@ -2231,6 +2322,38 @@ GRAPH_JS = r"""
     window.__gym.pinned = function () { return pinned < 0 ? null : G.ids[pinned]; };
     window.__gym.localDepth = function () { return localDepth; };
     window.__gym.fit = function () { fitView(); };
+    // A plate must never cover a hub -- the Concepts an island's name is
+    // made of are exactly the ones that would go missing under it.
+    window.__gym.hubsUnderPlates = function () {
+      var r = gsvg.getBoundingClientRect();
+      var plates = [];
+      for (var c in hullOf) {
+        if (!hullOf.hasOwnProperty(c) || !hullOf[c].strip) continue;
+        if (hullOf[c].strip.style.display !== "block") continue;
+        var pr = hullOf[c].strip.getBoundingClientRect();
+        plates.push({ l: pr.left - r.left, t: pr.top - r.top,
+                      rt: pr.right - r.left, b: pr.bottom - r.top });
+      }
+      var out = [];
+      for (var a = 0; a < activeNode.length; a++) {
+        var i = activeNode[a];
+        if (commOff[G.comm[i]]) continue;
+        if (!(G.deg[i] > HUB_CUT || alwaysSet[i])) continue;
+        var nx = gx[i] * vk + vx, ny = gy[i] * vk + vy, rad = gr[i] * vk;
+        for (var q = 0; q < plates.length; q++) {
+          var pl = plates[q];
+          if (nx + rad > pl.l && nx - rad < pl.rt && ny + rad > pl.t && ny - rad < pl.b) {
+            out.push(G.labels[i]);
+            break;
+          }
+        }
+      }
+      return out;
+    };
+    window.__gym.namePlacement = function (v) {
+      if (v) { namePlacement = v; updateLabels(); }
+      return namePlacement;
+    };
     window.__gym.zoom = function (f) {
       vk = Math.max(0.05, Math.min(12, vk * f));
       viewIsFitted = false;

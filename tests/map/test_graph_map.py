@@ -374,17 +374,43 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
               '#ghullnames .ghullstrip[data-comm="' + c + '"]');
             const tr = t.getBoundingClientRect();
             const sr = s ? s.getBoundingClientRect() : null;
+            // The plate carries the island's colour and the type is set
+            // near-black on it, so the two fills differ by design; what has
+            // to match is the plate against the island's legend swatch.
             out.push({
               named: !!s && s.style.display === 'block',
-              colour: s ? s.getAttribute('fill') === t.getAttribute('fill') : false,
+              colour: !!s && /^#[0-9A-Fa-f]{6}$/.test(s.getAttribute('fill') || ''),
+              dark: (t.getAttribute('fill') || '').toLowerCase() === '#11151c',
               covers: !!sr && sr.left <= tr.left + 1 && sr.right >= tr.right - 1
+                      && sr.top <= tr.top + 1 && sr.bottom >= tr.bottom - 1
             });
           });
           return out;
         }""")
         assert strips, "island names are drawn"
-        assert all(x["named"] and x["colour"] and x["covers"] for x in strips), strips
-        print("island names on a strip of their own colour:", len(strips))
+        assert all(
+            x["named"] and x["colour"] and x["dark"] and x["covers"] for x in strips
+        ), strips
+        # A plate never covers a hub, and no Concept label is drawn under one.
+        assert page.evaluate("() => window.__gym.hubsUnderPlates()") == [], \
+            page.evaluate("() => window.__gym.hubsUnderPlates()")
+        under = page.evaluate("""() => {
+          const plates = [...document.querySelectorAll('#ghullnames .ghullstrip')]
+            .filter(e => e.style.display === 'block')
+            .map(e => e.getBoundingClientRect());
+          const out = [];
+          document.querySelectorAll('#glabels .glabel').forEach(e => {
+            if (e.style.display !== 'block' || e.style.visibility === 'hidden') return;
+            const r = e.getBoundingClientRect();
+            if (plates.some(p => r.right > p.left && r.left < p.right &&
+                                 r.bottom > p.top && r.top < p.bottom))
+              out.push(e.textContent);
+          });
+          return out;
+        }""")
+        assert under == [], under
+        print("island names on a plate of their own colour:", len(strips),
+              "| hubs or labels under a plate: 0")
 
         # The reviewer's path is search, not a click, and it clipped where a
         # click did not: the search centres the view, so a Concept can end up
