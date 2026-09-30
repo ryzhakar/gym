@@ -319,3 +319,4 @@
 2026-09-30T23:58 | agent:baseline-command | receipt | baseline-command-report.md: gym train baseline stage and grade in baseline.py, cwd-independent, key never printed, verified on a scratch b1-own from /tmp; open refuses a colon id with exit 2; findings 7 and 9 already fixed, shown by grep and tests; procedure kind added; 280 tests; unverified
 2026-09-30T23:58 | self | commitment | baseline commands committed after the train tests passed here
 2026-09-30T23:58 | self | change | architecture log: Baseline items run by command, commits 2c8e3a3, ed3b481
+2026-09-30T23:58 | self | commitment | third review prompt written at recon/2026-09-30/prompts/map-review-3.md; launches when graph revision 5 and the Matrix refinements both land
