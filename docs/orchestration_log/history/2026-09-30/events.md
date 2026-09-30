@@ -167,3 +167,8 @@
 2026-09-30T19:55 | self | delegation | agent:u03-practice-gap, sonnet, background: u03 reuse-3 draft; output recon/2026-09-30/train/u03-reuse-3-report.md; wait bounded by heartbeat eed4185b
 2026-09-30T20:00 | agent:u03-practice-gap | receipt | u03 reuse-3 drafted and cargo-verified in recon (ballot tally: loop, enumerate, first-bad index via ?, fold); distinct from all ten u03 items; not slotted: the unit form holds two reuse items and one unshown; unverified
 2026-09-30T20:00 | self | decision | decided: the u03 reuse-3 draft is held in recon; whether the unit form takes a third reuse item or swaps one goes to the owner before u03 opens, with the u01 drafts
+2026-09-30T21:14 | owner | decision | in the question tool: u03 reuse-3 installed as recommended (a third reuse item); the u01 drafts installed as probe-c; the Matrix default undecided, the owner asks where the map frontend requirements came from; interface iteration: the owner reviews, the manager lists, agents build
+2026-09-30T21:14 | self | delegation | agent:install-u03-reuse-3, sonnet, background; output recon/2026-09-30/train/install-u03-report.md
+2026-09-30T21:14 | self | delegation | agent:probe-sides, sonnet, background: which accepts any probe-[a-z] side, events carry the literal side; output recon/2026-09-30/app/probe-sides-report.md
+2026-09-30T21:14 | self | delegation | agent:install-u01-probe-c, sonnet, background; output recon/2026-09-30/train/install-u01-probe-c-report.md; all three bounded by heartbeat eed4185b
+2026-09-30T21:16 | owner | receipt | in conversation: asked whether the map of concepts is a connected graph; answered: Concepts connect only through Questions, Concept-to-Concept edges 0 of 1447, two routes offered, none started
