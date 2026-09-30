@@ -9,12 +9,15 @@ import typer
 
 from gym.map import census as census_module
 from gym.map import check_map as check_map_module
+from gym.map import concepts as concepts_module
 from gym.map import estimate as estimate_module
 from gym.map import prepare_frame as prepare_frame_module
 from gym.map import sample as sample_module
 from gym.map import site as site_module
 
 app = typer.Typer(help="Opinion map: census, sampling, estimation, frame prep, site.")
+concepts_app = typer.Typer(help="Concept-set maintenance.")
+app.add_typer(concepts_app, name="concepts")
 
 
 @app.command()
@@ -23,6 +26,16 @@ def check(
 ) -> None:
     """Check a map instance against its schema.yaml. One line per finding; exits 1 on any FAIL."""
     raise typer.Exit(code=check_map_module.main(map_dir))
+
+
+@concepts_app.command()
+def dedup(
+    map_path: Path = typer.Argument(..., help="Map directory, e.g. maps/rust"),
+    apply: bool = typer.Option(False, "--apply", help="Write merged_into to each merged Concept's file"),
+    report: Optional[Path] = typer.Option(None, "--report", help="Path to write the merge report"),
+) -> None:
+    """Merge duplicate/near-duplicate Concepts; prints tier counts, writes the report."""
+    raise typer.Exit(code=concepts_module.main(map_path, apply, report))
 
 
 @app.command()

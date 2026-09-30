@@ -261,6 +261,23 @@ def check_conventions(entities: list[Entity]) -> Iterator[Finding]:
             yield fail(str(entity.path), "no prevalence line with a url and a date")
 
 
+# --- merged_into: the target must exist (rule 2 already checks this via the
+# concept.merged_into relation) and must itself be canonical ---
+
+
+def check_concept_merges(entities: list[Entity]) -> Iterator[Finding]:
+    concepts = {e.id: e for e in entities if e.kind == "concept"}
+    for entity_id, entity in concepts.items():
+        target_id = entity.data.get("merged_into")
+        if not target_id:
+            continue
+        target = concepts.get(target_id)
+        if target is None:
+            continue  # already reported by check_relations
+        if target.data.get("merged_into"):
+            yield fail(str(entity.path), f"merged_into '{target_id}' is itself merged, not canonical")
+
+
 # --- Rule 8: report ---
 
 
@@ -295,6 +312,7 @@ def run_checks(map_dir: Path) -> list[Finding]:
     findings += list(check_closed_questions(entities, checks))
     findings += list(check_voices(entities))
     findings += list(check_conventions(entities))
+    findings += list(check_concept_merges(entities))
     return findings
 
 
