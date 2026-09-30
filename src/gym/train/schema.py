@@ -135,6 +135,12 @@ KINDS: dict[str, dict[str, Validator]] = {
     "start": {
         "unit": nonempty,
     },
+    # Finding 12 (recon/2026-09-30/train/trainer-quality-report.md): mechanics exchanges (setup,
+    # rules, clarifying questions — not an item turn) went unlogged; `unit` is optional since a
+    # procedural turn need not belong to any one unit.
+    "procedure": {
+        "note": nonempty,
+    },
     "present": {
         "unit": nonempty,
         "item": nonempty,
@@ -198,7 +204,10 @@ KINDS: dict[str, dict[str, Validator]] = {
     },
     "probe-item": {
         "unit": nonempty,
-        "which": matches(r"probe-[a-z]"),
+        # `baseline` is a literal addition, not a probe side: `gym train baseline grade` logs its
+        # result through this same kind (`unit=baseline`, `which=baseline`), reusing the probe
+        # machinery rather than adding a parallel event kind for one extra literal value.
+        "which": matches(r"probe-[a-z]|baseline"),
         "problem": nonempty,
         "result": enum("pass", "fail"),
         "minutes": float_at_least(0),
@@ -241,6 +250,8 @@ KIND_OPTIONAL_FIELDS: dict[str, dict[str, Validator]] = {
     # number — the one old `sessions.csv` column (`record_schema.py`'s `probe_minutes`,
     # `float_at_least(0)` there too) this schema gives a home to.
     "close": {"probe_minutes": float_at_least(0)},
+    # Finding 12: a procedural turn need not belong to any one unit.
+    "procedure": {"unit": nonempty},
 }
 
 

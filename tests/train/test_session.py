@@ -65,12 +65,18 @@ def test_validate_session_id_accepts_the_hyphen_shape() -> None:
     validate_session_id("2026-09-30T10-00")  # does not raise
 
 
-def test_validate_session_id_refuses_the_old_colon_shape() -> None:
+def test_validate_session_id_refuses_the_old_colon_shape(capsys: pytest.CaptureFixture) -> None:
     """Team lead ruling (2026-09-30): the colon shape this module used before this fix is now
     refused outright, since a colon in a session id breaks `cargo test` on macOS once it reaches a
-    probe's staging path."""
-    with pytest.raises(SystemExit, match=r"is not %Y-%m-%dT%H-%M"):
+    probe's staging path. A colon-bearing id is refused by its own, dedicated check, ahead of the
+    general shape check: a one-line message that never echoes the offending id, exit code 2."""
+    with pytest.raises(SystemExit) as excinfo:
         validate_session_id("2026-09-30T10:00")
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err.strip().count("\n") == 0  # one line
+    assert "2026-09-30T10:00" not in err
+    assert "10:00" not in err
 
 
 def test_validate_session_id_refuses_a_malformed_id() -> None:
@@ -84,7 +90,9 @@ def test_open_session_refuses_a_malformed_id(subject_dir: Path) -> None:
     assert not (subject_dir / "sessions").exists()  # refused before creating anything
 
 
-def test_open_session_refuses_a_colon_shaped_id(subject_dir: Path) -> None:
-    with pytest.raises(SystemExit, match=r"is not %Y-%m-%dT%H-%M"):
+def test_open_session_refuses_a_colon_shaped_id(subject_dir: Path, capsys: pytest.CaptureFixture) -> None:
+    with pytest.raises(SystemExit) as excinfo:
         open_session(subject_dir, "arthur", "opus", "2026-09-30T10:00")
+    assert excinfo.value.code == 2
+    assert "10:00" not in capsys.readouterr().err
     assert not (subject_dir / "sessions").exists()

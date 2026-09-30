@@ -9,6 +9,7 @@ from typing import Optional
 
 import typer
 
+from gym.train import baseline as baseline_module
 from gym.train import check as check_module
 from gym.train import close as close_module
 from gym.train import probe as probe_module
@@ -19,6 +20,8 @@ from gym.train.log import log_event
 app = typer.Typer(help="Training sessions: per-session events, logging, probing, status, checks.")
 probe_app = typer.Typer(help="Stage a unit's probe problems, then grade them once ready — no interactive wait.")
 app.add_typer(probe_app, name="probe")
+baseline_app = typer.Typer(help="Stage a baseline item's stub, then grade it once ready — mirrors probe stage/grade.")
+app.add_typer(baseline_app, name="baseline")
 
 
 def _validate_which(which: str) -> None:
@@ -81,6 +84,40 @@ def probe_grade_command(
     _validate_which(which)
     subject_dir = unit_dir.resolve().parent.parent
     probe_module.run_grade(subject_dir, unit_dir, which, session, cap_minutes)
+
+
+@baseline_app.command("stage")
+def baseline_stage_command(
+    subject_dir: Path = typer.Argument(..., help="Subject directory, e.g. training/rust"),
+    item: Optional[str] = typer.Option(None, "--item", help="Baseline item id, e.g. b1-own; required unless --all"),
+    session: str = typer.Option(..., "--session", help="Session id this stage belongs to"),
+    all_items: bool = typer.Option(False, "--all", help="Stage all six baseline items, in order, ignoring --item"),
+) -> None:
+    """Copy the item's stub/ to its own work path (absolute, from this command's own arguments,
+    never the caller's cwd) and log a present event; prints the staged path. --all stages every
+    baseline item in order."""
+    subject_dir = subject_dir.resolve()
+    if all_items:
+        baseline_module.run_stage_all(subject_dir, session)
+        return
+    if not item:
+        raise typer.BadParameter("required unless --all is given", param_hint="--item")
+    baseline_module.run_stage(subject_dir, item, session)
+
+
+@baseline_app.command("grade")
+def baseline_grade_command(
+    subject_dir: Path = typer.Argument(..., help="Subject directory, e.g. training/rust"),
+    item: str = typer.Option(..., "--item", help="Baseline item id, e.g. b1-own"),
+    session: str = typer.Option(..., "--session", help="Session id this grade belongs to"),
+    cap_minutes: float = typer.Option(
+        baseline_module.CAP_MINUTES_DEFAULT, "--cap-minutes", help="Minutes recorded as the cap, never enforced"
+    ),
+) -> None:
+    """Grade the staged item against its key and log one probe-item event (which=baseline);
+    refuses if nothing was staged for this item in this session. Never opens or prints key/."""
+    subject_dir = subject_dir.resolve()
+    baseline_module.run_grade(subject_dir, item, session, cap_minutes)
 
 
 @app.command("close")

@@ -268,3 +268,27 @@ def test_probe_item_which_refuses_a_shape_that_is_not_a_single_letter_side() -> 
         fields = {"unit": "u1", "which": bad, "problem": "p1", "result": "pass", "minutes": "5"}
         error = validate_fields("probe-item", fields)
         assert error is not None and "which" in error
+
+
+def test_probe_item_which_accepts_the_literal_baseline_value() -> None:
+    """`gym train baseline grade` reuses `probe-item` for its own result, `which=baseline` — not a
+    probe side, so `probe-start`'s own `which` stays unwidened (a baseline item is never staged
+    through `probe-start`)."""
+    fields = {"unit": "baseline", "which": "baseline", "problem": "b1-own", "result": "pass", "minutes": "5"}
+    assert validate_fields("probe-item", fields) is None
+
+
+def test_probe_start_which_still_refuses_the_literal_baseline_value() -> None:
+    fields = {"unit": "baseline", "which": "baseline", "problems": "b1-own"}
+    error = validate_fields("probe-start", fields)
+    assert error is not None and "which" in error
+
+
+def test_procedure_requires_note_and_allows_an_optional_unit() -> None:
+    assert validate_fields("procedure", {"note": "explained cargo test flags"}) is None
+    assert validate_fields("procedure", {"note": "explained the cap", "unit": "u1"}) is None
+
+
+def test_procedure_refuses_a_missing_note() -> None:
+    error = validate_fields("procedure", {"unit": "u1"})
+    assert error is not None and "note" in error

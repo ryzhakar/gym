@@ -16,7 +16,15 @@ def validate_session_id(session_id: str) -> None:
     `gym.train.probe.session_path_segment`, the probe's staging directory. `--id` is refused
     outright on any other shape, rather than let a malformed id become a directory name and only
     surface as a `datetime.strptime` crash later, inside `gap_days` or a subsequent `gym train log`
-    call."""
+    call.
+
+    A colon is refused first, ahead of the general shape check, with its own one-line message and
+    exit code 2 (the general refusal below exits 1, via `sys.exit(str)`) — and that message never
+    echoes `session_id` itself, so a colon-bearing value is never printed at all, never mind as
+    part of a path."""
+    if ":" in session_id:
+        sys.stderr.write("refused, --id may not contain ':' (breaks cargo's search path on macOS)\n")
+        sys.exit(2)
     try:
         datetime.strptime(session_id, SESSION_ID_FORMAT)
     except ValueError:
