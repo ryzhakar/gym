@@ -276,3 +276,5 @@
 2026-09-30T23:26 | self | delegation | agent:trainer-v4, opus, background: trainer definition and summons template amended from the audit (colon guard, cap mechanism stated, workspace provisioned, worked example walked live, baseline via stage and grade commands); output recon/2026-09-30/train/trainer-v4-report.md; wait bounded by heartbeat feb9bb57
 2026-09-30T23:26 | self | decision | decided: change 4, gym train baseline stage and grade, waits for cli-ergonomics to land since both touch src/gym/train/cli.py
 2026-09-30T23:27 | self | commitment | baseline-command prompt written at recon/2026-09-30/prompts/baseline-command.md; launches when cli-ergonomics reports
+2026-09-30T23:27 | owner | receipt | in conversation: the line Six agents running was a message; violation
+2026-09-30T23:27 | self | failure | status line on a harness prompt, the pattern repeats each time a harness prompt arrives with no work pending; the turn must end with no call and no text; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
