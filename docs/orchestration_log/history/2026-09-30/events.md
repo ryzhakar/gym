@@ -333,3 +333,4 @@
 2026-10-01T00:08 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T00:09 | agent:graph-map | receipt | revision 5: island names inside hulls, breaking across lines, two smallest dropped; dark panel; hull gap 96; line-pick fixed by projection; 94 map tests; unverified
 2026-10-01T00:09 | self | delegation | agent:map-review-3, sonnet, background: third cold-reader pass over both views plus a designer's list; output recon/2026-09-30/frontend/map-review-3.md; wait bounded by heartbeat feb9bb57
+2026-10-01T00:09 | self | discovery | map-default.png read after revision 5: island names inside hulls, islands apart with neighbourhoods inside, crossings faint; the page reads as a map at a glance; nothing further asked before the third review
