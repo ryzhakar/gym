@@ -25,3 +25,7 @@
 2026-10-01T00:41 | agent:graph-map | receipt | revision 8: variant a legible but anchored at the hull centroid, ambiguous; b placed right but unreadable over dots; shipped a's solid plate with near-black type at b's densest-third anchor; 94 map tests; screenshots map-names-a, map-names-b, map-default; unverified
 2026-10-01T00:41 | self | discovery | map-default.png after revision 8 read: names legible but the solid plates cover each island's core and its hub labels; revision 8 held uncommitted
 2026-10-01T00:41 | self | delegation | agent:graph-map revision 9: plates at 65 percent with a border, anchored just above the densest third, hubs never covered
+2026-10-01T00:48 | owner | receipt | in conversation: the line Revision 9 in flight was a message; violation
+2026-10-01T00:48 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T00:48 | agent:graph-map | receipt | revision 9: plates 65 percent with border above the topmost hub, fallback below, largest islands first; tests assert no hub and no label under a plate; eleven names, none overlapping; 94 map tests; unverified
+2026-10-01T00:49 | self | discovery | map-default.png after revision 9 read: plates legible, hubs and labels clear, names next to their islands; committed as the final cosmetic
