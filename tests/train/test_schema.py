@@ -187,6 +187,26 @@ def test_over_cap_is_not_recognized_on_a_kind_other_than_probe_item() -> None:
     assert error is not None and "unknown field(s)" in error and "over_cap" in error
 
 
+def test_probe_item_accepts_an_optional_total_minutes_field() -> None:
+    """Team lead ruling (2026-09-30): once `minutes` became per-problem (mtime-based), `over_cap`
+    needed a separate shared quantity to judge against — `total_minutes`, grade time minus
+    `probe-start` time, the same on every problem in one `grade` call."""
+    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    assert validate_fields("probe-item", {**required, "total_minutes": "5.32"}) is None
+    assert validate_fields("probe-item", {**required, "total_minutes": "0"}) is None
+
+
+def test_probe_item_total_minutes_below_0_is_refused() -> None:
+    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    error = validate_fields("probe-item", {**required, "total_minutes": "-1"})
+    assert error is not None and "below 0" in error
+
+
+def test_total_minutes_is_not_recognized_on_a_kind_other_than_probe_item() -> None:
+    error = validate_fields("attempt", {"unit": "u1", "item": "x", "result": "pass", "minutes": "5", "total_minutes": "5"})
+    assert error is not None and "unknown field(s)" in error and "total_minutes" in error
+
+
 def test_fraction_is_not_recognized_on_a_kind_other_than_probe_item() -> None:
     """`fraction` is `probe-item`'s own optional field, not global like `request` — an unrelated
     kind carrying it is refused as an unknown field for that kind."""

@@ -9,6 +9,7 @@ Run: `uv run pytest tests/train/test_probe.py`. Needs `cargo` on PATH for the gr
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -258,7 +259,10 @@ def test_run_grade_logs_one_probe_item_event_per_problem_even_on_a_compile_failu
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
-def test_run_grade_computes_minutes_from_the_probe_start_events_own_timestamp(tmp_path: Path, subject_dir: Path) -> None:
+def test_run_grade_total_minutes_is_computed_from_the_probe_start_events_own_timestamp(tmp_path: Path, subject_dir: Path) -> None:
+    """Team lead ruling (2026-09-30): `total_minutes` is the shared quantity the old, single
+    `minutes` field used to be — grade time minus the `probe-start` event's own clock stamp, the
+    same on every problem in one `grade` call."""
     unit_dir = make_unit_dir(tmp_path, "unit-1")
     probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
     # the probe-start event was just stamped with the real clock; graded "now" is 5 minutes later
@@ -267,7 +271,79 @@ def test_run_grade_computes_minutes_from_the_probe_start_events_own_timestamp(tm
 
     rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=real_start + timedelta(minutes=5))
 
-    assert all(float(row["minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
+    assert all(float(row["total_minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
+
+
+def _set_mtime(path: Path, when: datetime) -> None:
+    epoch = when.timestamp()
+    os.utime(path, (epoch, epoch))
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_run_grade_minutes_is_0_for_an_untouched_problem(tmp_path: Path, subject_dir: Path) -> None:
+    """Team lead ruling (2026-09-30): each event's own `minutes` is now per-problem — the latest
+    mtime under that problem's staged `src/` minus the `probe-start` event's time. A problem never
+    edited since staging reads `minutes=0`, whatever `total_minutes` (grade time elapsed) says.
+    Both problems' `src/` mtimes are pinned explicitly, at-or-before `real_start`, so the test
+    doesn't depend on how fast `shutil.copytree` happened to run relative to the minute boundary
+    `probe-start`'s own timestamp truncated to (see `minutes_since`'s docstring)."""
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
+    real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
+    for problem in ("p1", "p2"):
+        _set_mtime(subject_dir / "work" / "sess-1" / "unit-1" / problem / "src" / "lib.rs", real_start)
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=real_start + timedelta(minutes=5))
+
+    assert all(row["minutes"] == "0.00" for row in rows)
+    assert all(float(row["total_minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_run_grade_minutes_reflects_the_edited_problems_own_mtime(tmp_path: Path, subject_dir: Path) -> None:
+    """A problem the learner actually edited gets its own `minutes`, from its own `src/` mtime —
+    not `total_minutes`'s shared, grade-time-elapsed figure. Both problems' mtimes are pinned
+    explicitly (p2 to exactly `real_start`, p1 three minutes after) so the comparison is exact,
+    not subject to real `shutil.copytree` timing noise within a minute boundary."""
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
+    real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
+
+    p1_src = subject_dir / "work" / "sess-1" / "unit-1" / "p1" / "src" / "lib.rs"
+    p1_src.write_text(LIB_RS_PASSING, encoding="utf-8")
+    _set_mtime(p1_src, real_start + timedelta(minutes=3))
+    _set_mtime(subject_dir / "work" / "sess-1" / "unit-1" / "p2" / "src" / "lib.rs", real_start)
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=real_start + timedelta(minutes=5))
+    by_problem = {row["problem"]: row for row in rows}
+
+    assert float(by_problem["p1"]["minutes"]) == pytest.approx(3.0, abs=0.02)
+    assert by_problem["p2"]["minutes"] == "0.00"  # p2 was never touched
+    assert all(float(row["total_minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
+
+
+def test_latest_mtime_under_returns_none_for_a_missing_directory(tmp_path: Path) -> None:
+    assert probe.latest_mtime_under(tmp_path / "nope") is None
+
+
+def test_latest_mtime_under_returns_none_for_an_empty_directory(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert probe.latest_mtime_under(empty) is None
+
+
+def test_minutes_since_floors_at_0_for_no_mtime_or_an_mtime_at_or_before_the_reference() -> None:
+    reference = datetime(2026, 9, 30, 22, 0)
+    assert probe.minutes_since(reference, None) == 0.0
+    assert probe.minutes_since(reference, reference.timestamp()) == 0.0
+    assert probe.minutes_since(reference, reference.timestamp() - 60) == 0.0  # a minute earlier: still 0
+
+
+def test_minutes_since_computes_positive_elapsed_minutes() -> None:
+    reference = datetime(2026, 9, 30, 22, 0)
+    assert probe.minutes_since(reference, reference.timestamp() + 90) == pytest.approx(1.5, abs=0.001)
 
 
 def test_run_grade_defaults_cap_minutes_to_10() -> None:

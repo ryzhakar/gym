@@ -170,6 +170,35 @@ def latest_probe_start(subject_dir: Path, session_id: str, unit: str, which: str
 CAP_MINUTES_DEFAULT = 10.0
 
 
+def latest_mtime_under(directory: Path) -> "float | None":
+    """The most recent modification time (epoch seconds) among every file under `directory`, or
+    `None` when it holds none at all (missing, or empty)."""
+    if not directory.is_dir():
+        return None
+    mtimes = [path.stat().st_mtime for path in directory.rglob("*") if path.is_file()]
+    return max(mtimes) if mtimes else None
+
+
+def minutes_since(reference: datetime, mtime_epoch: "float | None") -> float:
+    """Minutes from `reference` to the local time `mtime_epoch` names, floored at 0. `None` (no
+    file at all) or an `mtime_epoch` at or before `reference` both read as `0.0` — team lead ruling
+    (2026-09-30): "an untouched problem gets minutes=0".
+
+    Known precision limit, not fixed here: `reference` is a `probe-start` event's own timestamp,
+    truncated to the minute (`TIMESTAMP_FORMAT` has no seconds), while `mtime_epoch` is a real,
+    second-precision filesystem timestamp. `gym train probe stage`'s own `shutil.copytree` runs at
+    the *real* instant the event was logged, which is always at or after that truncated minute, by
+    up to 59 seconds — so an untouched problem's true `minutes` can read as up to ~1 (never
+    negative, thanks to the floor above) rather than exactly `0`, depending on where in the minute
+    staging happened to land. This is a property of every event timestamp in this schema, not a bug
+    specific to this function; narrowing it would mean giving `probe-start` sub-minute precision,
+    which the task never asked for."""
+    if mtime_epoch is None:
+        return 0.0
+    touched = datetime.fromtimestamp(mtime_epoch)
+    return max(0.0, (touched - reference).total_seconds() / 60)
+
+
 def run_grade(
     subject_dir: Path,
     unit_dir: Path,
@@ -180,31 +209,36 @@ def run_grade(
 ) -> list[dict[str, str]]:
     """Grade every problem `gym train probe stage` staged for `unit_dir`/`which` in this session,
     against its key, and log one `probe-item` event each. Refuses outright if no `probe-start`
-    event exists for this unit and probe side in this session. `minutes` is elapsed time from that
-    `probe-start` event's own clock stamp to `now` (or `datetime.now()`), shared across every
-    problem — the same "one cap for the whole probe" semantics the original single command had,
-    now measured across two separate invocations instead of one wait. `cap_minutes` (team lead
-    ruling, 2026-09-30, restoring what the seventh update dropped) is never enforced or refused
-    here — it only decides `over_cap` (`yes`/`no`), an optional field on every logged `probe-item`,
-    recorded as data for whoever reads the record later."""
+    event exists for this unit and probe side in this session.
+
+    Team lead ruling (2026-09-30): each event's own `minutes` is now per-problem, not shared — the
+    latest modification time under that problem's staged `src/` minus the `probe-start` event's own
+    clock stamp (`minutes_since`), so an untouched problem (never edited since staging) reads
+    `minutes=0`, and a problem the learner actually worked on reads how long *that* work took.
+    `total_minutes` (new, optional) is the old shared quantity — `now` (or `datetime.now()`) minus
+    the `probe-start` event's clock stamp, the same on every problem in this call — kept because
+    `over_cap` (`yes`/`no`, still optional, recorded only, never enforced or refused) is judged
+    against `total_minutes`, not the new per-problem `minutes`."""
     unit = unit_dir.name
     start_row = latest_probe_start(subject_dir, session_id, unit, which)
     if start_row is None:
         sys.exit(f"refused, no probe-start event for unit {unit!r}, which {which!r}, in session {session_id}")
     started = datetime.strptime(start_row["timestamp"], TIMESTAMP_FORMAT)
-    elapsed_minutes = ((now or datetime.now()) - started).total_seconds() / 60
-    over_cap = "yes" if elapsed_minutes > cap_minutes else "no"
+    total_minutes = max(0.0, ((now or datetime.now()) - started).total_seconds() / 60)
+    over_cap = "yes" if total_minutes > cap_minutes else "no"
     work_root = subject_dir / "work"
     rows: list[dict[str, str]] = []
     for problem_name in start_row["problems"].split(","):
         work_dir = work_root / session_path_segment(session_id) / unit / problem_name
+        item_minutes = minutes_since(started, latest_mtime_under(work_dir / "src"))
         passed, fraction = grade_item(work_dir, key_dir_for(unit_dir, which, problem_name))
         fields = {
             "unit": unit,
             "which": which,
             "problem": problem_name,
             "result": "pass" if passed else "fail",
-            "minutes": f"{elapsed_minutes:.2f}",
+            "minutes": f"{item_minutes:.2f}",
+            "total_minutes": f"{total_minutes:.2f}",
             "over_cap": over_cap,
             "fraction": f"{fraction:.4f}",
         }
