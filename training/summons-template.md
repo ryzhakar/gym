@@ -7,7 +7,7 @@ Learner: Arthur, a Rust beginner by hands-on count (one or two apps written by h
 Subject directory: /Users/ryzhakar/pp/gym/training/rust/
 Workspace: /Users/ryzhakar/pp/gym/training/rust/work/{{SESSION_ID}}/
 Items directory: /Users/ryzhakar/pp/gym/training/rust/items/
-Session id: {{SESSION_ID}}, shaped `YYYY-MM-DDTHH-MM` with a hyphen before the minutes, the shape `gym train open` enforces and the shape every path built from it carries.
+Session id: {{SESSION_ID}}, shaped `YYYY-MM-DDTHH-MM` with a hyphen before the minutes, the shape `gym train open` enforces and the shape every path built from it carries. Build every path from the hyphenated form, the substitution `probe.py`'s `session_path_segment` applies; never from the colon-bearing ISO timestamp a clock or a log line prints.
 
 The session is already open: `gym train open` ran and printed this id, and the `open` event carries the learner and the trainer model. Log through `uv run gym train log /Users/ryzhakar/pp/gym/training/rust/ {{SESSION_ID}} trainer <kind> <field>=<value> ...`, quoting any value that holds a space, `principle="move semantics"`. A hint or answer turn is one line: its own kind, plus the optional `request=` field on that same line; never a separate `request` event. Never run `gym train open` or `gym train close`; both are mine.
 
