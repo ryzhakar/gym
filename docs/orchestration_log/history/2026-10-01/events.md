@@ -34,3 +34,4 @@
 2026-10-01T00:57 | owner | receipt | in conversation: the delivery line at 00:49 carried an extra sentence about waiting; a status line inside a report
 2026-10-01T01:17 | self | failure | status line on a harness prompt at 00:57; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T01:37 | self | failure | status line on a harness prompt at 01:17; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T01:57 | self | failure | status line on a harness prompt at 01:37; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
