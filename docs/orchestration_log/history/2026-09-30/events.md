@@ -225,3 +225,4 @@
 2026-09-30T21:57 | self | commitment | heartbeat re-laid: cron feb9bb57 replaces eed4185b, same schedule; prompt now opens by naming itself a cron and orders zero text, no call when nothing advances
 2026-09-30T21:59 | agent:concept-dedup | receipt | addendum: six wrong merges reverted, async-await-2 relinked to async-await; tier 2 requires a shared Question for names under 12 characters; 47 tests pass; check 417 FAIL; 1372 canonical Concepts; the rule as specified would not catch four of the six on a rerun, flagged; unverified
 2026-09-30T21:59 | self | commitment | concept dedup committed as feat(map) after 47 tests and check 417 FAIL passed here; 75 merges stand, 363 review pairs listed in recon/2026-09-30/frontend/concept-merges.md
+2026-09-30T21:59 | self | discovery | gym CLI imports again: site/page.py exists; the graph-map agent still runs, its report not yet written
