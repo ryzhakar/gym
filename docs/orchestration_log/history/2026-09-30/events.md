@@ -158,3 +158,4 @@
 2026-09-30T19:21 | self | decision | decided under the handover: u02 and u03 get the source-level item audit before u02's session of 2026-10-01; the Graph view's two rough edges get fixed; both delegated
 2026-09-30T19:21 | self | delegation | agent:item-bank-audit-u02-u03, sonnet, background; output recon/2026-09-30/train/item-bank-audit-u02-u03.md; wait bounded by heartbeat eed4185b
 2026-09-30T19:21 | self | delegation | agent:graph-v01, sonnet, background: soft boundary and Domains and Values in the default subset; output recon/2026-09-30/frontend/graph-v01-report.md; wait bounded by heartbeat eed4185b
+2026-09-30T19:25 | agent:graph-v01 | receipt | graph-v01-report.md: soft boundary spring replaces the clamp; default subset now 282 nodes with all 12 Domains and 6 Values, 836 edges; 53 tests/map pass; Matrix untouched by diff; unverified
