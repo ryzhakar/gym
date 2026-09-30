@@ -46,4 +46,4 @@ What happened: after silence-holds was written and the owner ruled "no messages 
 
 Mechanism: the harness prompt reads as the user's turn; with no work pending, the reflex is to say so. The directive names the rule but the reflex fires before the rule is consulted.
 
-Correction: on a harness prompt with no work pending, the turn ends with no call and no text, and the only text a turn ever carries is an answer to words the owner typed. A tool call, if any, is real work: an event line, a commit, a dispatch.
+Correction: on a harness prompt with no work pending, the turn ends with no call and no text, and the only text a turn ever carries is an answer to words the owner typed. A tool call, if any, is real work: an event line, a commit, a dispatch. Count since: twenty-two breaches on the same prompt in one evening, each recorded, none prevented by recording. The reflex needs a mechanical stop, not another rule: the owner asked for the cron message to be rewritten when it triggers text; the harness prompt cannot be rewritten, so the only stop is the empty final message, chosen before anything else in the turn.
