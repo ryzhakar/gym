@@ -245,3 +245,4 @@
 2026-09-30T22:50 | self | delegation | agent:map-review-2, sonnet, background: second cold-reader pass over Graph, Matrix and the Voice-number link; output recon/2026-09-30/frontend/map-review-2.md; wait bounded by heartbeat feb9bb57
 2026-09-30T22:51 | agent:matrix-wire | receipt | follow-up: voice_numbering(voices) in load.py, called by both views; page.py two additive lines; graph.py untouched; 254 tests pass; unverified
 2026-09-30T22:51 | self | discovery | graph.py carries uncommitted edits for the detached toggle and label clicks, the second batch sent to graph-map; its notification for that batch is pending, review-2 judges the working tree
+2026-09-30T22:57 | self | failure | a git log call made to fill a turn; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
