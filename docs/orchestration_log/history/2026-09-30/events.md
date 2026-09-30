@@ -297,3 +297,4 @@
 2026-09-30T23:35 | self | decision | decided: finding 12 (a procedure kind) goes to baseline-command; findings 10 (b3-result cap) and 11 (u01 probe-a as renames) are left: both baseline and probe-a items are consumed by the one learner, so a fix buys nothing; noted for any future learner
 2026-09-30T23:37 | owner | receipt | in conversation: the line Three agents still working was a message; violation
 2026-09-30T23:37 | self | failure | status line on a harness prompt; every such prompt gets an empty turn; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
+2026-09-30T23:51 | self | discovery | session limit hit 23:37: graph-map at step 7 of revision 4, matrix-v2 at the block wash contrast, baseline-command reading inputs; limit reset; all three resumed via SendMessage
