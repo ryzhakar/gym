@@ -14,7 +14,11 @@ from collections import defaultdict
 
 from gym.map.cluster import cocluster
 
-PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#7B3F61"]
+# Okabe-Ito base, re-lightened for a dark (#0e1116) canvas: the two entries
+# that read fine on white but sank toward the background on dark --
+# #009E73 (green) and #0072B2 (blue) -- are lifted in luminance; the rest
+# were already bright enough to hold contrast unchanged.
+PALETTE = ["#E69F00", "#56B4E9", "#00C896", "#F0E442", "#3391D6", "#E8703A", "#B368A0"]
 
 
 def build_matrix(
@@ -235,26 +239,43 @@ def build_matrix(
 
 
 MATRIX_CSS = r"""
-  #gridwrap { flex: 1 1 auto; overflow: auto; padding: 18px; background: #f7f6f3; }
+  #gridwrap { flex: 1 1 auto; overflow: auto; padding: 18px; background: var(--canvas); }
   svg#matrix { display: block; }
   .hit { fill: transparent; cursor: pointer; }
-  .hit:hover { fill: rgba(0,0,0,0.045); }
-  .cell { stroke: #ffffff; stroke-width: 1; cursor: pointer; }
-  .cell.provisional { stroke-dasharray: 2,2; stroke: #8a8378; }
-  .cell.changed-marker { fill: #1c1b1a; }
-  .cell.undated-marker { fill: none; stroke: #ffffff; stroke-width: 1.1; }
-  text.lbl { fill: #1c1b1a; font-size: 11px; cursor: pointer; user-select: none; }
-  text.lbl:hover { fill: #000; text-decoration: underline; }
+  .hit:hover { fill: rgba(255,255,255,0.06); }
+  .cell { stroke: var(--canvas); stroke-width: 1; cursor: pointer; }
+  .cell.provisional { stroke-dasharray: 2,2; stroke: rgba(223,218,208,0.55); }
+  /* Pre-existing bug found while wiring the dark theme, fixed here: these two
+     rules used to read ".cell.changed-marker" / ".cell.undated-marker", but
+     the circles below carry only the bare class -- the selector never
+     matched, so "undated" rendered as a plain filled dot (default SVG
+     fill: black) instead of the intended hollow ring. Selectors corrected;
+     colours chosen for the dark canvas. */
+  .changed-marker { fill: #12161d; stroke: rgba(255,255,255,.55); stroke-width: .6; }
+  .undated-marker { fill: none; stroke: #ffffff; stroke-width: 1.1; }
+  text.lbl { fill: var(--chrome-ink); font-size: 11px; cursor: pointer; user-select: none; }
+  text.lbl:hover { fill: #ffffff; text-decoration: underline; }
   text.lbl.dragging { opacity: 0.4; }
-  text.lbl.pulse-row { fill: #a13a2f; font-weight: 700; }
-  .block-outline { fill: none; stroke: #1c1b1a; stroke-width: 2; pointer-events: stroke; }
-  .block-outline.block-discussion { stroke: #a13a2f; stroke-dasharray: 5,3; }
-  text.block-label { fill: #a13a2f; font-size: 10px; font-weight: 700; pointer-events: none; }
+  text.lbl.pulse-row { fill: #ff8f73; font-weight: 700; }
+  .block-fill { pointer-events: none; }
+  .block-outline { fill: none; stroke: var(--chrome-ink); stroke-width: 1.5; pointer-events: stroke; }
+  .block-outline.block-discussion { stroke: #ff8f73; stroke-dasharray: 5,3; }
+  /* A block can start at row/col 0, right over a Position-coloured cell --
+     seen live as "discussion" landing on an orange cell and going half
+     invisible, coral-on-orange. A dark halo (graph.py's own fix for
+     glabel-over-varied-node-colour) keeps it legible over any cell colour. */
+  text.block-label { fill: #ff8f73; font-size: 9.5px; font-weight: 700; font-variant: small-caps;
+    letter-spacing: .06em; pointer-events: none; paint-order: stroke;
+    stroke: var(--canvas); stroke-width: 3px; stroke-linejoin: round; }
+  .gap-hairline { stroke: var(--chrome-line); stroke-width: 1; }
+  .gap-label { fill: var(--chrome-dim); font-size: 9px; letter-spacing: .08em; pointer-events: none; }
+  .hover-band { fill: #ffffff; pointer-events: none; }
 """
 
 
 MATRIX_JS = r"""
-  var CELL = 18, LABEL_W = 320, HEAD_H = 170, GAP = 26;
+  var CELL = 18, LABEL_W = 280, HEAD_H = 170, GAP = 28;
+  var LABEL_FONT = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   var showAll = false;
   var rowOrder = [], colOrder = [];
   var revealed = {};
@@ -268,6 +289,62 @@ MATRIX_JS = r"""
       var c = DATA.matrix[i];
       cellIndex[key(c.q, c.v)] = c;
     }
+  }
+
+  // --- pixel-accurate label fitting (SVG <text> has no CSS text-overflow) --
+  var _measureCtx = null;
+  function textWidth(s, font) {
+    if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
+    _measureCtx.font = font;
+    return _measureCtx.measureText(s).width;
+  }
+  function ellipsisFit(s, maxWidth, font) {
+    if (textWidth(s, font) <= maxWidth) return s;
+    var lo = 0, hi = s.length;
+    while (lo < hi) {
+      var mid = (lo + hi + 1) >> 1;
+      if (textWidth(s.slice(0, mid) + "…", font) <= maxWidth) lo = mid; else hi = mid - 1;
+    }
+    return lo > 0 ? s.slice(0, lo) + "…" : "…";
+  }
+
+  // The "default subset" cocluster() hands back, independent of showAll --
+  // used only to size CELL/HEAD_H so that subset is what fits without
+  // scrolling; "show all" still renders past it, scrolled, as before.
+  function coreRowIds() {
+    var c = DATA.clustering;
+    return c.row_order.slice(0, c.row_order.length - c.thin_rows.length);
+  }
+  function coreColIds() {
+    var c = DATA.clustering;
+    return c.col_order.slice(0, c.col_order.length - c.thin_cols.length);
+  }
+
+  function computeLayout() {
+    var coreRows = coreRowIds(), coreCols = coreColIds();
+    var maxColLabelW = 0;
+    for (var i = 0; i < coreCols.length; i++) {
+      var lw = textWidth(voiceLabel(coreCols[i]), LABEL_FONT);
+      if (lw > maxColLabelW) maxColLabelW = lw;
+    }
+    // Column headers rotate -60deg; vertical space they need is the
+    // label's pixel length projected onto the vertical axis (sin 60deg),
+    // plus room for the rotation pivot and a little breathing space.
+    HEAD_H = Math.max(60, Math.min(260, Math.round(maxColLabelW * Math.sin(Math.PI / 3)) + 34));
+    // Measured off #wrap, not #gridwrap: #gridwrap is the overflow:auto box
+    // whose own clientHeight shrinks the instant its content is taller than
+    // the viewport (the scrollbar it then grows eats into clientWidth too),
+    // which would make this a closed loop chasing its own last frame.
+    // #wrap never scrolls, so its box is stable input to size from.
+    // -36 is #gridwrap's padding (18px both sides); -20 mirrors the same
+    // fixed slack render() adds past the last row/column in its own w/h
+    // (LABEL_W + cols*CELL + colGap + 20).
+    var wrapEl = document.getElementById("wrap");
+    var availW = (wrapEl.clientWidth || 1600) - 36 - 20 - LABEL_W;
+    var availH = (wrapEl.clientHeight || 1000) - 36 - 20 - HEAD_H;
+    var byW = coreCols.length ? availW / coreCols.length : 18;
+    var byH = coreRows.length ? availH / coreRows.length : 18;
+    CELL = Math.max(8, Math.min(22, Math.floor(Math.min(byW, byH))));
   }
 
   // Row/column order comes straight from cocluster()'s output: row_order /
@@ -598,8 +675,26 @@ MATRIX_JS = r"""
     });
   }
 
+  var layoutSettling = false;
   function render() {
     buildCellIndex();
+    computeLayout();
+    // computeLayout() measures #wrap, but page.py's setView() calls render()
+    // before it fills in the matrix legend and the note line -- both still
+    // land in the header a tick later and grow it, which is exactly what
+    // made the "fits without scrolling" size land ~20px over budget on
+    // first paint. One corrective re-measure next frame (bounded: it only
+    // re-renders if the numbers actually changed) catches that without
+    // page.py needing to reorder anything.
+    if (!layoutSettling) {
+      layoutSettling = true;
+      requestAnimationFrame(function () {
+        layoutSettling = false;
+        var before = CELL + "," + HEAD_H;
+        computeLayout();
+        if (CELL + "," + HEAD_H !== before) render();
+      });
+    }
     var svg = document.getElementById("matrix");
     svg.innerHTML = "";
 
@@ -647,6 +742,30 @@ MATRIX_JS = r"""
     bgBand(coreRowCount, thinRowN, 0, coreColCount);
     bgBand(coreRowCount, thinRowN, coreColCount, thinColN);
 
+    // the gap that separates the clustered core from parked thin rows/cols
+    // reads as dead space otherwise; a hairline plus a small "thin" label
+    // marks it as a deliberate break, not a rendering gap.
+    if (thinColN > 0) {
+      var gapX = LABEL_W + coreColCount * CELL + colGap / 2;
+      svg.appendChild(svgEl("line", { x1: gapX, y1: 0, x2: gapX, y2: h, class: "gap-hairline" }));
+      var gLblCol = svgEl("text", { x: gapX, y: 12, class: "gap-label", "text-anchor": "middle" });
+      gLblCol.textContent = "thin";
+      svg.appendChild(gLblCol);
+    }
+    if (thinRowN > 0) {
+      var gapY = HEAD_H + coreRowCount * CELL + rowGap / 2;
+      svg.appendChild(svgEl("line", { x1: 0, y1: gapY, x2: w, y2: gapY, class: "gap-hairline" }));
+      var gLblRow = svgEl("text", { x: 4, y: gapY + 3, class: "gap-label" });
+      gLblRow.textContent = "thin";
+      svg.appendChild(gLblRow);
+    }
+
+    // a translucent row/col band, shown on hover (row and column hit areas
+    // below toggle it); created now, appended once at the end of render()
+    // so it paints on top of cells and blocks rather than under them.
+    var rowBand = svgEl("rect", { x: 0, y: 0, width: w, height: CELL, class: "hover-band", "fill-opacity": "0" });
+    var colBand = svgEl("rect", { x: 0, y: 0, width: CELL, height: h, class: "hover-band", "fill-opacity": "0" });
+
     // column headers (rotated) + drag/click hit area
     for (var ci = 0; ci < colOrder.length; ci++) {
       var vid = colOrder[ci];
@@ -658,43 +777,129 @@ MATRIX_JS = r"""
       svg.appendChild(hit);
       var txt = svgEl("text", {
         x: x, y: HEAD_H - 6, class: "lbl", "data-axis": "col", "data-id": vid,
-        transform: "rotate(-55 " + x + " " + (HEAD_H - 6) + ")"
+        transform: "rotate(-60 " + x + " " + (HEAD_H - 6) + ")"
       });
       txt.textContent = voiceLabel(vid);
       svg.appendChild(txt);
       attachDrag(txt, "col", vid);
       attachDrag(hit, "col", vid);
+      (function (bx) {
+        function enter() { colBand.setAttribute("x", bx); colBand.setAttribute("fill-opacity", "0.07"); }
+        function leave() { colBand.setAttribute("fill-opacity", "0"); }
+        hit.addEventListener("mouseenter", enter);
+        hit.addEventListener("mouseleave", leave);
+        txt.addEventListener("mouseenter", enter);
+        txt.addEventListener("mouseleave", leave);
+      })(colX(ci));
     }
 
     // row headers + hit area
     for (var ri = 0; ri < rowOrder.length; ri++) {
       var qid = rowOrder[ri];
+      var qText = DATA.questions[qid].text;
       var y = rowY(ri) + CELL / 2 + 4;
       var hitR = svgEl("rect", {
         x: 0, y: rowY(ri), width: LABEL_W, height: CELL,
         class: "hit", "data-axis": "row", "data-id": qid
       });
+      var hitTitle = svgEl("title", {});
+      hitTitle.textContent = qText;
+      hitR.appendChild(hitTitle);
       svg.appendChild(hitR);
       var txtR = svgEl("text", {
-        x: LABEL_W - 8, y: y, class: "lbl", "text-anchor": "end",
+        x: LABEL_W - 10, y: y, class: "lbl", "text-anchor": "end",
         "data-axis": "row", "data-id": qid
       });
-      txtR.textContent = truncate(DATA.questions[qid].text, 56);
+      // Fit to the fixed label column by measured pixel width, not a
+      // fixed character count: a 56-char cap at 11px can still run past a
+      // 320px column on wide characters, which is exactly why row labels
+      // used to clip mid-word against the panel edge. The full Question
+      // text is always available on hover via the hit rect's <title>.
+      txtR.textContent = ellipsisFit(qText, LABEL_W - 20, LABEL_FONT);
       svg.appendChild(txtR);
       attachDrag(txtR, "row", qid);
       attachDrag(hitR, "row", qid);
+      (function (by) {
+        function enter() { rowBand.setAttribute("y", by); rowBand.setAttribute("fill-opacity", "0.07"); }
+        function leave() { rowBand.setAttribute("fill-opacity", "0"); }
+        hitR.addEventListener("mouseenter", enter);
+        hitR.addEventListener("mouseleave", leave);
+        txtR.addEventListener("mouseenter", enter);
+        txtR.addEventListener("mouseleave", leave);
+      })(rowY(ri));
     }
 
-    // data cells
+    // block boxes: cocluster()'s diagonal blocks, one box per (row_group,
+    // col_group) pair sharing a label. A block's bounding box is read off
+    // the *current* rowOrder/colOrder positions of its members (min..max on
+    // each axis), so it stays correct through a manual drag, not just the
+    // default clustered order. Computed once, used for both the fill wash
+    // (drawn under the cells) and the outline (drawn over them).
+    var rowPos = {}, colPos = {};
+    for (var pi = 0; pi < rowOrder.length; pi++) rowPos[rowOrder[pi]] = pi;
+    for (var pj = 0; pj < colOrder.length; pj++) colPos[colOrder[pj]] = pj;
+    var blocks = DATA.clustering.blocks;
+    var blockBoxes = [];
+    var blockCellKeys = {};
+    for (var bi = 0; bi < blocks.length; bi++) {
+      var blk = blocks[bi];
+      if (!blk.rows.length || !blk.cols.length) continue;
+      var rIdxs = [], cIdxs = [];
+      for (var bri = 0; bri < blk.rows.length; bri++) {
+        if (rowPos.hasOwnProperty(blk.rows[bri])) rIdxs.push(rowPos[blk.rows[bri]]);
+      }
+      for (var bci = 0; bci < blk.cols.length; bci++) {
+        if (colPos.hasOwnProperty(blk.cols[bci])) cIdxs.push(colPos[blk.cols[bci]]);
+      }
+      if (!rIdxs.length || !cIdxs.length) continue;
+      var rMin = Math.min.apply(null, rIdxs), rMax = Math.max.apply(null, rIdxs);
+      var cMin = Math.min.apply(null, cIdxs), cMax = Math.max.apply(null, cIdxs);
+      blockBoxes.push({
+        blk: blk, rMin: rMin, rMax: rMax, cMin: cMin, cMax: cMax,
+        discussion: blk.agreement < 0.75
+      });
+      for (var bq = 0; bq < blk.rows.length; bq++) {
+        for (var bv = 0; bv < blk.cols.length; bv++) {
+          var bk = key(blk.rows[bq], blk.cols[bv]);
+          if (cellIndex.hasOwnProperty(bk)) blockCellKeys[bk] = true;
+        }
+      }
+    }
+
+    // block fill: a 6%-alpha wash over the block's full rows-by-columns
+    // area, not a bounding rectangle around mostly-empty cells -- the wash
+    // reads as "this region is one block" even where a Voice holds no
+    // Claim on a Question in it, which the old outline-only look did not
+    // convey (it enclosed dead space and looked like a box around nothing).
+    for (var fi = 0; fi < blockBoxes.length; fi++) {
+      var fb = blockBoxes[fi];
+      svg.appendChild(svgEl("rect", {
+        x: colX(fb.cMin), y: rowY(fb.rMin),
+        width: (fb.cMax - fb.cMin + 1) * CELL, height: (fb.rMax - fb.rMin + 1) * CELL,
+        // The cell field underneath (including "no claim") is the light
+        // #dedad3, not the dark canvas -- a light wash at 6% was invisible
+        // against it in the first render; a dark neutral at the same alpha
+        // actually darkens the beige enough to read as "this area is one
+        // block" even where most of it is empty.
+        fill: "#1c1b1a", "fill-opacity": "0.06", class: "block-fill"
+      }));
+    }
+
+    // data cells -- a cell that actually falls inside a block's rows x cols
+    // area is drawn 1px larger (thinner white gutter) so it reads as part
+    // of the block's wash rather than floating a hairline above it.
     var shownCount = 0;
     for (var i = 0; i < rowOrder.length; i++) {
       for (var j = 0; j < colOrder.length; j++) {
-        var c = cellIndex[key(rowOrder[i], colOrder[j])];
+        var ckey = key(rowOrder[i], colOrder[j]);
+        var c = cellIndex[ckey];
         if (!c) continue;
         shownCount++;
         var cx = colX(j), cy = rowY(i);
+        var inset = blockCellKeys.hasOwnProperty(ckey) ? 0.5 : 1;
+        var size = CELL - inset * 2;
         var rect = svgEl("rect", {
-          x: cx + 1, y: cy + 1, width: CELL - 2, height: CELL - 2,
+          x: cx + inset, y: cy + inset, width: size, height: size,
           fill: DATA.palette[c.color - 1] || "#999",
           class: "cell" + (c.checked ? "" : " provisional")
         });
@@ -722,50 +927,33 @@ MATRIX_JS = r"""
       }
     }
 
-    // block outlines: cocluster()'s diagonal blocks, one outline per
-    // (row_group, col_group) pair sharing a label. A block's bounding box
-    // is read off the *current* rowOrder/colOrder positions of its members
-    // (min..max on each axis), so it stays correct through a manual drag,
-    // not just the default clustered order. fill_ratio and agreement go in
-    // the hover tooltip; agreement under 0.75 draws dashed and labelled
-    // "discussion" per the 2026-09-30 brief.
-    var rowPos = {}, colPos = {};
-    for (var pi = 0; pi < rowOrder.length; pi++) rowPos[rowOrder[pi]] = pi;
-    for (var pj = 0; pj < colOrder.length; pj++) colPos[colOrder[pj]] = pj;
-    var blocks = DATA.clustering.blocks;
-    for (var bi = 0; bi < blocks.length; bi++) {
-      var blk = blocks[bi];
-      if (!blk.rows.length || !blk.cols.length) continue;
-      var rIdxs = [], cIdxs = [];
-      for (var bri = 0; bri < blk.rows.length; bri++) {
-        if (rowPos.hasOwnProperty(blk.rows[bri])) rIdxs.push(rowPos[blk.rows[bri]]);
-      }
-      for (var bci = 0; bci < blk.cols.length; bci++) {
-        if (colPos.hasOwnProperty(blk.cols[bci])) cIdxs.push(colPos[blk.cols[bci]]);
-      }
-      if (!rIdxs.length || !cIdxs.length) continue;
-      var rMin = Math.min.apply(null, rIdxs), rMax = Math.max.apply(null, rIdxs);
-      var cMin = Math.min.apply(null, cIdxs), cMax = Math.max.apply(null, cIdxs);
-      var discussion = blk.agreement < 0.75;
+    // block outlines on top of the cells: a 1px stroke plus, for a block
+    // under the 75% agreement bar, a dashed "discussion" label. fill_ratio
+    // and agreement go in the hover tooltip.
+    for (var oi = 0; oi < blockBoxes.length; oi++) {
+      var ob = blockBoxes[oi];
       var outline = svgEl("rect", {
-        x: colX(cMin), y: rowY(rMin),
-        width: (cMax - cMin + 1) * CELL, height: (rMax - rMin + 1) * CELL,
-        class: "block-outline" + (discussion ? " block-discussion" : "")
+        x: colX(ob.cMin), y: rowY(ob.rMin),
+        width: (ob.cMax - ob.cMin + 1) * CELL, height: (ob.rMax - ob.rMin + 1) * CELL,
+        class: "block-outline" + (ob.discussion ? " block-discussion" : "")
       });
       var bt = svgEl("title", {});
-      bt.textContent = "Block: " + blk.rows.length + " Questions × " + blk.cols.length +
-        " Voices — fill " + Math.round(blk.fill_ratio * 100) + "%, agreement " +
-        Math.round(blk.agreement * 100) + "%" + (discussion ? " (discussion)" : "");
+      bt.textContent = "Block: " + ob.blk.rows.length + " Questions × " + ob.blk.cols.length +
+        " Voices — fill " + Math.round(ob.blk.fill_ratio * 100) + "%, agreement " +
+        Math.round(ob.blk.agreement * 100) + "%" + (ob.discussion ? " (discussion)" : "");
       outline.appendChild(bt);
       svg.appendChild(outline);
-      if (discussion) {
+      if (ob.discussion) {
         var lbl = svgEl("text", {
-          x: colX(cMin) + 3, y: rowY(rMin) + 11, class: "block-label"
+          x: colX(ob.cMin) + 3, y: rowY(ob.rMin) + 11, class: "block-label"
         });
         lbl.textContent = "discussion";
         svg.appendChild(lbl);
       }
     }
+
+    svg.appendChild(rowBand);
+    svg.appendChild(colBand);
 
     document.getElementById("stat").textContent =
       rowOrder.length + " Questions × " + colOrder.length + " Voices, " +

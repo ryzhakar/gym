@@ -203,6 +203,15 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         with_islands = page.inner_text("#stat")
         assert body_only != with_islands
         print("stat, body only:", body_only, "| with clusters:", with_islands)
+        # the detached clusters sit in a band under the body, not a ring
+        # around it: their rows start below the lowest connected Concept.
+        spread = page.evaluate("""() => {
+          const g = window.__gym;
+          return g.islandBand();
+        }""")
+        assert spread["bandTop"] >= spread["bodyBottom"], spread
+        assert spread["bandWidth"] <= spread["bodyWidth"] * 1.6, spread
+        print("island band:", spread)
         page.eval_on_selector("#glegend .row", "el => el.click()")
         page.wait_for_timeout(250)
         assert page.inner_text("#stat") == body_only
@@ -254,7 +263,7 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         panel = page.inner_text("#panel-body")
         assert "async runtimes" in panel
         assert "QUESTIONS ON THIS CONCEPT" in panel.upper()
-        assert "NEIGHBOURS BY SHARED QUESTIONS" in panel.upper()
+        assert "NEIGHBOURS, BY SHARED QUESTIONS" in panel.upper()
         q_lines = page.eval_on_selector_all("#panel-body .qline", "els => els.length")
         assert q_lines > 0
 
@@ -303,12 +312,22 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         # Every line is opened, because Arguments and Claims exist only where
         # the data holds them and one Question is not the contract.
         page.eval_on_selector_all("#panel-body .qline", "els => els.forEach(e => e.click())")
-        page.wait_for_selector("#panel-body .pos-block")
+        page.wait_for_selector("#panel-body .pos")
         opened = page.inner_text("#panel-body")
-        assert "For:" in opened or "Against:" in opened
+        assert page.eval_on_selector_all(
+            "#panel-body .arg-for, #panel-body .arg-against", "els => els.length"
+        ) > 0, "an opened Question shows its Arguments"
+        # The Question's text is the entry's one title, never printed twice.
+        titles = page.eval_on_selector_all("#panel-body .qtitle", "els => els.map(e => e.textContent)")
+        lines = page.eval_on_selector_all(
+            "#panel-body .qline",
+            "els => els.filter(e => e.style.display !== 'none').map(e => e.textContent)",
+        )
+        for t in titles:
+            assert t not in lines, t
         assert re.search(r"Voice \d+", opened), "Claims name Voices anonymously"
         assert re.search(r"\d{4}-\d{2}-\d{2}", opened), "Claims carry their date"
-        assert page.eval_on_selector_all("#panel-body .pos-block", "els => els.length") >= q_lines
+        assert page.eval_on_selector_all("#panel-body .pos", "els => els.length") >= q_lines
 
         # local mode at depth 2 redraws the neighbourhood only
         page.click("#panel button:has-text('Local 2')")
@@ -356,11 +375,26 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         # a click on a line opens the Questions that line stands for
         page.keyboard.press("Escape")
         page.wait_for_timeout(150)
-        e = page.evaluate("() => window.__gym.heaviestEdge()")
+        e = page.evaluate("() => window.__gym.longestEdge()")
         page.evaluate("(k) => window.__gym.centreOnEdge(k, 2)", e)
         page.wait_for_timeout(150)
-        spot = page.evaluate("(k) => window.__gym.edgeScreen(k)", e)
-        assert 0 < spot["x"] < 1600 and 0 < spot["y"] < 1000, spot
+        # A Concept's label can sit over the middle of a line and take the
+        # click -- the price of a label being its Concept -- so the first
+        # point along the line that is not under one is used.
+        spot = None
+        for t in (0.5, 0.4, 0.6, 0.3, 0.7, 0.25, 0.75):
+            cand = page.evaluate("([k, t]) => window.__gym.edgeScreen(k, t)", [e, t])
+            if not (0 < cand["x"] < 1600 and 0 < cand["y"] < 1000):
+                continue
+            on_top = page.evaluate(
+                "(s) => { const el = document.elementFromPoint(s.x, s.y);"
+                " return el ? el.tagName + '.' + (el.getAttribute('class') || '') : ''; }",
+                cand,
+            )
+            if "glabel" not in on_top and "gnode" not in on_top and "circle" not in on_top:
+                spot = cand
+                break
+        assert spot is not None, "no point on this line is free of a label"
         page.mouse.click(spot["x"], spot["y"])
         page.wait_for_selector("#panel.open")
         # Which line the pointer lands on is the picker's business; what has
@@ -380,6 +414,78 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         after_colour = page.evaluate("() => window.__gym.nodeColour('unsafe')")
         assert after_colour != before_colour
         assert page.evaluate("() => window.__gym.nodes") == node_count
+
+        # island hulls: one soft shape per community, each carrying its name.
+        # Colour goes back to community first -- the Domain toggle above left
+        # it on, and the hulls are the community's own colour.
+        if "domain" in page.inner_text("#btn-colour").lower():
+            page.click("#btn-colour")
+            page.wait_for_timeout(120)
+        assert "community" in page.inner_text("#btn-colour").lower()
+        page.keyboard.press("Escape")
+        page.evaluate("() => window.__gym.fit()")
+        page.wait_for_timeout(250)
+        hulls = page.eval_on_selector_all("#ghulls .ghull", "els => els.length")
+        names = page.eval_on_selector_all(
+            "#ghullnames .ghullname",
+            "els => els.filter(e => e.style.display === 'block').map(e => e.textContent)",
+        )
+        assert hulls >= 10, hulls
+        assert len(names) >= 8, names
+        assert any("unsafe" in n for n in names), names
+        print("hulls:", hulls, "named on screen:", len(names))
+        page.evaluate("() => window.__gym.click('unsafe')")
+        page.wait_for_timeout(200)
+        page.evaluate("() => window.__gym.zoom(2.2)")
+        page.wait_for_timeout(250)
+        page.screenshot(path=str(SHOTS / "map-island-hull.png"))
+
+        # the legend folds to a strip and the fit takes the width back
+        wide_hud = page.evaluate("() => document.getElementById('graph-hud').offsetWidth")
+        page.eval_on_selector("#glegend .hd", "el => el.click()")
+        page.wait_for_timeout(300)
+        folded_hud = page.evaluate("() => document.getElementById('graph-hud').offsetWidth")
+        assert folded_hud < wide_hud, (folded_hud, wide_hud)
+        assert page.eval_on_selector_all("#glegend .row", "els => els.length") == 0
+        # nothing is drawn under the legend, folded or not
+        def under_legend() -> list:
+            return page.evaluate("""() => {
+              const hud = document.getElementById('graph-hud').getBoundingClientRect();
+              const bad = [];
+              document.querySelectorAll('#glabels .glabel, #ghullnames .ghullname').forEach(e => {
+                if (e.style.display !== 'block') return;
+                const r = e.getBoundingClientRect();
+                if (r.right > hud.left && r.left < hud.right &&
+                    r.bottom > hud.top && r.top < hud.bottom) bad.push(e.textContent);
+              });
+              return bad;
+            }""")
+        assert under_legend() == [], under_legend()
+        page.eval_on_selector("#glegend .hd", "el => el.click()")
+        page.wait_for_timeout(300)
+        assert page.eval_on_selector_all("#glegend .row", "els => els.length") > 0
+        assert under_legend() == [], under_legend()
+
+        # keyboard: "/" reaches the search box, arrows walk the neighbours,
+        # Enter opens the one under the cursor, Escape lets the box go
+        page.keyboard.press("Escape")
+        page.evaluate("() => window.__gym.fit()")
+        page.keyboard.press("/")
+        assert page.evaluate("() => document.activeElement.id") == "gsearch"
+        page.keyboard.press("Escape")
+        assert page.evaluate("() => document.activeElement.id") != "gsearch"
+        page.evaluate("() => window.__gym.click('unsafe')")
+        page.wait_for_selector("#panel.open")
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("ArrowDown")
+        cursor = page.eval_on_selector_all(
+            "#panel-body .gchip.kbd", "els => els.map(e => e.textContent)"
+        )
+        assert len(cursor) == 1, cursor
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => window.__gym.pinned()") != "unsafe"
+        print("keyboard walk:", cursor[0], "->", page.inner_text("#panel-body h2"))
 
         assert errors == [], errors
         browser.close()
