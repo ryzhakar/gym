@@ -27,6 +27,21 @@ def last_probe_by_unit(rows: list[dict[str, str]], which: str) -> dict[str, dict
     return last
 
 
+def other_probes_by_unit(rows: list[dict[str, str]]) -> dict[str, dict[str, dict[str, str]]]:
+    """Every unit's last `probe-item` row for each side beyond `probe-a`/`probe-b` — a unit
+    carrying a third probe side (`probe-c`, a repeat of the unit; team lead ruling, 2026-09-30) or
+    any later one of the same shape — keyed by that side's own literal name."""
+    last: dict[str, dict[str, dict[str, str]]] = {}
+    for row in rows:
+        if row["event_kind"] != "probe-item":
+            continue
+        side = row.get("which")
+        if side in ("probe-a", "probe-b"):
+            continue
+        last.setdefault(row["unit"], {})[side] = row
+    return last
+
+
 def last_confidence_by_unit(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     last: dict[str, dict[str, str]] = {}
     for row in rows:
@@ -57,8 +72,9 @@ def build_status(subject_dir: Path, today: "date | None" = None) -> dict:
     rows = all_events(subject_dir)
     return {
         "last_attempt": last_attempt_by_unit(rows),
-        "last_probe_immediate": last_probe_by_unit(rows, "immediate"),
-        "last_probe_delayed": last_probe_by_unit(rows, "delayed"),
+        "last_probe_immediate": last_probe_by_unit(rows, "probe-a"),
+        "last_probe_delayed": last_probe_by_unit(rows, "probe-b"),
+        "other_probes": other_probes_by_unit(rows),
         "last_confidence": last_confidence_by_unit(rows),
         "due_queue": due_queue_rows(rows, today),
         "tail": [f"{row['session']}: {row['raw']}" for row in rows][-TAIL_LINES:],
@@ -68,7 +84,11 @@ def build_status(subject_dir: Path, today: "date | None" = None) -> dict:
 def format_status(status: dict) -> str:
     lines: list[str] = []
     units = sorted(
-        set(status["last_attempt"]) | set(status["last_probe_immediate"]) | set(status["last_probe_delayed"]) | set(status["last_confidence"])
+        set(status["last_attempt"])
+        | set(status["last_probe_immediate"])
+        | set(status["last_probe_delayed"])
+        | set(status["other_probes"])
+        | set(status["last_confidence"])
     )
     lines.append("## Units")
     if not units:
@@ -77,6 +97,7 @@ def format_status(status: dict) -> str:
         attempt = status["last_attempt"].get(unit)
         immediate = status["last_probe_immediate"].get(unit)
         delayed = status["last_probe_delayed"].get(unit)
+        other = status["other_probes"].get(unit, {})
         confidence = status["last_confidence"].get(unit)
         lines.append(f"- {unit}")
         lines.append(f"  last attempt: {attempt['result'] if attempt else 'none'}")
@@ -87,6 +108,9 @@ def format_status(status: dict) -> str:
         lines.append(
             "  last delayed probe: " + (f"{delayed['result']} ({delayed['timestamp'][:10]})" if delayed else "none")
         )
+        for side in sorted(other):
+            row = other[side]
+            lines.append(f"  other probe {side}: {row['result']} ({row['timestamp'][:10]})")
         lines.append(f"  last confidence: {confidence['value'] if confidence else 'none'}")
     lines.append("")
     lines.append("## Due queue")

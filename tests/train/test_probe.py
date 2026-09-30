@@ -99,6 +99,31 @@ def test_probe_dir_refuses_a_key_target(tmp_path: Path, monkeypatch: pytest.Monk
         probe.probe_dir(unit_dir, "immediate")
 
 
+def test_resolve_side_maps_immediate_and_delayed_to_probe_a_and_probe_b() -> None:
+    assert probe.resolve_side("immediate") == "probe-a"
+    assert probe.resolve_side("delayed") == "probe-b"
+
+
+def test_resolve_side_passes_a_literal_probe_side_name_through() -> None:
+    assert probe.resolve_side("probe-c") == "probe-c"
+
+
+def test_resolve_side_refuses_anything_else() -> None:
+    with pytest.raises(SystemExit, match="not 'immediate', 'delayed', or a literal"):
+        probe.resolve_side("tomorrow")
+
+
+def test_probe_dir_accepts_a_literal_third_side(tmp_path: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1", which_dirs=("probe-a", "probe-b", "probe-c"))
+    assert probe.probe_dir(unit_dir, "probe-c") == unit_dir / "probe-c"
+
+
+def test_probe_dir_refuses_a_side_with_no_directory_under_the_unit(tmp_path: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")  # only probe-a/probe-b exist
+    with pytest.raises(SystemExit, match=r"no such probe directory: .*probe-c"):
+        probe.probe_dir(unit_dir, "probe-c")
+
+
 def test_list_problem_dirs_finds_every_crate_sorted(tmp_path: Path) -> None:
     unit_dir = make_unit_dir(tmp_path, "unit-1")
     problems = probe.list_problem_dirs(unit_dir / "probe-a")
@@ -206,8 +231,19 @@ def test_run_stage_logs_a_probe_start_event_and_stages_every_problem(tmp_path: P
     logged = read_events(subject_dir / "sessions" / "sess-1" / "events.md")
     starts = [row for row in logged if row["event_kind"] == "probe-start"]
     assert len(starts) == 1
-    assert starts[0]["unit"] == "unit-1" and starts[0]["which"] == "immediate"
+    assert starts[0]["unit"] == "unit-1" and starts[0]["which"] == "probe-a"
     assert starts[0]["problems"] == "p1,p2"
+
+
+def test_run_stage_stages_a_literal_third_side_and_logs_its_own_literal_name(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1", which_dirs=("probe-a", "probe-b", "probe-c"))
+
+    result = probe.run_stage(subject_dir, unit_dir, "probe-c", "sess-1")
+
+    assert result["problem_names"] == ["p1", "p2"]
+    logged = read_events(subject_dir / "sessions" / "sess-1" / "events.md")
+    starts = [row for row in logged if row["event_kind"] == "probe-start"]
+    assert starts[0]["which"] == "probe-c"
 
 
 def test_run_stage_prints_the_staged_paths_not_the_item_text(tmp_path: Path, subject_dir: Path, capsys: pytest.CaptureFixture) -> None:
@@ -229,7 +265,7 @@ def test_latest_probe_start_returns_the_most_recent_matching_event(tmp_path: Pat
 
     row = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
 
-    assert row is not None and row["which"] == "immediate"
+    assert row is not None and row["which"] == "probe-a"
 
 
 def test_run_grade_refuses_without_a_matching_probe_start_event(tmp_path: Path, subject_dir: Path) -> None:
@@ -255,7 +291,28 @@ def test_run_grade_logs_one_probe_item_event_per_problem_even_on_a_compile_failu
     logged = read_events(subject_dir / "sessions" / "sess-1" / "events.md")
     probe_events = [row for row in logged if row["event_kind"] == "probe-item"]
     assert len(probe_events) == 2
-    assert all(row["unit"] == "unit-1" and row["which"] == "immediate" for row in probe_events)
+    assert all(row["unit"] == "unit-1" and row["which"] == "probe-a" for row in probe_events)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_stage_then_grade_round_trips_on_a_literal_third_side(tmp_path: Path, subject_dir: Path) -> None:
+    """A unit's repeat side, `probe-c` (owner ruling, 2026-09-30): stage and grade both take it as
+    a literal side name, unrelated to `immediate`/`delayed`, and every event it logs carries
+    `which=probe-c`, never an alias."""
+    unit_dir = make_unit_dir(tmp_path, "unit-1", which_dirs=("probe-a", "probe-b", "probe-c"))
+
+    probe.run_stage(subject_dir, unit_dir, "probe-c", "sess-1")
+    rows = probe.run_grade(subject_dir, unit_dir, "probe-c", "sess-1")
+
+    assert len(rows) == 2
+    assert all(row["which"] == "probe-c" for row in rows)
+    assert {row["result"] for row in rows} == {"pass"}
+
+
+def test_run_grade_refuses_a_literal_side_with_no_matching_probe_start(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1", which_dirs=("probe-a", "probe-b", "probe-c"))
+    with pytest.raises(SystemExit, match="no probe-start event for unit 'unit-1', which 'probe-c'"):
+        probe.run_grade(subject_dir, unit_dir, "probe-c", "sess-1")
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")

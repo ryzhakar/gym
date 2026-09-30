@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from gym.train.events import append_event
-from gym.train.status import build_status, due_queue_rows, format_status
+from gym.train.status import build_status, due_queue_rows, format_status, other_probes_by_unit
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def test_build_status_reads_last_attempt_probe_and_confidence(subject_dir: Path)
     append_event(subject_dir, SESSION, "trainer", "attempt", {"unit": "u1", "item": "u1-attempt", "result": "pass", "minutes": "2"})
     append_event(
         subject_dir, SESSION, "tool:probe", "probe-item",
-        {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "4"},
+        {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "4"},
     )
     append_event(subject_dir, SESSION, "trainer", "confidence", {"unit": "u1", "item": "u1-probe-a-p1", "value": "3"})
 
@@ -76,3 +76,35 @@ def test_format_status_prints_units_due_queue_and_tail(subject_dir: Path) -> Non
     assert "## Units" in text and "- u1" in text
     assert "## Due queue" in text and "next_unit unit=u1 due=2020-01-01" in text
     assert "## Tail (last 20 events)" in text
+
+
+def test_other_probes_by_unit_ignores_probe_a_and_probe_b_keeping_only_further_sides() -> None:
+    rows = [
+        {"event_kind": "probe-item", "unit": "u1", "which": "probe-a", "result": "pass"},
+        {"event_kind": "probe-item", "unit": "u1", "which": "probe-b", "result": "fail"},
+        {"event_kind": "probe-item", "unit": "u1", "which": "probe-c", "result": "pass"},
+    ]
+    other = other_probes_by_unit(rows)
+    assert set(other["u1"]) == {"probe-c"}
+    assert other["u1"]["probe-c"]["result"] == "pass"
+
+
+def test_other_probes_by_unit_keeps_only_the_latest_row_per_side() -> None:
+    rows = [
+        {"event_kind": "probe-item", "unit": "u1", "which": "probe-c", "result": "fail"},
+        {"event_kind": "probe-item", "unit": "u1", "which": "probe-c", "result": "pass"},
+    ]
+    assert other_probes_by_unit(rows)["u1"]["probe-c"]["result"] == "pass"
+
+
+def test_build_status_and_format_status_surface_a_third_probe_side(subject_dir: Path) -> None:
+    append_event(
+        subject_dir, SESSION, "tool:probe", "probe-item",
+        {"unit": "u1", "which": "probe-c", "problem": "p1", "result": "pass", "minutes": "4"},
+    )
+
+    status = build_status(subject_dir)
+    text = format_status(status)
+
+    assert status["other_probes"]["u1"]["probe-c"]["result"] == "pass"
+    assert "other probe probe-c: pass" in text

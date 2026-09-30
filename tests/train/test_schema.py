@@ -154,14 +154,14 @@ def test_request_kind_itself_still_requires_its_own_request_field() -> None:
 
 
 def test_probe_item_accepts_an_optional_fraction_field_in_0_to_1() -> None:
-    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    required = {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"}
     assert validate_fields("probe-item", {**required, "fraction": "0.6667"}) is None
     assert validate_fields("probe-item", {**required, "fraction": "0"}) is None
     assert validate_fields("probe-item", {**required, "fraction": "1"}) is None
 
 
 def test_probe_item_fraction_outside_0_to_1_is_refused() -> None:
-    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    required = {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"}
     error = validate_fields("probe-item", {**required, "fraction": "1.5"})
     assert error is not None and "outside [0.0, 1.0]" in error
     error = validate_fields("probe-item", {**required, "fraction": "-0.1"})
@@ -171,13 +171,13 @@ def test_probe_item_fraction_outside_0_to_1_is_refused() -> None:
 def test_probe_item_accepts_an_optional_over_cap_field() -> None:
     """Team lead ruling (2026-09-30): the per-probe cap `gym train probe grade` dropped along with
     the interactive wait is restored as data on `probe-item` — recorded, never enforced."""
-    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    required = {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"}
     assert validate_fields("probe-item", {**required, "over_cap": "yes"}) is None
     assert validate_fields("probe-item", {**required, "over_cap": "no"}) is None
 
 
 def test_probe_item_over_cap_must_be_yes_or_no() -> None:
-    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    required = {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"}
     error = validate_fields("probe-item", {**required, "over_cap": "maybe"})
     assert error is not None and "not one of" in error
 
@@ -191,13 +191,13 @@ def test_probe_item_accepts_an_optional_total_minutes_field() -> None:
     """Team lead ruling (2026-09-30): once `minutes` became per-problem (mtime-based), `over_cap`
     needed a separate shared quantity to judge against — `total_minutes`, grade time minus
     `probe-start` time, the same on every problem in one `grade` call."""
-    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    required = {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"}
     assert validate_fields("probe-item", {**required, "total_minutes": "5.32"}) is None
     assert validate_fields("probe-item", {**required, "total_minutes": "0"}) is None
 
 
 def test_probe_item_total_minutes_below_0_is_refused() -> None:
-    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    required = {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"}
     error = validate_fields("probe-item", {**required, "total_minutes": "-1"})
     assert error is not None and "below 0" in error
 
@@ -218,7 +218,7 @@ def test_probe_item_refuses_the_old_ad_hoc_continuous_field() -> None:
     """The exact bug reported: `gym train log ... probe-item ... continuous=0.5` used to be
     accepted, `continuous` never having been declared anywhere in this schema (only `fraction`
     is `probe-item`'s own optional field, since the second-pass rename)."""
-    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    required = {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"}
     error = validate_fields("probe-item", {**required, "continuous": "0.5"})
     assert error is not None and "unknown field(s)" in error and "continuous" in error
 
@@ -240,3 +240,31 @@ def test_close_probe_minutes_below_0_is_refused() -> None:
 def test_close_probe_minutes_is_not_recognized_on_an_unrelated_kind() -> None:
     error = validate_fields("attempt", {"unit": "u1", "item": "x", "result": "pass", "minutes": "5", "probe_minutes": "8"})
     assert error is not None and "unknown field(s)" in error and "probe_minutes" in error
+
+
+def test_probe_start_which_accepts_any_literal_probe_side_name() -> None:
+    for side in ("probe-a", "probe-b", "probe-c", "probe-z"):
+        fields = {"unit": "u1", "which": side, "problems": "p1,p2"}
+        assert validate_fields("probe-start", fields) is None
+
+
+def test_probe_item_which_accepts_any_literal_probe_side_name() -> None:
+    for side in ("probe-a", "probe-b", "probe-c"):
+        fields = {"unit": "u1", "which": side, "problem": "p1", "result": "pass", "minutes": "5"}
+        assert validate_fields("probe-item", fields) is None
+
+
+def test_probe_item_which_refuses_the_old_immediate_delayed_aliases() -> None:
+    """Team lead ruling (2026-09-30): a stored event's `which` is always the literal, resolved
+    side name (`gym.train.probe.resolve_side`) — `immediate`/`delayed` are CLI-facing aliases
+    only, never a value an event line itself carries."""
+    fields = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    error = validate_fields("probe-item", fields)
+    assert error is not None and "which" in error
+
+
+def test_probe_item_which_refuses_a_shape_that_is_not_a_single_letter_side() -> None:
+    for bad in ("probe-ab", "probe-1", "probe-", "probe"):
+        fields = {"unit": "u1", "which": bad, "problem": "p1", "result": "pass", "minutes": "5"}
+        error = validate_fields("probe-item", fields)
+        assert error is not None and "which" in error

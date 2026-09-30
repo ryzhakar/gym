@@ -103,6 +103,19 @@ def csv_list(value: str) -> "str | None":
     return None
 
 
+def matches(pattern: str) -> Validator:
+    """A validator for a value that must fully match `pattern` — `probe-start`/`probe-item`'s own
+    `which` field, `probe-[a-z]` (team lead ruling, 2026-09-30: a unit may carry a third probe
+    side, `probe-c`, for a repeat of the unit, so `which` is no longer the closed pair
+    `immediate`/`delayed`; every event logs the literal, resolved side name, `gym.train.probe.resolve_side`)."""
+    compiled = re.compile(pattern)
+
+    def check(value: str) -> "str | None":
+        return None if compiled.fullmatch(value) else f"does not match {pattern!r}"
+
+    return check
+
+
 # Every kind's required fields, in the order the task prompt gives them. A kind not listed here is
 # unknown. `note` never appears as a required field except for `ladder-gap`, the one kind the
 # trainer's own procedure (gym-trainer.md's <respond-to-a-request>) requires a note on.
@@ -180,12 +193,12 @@ KINDS: dict[str, dict[str, Validator]] = {
     # `grade` measures elapsed minutes from, and `problems` is the ordered list `grade` re-grades.
     "probe-start": {
         "unit": nonempty,
-        "which": enum("immediate", "delayed"),
+        "which": matches(r"probe-[a-z]"),
         "problems": csv_list,
     },
     "probe-item": {
         "unit": nonempty,
-        "which": enum("immediate", "delayed"),
+        "which": matches(r"probe-[a-z]"),
         "problem": nonempty,
         "result": enum("pass", "fail"),
         "minutes": float_at_least(0),

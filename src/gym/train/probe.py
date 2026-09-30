@@ -18,6 +18,12 @@ copied; a build failure grades as a full miss, never a script abort; the session
 before it becomes a path component (`cargo test`'s `$DYLD_FALLBACK_LIBRARY_PATH` breaks on a
 literal `:` on macOS — moot in practice now that `gym train open` only ever produces a hyphen-shaped
 id, but kept as a defensive second layer).
+
+Team lead ruling (2026-09-30): a unit may carry a third probe side, `probe-c`, for a repeat of the
+unit — and any further side of the same shape. `which` still accepts `immediate`/`delayed` as
+aliases for `probe-a`/`probe-b`, or a literal side name matching `probe-[a-z]` (`resolve_side`);
+every event this module logs carries that resolved, literal side name in its own `which` field, so
+a stored event's `which` is always one spelling, never an alias (schema widened to match).
 """
 from __future__ import annotations
 
@@ -33,6 +39,21 @@ from gym.train.schema import TIMESTAMP_FORMAT
 
 ISOMORPH_OF = {"immediate": "probe-a", "delayed": "probe-b"}
 
+# A literal probe-side directory name: `probe-a`, `probe-b`, `probe-c`, ... — matches the schema's
+# own `which` pattern for `probe-start`/`probe-item` (`gym.train.schema.KINDS`).
+SIDE_PATTERN = re.compile(r"probe-[a-z]")
+
+
+def resolve_side(which: str) -> str:
+    """The canonical, literal probe-side name for `which`: `immediate` and `delayed` still mean
+    `probe-a` and `probe-b`; anything else must already be a literal `probe-[a-z]` name (a unit's
+    repeat side, `probe-c`, or any later one of the same shape). Refuses otherwise."""
+    if which in ISOMORPH_OF:
+        return ISOMORPH_OF[which]
+    if SIDE_PATTERN.fullmatch(which):
+        return which
+    sys.exit(f"refused, not 'immediate', 'delayed', or a literal 'probe-[a-z]' side name: {which!r}")
+
 
 def assert_no_key(path: Path) -> None:
     """The presentation-side guard: never used by grading, which reads `key/` by design."""
@@ -41,7 +62,7 @@ def assert_no_key(path: Path) -> None:
 
 
 def probe_dir(unit_dir: Path, which: str) -> Path:
-    target = unit_dir / ISOMORPH_OF[which]
+    target = unit_dir / resolve_side(which)
     assert_no_key(target)
     if not target.is_dir():
         sys.exit(f"refused, no such probe directory: {target}")
@@ -113,7 +134,7 @@ def stage_item(source_dir: Path, work_root: Path, session_id: str, unit: str) ->
 
 
 def key_dir_for(unit_dir: Path, which: str, problem_name: str) -> Path:
-    return unit_dir / "key" / ISOMORPH_OF[which] / problem_name
+    return unit_dir / "key" / resolve_side(which) / problem_name
 
 
 def heldout_test_files(key_problem_dir: Path, problem_dir: Path) -> list[Path]:
@@ -144,16 +165,19 @@ def grade_item(problem_dir: Path, key_problem_dir: Path) -> tuple[bool, float]:
 def run_stage(subject_dir: Path, unit_dir: Path, which: str, session_id: str) -> dict:
     """Copy every problem crate for `which` into its work path and log one `probe-start` event
     naming them, in staged order. Returns `{'line', 'problem_names', 'staged'}`; prints each
-    staged path (never the item text — presentation is no longer this command's job)."""
+    staged path (never the item text — presentation is no longer this command's job). The event's
+    own `which` is always the resolved, literal side name (`resolve_side`), never `immediate` or
+    `delayed`."""
     unit = unit_dir.name
     work_root = subject_dir / "work"
+    side = resolve_side(which)
     directory = probe_dir(unit_dir, which)
     problems = list_problem_dirs(directory)
     staged = [stage_item(problem, work_root, session_id, unit) for problem in problems]
     problem_names = [problem.name for problem in problems]
     line = append_event(
         subject_dir, session_id, "tool:probe", "probe-start",
-        {"unit": unit, "which": which, "problems": ",".join(problem_names)},
+        {"unit": unit, "which": side, "problems": ",".join(problem_names)},
     )
     for work_dir in staged:
         print(work_dir)
@@ -161,9 +185,11 @@ def run_stage(subject_dir: Path, unit_dir: Path, which: str, session_id: str) ->
 
 
 def latest_probe_start(subject_dir: Path, session_id: str, unit: str, which: str) -> "dict[str, str] | None":
-    """The most recent `probe-start` event for `unit`/`which` in this session, or `None`."""
+    """The most recent `probe-start` event for `unit`/`which` (an alias or a literal side name,
+    resolved the same way `run_stage` resolved it before logging) in this session, or `None`."""
+    side = resolve_side(which)
     rows = read_events(events_path(subject_dir, session_id))
-    matches = [row for row in rows if row["event_kind"] == "probe-start" and row["unit"] == unit and row["which"] == which]
+    matches = [row for row in rows if row["event_kind"] == "probe-start" and row["unit"] == unit and row["which"] == side]
     return matches[-1] if matches else None
 
 
@@ -220,9 +246,10 @@ def run_grade(
     `over_cap` (`yes`/`no`, still optional, recorded only, never enforced or refused) is judged
     against `total_minutes`, not the new per-problem `minutes`."""
     unit = unit_dir.name
+    side = resolve_side(which)
     start_row = latest_probe_start(subject_dir, session_id, unit, which)
     if start_row is None:
-        sys.exit(f"refused, no probe-start event for unit {unit!r}, which {which!r}, in session {session_id}")
+        sys.exit(f"refused, no probe-start event for unit {unit!r}, which {side!r}, in session {session_id}")
     started = datetime.strptime(start_row["timestamp"], TIMESTAMP_FORMAT)
     total_minutes = max(0.0, ((now or datetime.now()) - started).total_seconds() / 60)
     over_cap = "yes" if total_minutes > cap_minutes else "no"
@@ -234,7 +261,7 @@ def run_grade(
         passed, fraction = grade_item(work_dir, key_dir_for(unit_dir, which, problem_name))
         fields = {
             "unit": unit,
-            "which": which,
+            "which": side,
             "problem": problem_name,
             "result": "pass" if passed else "fail",
             "minutes": f"{item_minutes:.2f}",

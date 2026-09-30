@@ -22,8 +22,11 @@ app.add_typer(probe_app, name="probe")
 
 
 def _validate_which(which: str) -> None:
-    if which not in ("immediate", "delayed"):
-        raise typer.BadParameter("must be 'immediate' or 'delayed'", param_hint="which")
+    if which in ("immediate", "delayed") or probe_module.SIDE_PATTERN.fullmatch(which):
+        return
+    raise typer.BadParameter(
+        "must be 'immediate', 'delayed', or a literal 'probe-[a-z]' side name", param_hint="which"
+    )
 
 
 @app.command("open")
@@ -52,7 +55,7 @@ def log_command(
 @probe_app.command("stage")
 def probe_stage_command(
     unit_dir: Path = typer.Argument(...),
-    which: str = typer.Argument(..., help="immediate|delayed"),
+    which: str = typer.Argument(..., help="immediate|delayed|probe-<letter>"),
     session: str = typer.Option(..., "--session"),
 ) -> None:
     """Copy the unit's probe problems to the work path and log a probe-start event; prints the staged paths."""
@@ -64,7 +67,7 @@ def probe_stage_command(
 @probe_app.command("grade")
 def probe_grade_command(
     unit_dir: Path = typer.Argument(...),
-    which: str = typer.Argument(..., help="immediate|delayed"),
+    which: str = typer.Argument(..., help="immediate|delayed|probe-<letter>"),
     session: str = typer.Option(..., "--session"),
     cap_minutes: float = typer.Option(probe_module.CAP_MINUTES_DEFAULT, "--cap-minutes"),
 ) -> None:

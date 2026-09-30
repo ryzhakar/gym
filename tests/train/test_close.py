@@ -54,7 +54,7 @@ def test_close_session_appends_close_block_and_close_event(opened_session: tuple
 
 def test_close_session_summarizes_probe_and_queue_events(opened_session: tuple[Path, str]) -> None:
     subject_dir, session_id = opened_session
-    append_event(subject_dir, session_id, "tool:probe", "probe-item", {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"})
+    append_event(subject_dir, session_id, "tool:probe", "probe-item", {"unit": "u1", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "5"})
     append_event(subject_dir, session_id, "manager", "queue", {"unit": "u1", "kind": "delayed_probe", "due": "2026-10-07"})
 
     close_session(subject_dir, session_id, minutes=30, units="u1", interruptions=1, assistant_closed="no", next_step="revisit u1")

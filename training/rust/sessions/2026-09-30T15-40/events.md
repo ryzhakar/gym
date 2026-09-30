@@ -39,10 +39,10 @@
 2026-09-30T18:14 | trainer | confidence | unit=u01-own-move-borrow item=u01-own-move-borrow-probe-a-p1-board value=4
 2026-09-30T18:14 | trainer | confidence | unit=u01-own-move-borrow item=u01-own-move-borrow-probe-a-p2-summary value=4
 2026-09-30T18:14 | trainer | confidence | unit=u01-own-move-borrow item=u01-own-move-borrow-probe-a-p3-shift value=4
-2026-09-30T18:23 | tool:probe | probe-item | unit=u01-own-move-borrow which=immediate problem=probe-a-p1-board result=pass minutes=1.50 fraction=1.0000
+2026-09-30T18:23 | tool:probe | probe-item | unit=u01-own-move-borrow which=probe-a problem=probe-a-p1-board result=pass minutes=1.50 fraction=1.0000
 2026-09-30T18:24 | trainer | feedback | unit=u01-own-move-borrow item=probe-a
-2026-09-30T18:24 | tool:probe | probe-item | unit=u01-own-move-borrow which=immediate problem=probe-a-p2-summary result=pass minutes=1.33 fraction=1.0000
-2026-09-30T18:24 | tool:probe | probe-item | unit=u01-own-move-borrow which=immediate problem=probe-a-p3-shift result=pass minutes=2.38 fraction=1.0000
+2026-09-30T18:24 | tool:probe | probe-item | unit=u01-own-move-borrow which=probe-a problem=probe-a-p2-summary result=pass minutes=1.33 fraction=1.0000
+2026-09-30T18:24 | tool:probe | probe-item | unit=u01-own-move-borrow which=probe-a problem=probe-a-p3-shift result=pass minutes=2.38 fraction=1.0000
 2026-09-30T18:24 | manager | queue | unit=u01-own-move-borrow kind=delayed_probe due=2026-10-07
 2026-09-30T18:24 | manager | queue | unit=u02-enums-match kind=next_unit due=2026-10-01
 2026-09-30T18:25 | manager | close | minutes=168 units=u01-own-move-borrow interruptions=2 assistant_closed=yes probe_minutes=5.45
