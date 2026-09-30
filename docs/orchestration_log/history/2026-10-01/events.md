@@ -11,3 +11,7 @@
 2026-10-01T00:30 | owner | receipt | in conversation: the line Fourth review running was a message; violation
 2026-10-01T00:30 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T00:31 | agent:graph-map | receipt | revision 7 proper: tests lock spoke colour, width, opacity, the twelve-neighbour cap, name strips covering their text; found island names measured by the plain-label ruler, given their own; eleven of thirteen names shown; 94 map tests; unverified
+2026-10-01T00:33 | owner | receipt | in conversation: the line Review 4 pending was a message; violation
+2026-10-01T00:33 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T00:33 | agent:map-review-4 | receipt | map-review-4.md: a to e all PASS, 22 fresh screenshots, zero console errors; the clip retested on three Concepts, gone; worst remaining: island names at the dim upper fringe, cosmetic; unverified
+2026-10-01T00:33 | self | decision | decided: the quality push reaches the owner now: graph revisions 4 to 7, Matrix v2, CLI ergonomics, trainer v4, baseline commands, map data gaps; proud enough to deliver; the name-position note stays open as cosmetic
