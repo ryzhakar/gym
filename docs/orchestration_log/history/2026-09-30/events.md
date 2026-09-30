@@ -114,3 +114,8 @@
 2026-09-30T17:25 | agent:gym-trainer | receipt | u01 attempt clock started 17:25, cap 17:35
 2026-09-30T17:36 | agent:gym-trainer | receipt | u01 attempt passed 6 of 6 inside the cap at 17:35; feedback and the unit's instruction given; reuse-1 presented at 17:36
 2026-09-30T17:56 | agent:gym-trainer | receipt | u01 worked example walked through by 17:49; reuse-1 stands presented
+2026-09-30T18:01 | agent:gym-trainer | receipt | reuse-1 started 18:00, no cap
+2026-09-30T18:06 | agent:gym-trainer | receipt | reuse-1 passed 2 of 2 at 18:06; reuse-2 presented
+2026-09-30T18:11 | agent:gym-trainer | receipt | reuse-2 passed 1 of 1 in 2m41s at 18:11; practice done; immediate probe next, confidence ratings requested
+2026-09-30T18:14 | agent:gym-trainer | receipt | confidence before an unseen probe collapses to one rating per unit, logged once per item; a design point for the trainer definition and the record schema
+2026-09-30T18:14 | agent:gym-trainer | receipt | confidence 4 logged; immediate probe procedure issued at 18:14: probe.py on u01, 10 minutes, learner alone
