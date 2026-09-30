@@ -257,12 +257,17 @@ GRAPH_CSS = r"""
   #gscene .gedge { stroke: #6f7b8c; fill: none; }
   /* A crossing between two communities is the thing a reader is asked to
      name, so it is drawn brighter than a line inside one. */
-  #gscene .gedge.br { stroke: #cfe0f2; }
+  #gscene .gedge.br { stroke: #9fb6cf; fill: none; }
   /* The opening frame draws the backbone. Everything else is in the page and
      comes back on a hover, a pin, or in a local view. */
   #gscene .gedge.nb { display: none; }
   #gscene.showall .gedge.nb { display: block; }
   #gscene .gedge.nb.hl { display: block; }
+  #ghulls .ghull { filter: url(#hullsoft); opacity: .1; pointer-events: none; }
+  #ghullnames { pointer-events: none; }
+  #ghullnames .ghullname { font-size: 10.5px; font-variant: small-caps;
+    letter-spacing: .1em; opacity: .75; paint-order: stroke;
+    stroke: #0e1116; stroke-width: 3px; stroke-linejoin: round; }
   #gscene .gnode circle { stroke: rgba(10,12,16,.85); stroke-width: 1; }
   #gscene .gnode { cursor: pointer; }
   #glabels { pointer-events: none; }
@@ -287,6 +292,8 @@ GRAPH_CSS = r"""
   #gscene .gedge.off { display: none; }
   #graph-hud { position: absolute; left: 12px; top: 12px; display: flex;
     flex-direction: column; gap: 8px; width: 244px; pointer-events: none; }
+  #graph-hud.folded { width: auto; }
+  #graph-hud.folded #gsearch, #graph-hud.folded #gsuggest { display: none; }
   #graph-hud > * { pointer-events: auto; }
   #gsearch { width: 100%; padding: 6px 9px; border-radius: 5px;
     border: 1px solid #2f3947; background: rgba(16,20,27,.92); color: #e6ebf2;
@@ -305,23 +312,70 @@ GRAPH_CSS = r"""
   #glegend .row .sw { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px;
     margin-top: 3px; }
   #glegend .hd { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
-    color: #6f7b8c; margin-bottom: 4px; }
+    color: #6f7b8c; margin-bottom: 4px; cursor: pointer; white-space: nowrap; }
+  #glegend .hd:hover { color: #cfd6e0; }
+  #graph-hud.folded #glegend .hd { margin-bottom: 0; }
   #gcrumbs { position: absolute; left: 12px; bottom: 10px; right: 400px;
     font-size: 11.5px; color: #93a0b0; }
   #gcrumbs b { color: #e6ebf2; font-weight: 600; }
   #gcrumbs .sep { color: #55606f; margin: 0 5px; }
   #ghint { position: absolute; right: 12px; bottom: 10px; font-size: 11px;
     color: #6f7b8c; }
-  .gchip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
-    border: 1px solid var(--border); margin: 2px 3px 2px 0; cursor: pointer; }
-  .gchip:hover { background: #efece6; }
-  .gchip .w { color: var(--ink-dim); margin-left: 5px; }
-  .qline { font-size: 12.5px; margin: 5px 0; cursor: pointer; color: #1c1b1a;
-    border-left: 2px solid var(--border); padding-left: 8px; }
-  .qline:hover { border-left-color: #1c1b1a; }
-  .claim { font-size: 12px; margin: 5px 0 5px 4px; padding-left: 8px;
-    border-left: 2px solid #e3ded4; }
-  .claim .vn { cursor: pointer; text-decoration: underline dotted; }
+  /* Panel. One spacing grid, 4 / 8 / 12, and one type scale, 12 / 13 / 15 /
+     18. Nothing else is allowed a size of its own. */
+  #panel h2 { font-size: 18px; line-height: 1.25; margin: 0 24px 8px 0; font-weight: 600; }
+  #panel .seclabel { font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink-dim); margin: 20px 0 8px; }
+  .chiprow { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+  .chip { display: inline-block; font-size: 12px; line-height: 1.5; padding: 0 8px;
+    border-radius: 3px; background: #f1eee8; color: #4a453f; white-space: nowrap;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .chip-count { background: #e8eef4; color: #2c4459; }
+  .chip-island { background: #efeaf4; color: #4a3d57; }
+  .chip-domain { background: #e6efe9; color: #2f4d3a; }
+  .chip-value { background: #f5efe2; color: #57472c; }
+  .chip-fact { background: #e4edf3; color: #274456; }
+  .chip-tradeoff { background: #f1ebf7; color: #48385a; }
+  .chip-taste { background: #f8f1e0; color: #5a4a26; }
+  .chip-untagged { background: #eeeced; color: #5a565a; }
+  #panel .tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 0; }
+  #panel .tools button { font-size: 12px; padding: 4px 8px; border-radius: 3px; }
+  .qlist { margin: 0; }
+  .qline { font-size: 13px; line-height: 1.45; margin: 0 0 4px; padding: 4px 0 4px 12px;
+    cursor: pointer; color: var(--ink); border-left: 2px solid var(--border); }
+  .qline:hover, .qline:focus { border-left-color: var(--ink); background: #faf8f4;
+    outline: none; }
+  .qline.kbd { border-left-color: var(--ink); background: #f2efe9; }
+  .qentry { border-left: 2px solid var(--ink); padding: 4px 0 8px 12px; margin: 0 0 12px; }
+  .qtitle { font-size: 15px; line-height: 1.35; font-weight: 600; cursor: pointer; }
+  .qtitle:hover { color: #000; }
+  .pos { margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 4px; }
+  .possum { font-size: 13px; line-height: 1.45; margin: 4px 0 0; }
+  .arg { font-size: 12px; line-height: 1.45; margin: 8px 0 0; padding-left: 8px;
+    border-left: 2px solid #e6e1d8; }
+  .argside { font-weight: 600; margin-right: 4px; }
+  .arg-for .argside { color: #2a7a3f; }
+  .arg-against .argside { color: #a13a2f; }
+  .claims { margin: 4px 0 0; }
+  .claim { font-size: 12px; line-height: 1.5; margin: 8px 0 0; }
+  .claimhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+  .claim .voice { font: inherit; font-weight: 600; padding: 0; border: 0; background: none;
+    color: var(--ink); cursor: pointer; text-decoration: underline dotted; }
+  .claim .voice:hover { color: #000; background: none; }
+  .claimmeta { color: var(--ink-dim); }
+  .claimpara { margin: 4px 0 0; }
+  .quote { margin: 4px 0 0; padding: 4px 0 4px 8px; border-left: 2px solid #e6e1d8;
+    color: #6b6560; font-style: italic; }
+  .srcline { margin: 4px 0 0; }
+  .nblist { display: flex; flex-wrap: wrap; gap: 4px; }
+  .gchip { font: inherit; font-size: 12px; line-height: 1.5; padding: 0 8px;
+    border-radius: 3px; border: 1px solid var(--border); background: #fff;
+    color: var(--ink); cursor: pointer; }
+  .gchip:hover { background: #f1eee8; }
+  .gchip.kbd { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .gchip .w { color: var(--ink-dim); margin-left: 8px; }
+  .gchip.kbd .w { color: #cfcac2; }
 """
 
 
@@ -355,6 +409,7 @@ GRAPH_JS = r"""
   }
 
   var gNodeEl = new Array(GN), gLabelEl = new Array(GN), gEdgeEl = new Array(GE);
+  var commCentre = {};   // community index -> {x, y, r}, set by the two-level layout
   var activeNode = [], activeEdge = [];
   var inActive = new Uint8Array(GN);
   var commOff = {};
@@ -457,9 +512,20 @@ GRAPH_JS = r"""
     }
   }
 
-  function simulate(ids, edgeList, ticks, side, gravity) {
+  // opt: gravity (pull to the origin, flattens structure when strong),
+  // containR (soft disc boundary: a node past it is eased back, never
+  // snapped), hubPull (pull to the origin in proportion to a node's share of
+  // the group's top degree, so the hubs sit in the middle and the graph's own
+  // forces decide everything else).
+  function simulate(ids, edgeList, ticks, side, opt) {
     var n = ids.length;
     if (n < 2) return;
+    opt = opt || {};
+    var grav = opt.gravity === undefined ? 0.006 : opt.gravity;
+    var containR = opt.containR || 0;
+    var hubPull = opt.hubPull || 0;
+    var maxDeg = 1;
+    for (var md = 0; md < n; md++) if (G.deg[ids[md]] > maxDeg) maxDeg = G.deg[ids[md]];
     var k = Math.sqrt(side * side / n), k2 = k * k;
     var dx = new Float64Array(n), dy = new Float64Array(n);
     var slot = {};
@@ -487,25 +553,37 @@ GRAPH_JS = r"""
         dx[sa] -= fx; dy[sa] -= fy;
         dx[sb] += fx; dy[sb] += fy;
       }
-      var g = gravity === undefined ? 0.006 : gravity;
       for (var c = 0; c < n; c++) {
         var id = ids[c];
         var len = Math.sqrt(dx[c] * dx[c] + dy[c] * dy[c]) || 1e-6;
         var cap = Math.min(len, temp);
         gx[id] += dx[c] / len * cap;
         gy[id] += dy[c] / len * cap;
-        gx[id] -= gx[id] * g;
-        gy[id] -= gy[id] * g;
+        if (grav) { gx[id] -= gx[id] * grav; gy[id] -= gy[id] * grav; }
+        if (hubPull) {
+          var hp = hubPull * (G.deg[id] / maxDeg);
+          gx[id] -= gx[id] * hp;
+          gy[id] -= gy[id] * hp;
+        }
+        if (containR) {
+          var rd = Math.sqrt(gx[id] * gx[id] + gy[id] * gy[id]);
+          if (rd > containR) {
+            var back = (rd - containR) * 0.3 / rd;
+            gx[id] -= gx[id] * back;
+            gy[id] -= gy[id] * back;
+          }
+        }
       }
     }
   }
 
-  function runLayout(ids, edgeList, ticks, seed, gravity, sideOverride) {
+  function runLayout(ids, edgeList, ticks, seed, opt) {
     if (!ids.length) return;
     if (ids.length === 1) { gx[ids[0]] = 0; gy[ids[0]] = 0; return; }
-    var side = sideOverride || Math.sqrt(ids.length * 1500) + 90;
+    opt = opt || {};
+    var side = opt.side || Math.sqrt(ids.length * 1500) + 90;
     seedNodes(ids, seed, side);
-    simulate(ids, edgeList, ticks, side, gravity);
+    simulate(ids, edgeList, ticks, side, opt);
     relaxCollisions(ids, 60);
   }
 
@@ -670,26 +748,28 @@ GRAPH_JS = r"""
     }
   }
 
-  // The detached clusters fill concentric rings just outside the body,
-  // stepping out whenever one ring is full, so 125 of them stay a band rather
-  // than one enormous circle.
-  function ringDiscs(units, inner) {
+  // The detached clusters used to ring the body at three times its radius,
+  // which read as decoration rather than data. They are packed into a band
+  // below the body instead: rows of tight blobs, as wide as the body, so
+  // switching them on adds a grey shelf under the map rather than a halo
+  // around it.
+  function bandDiscs(units, minx, maxx, maxy) {
     if (!units.length) return;
-    var radius = inner, ang = 0, maxR = 0, i = 0, guard = 0;
-    while (i < units.length && guard++ < 4000) {
+    var gap = 22;
+    var width = Math.max(maxx - minx, 400);
+    var x = minx, y = maxy + 60, rowH = 0;
+    for (var i = 0; i < units.length; i++) {
       var u = units[i];
-      var step = 2 * Math.atan2(u.r + 12, Math.max(radius + u.r, 1));
-      if (ang > 0 && ang + step > Math.PI * 2) {
-        radius += maxR * 2 + 40;
-        ang = 0; maxR = 0;
-        continue;
+      var d = u.r * 2;
+      if (x > minx && x + d > minx + width) {
+        x = minx;
+        y += rowH + gap;
+        rowH = 0;
       }
-      var mid = ang + step / 2;
-      u.cx = Math.cos(mid) * (radius + u.r);
-      u.cy = Math.sin(mid) * (radius + u.r);
-      ang += step;
-      if (u.r > maxR) maxR = u.r;
-      i++;
+      u.cx = x + u.r;
+      u.cy = y + u.r;
+      x += d + gap;
+      if (d > rowH) rowH = d;
     }
   }
 
@@ -721,63 +801,244 @@ GRAPH_JS = r"""
           // A detached cluster of two dots does not need the spacing a
           // community of 132 needs; at the default side, 125 of them
           // ringed the body at four times its own radius.
-          runLayout(comps[z], edgesWithin(comps[z]), 110, 9001 + z, 0.03,
-                    Math.sqrt(comps[z].length) * 26 + 20);
+          runLayout(comps[z], edgesWithin(comps[z]), 110, 9001 + z, {
+            gravity: 0.06,
+            side: Math.sqrt(comps[z].length) * 15 + 14
+          });
           fringe.push({ ids: comps[z], r: recentre(comps[z]), comm: comm });
         }
       } else {
-        // Strong gravity inside a community: at 0.014 the members smear and
-        // two neighbouring territories interleave at their edges, which is
-        // the failure this layout exists to fix. The cost is real and is
-        // stated in the report: inside one community, position is packing,
-        // not structure. Intra-community structure is read in a local view,
-        // which runs a plain force layout on the neighbourhood.
-        runLayout(members, intra[comm] || [], 300, 1337 + comm, 0.035);
+        // Inside an island, structure rather than packing. Strong gravity
+        // plus the collision pass produced concentric rings -- an
+        // algorithm's signature, not the data's shape. Instead the island
+        // keeps a soft disc boundary, its hubs are drawn to the middle in
+        // proportion to their degree, and everything else is decided by the
+        // Questions that join these Concepts.
+        // The natural spread has to sit inside the boundary, or every
+        // low-degree Concept presses on it and the island grows an arc --
+        // the same signature the concentric rings were. side is set so the
+        // force layout's own radius lands well within containR, which then
+        // only catches outliers.
+        var target = Math.sqrt(members.length) * 24 + 50;
+        runLayout(members, intra[comm] || [], 340, 1337 + comm, {
+          gravity: 0.003,
+          hubPull: 0.05,
+          containR: target,
+          side: target * 1.15
+        });
         core.push({ comm: comm, ids: members, r: recentre(members) });
       }
     }
     packDiscs(core, interW);
-    var R = 0;
+    var bminx = Infinity, bmaxx = -Infinity, bmaxy = -Infinity;
     for (var p = 0; p < core.length; p++) {
-      var d = Math.sqrt(core[p].cx * core[p].cx + core[p].cy * core[p].cy) + core[p].r;
-      if (d > R) R = d;
+      bminx = Math.min(bminx, core[p].cx - core[p].r);
+      bmaxx = Math.max(bmaxx, core[p].cx + core[p].r);
+      bmaxy = Math.max(bmaxy, core[p].cy + core[p].r);
     }
-    ringDiscs(fringe, R * 1.20 + DISC_GAP);
-    for (var u = 0; u < core.length; u++) shift(core[u].ids, core[u].cx, core[u].cy);
+    if (bminx === Infinity) { bminx = -400; bmaxx = 400; bmaxy = 400; }
+    bandDiscs(fringe, bminx, bmaxx, bmaxy);
+    commCentre = {};
+    for (var u = 0; u < core.length; u++) {
+      shift(core[u].ids, core[u].cx, core[u].cy);
+      commCentre[core[u].comm] = { x: core[u].cx, y: core[u].cy, r: core[u].r };
+    }
     for (var v = 0; v < fringe.length; v++) shift(fringe[v].ids, fringe[v].cx, fringe[v].cy);
     relaxCollisions(ids, 40);
+  }
+
+  // --- island hulls -------------------------------------------------------
+  // A soft shape under each island in its own colour. It carries the island's
+  // name, so the legend stops being the only place the colours are explained,
+  // and it gives the eye a boundary the scattered low-degree Concepts do not.
+
+  function convexHull(points) {
+    if (points.length < 3) return points.slice();
+    var pts = points.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    function cross(o, a, b) {
+      return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    }
+    var lower = [];
+    for (var i = 0; i < pts.length; i++) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], pts[i]) <= 0) lower.pop();
+      lower.push(pts[i]);
+    }
+    var upper = [];
+    for (var j = pts.length - 1; j >= 0; j--) {
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pts[j]) <= 0) upper.pop();
+      upper.push(pts[j]);
+    }
+    lower.pop(); upper.pop();
+    return lower.concat(upper);
+  }
+
+  // Catmull-Rom through the expanded hull vertices, closed: the blur alone
+  // leaves polygon corners showing at high zoom.
+  function smoothClosedPath(p) {
+    if (p.length < 3) return "";
+    var d = "M" + p[0][0].toFixed(1) + " " + p[0][1].toFixed(1);
+    for (var i = 0; i < p.length; i++) {
+      var p0 = p[(i - 1 + p.length) % p.length];
+      var p1 = p[i];
+      var p2 = p[(i + 1) % p.length];
+      var p3 = p[(i + 2) % p.length];
+      d += "C" + (p1[0] + (p2[0] - p0[0]) / 6).toFixed(1) + " " +
+                 (p1[1] + (p2[1] - p0[1]) / 6).toFixed(1) + " " +
+                 (p2[0] - (p3[0] - p1[0]) / 6).toFixed(1) + " " +
+                 (p2[1] - (p3[1] - p1[1]) / 6).toFixed(1) + " " +
+                 p2[0].toFixed(1) + " " + p2[1].toFixed(1);
+    }
+    return d + "Z";
+  }
+
+  var hullOf = {};   // community index -> {path, cx, topY, colour}
+
+  function buildHulls() {
+    hullOf = {};
+    if (!gHullLayer) return;
+    gHullLayer.innerHTML = "";
+    if (!Object.keys(commCentre).length) return;   // local views carry no islands
+    var byComm = {};
+    for (var a = 0; a < activeNode.length; a++) {
+      var i = activeNode[a];
+      var c = G.comm[i];
+      if (c === G.islands_comm) continue;
+      (byComm[c] || (byComm[c] = [])).push(i);
+    }
+    var keys = [];
+    for (var k in byComm) if (byComm.hasOwnProperty(k)) keys.push(+k);
+    keys.sort(function (a, b) { return byComm[b].length - byComm[a].length || a - b; });
+    for (var q = 0; q < keys.length; q++) {
+      var comm = keys[q], members = byComm[comm];
+      if (members.length < 3) continue;
+      // The hull is drawn over the island's body, not its stragglers: a
+      // convex hull over every member reaches out to the furthest satellite
+      // and the thirteen shapes then overlap into mud. Members past the 80th
+      // percentile of distance from the island's own centre are left out of
+      // the shape; they are still drawn, still coloured, still theirs.
+      var c0 = commCentre[comm] || { x: 0, y: 0 };
+      var dists = [];
+      for (var m0 = 0; m0 < members.length; m0++) {
+        var ddx = gx[members[m0]] - c0.x, ddy = gy[members[m0]] - c0.y;
+        dists.push(Math.sqrt(ddx * ddx + ddy * ddy));
+      }
+      var cut = dists.slice().sort(function (a, b) { return a - b; })[
+        Math.max(2, Math.floor(dists.length * 0.8) - 1)
+      ];
+      var pts = [];
+      for (var m = 0; m < members.length; m++) {
+        if (dists[m] <= cut) pts.push([gx[members[m]], gy[members[m]]]);
+      }
+      if (pts.length < 3) continue;
+      var hull = convexHull(pts);
+      if (hull.length < 3) continue;
+      var cx = 0, cy = 0;
+      for (var h = 0; h < hull.length; h++) { cx += hull[h][0]; cy += hull[h][1]; }
+      cx /= hull.length; cy /= hull.length;
+      var pad = 30, expanded = [], topY = Infinity;
+      for (var e2 = 0; e2 < hull.length; e2++) {
+        var vx2 = hull[e2][0] - cx, vy2 = hull[e2][1] - cy;
+        var len = Math.sqrt(vx2 * vx2 + vy2 * vy2) || 1;
+        var px = hull[e2][0] + vx2 / len * pad, py = hull[e2][1] + vy2 / len * pad;
+        expanded.push([px, py]);
+        if (py < topY) topY = py;
+      }
+      var path = svgEl("path", {
+        class: "ghull",
+        d: smoothClosedPath(expanded),
+        fill: G.communities[comm].color,
+        "data-comm": comm
+      });
+      gHullLayer.appendChild(path);
+      hullOf[comm] = { cx: cx, topY: topY, color: G.communities[comm].color };
+    }
+  }
+
+  function buildHullNames() {
+    if (!gHullNameLayer) return;
+    gHullNameLayer.innerHTML = "";
+    for (var c in hullOf) {
+      if (!hullOf.hasOwnProperty(c)) continue;
+      var t = svgEl("text", { class: "ghullname", "text-anchor": "middle", "data-comm": c });
+      t.textContent = G.communities[+c].name;
+      t.setAttribute("fill", hullOf[c].color);
+      gHullNameLayer.appendChild(t);
+      hullOf[c].el = t;
+    }
+  }
+
+  function updateHullNames() {
+    var r = gsvg.getBoundingClientRect();
+    var boxes = [];
+    for (var c in hullOf) {
+      if (!hullOf.hasOwnProperty(c)) continue;
+      var h = hullOf[c];
+      if (!h.el) continue;
+      if (commOff[+c]) { h.el.style.display = "none"; continue; }
+      var sx = h.cx * vk + vx, sy = h.topY * vk + vy - 9;
+      if (sy < 12 || sy > r.height - 8) { h.el.style.display = "none"; continue; }
+      // A name never runs off the canvas, under the side panel, or under the
+      // legend, which floats over the left of the map.
+      var half = G.communities[+c].name.length * 3.2;
+      var leftLimit = canvasInsets().left;
+      if (sx + half > r.width - 8) sx = r.width - 8 - half;
+      if (sx - half < leftLimit) sx = leftLimit + half;
+      if (half * 2 > r.width - leftLimit - 8) { h.el.style.display = "none"; continue; }
+      h.el.setAttribute("x", sx.toFixed(1));
+      h.el.setAttribute("y", sy.toFixed(1));
+      h.el.style.display = "block";
+      boxes.push({ x: sx - half, y: sy - 11, w: half * 2, h: 14 });
+    }
+    return boxes;
   }
 
   // --- scene --------------------------------------------------------------
   var gsvg = document.getElementById("graph");
   var gscene = null, gEdgeLayer = null, gNodeLayer = null, gLabelLayer = null;
+  var gInterLayer = null, gHullLayer = null, gHullNameLayer = null;
 
   function buildScene() {
     gsvg.innerHTML = "";
+    var defs = svgEl("defs", {});
+    defs.innerHTML = '<filter id="hullsoft" x="-25%" y="-25%" width="150%" height="150%">' +
+      '<feGaussianBlur stdDeviation="22"/></filter>';
+    gsvg.appendChild(defs);
     gNodeEl = new Array(GN); gLabelEl = new Array(GN); gEdgeEl = new Array(GE);
     hlNodes = []; hlEdges = [];
     // A local view draws every line it holds; the opening frame draws the
     // backbone and keeps the rest one hover away.
     gscene = svgEl("g", { id: "gscene", class: localDepth > 0 ? "showall" : "" });
-    gEdgeLayer = svgEl("g", {});
+    gHullLayer = svgEl("g", { id: "ghulls" });
+    gInterLayer = svgEl("g", { id: "ginter" });
+    gEdgeLayer = svgEl("g", { id: "gintra" });
     gNodeLayer = svgEl("g", {});
+    gscene.appendChild(gHullLayer);
+    gscene.appendChild(gInterLayer);
     gscene.appendChild(gEdgeLayer);
     gscene.appendChild(gNodeLayer);
     gsvg.appendChild(gscene);
+    gHullNameLayer = svgEl("g", { id: "ghullnames" });
+    gsvg.appendChild(gHullNameLayer);
     gLabelLayer = svgEl("g", { id: "glabels" });
     gsvg.appendChild(gLabelLayer);
 
+    // A line inside an island is drawn above, a crossing below and as a
+    // curve: straight crossings cut the canvas into a star and read as noise,
+    // a curve bowed toward the two island centres stays out of the way and
+    // still says which islands it joins.
     for (var a = 0; a < activeEdge.length; a++) {
       var e = activeEdge[a];
       var w = edgeWeight(e);
-      var bridge = G.bridge[e] === 1;
-      var line = svgEl("line", {
-        class: "gedge" + (G.backbone[e] ? "" : " nb") + (bridge ? " br" : ""),
-        "stroke-width": (Math.min(0.32 + w * 0.62, 4) * (bridge ? 1.5 : 1)).toFixed(2),
-        "stroke-opacity": Math.min((bridge ? 0.34 : 0.13) + w * 0.13, 0.85).toFixed(3)
+      var crossing = G.bridge[e] === 1;
+      var el = svgEl(crossing ? "path" : "line", {
+        class: "gedge" + (G.backbone[e] ? "" : " nb") + (crossing ? " br" : ""),
+        "stroke-width": (crossing
+          ? Math.min(0.5 + w * 0.5, 3)
+          : Math.min(0.32 + w * 0.62, 4)).toFixed(2),
+        "stroke-opacity": Math.min((crossing ? 0.10 : 0.13) + w * 0.12, 0.8).toFixed(3)
       });
-      gEdgeEl[e] = line;
-      gEdgeLayer.appendChild(line);
+      gEdgeEl[e] = el;
+      (crossing ? gInterLayer : gEdgeLayer).appendChild(el);
     }
     for (var b = 0; b < activeNode.length; b++) {
       var i = activeNode[b];
@@ -793,16 +1054,52 @@ GRAPH_JS = r"""
       bindNode(g, i);
       bindNode(lbl, i);
     }
+    buildHulls();
+    buildHullNames();
     placeAll();
+  }
+
+  // A crossing is drawn as a quadratic bowed toward the midpoint of the two
+  // island centres. One function returns that control point, so what is drawn
+  // and what a click is tested against can never drift apart.
+  function edgeControl(e) {
+    var ia = G.e_a[e], ib = G.e_b[e];
+    var mx = (gx[ia] + gx[ib]) / 2, my = (gy[ia] + gy[ib]) / 2;
+    var ca = commCentre[G.comm[ia]], cb = commCentre[G.comm[ib]];
+    if (!ca || !cb) return { x: mx, y: my };
+    return {
+      x: mx + (((ca.x + cb.x) / 2) - mx) * 0.55,
+      y: my + (((ca.y + cb.y) / 2) - my) * 0.55
+    };
+  }
+  function edgePointAt(e, t) {
+    var ia = G.e_a[e], ib = G.e_b[e];
+    if (G.bridge[e] !== 1) {
+      return { x: gx[ia] + (gx[ib] - gx[ia]) * t, y: gy[ia] + (gy[ib] - gy[ia]) * t };
+    }
+    var q = edgeControl(e), u = 1 - t;
+    return {
+      x: u * u * gx[ia] + 2 * u * t * q.x + t * t * gx[ib],
+      y: u * u * gy[ia] + 2 * u * t * q.y + t * t * gy[ib]
+    };
   }
 
   function placeAll() {
     for (var a = 0; a < activeEdge.length; a++) {
       var e = activeEdge[a], el = gEdgeEl[e];
-      el.setAttribute("x1", gx[G.e_a[e]].toFixed(1));
-      el.setAttribute("y1", gy[G.e_a[e]].toFixed(1));
-      el.setAttribute("x2", gx[G.e_b[e]].toFixed(1));
-      el.setAttribute("y2", gy[G.e_b[e]].toFixed(1));
+      var ia = G.e_a[e], ib = G.e_b[e];
+      if (el.tagName === "path") {
+        var q = edgeControl(e);
+        el.setAttribute("d",
+          "M" + gx[ia].toFixed(1) + " " + gy[ia].toFixed(1) +
+          "Q" + q.x.toFixed(1) + " " + q.y.toFixed(1) +
+          " " + gx[ib].toFixed(1) + " " + gy[ib].toFixed(1));
+      } else {
+        el.setAttribute("x1", gx[ia].toFixed(1));
+        el.setAttribute("y1", gy[ia].toFixed(1));
+        el.setAttribute("x2", gx[ib].toFixed(1));
+        el.setAttribute("y2", gy[ib].toFixed(1));
+      }
     }
     for (var b = 0; b < activeNode.length; b++) {
       var i = activeNode[b];
@@ -824,6 +1121,20 @@ GRAPH_JS = r"""
 
   // The frame is whatever is on: hiding a community and refitting gives the
   // rest of the map the whole canvas.
+  // The legend floats over the left of the canvas and the side panel takes
+  // the right. Neither is canvas, so the fit is computed inside what is
+  // actually left, and a Concept at the edge is no longer half-covered.
+  function canvasInsets() {
+    var r = gsvg.getBoundingClientRect();
+    var left = 12;
+    var hud = document.getElementById("graph-hud");
+    if (hud && hud.offsetWidth) {
+      var hr = hud.getBoundingClientRect();
+      left = Math.max(left, hr.right - r.left + 16);
+    }
+    return { left: left, right: 12, top: 12, bottom: 30 };
+  }
+
   function fitView() {
     var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
     for (var a = 0; a < activeNode.length; a++) {
@@ -836,11 +1147,13 @@ GRAPH_JS = r"""
     }
     if (minx === Infinity) { minx = miny = -100; maxx = maxy = 100; }
     var r = gsvg.getBoundingClientRect();
-    var pad = 40;
-    vk = Math.min((r.width - pad * 2) / Math.max(maxx - minx, 1), (r.height - pad * 2) / Math.max(maxy - miny, 1));
+    var ins = canvasInsets();
+    var availW = Math.max(r.width - ins.left - ins.right, 60);
+    var availH = Math.max(r.height - ins.top - ins.bottom, 60);
+    vk = Math.min(availW / Math.max(maxx - minx, 1), availH / Math.max(maxy - miny, 1));
     vk = Math.max(Math.min(vk, 4), 0.05);
-    vx = r.width / 2 - (minx + maxx) / 2 * vk;
-    vy = r.height / 2 - (miny + maxy) / 2 * vk;
+    vx = ins.left + availW / 2 - (minx + maxx) / 2 * vk;
+    vy = ins.top + availH / 2 - (miny + maxy) / 2 * vk;
     lastCanvasW = r.width;
     applyTransform();
     viewIsFitted = true;
@@ -916,7 +1229,17 @@ GRAPH_JS = r"""
     // canvas -- where the side panel is -- in which case it flips to the left.
     // Nothing is ever drawn under the panel: a label that fits on neither side
     // is not drawn at all.
-    var placed = [], shown = 0;
+    // The island names go down first and a Concept label never lands on one.
+    // The legend's own box goes in with them, so nothing is drawn under it.
+    var placed = updateHullNames(), shown = 0;
+    var hudEl = document.getElementById("graph-hud");
+    if (hudEl && hudEl.offsetWidth) {
+      var hb = hudEl.getBoundingClientRect();
+      placed.push({
+        x: hb.left - r.left - 4, y: hb.top - r.top - 4,
+        w: hb.width + 8, h: hb.height + 8
+      });
+    }
     for (var c = 0; c < cands.length && shown < LABEL_BUDGET; c++) {
       var k = cands[c];
       var fs = k.pri <= 1 ? 12 : 11;
@@ -1052,15 +1375,30 @@ GRAPH_JS = r"""
   function backgroundClick(ev) {
     var r = gsvg.getBoundingClientRect();
     var wx = (ev.clientX - r.left - vx) / vk, wy = (ev.clientY - r.top - vy) / vk;
-    var tol = 5 / vk, best = -1, bestD = tol;
+    var tol = 6 / vk, best = -1, bestD = tol;
+    var drawnOnly = !localDepth;
     for (var a = 0; a < activeEdge.length; a++) {
       var e = activeEdge[a];
-      var x1 = gx[G.e_a[e]], y1 = gy[G.e_a[e]], x2 = gx[G.e_b[e]], y2 = gy[G.e_b[e]];
-      var ddx = x2 - x1, ddy = y2 - y1;
-      var L2 = ddx * ddx + ddy * ddy;
-      var t = L2 === 0 ? 0 : Math.max(0, Math.min(1, ((wx - x1) * ddx + (wy - y1) * ddy) / L2));
-      var px = x1 + t * ddx - wx, py = y1 + t * ddy - wy;
-      var d = Math.sqrt(px * px + py * py);
+      if (drawnOnly && !G.backbone[e]) continue;      // it is not on screen
+      if (commOff[G.comm[G.e_a[e]]] || commOff[G.comm[G.e_b[e]]]) continue;
+      var d;
+      if (G.bridge[e] === 1) {
+        // sampled along the curve, since the chord is not what is drawn
+        d = Infinity;
+        for (var t2 = 0; t2 <= 1.0001; t2 += 0.125) {
+          var pt = edgePointAt(e, t2);
+          var sdx = pt.x - wx, sdy = pt.y - wy;
+          var sd = Math.sqrt(sdx * sdx + sdy * sdy);
+          if (sd < d) d = sd;
+        }
+      } else {
+        var x1 = gx[G.e_a[e]], y1 = gy[G.e_a[e]], x2 = gx[G.e_b[e]], y2 = gy[G.e_b[e]];
+        var ddx = x2 - x1, ddy = y2 - y1;
+        var L2 = ddx * ddx + ddy * ddy;
+        var t = L2 === 0 ? 0 : Math.max(0, Math.min(1, ((wx - x1) * ddx + (wy - y1) * ddy) / L2));
+        var px = x1 + t * ddx - wx, py = y1 + t * ddy - wy;
+        d = Math.sqrt(px * px + py * py);
+      }
       if (d < bestD) { bestD = d; best = e; }
     }
     if (best >= 0) { showEdgePanel(best); return; }
@@ -1160,6 +1498,7 @@ GRAPH_JS = r"""
       layoutTwoLevel(activeNode, activeEdge);
     } else {
       setActive(neighbourhood(centre, depth));
+      commCentre = {};
       runLayout(activeNode, activeEdge, 420, 4242);
     }
     buildScene();
@@ -1186,84 +1525,151 @@ GRAPH_JS = r"""
   }
 
   var revealedVoice = {};
+
+  // Domain texts are written as sentences, and one of them runs to eighty-five
+  // characters ("Questions live in every Domain, e.g. language semantics,
+  // ..."). A chip is a name, not a sentence: the text is used when it is short
+  // enough to be a name, and otherwise the Domain's own id, which is already
+  // short. The full text is the chip's tooltip either way.
+  function domainName(did, text) {
+    var t = (text || "").replace(/\.$/, "").trim();
+    if (t && t.length <= 26) return t;
+    // Acronyms stay acronyms; "core" is a word and must not become "CORE".
+    if (/^(ml|wasm|wasi|api|abi|ffi|wit|cli|ui)$/.test(did)) return String(did).toUpperCase();
+    var parts = String(did).split("-");
+    return parts.map(function (w, i) {
+      return i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+    }).join(" ");
+  }
+  function domainChip(did, text) {
+    var full = text !== undefined ? text : (W.domains[did] || did);
+    var c = document.createElement("span");
+    c.className = "chip chip-domain";
+    c.textContent = domainName(did, full);
+    c.title = full;
+    return c;
+  }
+  function chip(text, cls) {
+    var c = document.createElement("span");
+    c.className = "chip" + (cls ? " " + cls : "");
+    c.textContent = text;
+    return c;
+  }
+  function chipRow() {
+    var d = document.createElement("div");
+    d.className = "chiprow";
+    for (var i = 0; i < arguments.length; i++) if (arguments[i]) d.appendChild(arguments[i]);
+    return d;
+  }
+  function sectionLabel(text) {
+    var d = document.createElement("div");
+    d.className = "seclabel";
+    d.textContent = text;
+    return d;
+  }
   function questionBlock(qIdx) {
     var qid = G.qids[qIdx];
     var q = W.questions[qid];
     var wrap = document.createElement("div");
-    wrap.className = "pos-block";
+    wrap.className = "qentry";
+
+    // The Question's text is the entry's one title. The list line above it is
+    // hidden while the entry is open, so it is never printed twice.
     var head = document.createElement("div");
+    head.className = "qtitle";
     head.textContent = q.text;
-    head.style.fontWeight = "600";
     wrap.appendChild(head);
+
     if (q.domains && q.domains.length) {
-      var dwrap = document.createElement("div");
-      dwrap.style.marginTop = "4px";
-      for (var d = 0; d < q.domains.length; d++) dwrap.appendChild(badge(W.domains[q.domains[d]] || q.domains[d], ""));
+      var dwrap = chipRow();
+      for (var d = 0; d < q.domains.length; d++) dwrap.appendChild(domainChip(q.domains[d]));
       wrap.appendChild(dwrap);
     }
+
     for (var p = 0; p < q.positions.length; p++) {
       var pid = q.positions[p], pos = W.positions[pid];
       var pb = document.createElement("div");
-      pb.style.marginTop = "8px";
-      pb.appendChild(badge(pos.tag ? pos.tag : "untagged", pos.tag ? "tag-" + pos.tag : ""));
+      pb.className = "pos";
+      pb.appendChild(chipRow(chip(pos.tag || "untagged", "chip-" + (pos.tag || "untagged"))));
       var sum = document.createElement("div");
-      sum.style.marginTop = "4px";
+      sum.className = "possum";
       sum.textContent = pos.summary;
       pb.appendChild(sum);
+
       for (var ar = 0; ar < pos.arguments.length; ar++) {
         var arg = pos.arguments[ar];
         var ad = document.createElement("div");
-        ad.className = "arg";
+        ad.className = "arg arg-" + (arg.side === "for" ? "for" : "against");
         var side = document.createElement("span");
-        side.className = arg.side === "for" ? "side-for" : "side-against";
-        side.textContent = arg.side === "for" ? "For: " : "Against: ";
+        side.className = "argside";
+        side.textContent = arg.side === "for" ? "For" : "Against";
         ad.appendChild(side);
         ad.appendChild(document.createTextNode(arg.text));
         if (arg.values && arg.values.length) {
-          var vv = document.createElement("div");
-          vv.style.marginTop = "3px";
-          for (var vi = 0; vi < arg.values.length; vi++) vv.appendChild(badge(arg.values[vi], ""));
+          var vv = chipRow();
+          for (var vi = 0; vi < arg.values.length; vi++) {
+            vv.appendChild(chip(arg.values[vi], "chip-value"));
+          }
           ad.appendChild(vv);
         }
         pb.appendChild(ad);
       }
-      for (var cl = 0; cl < pos.claims.length; cl++) {
-        pb.appendChild(claimBlock(pos.claims[cl], qIdx));
+
+      if (pos.claims.length) {
+        pb.appendChild(sectionLabel(
+          pos.claims.length + (pos.claims.length === 1 ? " Claim" : " Claims")));
+        var cl = document.createElement("div");
+        cl.className = "claims";
+        for (var ci = 0; ci < pos.claims.length; ci++) cl.appendChild(claimBlock(pos.claims[ci]));
+        pb.appendChild(cl);
       }
       wrap.appendChild(pb);
     }
     return wrap;
   }
 
-  function claimBlock(c, qIdx) {
+  function claimBlock(c) {
     var d = document.createElement("div");
     d.className = "claim";
-    var vn = document.createElement("span");
-    vn.className = "vn";
+
+    var line = document.createElement("div");
+    line.className = "claimhead";
+    var vn = document.createElement("button");
+    vn.className = "voice";
+    vn.type = "button";
     vn.textContent = revealedVoice[c.voice] ? W.voice_names[c.voice] : "Voice " + c.n;
+    vn.title = "Reveal this Voice";
     vn.addEventListener("click", function () {
       revealedVoice[c.voice] = !revealedVoice[c.voice];
       vn.textContent = revealedVoice[c.voice] ? W.voice_names[c.voice] : "Voice " + c.n;
     });
-    d.appendChild(vn);
-    d.appendChild(document.createTextNode(" · " + (c.date || "undated") + (c.checked ? " · checked" : " · provisional")));
+    line.appendChild(vn);
+    var meta = document.createElement("span");
+    meta.className = "claimmeta";
+    meta.textContent = (c.date || "undated") + " · " + (c.checked ? "checked" : "provisional");
+    line.appendChild(meta);
+    d.appendChild(line);
+
     if (c.paraphrase) {
       var pp = document.createElement("div");
+      pp.className = "claimpara";
       pp.textContent = c.paraphrase;
       d.appendChild(pp);
     }
     if (c.quote) {
-      var bq = document.createElement("blockquote");
+      var bq = document.createElement("div");
+      bq.className = "quote";
       bq.textContent = c.quote;
       d.appendChild(bq);
     }
     if (c.source && c.source.url) {
+      var sl = document.createElement("div");
+      sl.className = "srcline";
       var a = document.createElement("a");
       a.href = c.source.url; a.target = "_blank"; a.rel = "noopener";
       a.textContent = c.source.title || c.source.url;
-      var sw = document.createElement("div");
-      sw.appendChild(a);
-      d.appendChild(sw);
+      sl.appendChild(a);
+      d.appendChild(sl);
     }
     return d;
   }
@@ -1271,49 +1677,74 @@ GRAPH_JS = r"""
   function showConceptPanel(i) {
     var body = document.getElementById("panel-body");
     body.innerHTML = "";
+    kbdIndex = -1;
     var h = document.createElement("h2");
     h.textContent = G.labels[i];
     body.appendChild(h);
 
-    var meta = document.createElement("div");
-    meta.className = "q-context";
-    meta.textContent = "Concept · degree " + G.deg[i] + " · " +
-      G.communities[G.comm[i]].name +
-      (G.dom[i] >= 0 ? " · mostly " + G.domains[G.dom[i]].text : "");
-    body.appendChild(meta);
+    // Facts about the Concept are chips, not a sentence: three separate
+    // things -- how many Questions touch it, which island it is in, which
+    // Domain most of those Questions are live in -- were reading as one
+    // run-on line ending in a stray full stop.
+    // "degree", not "links": the number counts (Question, neighbour) pairs, so
+    // it runs ahead of the neighbour count whenever two Concepts share more
+    // than one Question. Calling it links would be a quiet lie.
+    var degChip = chip("degree " + G.deg[i], "chip-count");
+    degChip.title = "(Question, neighbouring Concept) pairs this Concept takes part in";
+    body.appendChild(chipRow(
+      degChip,
+      chip(G.communities[G.comm[i]].name, "chip-island"),
+      G.dom[i] >= 0 ? domainChip(G.domains[G.dom[i]].id, G.domains[G.dom[i]].text) : null
+    ));
 
     var tools = document.createElement("div");
+    tools.className = "tools";
     [["Local 1", 1], ["Local 2", 2], ["Whole map", 0]].forEach(function (pair) {
       var b = document.createElement("button");
+      b.type = "button";
       b.textContent = pair[0];
       b.className = localDepth === pair[1] ? "active" : "";
-      b.style.marginRight = "5px";
       b.addEventListener("click", function () { setLocal(pair[1]); });
       tools.appendChild(b);
     });
     var cb = document.createElement("button");
+    cb.type = "button";
     cb.textContent = "Centre";
     cb.addEventListener("click", function () { centreOn(i, 1.8); });
     tools.appendChild(cb);
     body.appendChild(tools);
 
     var qs = conceptQuestions(i);
+    body.appendChild(sectionLabel(
+      qs.length + (qs.length === 1 ? " Question" : " Questions") + " on this Concept"));
     var qwrap = document.createElement("div");
+    qwrap.className = "qlist";
     for (var a = 0; a < qs.length; a++) {
       (function (qIdx) {
         var line = document.createElement("div");
         line.className = "qline";
+        line.setAttribute("tabindex", "0");
         line.textContent = truncate(W.questions[G.qids[qIdx]].text, 110);
-        var open = false, block = null;
-        line.addEventListener("click", function () {
-          open = !open;
-          if (open) { block = questionBlock(qIdx); line.parentNode.insertBefore(block, line.nextSibling); }
-          else if (block) { block.parentNode.removeChild(block); block = null; }
-        });
+        var block = null;
+        function toggle() {
+          if (block) {
+            block.parentNode.removeChild(block);
+            block = null;
+            line.style.display = "";
+            line.classList.remove("open");
+            return;
+          }
+          block = questionBlock(qIdx);
+          block.querySelector(".qtitle").addEventListener("click", toggle);
+          line.parentNode.insertBefore(block, line.nextSibling);
+          line.style.display = "none";
+          line.classList.add("open");
+        }
+        line.addEventListener("click", toggle);
         qwrap.appendChild(line);
       })(qs[a]);
     }
-    body.appendChild(field("Questions on this Concept (" + qs.length + ")", qwrap));
+    body.appendChild(qwrap);
 
     var nb = [];
     for (var b2 = 0; b2 < gAdj[i].length; b2++) {
@@ -1321,25 +1752,28 @@ GRAPH_JS = r"""
       nb.push({ i: other(e, i), w: edgeWeight(e), e: e });
     }
     nb.sort(function (p, q) { return q.w - p.w || (G.labels[p.i] < G.labels[q.i] ? -1 : 1); });
+    body.appendChild(sectionLabel(nb.length + " neighbours, by shared Questions"));
     var nwrap = document.createElement("div");
+    nwrap.className = "nblist";
     for (var c = 0; c < nb.length; c++) {
       (function (row) {
-        var chip = document.createElement("span");
-        chip.className = "gchip";
-        chip.textContent = G.labels[row.i];
+        var ch = document.createElement("button");
+        ch.type = "button";
+        ch.className = "gchip";
+        ch.textContent = G.labels[row.i];
         var w = document.createElement("span");
         w.className = "w";
         w.textContent = row.w;
-        chip.appendChild(w);
-        chip.addEventListener("click", function () {
+        ch.appendChild(w);
+        ch.addEventListener("click", function () {
           if (!inActive[row.i]) setLocal(0);
           pinNode(row.i, true);
           centreOn(row.i);
         });
-        nwrap.appendChild(chip);
+        nwrap.appendChild(ch);
       })(nb[c]);
     }
-    body.appendChild(field("Neighbours by shared Questions (" + nb.length + ")", nwrap));
+    body.appendChild(nwrap);
     openPanel();
   }
 
@@ -1362,17 +1796,26 @@ GRAPH_JS = r"""
       (function (qIdx) {
         var line = document.createElement("div");
         line.className = "qline";
+        line.setAttribute("tabindex", "0");
         line.textContent = truncate(W.questions[G.qids[qIdx]].text, 110);
-        var open = false, block = null;
-        line.addEventListener("click", function () {
-          open = !open;
-          if (open) { block = questionBlock(qIdx); line.parentNode.insertBefore(block, line.nextSibling); }
-          else if (block) { block.parentNode.removeChild(block); block = null; }
-        });
+        var block = null;
+        function toggle() {
+          if (block) {
+            block.parentNode.removeChild(block);
+            block = null;
+            line.style.display = "";
+            return;
+          }
+          block = questionBlock(qIdx);
+          block.querySelector(".qtitle").addEventListener("click", toggle);
+          line.parentNode.insertBefore(block, line.nextSibling);
+          line.style.display = "none";
+        }
+        line.addEventListener("click", toggle);
         wrap.appendChild(line);
       })(qs[i]);
     }
-    body.appendChild(field("Questions on this edge", wrap));
+    body.appendChild(wrap);
     gEdgeEl[e].classList.add("hl");
     hlEdges.push(e);
     gscene.classList.add("focus");
@@ -1385,12 +1828,23 @@ GRAPH_JS = r"""
   function renderLegend() {
     var el = document.getElementById("glegend");
     el.innerHTML = "";
+    var hud = document.getElementById("graph-hud");
+    var folded = hud.classList.contains("folded");
     var hd = document.createElement("div");
     hd.className = "hd";
-    hd.textContent = colorMode === "community"
-      ? G.communities.length + " communities · click to hide"
-      : G.domains.length + " domains · colour by dominant Domain";
+    hd.textContent = folded
+      ? "\u25b8 legend"
+      : "\u25be " + (colorMode === "community"
+          ? G.communities.length + " communities \u00b7 click a row to hide"
+          : G.domains.length + " domains \u00b7 dominant Domain");
+    hd.title = "Fold the legend away";
+    hd.addEventListener("click", function () {
+      hud.classList.toggle("folded");
+      renderLegend();
+      fitView();
+    });
     el.appendChild(hd);
+    if (folded) return;
     var rows = colorMode === "community" ? G.communities : G.domains;
     for (var i = 0; i < rows.length; i++) {
       (function (idx, row) {
@@ -1402,7 +1856,10 @@ GRAPH_JS = r"""
         d.appendChild(sw);
         var t = document.createElement("span");
         if (colorMode !== "community") {
-          t.textContent = row.text;
+          // The same short name the chips use; the legend is not the place
+          // for a Domain's whole sentence either.
+          t.textContent = domainName(row.id, row.text);
+          d.title = row.text;
         } else if (row.islands) {
           t.textContent = row.size + " detached in " + G.stats.island_clusters +
             " clusters, " + (commOff[idx] ? "show" : "hide");
@@ -1435,6 +1892,10 @@ GRAPH_JS = r"""
       if (gEdgeEl[e]) gEdgeEl[e].classList.toggle("off", off);
     }
     updateLabels();
+    for (var h = 0; h < gHullLayer.childNodes.length; h++) {
+      var node = gHullLayer.childNodes[h];
+      node.style.display = commOff[+node.getAttribute("data-comm")] ? "none" : "block";
+    }
     updateStat();
   }
 
@@ -1596,9 +2057,47 @@ GRAPH_JS = r"""
         b: G.labels[G.e_b[lastEdge]]
       };
     };
+    // The longest drawn line, which is the one with room to be clicked
+    // between its two labels.
+    // Where the detached clusters sit relative to the connected body.
+    window.__gym.islandBand = function () {
+      var bb = { minx: Infinity, maxx: -Infinity, maxy: -Infinity };
+      var band = { minx: Infinity, maxx: -Infinity, miny: Infinity };
+      for (var i = 0; i < GN; i++) {
+        if (G.comm[i] === G.islands_comm) {
+          band.minx = Math.min(band.minx, gx[i]);
+          band.maxx = Math.max(band.maxx, gx[i]);
+          band.miny = Math.min(band.miny, gy[i]);
+        } else {
+          bb.minx = Math.min(bb.minx, gx[i]);
+          bb.maxx = Math.max(bb.maxx, gx[i]);
+          bb.maxy = Math.max(bb.maxy, gy[i]);
+        }
+      }
+      return {
+        bodyBottom: Math.round(bb.maxy),
+        bodyWidth: Math.round(bb.maxx - bb.minx),
+        bandTop: Math.round(band.miny),
+        bandWidth: Math.round(band.maxx - band.minx)
+      };
+    };
+    window.__gym.longestEdge = function () {
+      var best = -1, bestL = -1;
+      for (var e = 0; e < GE; e++) {
+        if (!G.backbone[e]) continue;
+        var a = G.e_a[e], b = G.e_b[e];
+        var dx = gx[a] - gx[b], dy = gy[a] - gy[b];
+        var L = dx * dx + dy * dy;
+        if (L > bestL) { bestL = L; best = e; }
+      }
+      return best;
+    };
     window.__gym.heaviestEdge = function () {
-      var best = 0;
-      for (var e = 0; e < GE; e++) if (edgeWeight(e) > edgeWeight(best)) best = e;
+      var best = -1;
+      for (var e = 0; e < GE; e++) {
+        if (!G.backbone[e]) continue;
+        if (best < 0 || edgeWeight(e) > edgeWeight(best)) best = e;
+      }
       return best;
     };
     window.__gym.centreOnEdge = function (e, zoom) {
@@ -1608,11 +2107,15 @@ GRAPH_JS = r"""
       vy = r.height / 2 - ((gy[G.e_a[e]] + gy[G.e_b[e]]) / 2) * vk;
       applyTransform();
     };
-    window.__gym.edgeScreen = function (e) {
+    // t picks a point along the drawn line; a caller scans it because a
+    // Concept's label can sit over the middle of a line and take the click,
+    // which is the price of a label being its Concept.
+    window.__gym.edgeScreen = function (e, t) {
       var r = gsvg.getBoundingClientRect();
+      var mid = edgePointAt(e, t === undefined ? 0.5 : t);
       return {
-        x: r.left + ((gx[G.e_a[e]] + gx[G.e_b[e]]) / 2) * vk + vx,
-        y: r.top + ((gy[G.e_a[e]] + gy[G.e_b[e]]) / 2) * vk + vy,
+        x: r.left + mid.x * vk + vx,
+        y: r.top + mid.y * vk + vy,
         w: edgeWeight(e),
         a: G.labels[G.e_a[e]],
         b: G.labels[G.e_b[e]]
@@ -1634,8 +2137,66 @@ GRAPH_JS = r"""
   });
   document.getElementById("btn-fit").addEventListener("click", function () { fitView(); });
 
+  // --- keyboard -----------------------------------------------------------
+  // "/" jumps to the search box, the arrows walk the neighbour list in the
+  // panel and Enter opens the one under the cursor, so a Concept can be
+  // walked without the mouse. Escape steps back, as it already did.
+  var kbdIndex = -1;
+
+  function kbdChips() {
+    return Array.prototype.slice.call(
+      document.querySelectorAll("#panel-body .nblist .gchip"));
+  }
+
+  function moveKbd(delta) {
+    var chips = kbdChips();
+    if (!chips.length) return false;
+    for (var i = 0; i < chips.length; i++) chips[i].classList.remove("kbd");
+    kbdIndex = kbdIndex < 0
+      ? (delta > 0 ? 0 : chips.length - 1)
+      : (kbdIndex + delta + chips.length) % chips.length;
+    var el = chips[kbdIndex];
+    el.classList.add("kbd");
+    el.scrollIntoView({ block: "nearest" });
+    return true;
+  }
+
+  function typingInField(ev) {
+    var t = ev.target;
+    return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+  }
+
+  document.addEventListener("keydown", function (ev) {
+    if (currentView !== "graph") return;
+    if (ev.key === "/" && !typingInField(ev)) {
+      ev.preventDefault();
+      // The search box folds away with the legend, so "/" brings both back.
+      var hud = document.getElementById("graph-hud");
+      if (hud.classList.contains("folded")) {
+        hud.classList.remove("folded");
+        renderLegend();
+        fitView();
+      }
+      var box = document.getElementById("gsearch");
+      box.focus();
+      box.select();
+      return;
+    }
+    if (typingInField(ev)) return;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      if (moveKbd(ev.key === "ArrowDown" ? 1 : -1)) ev.preventDefault();
+      return;
+    }
+    if (ev.key === "Enter" && kbdIndex >= 0) {
+      var chips = kbdChips();
+      if (chips[kbdIndex]) { ev.preventDefault(); chips[kbdIndex].click(); }
+    }
+  });
+
   document.addEventListener("keydown", function (ev) {
     if (ev.key !== "Escape" || currentView !== "graph") return;
+    var box = document.getElementById("gsearch");
+    if (document.activeElement === box) { box.blur(); return; }
     if (localDepth > 0) { setLocal(0); if (pinned >= 0) centreOn(pinned); return; }
     if (crumbs.length > 1) {
       crumbs.pop();

@@ -51,8 +51,13 @@ BASE_CSS = r"""
   #panel button { border-color: var(--border); background: #fff; color: var(--ink); }
   #panel button:hover { background: #efece6; }
   #panel button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
-  #note { padding: 6px 16px; font-size: 11.5px; color: var(--chrome-dim);
-    border-bottom: 1px solid var(--chrome-line); background: #11161e; }
+  /* What the view means is read once and then in the way. It folds behind
+     the "i" button and the canvas takes the height back. */
+  #note { display: none; padding: 8px 16px 12px; font-size: 12px; line-height: 1.5;
+    color: var(--chrome-dim); border-bottom: 1px solid var(--chrome-line);
+    background: #11161e; max-width: 96ch; }
+  #note.open { display: block; }
+  #btn-info { width: 24px; padding: 4px 0; font-style: italic; font-weight: 600; }
   #legend { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--chrome-dim); }
   #legend .sw { width: 11px; height: 11px; display: inline-block; border-radius: 2px;
     border: 1px solid rgba(255,255,255,.18); }
@@ -164,6 +169,12 @@ BOOT_JS = r"""
   document.getElementById("btn-view-graph").addEventListener("click", function () { setView("graph"); });
   document.getElementById("btn-view-matrix").addEventListener("click", function () { setView("matrix"); });
 
+  document.getElementById("btn-info").addEventListener("click", function () {
+    var open = document.getElementById("note").classList.toggle("open");
+    this.classList.toggle("active", open);
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
   resetOrders();
   document.getElementById("btn-scope").textContent = "Show all";
   setView("graph");
@@ -199,6 +210,7 @@ def _page_html(data_json: str) -> str:
     <button id="btn-scope">Default subset</button>
     <button id="btn-reorder">Reorder (seriate)</button>
   </span>
+  <button id="btn-info" aria-expanded="false" title="What this view shows">i</button>
   <span class="stat" id="stat"></span>
   <span id="legend" style="display:none"></span>
 </header>

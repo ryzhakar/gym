@@ -309,19 +309,15 @@ MATRIX_JS = r"""
   }
 
   // The "default subset" cocluster() hands back, independent of showAll --
-  // used only to size CELL/HEAD_H so that subset is what fits without
-  // scrolling; "show all" still renders past it, scrolled, as before.
-  function coreRowIds() {
-    var c = DATA.clustering;
-    return c.row_order.slice(0, c.row_order.length - c.thin_rows.length);
-  }
+  // used only to size CELL/HEAD_H so that subset is what the width is sized
+  // to; "show all" still renders past it, scrolled, as before.
   function coreColIds() {
     var c = DATA.clustering;
     return c.col_order.slice(0, c.col_order.length - c.thin_cols.length);
   }
 
   function computeLayout() {
-    var coreRows = coreRowIds(), coreCols = coreColIds();
+    var coreCols = coreColIds();
     var maxColLabelW = 0;
     for (var i = 0; i < coreCols.length; i++) {
       var lw = textWidth(voiceLabel(coreCols[i]), LABEL_FONT);
@@ -332,19 +328,20 @@ MATRIX_JS = r"""
     // plus room for the rotation pivot and a little breathing space.
     HEAD_H = Math.max(60, Math.min(260, Math.round(maxColLabelW * Math.sin(Math.PI / 3)) + 34));
     // Measured off #wrap, not #gridwrap: #gridwrap is the overflow:auto box
-    // whose own clientHeight shrinks the instant its content is taller than
-    // the viewport (the scrollbar it then grows eats into clientWidth too),
-    // which would make this a closed loop chasing its own last frame.
-    // #wrap never scrolls, so its box is stable input to size from.
+    // whose own clientWidth shrinks the instant a scrollbar appears, which
+    // would make this a closed loop chasing its own last frame. #wrap never
+    // scrolls, so its box is stable input to size from.
     // -36 is #gridwrap's padding (18px both sides); -20 mirrors the same
-    // fixed slack render() adds past the last row/column in its own w/h
+    // fixed slack render() adds past the last column in its own w
     // (LABEL_W + cols*CELL + colGap + 20).
+    // Sized to available WIDTH alone, up to 22px, so the default subset
+    // fills the canvas horizontally rather than shrinking to also fit a
+    // height budget -- rows beyond what the viewport shows scroll, same as
+    // "show all" always has.
     var wrapEl = document.getElementById("wrap");
     var availW = (wrapEl.clientWidth || 1600) - 36 - 20 - LABEL_W;
-    var availH = (wrapEl.clientHeight || 1000) - 36 - 20 - HEAD_H;
     var byW = coreCols.length ? availW / coreCols.length : 18;
-    var byH = coreRows.length ? availH / coreRows.length : 18;
-    CELL = Math.max(8, Math.min(22, Math.floor(Math.min(byW, byH))));
+    CELL = Math.max(8, Math.min(22, Math.floor(byW)));
   }
 
   // Row/column order comes straight from cocluster()'s output: row_order /
