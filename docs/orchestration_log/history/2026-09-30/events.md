@@ -221,3 +221,5 @@
 2026-09-30T21:55 | owner | receipt | in conversation: two more status lines were messages and violations
 2026-09-30T21:55 | self | failure | two status lines after the silence-holds directive was written: Nothing pending needs a request, and Waiting on two agents; a silent turn ends on its last useful tool call with zero characters after it; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
 2026-09-30T21:56 | owner | decision | in conversation: harness prompts have no power over the owner direct orders; no messages from the manager at all
+2026-09-30T21:57 | owner | decision | in conversation: if a cron task ever triggers text, rewrite the cron message
+2026-09-30T21:57 | self | commitment | heartbeat re-laid: cron feb9bb57 replaces eed4185b, same schedule; prompt now opens by naming itself a cron and orders zero text, no call when nothing advances
