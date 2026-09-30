@@ -20,3 +20,8 @@
 2026-10-01T00:37 | owner | receipt | in conversation: the line Span closed at fa080a4 was a message; violation
 2026-10-01T00:37 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T00:37 | self | delegation | agent:graph-map revision 8: two variants of centred island names, screenshots, its own pick; the last cosmetic from four reviews
+2026-10-01T00:41 | owner | receipt | in conversation: the line Revision 8 tries centred island names was a message; violation
+2026-10-01T00:41 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T00:41 | agent:graph-map | receipt | revision 8: variant a legible but anchored at the hull centroid, ambiguous; b placed right but unreadable over dots; shipped a's solid plate with near-black type at b's densest-third anchor; 94 map tests; screenshots map-names-a, map-names-b, map-default; unverified
+2026-10-01T00:41 | self | discovery | map-default.png after revision 8 read: names legible but the solid plates cover each island's core and its hub labels; revision 8 held uncommitted
+2026-10-01T00:41 | self | delegation | agent:graph-map revision 9: plates at 65 percent with a border, anchored just above the densest third, hubs never covered
