@@ -284,3 +284,8 @@
 2026-09-30T23:31 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
 2026-09-30T23:31 | agent:map-gaps | receipt | map-gaps-report.md: 6 Claim dates, 9 Position tags, 2 Question domains set from cached evidence; 64 Claims and 6 Sources left undated, the cache does not date them; check 417 to 394 FAIL; the test hardcoding 417 fails; unverified
 2026-09-30T23:31 | self | commitment | map gaps committed: check 394 FAIL, the test count updated
+2026-09-30T23:33 | owner | receipt | in conversation: the line Agents mid-edit was a message; violation
+2026-09-30T23:33 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
+2026-09-30T23:33 | agent:cli-ergonomics | receipt | cli-ergonomics-report.md: help on every command and option, --version, summary-first check output, file URL after site, exit 2 with one line on a bad path, train status as aligned tables; 260 tests pass, 2 deselected that fail on other agents' in-flight edits; unverified
+2026-09-30T23:34 | self | commitment | cli ergonomics committed after 261 tests passed here
+2026-09-30T23:34 | self | delegation | agent:baseline-command, sonnet, background: gym train baseline stage and grade, cwd-independent, key never printed; output recon/2026-09-30/app/baseline-command-report.md; wait bounded by heartbeat feb9bb57
