@@ -1033,7 +1033,7 @@ GRAPH_JS = r"""
       for (var o = 0; o < opts.length; o++) {
         var at11 = 0;
         for (var li2 = 0; li2 < opts[o].length; li2++) {
-          at11 = Math.max(at11, textWidth(opts[o][li2], NAME_MAX, false));
+          at11 = Math.max(at11, hullTextWidth(opts[o][li2], NAME_MAX));
         }
         var sz = Math.min(NAME_MAX, NAME_MAX * room / at11);
         if (sz >= NAME_MIN) { chosen = opts[o]; size = sz; widest = at11 * sz / NAME_MAX; break; }
@@ -1087,7 +1087,24 @@ GRAPH_JS = r"""
   var gsvg = document.getElementById("graph");
   var gscene = null, gEdgeLayer = null, gNodeLayer = null, gLabelLayer = null;
   var gInterLayer = null, gHullLayer = null, gHullNameLayer = null;
-  var gMeasure = null, widthCache = {};
+  var gMeasure = null, gMeasureHull = null, widthCache = {};
+
+  function hullTextWidth(text, size) {
+    var key = "h|" + size + "|" + text;
+    var hit = widthCache[key];
+    if (hit !== undefined) return hit;
+    var w = text.length * size * 0.72;
+    if (gMeasureHull) {
+      gMeasureHull.setAttribute("font-size", size);
+      gMeasureHull.textContent = text;
+      try {
+        var m = gMeasureHull.getComputedTextLength();
+        if (m) w = m;
+      } catch (err) { /* not rendered; the estimate stands */ }
+    }
+    widthCache[key] = w;
+    return w;
+  }
 
   function textWidth(text, size, bold) {
     var key = size + "|" + (bold ? 1 : 0) + "|" + text;
