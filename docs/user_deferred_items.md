@@ -55,3 +55,9 @@ Pick up once the data layer holds real Questions.
 ## Stop subagents loading CLAUDE.md
 
 CLAUDE.md has orchestrator-specific instructions. Subagents consume them unintentionally.
+
+## Move hard raw research out of the repo
+
+"let's defer an item to move hard raw research into ~/ai_driven_research or whatever its called. we'll retain only the shallowest couple of layers. leave stuff right now though." (2026-09-30, on the 1094 tracked files under docs/orchestration_log/recon/2026-09-27/)
+
+Pick up when the owner names the target repository; until then the tracked recon files stay as they are.
