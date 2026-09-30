@@ -203,3 +203,6 @@
 2026-09-30T21:48 | owner | receipt | in conversation: the duplicate-receipt note Already committed at bb0d915 was not silence either
 2026-09-30T21:48 | self | failure | the failure entry Silence broken after compaction by harness prompts counts this third line too; agent notifications get zero text; same entry as history/2026-09-30/failures.md
 2026-09-30T21:49 | owner | decision | in conversation: no status lines, never
+2026-09-30T21:49 | owner | receipt | in conversation: good, on a turn ending with no text
+2026-09-30T21:50 | owner | receipt | in conversation: are you kidding me, on the status line Both agents grew at 21:49
+2026-09-30T21:50 | self | failure | fourth status line after compaction, again on a harness prompt demanding visible output; the harness prompt is an outside event; the turn ends on the tool call or on nothing; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
