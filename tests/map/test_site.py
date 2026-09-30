@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from pathlib import Path
+
+import yaml
 
 from gym.map.site import main as build_site
 from gym.paths import ROOT
@@ -146,3 +149,124 @@ def test_voice_numbering_stable_through_drag(tmp_path: Path) -> None:
     assert before[second_id] == after[second_id]
     for vid, text in before.items():
         assert after.get(vid) == text
+
+
+def _load_yaml_kind(map_dir: Path, name: str) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for f in sorted((map_dir / name).glob("*.yaml")):
+        out[f.stem] = yaml.safe_load(f.read_text()) or {}
+    return out
+
+
+def test_graph_node_and_edge_counts_match_a_direct_pass_over_maps_rust(
+    tmp_path: Path,
+) -> None:
+    """Independently re-derive the Graph's nodes and edges straight from the
+    YAML files -- not by calling gym.map.site's own graph builder -- and
+    check the built page's embedded data agrees. Concept-Concept edges are
+    read from concept.related only; never inferred from co-occurrence."""
+    map_dir = ROOT / "maps" / "rust"
+    questions = _load_yaml_kind(map_dir, "questions")
+    positions = _load_yaml_kind(map_dir, "positions")
+    arguments = _load_yaml_kind(map_dir, "arguments")
+    concepts = _load_yaml_kind(map_dir, "concepts")
+    domains = _load_yaml_kind(map_dir, "domains")
+    values = _load_yaml_kind(map_dir, "values")
+
+    degree: dict[str, float] = defaultdict(float)
+    edge_count = 0
+    cc_edges = 0
+
+    for qid, q in questions.items():
+        for cid in q.get("concepts") or []:
+            if cid in concepts:
+                degree[f"question:{qid}"] += 1
+                degree[f"concept:{cid}"] += 1
+                edge_count += 1
+        for did in q.get("domains") or []:
+            if did in domains:
+                degree[f"question:{qid}"] += 1
+                degree[f"domain:{did}"] += 1
+                edge_count += 1
+
+    pos_to_question = {pid: p.get("question") for pid, p in positions.items()}
+    qv_weight: dict[tuple[str, str], int] = defaultdict(int)
+    for a in arguments.values():
+        qid = pos_to_question.get(a.get("position"))
+        if qid not in questions:
+            continue
+        for vid in a.get("values") or []:
+            if vid in values:
+                qv_weight[(qid, vid)] += 1
+    for (qid, vid), w in qv_weight.items():
+        degree[f"question:{qid}"] += w
+        degree[f"value:{vid}"] += w
+        edge_count += 1
+
+    for cid, c in concepts.items():
+        for rid in c.get("related") or []:
+            if rid in concepts:
+                degree[f"concept:{cid}"] += 1
+                degree[f"concept:{rid}"] += 1
+                edge_count += 1
+                cc_edges += 1
+
+    expected_node_count = sum(1 for d in degree.values() if d > 0)
+
+    out = tmp_path / "index.html"
+    build_site(map_dir, out)
+    data = _load_data(out)
+    graph = data["graph"]
+
+    assert graph["counts"]["nodes_full"] == expected_node_count
+    assert graph["counts"]["edges_full"] == edge_count
+    assert graph["concept_concept_count"] == cc_edges
+    # This map's concept.related is unpopulated today -- the one edge type
+    # the data does not supply -- and the legend must say so, not infer it.
+    assert cc_edges == 0
+    assert len(graph["nodes"]) == expected_node_count
+    assert len(graph["edges"]) == edge_count
+
+
+def test_graph_view_switch_and_node_click_opens_panel() -> None:
+    from playwright.sync_api import sync_playwright
+
+    out = ROOT / ".pytest_graph_view_tmp.html"
+    try:
+        build_site(ROOT / "maps" / "rust", out)
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": 1600, "height": 1000})
+            console_errors: list[str] = []
+            page.on(
+                "console",
+                lambda msg: console_errors.append(msg.text)
+                if msg.type == "error"
+                else None,
+            )
+            page.on("pageerror", lambda exc: console_errors.append(str(exc)))
+
+            page.goto(out.resolve().as_uri())
+            page.click("#btn-view-graph")
+            page.wait_for_selector("svg#graph .gnode")
+            assert page.eval_on_selector(
+                "#graphwrap", "el => el.style.display"
+            ) != "none"
+
+            # A force layout can leave nodes visually overlapping, so the
+            # node is clicked by dispatching straight to its element rather
+            # than relying on Playwright's pointer-hit-testing.
+            node = page.query_selector("svg#graph .gnode")
+            assert node is not None
+            node.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
+            page.wait_for_selector("#panel.open")
+            panel_text = page.inner_text("#panel-body")
+            # The panel's field-label CSS applies text-transform: uppercase,
+            # which Playwright's rendered inner_text reflects -- compare
+            # case-insensitively rather than against the literal source text.
+            assert "neighbours" in panel_text.lower()
+
+            assert console_errors == []
+            browser.close()
+    finally:
+        out.unlink(missing_ok=True)

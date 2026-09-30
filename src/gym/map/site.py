@@ -27,6 +27,107 @@ def load_kind(map_dir: Path, name: str) -> dict[str, dict]:
     return out
 
 
+def build_graph_data(
+    questions: dict[str, dict],
+    positions: dict[str, dict],
+    arguments: dict[str, dict],
+    concepts: dict[str, dict],
+    domains: dict[str, dict],
+    values: dict[str, dict],
+) -> dict:
+    """Graph view's node/edge set.
+
+    Edges drawn only where the files hold them: Question-Concept
+    (question.concepts), Question-Domain (question.domains),
+    Question-Value (a Question appeals to a Value when any Argument on any
+    of its Positions appeals to it; weight = count of such Arguments), and
+    Concept-Concept (concept.related) -- 0 today, never inferred from
+    co-occurrence. Node id is "{kind}:{raw_id}" to keep the four id spaces
+    from colliding; "raw" is kept per node for jumping to a Matrix row.
+    """
+
+    def nid(kind: str, raw: str) -> str:
+        return f"{kind}:{raw}"
+
+    edges: list[dict] = []
+    degree: dict[str, float] = defaultdict(float)
+
+    def add_edge(kind: str, a: str, b: str, weight: float = 1.0) -> None:
+        edges.append({"kind": kind, "source": a, "target": b, "weight": weight})
+        degree[a] += weight
+        degree[b] += weight
+
+    for qid, q in questions.items():
+        qn = nid("question", qid)
+        for cid in q.get("concepts") or []:
+            if cid in concepts:
+                add_edge("question-concept", qn, nid("concept", cid))
+        for did in q.get("domains") or []:
+            if did in domains:
+                add_edge("question-domain", qn, nid("domain", did))
+
+    pos_to_question = {pid: p.get("question") for pid, p in positions.items()}
+    qv_weight: dict[tuple[str, str], int] = defaultdict(int)
+    for a in arguments.values():
+        qid = pos_to_question.get(a.get("position"))
+        if qid not in questions:
+            continue
+        for vid in a.get("values") or []:
+            if vid in values:
+                qv_weight[(qid, vid)] += 1
+    for (qid, vid), w in qv_weight.items():
+        add_edge("question-value", nid("question", qid), nid("value", vid), float(w))
+
+    concept_concept_edges = 0
+    for cid, c in concepts.items():
+        for rid in c.get("related") or []:
+            if rid in concepts:
+                add_edge("concept-concept", nid("concept", cid), nid("concept", rid))
+                concept_concept_edges += 1
+
+    nodes: dict[str, dict] = {}
+    for kind, table, text_field in (
+        ("question", questions, "text"),
+        ("concept", concepts, "text"),
+        ("domain", domains, "text"),
+        ("value", values, "text"),
+    ):
+        for raw_id, item in table.items():
+            n = nid(kind, raw_id)
+            if degree.get(n, 0) <= 0:
+                continue
+            nodes[n] = {
+                "id": n,
+                "kind": kind,
+                "raw": raw_id,
+                "label": item.get(text_field) or raw_id,
+                "degree": degree[n],
+            }
+
+    concept_ids_by_degree = sorted(
+        (n["raw"] for n in nodes.values() if n["kind"] == "concept" and n["degree"] >= 3)
+    )
+    default_concepts = set(nid("concept", cid) for cid in concept_ids_by_degree)
+    default_nodes = set(default_concepts)
+    for e in edges:
+        if e["source"] in default_concepts:
+            default_nodes.add(e["target"])
+        if e["target"] in default_concepts:
+            default_nodes.add(e["source"])
+
+    return {
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "concept_concept_count": concept_concept_edges,
+        "default_subset": sorted(default_nodes),
+        "counts": {
+            "nodes_full": len(nodes),
+            "nodes_default": len(default_nodes),
+            "edges_full": len(edges),
+        },
+    }
+
+
 def main(map_dir: Path, out: Path) -> None:
     questions = load_kind(map_dir, "questions")
     positions = load_kind(map_dir, "positions")
@@ -35,6 +136,8 @@ def main(map_dir: Path, out: Path) -> None:
     sources = load_kind(map_dir, "sources")
     arguments = load_kind(map_dir, "arguments")
     values = load_kind(map_dir, "values")
+    concepts = load_kind(map_dir, "concepts")
+    domains = load_kind(map_dir, "domains")
 
     problems: dict[str, int] = defaultdict(int)
 
@@ -215,6 +318,8 @@ def main(map_dir: Path, out: Path) -> None:
 
     checked_count = sum(1 for c in claims.values() if "checked" in c)
 
+    graph = build_graph_data(questions, positions, arguments, concepts, domains, values)
+
     data = {
         "meta": {
             "subject": "rust",
@@ -277,6 +382,7 @@ def main(map_dir: Path, out: Path) -> None:
             "questions": sorted(candidate_questions),
             "voices": sorted(candidate_voices),
         },
+        "graph": graph,
     }
 
     json_text = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
@@ -292,6 +398,15 @@ def main(map_dir: Path, out: Path) -> None:
     print(
         "default subset: questions=%d voices=%d cells=%d"
         % (len(candidate_questions), len(candidate_voices), len(default_cells))
+    )
+    print(
+        "graph: nodes_full=%d nodes_default=%d edges_full=%d concept_concept_edges=%d"
+        % (
+            graph["counts"]["nodes_full"],
+            graph["counts"]["nodes_default"],
+            graph["counts"]["edges_full"],
+            graph["concept_concept_count"],
+        )
     )
     print("wrote", out)
 
@@ -365,19 +480,46 @@ HTML_TEMPLATE = r"""<!doctype html>
   #panel .arg .side-against { color: #a13a2f; font-weight: 600; }
   #panel .hist-item { font-size: 12px; margin: 3px 0; color: var(--ink-dim); }
   #empty-hint { padding: 40px; color: var(--ink-dim); font-size: 13px; }
+  #view-switch button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  #graphwrap { flex: 1 1 auto; overflow: hidden; padding: 0; position: relative; }
+  svg#graph { display: block; width: 100%; height: 100%; }
+  .gedge { stroke: #b9b2a6; stroke-opacity: .55; }
+  .gedge.kind-concept-concept { stroke: #a13a2f; stroke-opacity: .8; }
+  .gnode { cursor: pointer; }
+  .gnode .shape { stroke: #ffffff; stroke-width: 1; }
+  .gnode.kind-question .shape { fill: #56B4E9; }
+  .gnode.kind-concept .shape { fill: #E69F00; }
+  .gnode.kind-domain .shape { fill: #009E73; }
+  .gnode.kind-value .shape { fill: #D55E00; }
+  .gnode.pulse .shape { stroke: #1c1b1a; stroke-width: 3; }
+  .gnode .glabel { font-size: 10px; fill: var(--ink); pointer-events: none; display: none; }
+  .gnode.kind-domain .glabel, .gnode.kind-value .glabel { display: block; }
+  .gnode.revealed .glabel, .gnode:hover .glabel { display: block; }
+  #panel .nbr-chip { margin: 2px 3px 2px 0; display: inline-block; }
+  text.lbl.pulse-row { fill: #a13a2f; font-weight: 700; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Rust opinion map — reorderable matrix</h1>
-  <button id="btn-scope">Default subset</button>
-  <button id="btn-reorder">Reorder (seriate)</button>
+  <h1>Rust opinion map</h1>
+  <span id="view-switch">
+    <button id="btn-view-matrix" class="active">Matrix</button>
+    <button id="btn-view-graph">Graph</button>
+  </span>
+  <span id="matrix-controls">
+    <button id="btn-scope">Default subset</button>
+    <button id="btn-reorder">Reorder (seriate)</button>
+  </span>
+  <span id="graph-controls" style="display:none">
+    <button id="btn-graph-scope">Show all</button>
+  </span>
   <span class="stat" id="stat"></span>
   <span id="legend"></span>
 </header>
 <div id="note"></div>
 <div id="wrap">
   <div id="gridwrap"><svg id="matrix" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  <div id="graphwrap" style="display:none"><svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg></div>
   <div id="panel"><button class="close" id="panel-close">&times;</button><div id="panel-body"></div></div>
 </div>
 <script id="data" type="application/json">__DATA_JSON__</script>
@@ -865,7 +1007,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       (showAll ? "" : " (of " + DATA.meta.counts.questions + " / " + DATA.meta.counts.voices + " total)");
   }
 
-  function buildLegend() {
+  function buildMatrixLegend() {
     var l = document.getElementById("legend");
     l.innerHTML = "";
     var lab = document.createElement("span");
@@ -892,31 +1034,342 @@ HTML_TEMPLATE = r"""<!doctype html>
     l.appendChild(noneLab);
   }
 
-  document.getElementById("btn-scope").addEventListener("click", function () {
-    showAll = !showAll;
-    this.classList.toggle("active", showAll);
-    this.textContent = showAll ? "Default subset" : "Show all";
+  function buildGraphLegend() {
+    var l = document.getElementById("legend");
+    l.innerHTML = "";
+    var shapes = [
+      ["question", "circle"],
+      ["concept", "square"],
+      ["domain", "diamond"],
+      ["value", "triangle"]
+    ];
+    for (var i = 0; i < shapes.length; i++) {
+      var s = document.createElement("span");
+      s.textContent = shapes[i][0] + " = " + shapes[i][1] + (i < shapes.length - 1 ? "; " : ". ");
+      l.appendChild(s);
+    }
+    var sz = document.createElement("span");
+    sz.textContent = "size = degree. ";
+    l.appendChild(sz);
+    var cc = document.createElement("span");
+    cc.textContent = "Concept–Concept edges in this map: " + DATA.graph.concept_concept_count + ".";
+    l.appendChild(cc);
+  }
+
+  function setMatrixScope(newShowAll) {
+    showAll = newShowAll;
+    var btn = document.getElementById("btn-scope");
+    btn.classList.toggle("active", showAll);
+    btn.textContent = showAll ? "Default subset" : "Show all";
     revealed = {};
     resetOrders();
     render();
+  }
+
+  document.getElementById("btn-scope").addEventListener("click", function () {
+    setMatrixScope(!showAll);
   });
   document.getElementById("btn-reorder").addEventListener("click", doReorder);
   document.getElementById("panel-close").addEventListener("click", closePanel);
 
-  document.getElementById("note").textContent =
-    "Rust opinion map — " + DATA.meta.counts.questions + " Questions, " +
-    DATA.meta.counts.positions + " Positions, " + DATA.meta.counts.claims + " Claims, " +
-    DATA.meta.counts.voices + " Voices — generated " + DATA.meta.generated + ". " +
-    "Solid border = checked (quote/date verified against Source, 2026-09-28); " +
-    "dashed border = provisional (unverified Voice, never fidelity-checked). " +
-    "A ring marks an undated pick (no dated Claim to sort by); a filled dot marks a cell " +
-    "where the Voice changed Position over time — click for the history. " +
-    "Column names stay anonymous until clicked.";
+  function updateNote() {
+    var note = document.getElementById("note");
+    if (currentView === "matrix") {
+      note.textContent =
+        "Rust opinion map — " + DATA.meta.counts.questions + " Questions, " +
+        DATA.meta.counts.positions + " Positions, " + DATA.meta.counts.claims + " Claims, " +
+        DATA.meta.counts.voices + " Voices — generated " + DATA.meta.generated + ". " +
+        "Solid border = checked (quote/date verified against Source, 2026-09-28); " +
+        "dashed border = provisional (unverified Voice, never fidelity-checked). " +
+        "A ring marks an undated pick (no dated Claim to sort by); a filled dot marks a cell " +
+        "where the Voice changed Position over time — click for the history. " +
+        "Column names stay anonymous until clicked.";
+    } else {
+      note.textContent =
+        "Graph — Questions, Concepts, Domains and Values that carry at least one edge; " +
+        "edges are Question–Concept, Question–Domain, Question–Value (weighted by " +
+        "Argument count) and Concept–Concept (drawn only where the data holds them, " +
+        DATA.graph.concept_concept_count + " today). Node size follows degree; Domain and " +
+        "Value labels always show, Concept and Question labels show on hover and stay pinned " +
+        "after a click. Click a node for its side panel; a Question chip there jumps to that " +
+        "row in the Matrix.";
+    }
+  }
 
-  buildLegend();
+  // ---------------- Graph view ----------------
+  // Deterministic force layout: seeded start positions (fixed PRNG seed), a
+  // fixed iteration count set only by node count, no animation loop once
+  // those iterations finish — the same input always settles at the same
+  // positions.
+
+  var GRAPH_W = 1400, GRAPH_H = 900;
+  var graphNodeById = {};
+  for (var gi = 0; gi < DATA.graph.nodes.length; gi++) {
+    graphNodeById[DATA.graph.nodes[gi].id] = DATA.graph.nodes[gi];
+  }
+  var graphShowAll = false;
+  var graphRevealed = {};
+  var graphLayoutCache = {};
+
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function layoutGraph(nodeIds, edgeList) {
+    var rand = mulberry32(1337);
+    var n = nodeIds.length;
+    var pos = {};
+    for (var i = 0; i < n; i++) {
+      var ang = rand() * Math.PI * 2;
+      var rad = (0.15 + 0.75 * rand()) * Math.min(GRAPH_W, GRAPH_H) / 2;
+      pos[nodeIds[i]] = {
+        x: GRAPH_W / 2 + Math.cos(ang) * rad,
+        y: GRAPH_H / 2 + Math.sin(ang) * rad
+      };
+    }
+    if (n === 0) return pos;
+    var iterations = n > 600 ? 60 : 150;
+    var k = Math.sqrt((GRAPH_W * GRAPH_H) / n);
+    for (var it = 0; it < iterations; it++) {
+      var temp = (1 - it / iterations) * (k * 0.6);
+      var disp = {};
+      for (var di = 0; di < n; di++) disp[nodeIds[di]] = { x: 0, y: 0 };
+      for (var a = 0; a < n; a++) {
+        var pa = pos[nodeIds[a]];
+        for (var b = a + 1; b < n; b++) {
+          var pb = pos[nodeIds[b]];
+          var dx = pa.x - pb.x, dy = pa.y - pb.y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+          var force = (k * k) / dist;
+          var fx = (dx / dist) * force, fy = (dy / dist) * force;
+          disp[nodeIds[a]].x += fx; disp[nodeIds[a]].y += fy;
+          disp[nodeIds[b]].x -= fx; disp[nodeIds[b]].y -= fy;
+        }
+      }
+      for (var e = 0; e < edgeList.length; e++) {
+        var edge = edgeList[e];
+        var pa2 = pos[edge.source], pb2 = pos[edge.target];
+        if (!pa2 || !pb2) continue;
+        var dx2 = pa2.x - pb2.x, dy2 = pa2.y - pb2.y;
+        var dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 0.01;
+        var w = 0.4 + Math.min(edge.weight || 1, 5) * 0.15;
+        var force2 = ((dist2 * dist2) / k) * w;
+        var fx2 = (dx2 / dist2) * force2, fy2 = (dy2 / dist2) * force2;
+        disp[edge.source].x -= fx2; disp[edge.source].y -= fy2;
+        disp[edge.target].x += fx2; disp[edge.target].y += fy2;
+      }
+      for (var c = 0; c < n; c++) {
+        var id = nodeIds[c];
+        var p = pos[id], d = disp[id];
+        var dlen = Math.sqrt(d.x * d.x + d.y * d.y) || 0.01;
+        var capped = Math.min(dlen, temp);
+        p.x += (d.x / dlen) * capped;
+        p.y += (d.y / dlen) * capped;
+        p.x += (GRAPH_W / 2 - p.x) * 0.002;
+        p.y += (GRAPH_H / 2 - p.y) * 0.002;
+        p.x = Math.max(20, Math.min(GRAPH_W - 20, p.x));
+        p.y = Math.max(20, Math.min(GRAPH_H - 20, p.y));
+      }
+    }
+    return pos;
+  }
+
+  function graphNeighbors(nodeId) {
+    var out = [];
+    for (var i = 0; i < DATA.graph.edges.length; i++) {
+      var e = DATA.graph.edges[i];
+      if (e.source === nodeId) out.push({ id: e.target, kind: e.kind, weight: e.weight });
+      else if (e.target === nodeId) out.push({ id: e.source, kind: e.kind, weight: e.weight });
+    }
+    return out;
+  }
+
+  function currentGraphNodeIds() {
+    return graphShowAll
+      ? DATA.graph.nodes.map(function (n) { return n.id; })
+      : DATA.graph.default_subset.slice();
+  }
+
+  function graphRadius(degree) {
+    return Math.min(4 + Math.sqrt(degree) * 1.8, 22);
+  }
+
+  function graphShape(kind, cx, cy, r) {
+    if (kind === "question") return svgEl("circle", { cx: cx, cy: cy, r: r, class: "shape" });
+    if (kind === "concept") {
+      return svgEl("rect", { x: cx - r, y: cy - r, width: r * 2, height: r * 2, class: "shape" });
+    }
+    if (kind === "domain") {
+      var pts = [[cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy]]
+        .map(function (p) { return p.join(","); }).join(" ");
+      return svgEl("polygon", { points: pts, class: "shape" });
+    }
+    var h = r * 1.6;
+    var pts2 = [[cx, cy - h * 0.6], [cx + r, cy + h * 0.4], [cx - r, cy + h * 0.4]]
+      .map(function (p) { return p.join(","); }).join(" ");
+    return svgEl("polygon", { points: pts2, class: "shape" });
+  }
+
+  function renderGraph() {
+    var nodeIds = currentGraphNodeIds();
+    var idSet = {};
+    for (var i0 = 0; i0 < nodeIds.length; i0++) idSet[nodeIds[i0]] = true;
+    var edgeSubset = DATA.graph.edges.filter(function (e) {
+      return idSet[e.source] && idSet[e.target];
+    });
+
+    var cacheKey = graphShowAll ? "all" : "default";
+    if (!graphLayoutCache[cacheKey]) {
+      graphLayoutCache[cacheKey] = layoutGraph(nodeIds, edgeSubset);
+    }
+    var pos = graphLayoutCache[cacheKey];
+
+    var svg = document.getElementById("graph");
+    svg.innerHTML = "";
+    svg.setAttribute("viewBox", "0 0 " + GRAPH_W + " " + GRAPH_H);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+    for (var e2 = 0; e2 < edgeSubset.length; e2++) {
+      var edge = edgeSubset[e2];
+      var pa3 = pos[edge.source], pb3 = pos[edge.target];
+      if (!pa3 || !pb3) continue;
+      var line = svgEl("line", {
+        x1: pa3.x, y1: pa3.y, x2: pb3.x, y2: pb3.y,
+        class: "gedge kind-" + edge.kind,
+        "stroke-width": Math.min(0.5 + (edge.weight || 1) * 0.35, 4)
+      });
+      svg.appendChild(line);
+    }
+
+    for (var n2 = 0; n2 < nodeIds.length; n2++) {
+      var nid2 = nodeIds[n2];
+      var node = graphNodeById[nid2];
+      if (!node || !pos[nid2]) continue;
+      var p2 = pos[nid2];
+      var r2 = graphRadius(node.degree);
+      var g = svgEl("g", {
+        class: "gnode kind-" + node.kind + (graphRevealed[nid2] ? " revealed" : "")
+      });
+      g.appendChild(graphShape(node.kind, p2.x, p2.y, r2));
+      var lbl = svgEl("text", { x: p2.x + r2 + 3, y: p2.y + 3, class: "glabel" });
+      lbl.textContent = truncate(node.label, 40);
+      g.appendChild(lbl);
+      var tt2 = svgEl("title", {});
+      tt2.textContent = node.kind + ": " + node.label + " (degree " + node.degree + ")";
+      g.appendChild(tt2);
+      g.addEventListener("click", (function (id) {
+        return function () {
+          graphRevealed[id] = !graphRevealed[id];
+          showGraphNodePanel(id);
+          renderGraph();
+        };
+      })(nid2));
+      svg.appendChild(g);
+    }
+
+    document.getElementById("stat").textContent =
+      nodeIds.length + " nodes, " + edgeSubset.length + " edges shown" +
+      (graphShowAll ? "" : " (default subset; full graph: " +
+        DATA.graph.counts.nodes_full + " nodes, " + DATA.graph.counts.edges_full + " edges)");
+  }
+
+  function showGraphNodePanel(nodeId) {
+    var node = graphNodeById[nodeId];
+    var body = document.getElementById("panel-body");
+    body.innerHTML = "";
+    if (!node) return;
+    var h = document.createElement("h2");
+    h.textContent = node.kind.charAt(0).toUpperCase() + node.kind.slice(1);
+    body.appendChild(h);
+    var ctx = document.createElement("div");
+    ctx.className = "q-context";
+    ctx.textContent = node.label;
+    body.appendChild(ctx);
+    body.appendChild(field("Degree", String(node.degree)));
+
+    var neighbors = graphNeighbors(nodeId);
+    neighbors.sort(function (x, y) {
+      var nx = graphNodeById[x.id], ny = graphNodeById[y.id];
+      if (!nx || !ny) return 0;
+      if (nx.kind !== ny.kind) return nx.kind < ny.kind ? -1 : 1;
+      return nx.label < ny.label ? -1 : (nx.label > ny.label ? 1 : 0);
+    });
+    var wrap = document.createElement("div");
+    neighbors.forEach(function (nb) {
+      var nnode = graphNodeById[nb.id];
+      if (!nnode) return;
+      var chip = badge(nnode.kind + ": " + truncate(nnode.label, 40), "voice-chip nbr-chip");
+      chip.addEventListener("click", function () {
+        if (nnode.kind === "question") {
+          jumpToMatrixRow(nnode.raw);
+        } else {
+          showGraphNodePanel(nb.id);
+        }
+      });
+      wrap.appendChild(chip);
+    });
+    body.appendChild(field("Neighbours (" + neighbors.length + ")", wrap));
+    openPanel();
+  }
+
+  function jumpToMatrixRow(qid) {
+    setView("matrix");
+    if (!showAll && DATA.default_subset.questions.indexOf(qid) === -1) {
+      setMatrixScope(true);
+    } else {
+      render();
+    }
+    var rowEl = document.querySelector(
+      'svg#matrix text.lbl[data-axis="row"][data-id="' + qid + '"]'
+    );
+    if (rowEl) {
+      rowEl.scrollIntoView({ block: "center", inline: "center" });
+      rowEl.classList.add("pulse-row");
+      setTimeout(function () { rowEl.classList.remove("pulse-row"); }, 1600);
+    }
+    showQuestionPanel(qid);
+  }
+
+  function setView(view) {
+    currentView = view;
+    document.getElementById("btn-view-matrix").classList.toggle("active", view === "matrix");
+    document.getElementById("btn-view-graph").classList.toggle("active", view === "graph");
+    document.getElementById("matrix-controls").style.display = view === "matrix" ? "" : "none";
+    document.getElementById("graph-controls").style.display = view === "graph" ? "" : "none";
+    document.getElementById("gridwrap").style.display = view === "matrix" ? "" : "none";
+    document.getElementById("graphwrap").style.display = view === "graph" ? "" : "none";
+    closePanel();
+    if (view === "matrix") {
+      render();
+      buildMatrixLegend();
+    } else {
+      renderGraph();
+      buildGraphLegend();
+    }
+    updateNote();
+  }
+
+  document.getElementById("btn-view-matrix").addEventListener("click", function () { setView("matrix"); });
+  document.getElementById("btn-view-graph").addEventListener("click", function () { setView("graph"); });
+  document.getElementById("btn-graph-scope").addEventListener("click", function () {
+    graphShowAll = !graphShowAll;
+    this.classList.toggle("active", graphShowAll);
+    this.textContent = graphShowAll ? "Default subset" : "Show all";
+    graphRevealed = {};
+    renderGraph();
+  });
+
+  var currentView = "matrix";
+  buildMatrixLegend();
   resetOrders();
   render();
   document.getElementById("btn-scope").textContent = "Show all";
+  updateNote();
 })();
 </script>
 </body>
