@@ -19,3 +19,4 @@
 2026-10-01T00:37 | self | span-event | open; heartbeat after the close; nothing pending but the owner's go
 2026-10-01T00:37 | owner | receipt | in conversation: the line Span closed at fa080a4 was a message; violation
 2026-10-01T00:37 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T00:37 | self | delegation | agent:graph-map revision 8: two variants of centred island names, screenshots, its own pick; the last cosmetic from four reviews
