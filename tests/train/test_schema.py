@@ -168,6 +168,25 @@ def test_probe_item_fraction_outside_0_to_1_is_refused() -> None:
     assert error is not None and "outside [0.0, 1.0]" in error
 
 
+def test_probe_item_accepts_an_optional_over_cap_field() -> None:
+    """Team lead ruling (2026-09-30): the per-probe cap `gym train probe grade` dropped along with
+    the interactive wait is restored as data on `probe-item` — recorded, never enforced."""
+    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    assert validate_fields("probe-item", {**required, "over_cap": "yes"}) is None
+    assert validate_fields("probe-item", {**required, "over_cap": "no"}) is None
+
+
+def test_probe_item_over_cap_must_be_yes_or_no() -> None:
+    required = {"unit": "u1", "which": "immediate", "problem": "p1", "result": "pass", "minutes": "5"}
+    error = validate_fields("probe-item", {**required, "over_cap": "maybe"})
+    assert error is not None and "not one of" in error
+
+
+def test_over_cap_is_not_recognized_on_a_kind_other_than_probe_item() -> None:
+    error = validate_fields("attempt", {"unit": "u1", "item": "x", "result": "pass", "minutes": "5", "over_cap": "yes"})
+    assert error is not None and "unknown field(s)" in error and "over_cap" in error
+
+
 def test_fraction_is_not_recognized_on_a_kind_other_than_probe_item() -> None:
     """`fraction` is `probe-item`'s own optional field, not global like `request` — an unrelated
     kind carrying it is refused as an unknown field for that kind."""

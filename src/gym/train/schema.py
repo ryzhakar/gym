@@ -212,7 +212,11 @@ GLOBAL_OPTIONAL_FIELDS: dict[str, Validator] = {
 
 # An optional field recognized for one specific kind only.
 KIND_OPTIONAL_FIELDS: dict[str, dict[str, Validator]] = {
-    "probe-item": {"fraction": float_in(0.0, 1.0)},
+    # Team lead ruling (2026-09-30): the per-probe time cap `gym train probe grade` dropped along
+    # with the interactive wait (seventh update) is restored as data, never enforced — `grade`
+    # takes `--cap-minutes` (default 10) and writes whether the graded attempt ran over it,
+    # `over_cap` here, on every `probe-item` it logs.
+    "probe-item": {"fraction": float_in(0.0, 1.0), "over_cap": enum("yes", "no")},
     # Team lead ruling (2026-09-30): `close` may optionally carry `probe_minutes`, a non-negative
     # number — the one old `sessions.csv` column (`record_schema.py`'s `probe_minutes`,
     # `float_at_least(0)` there too) this schema gives a home to.

@@ -270,6 +270,41 @@ def test_run_grade_computes_minutes_from_the_probe_start_events_own_timestamp(tm
     assert all(float(row["minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
 
 
+def test_run_grade_defaults_cap_minutes_to_10() -> None:
+    assert probe.CAP_MINUTES_DEFAULT == 10.0
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_run_grade_records_over_cap_no_when_under_the_cap(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
+    real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
+
+    rows = probe.run_grade(
+        subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=real_start + timedelta(minutes=5)
+    )
+
+    assert all(row["over_cap"] == "no" for row in rows)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_run_grade_records_over_cap_yes_when_over_the_cap_never_refusing(tmp_path: Path, subject_dir: Path) -> None:
+    """The cap is recorded as data, never enforced: grading still runs and logs normally past it."""
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
+    real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
+
+    rows = probe.run_grade(
+        subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=real_start + timedelta(minutes=15)
+    )
+
+    assert len(rows) == 2
+    assert all(row["over_cap"] == "yes" for row in rows)
+    assert {row["result"] for row in rows} == {"pass"}  # grading itself is unaffected
+
+
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
 def test_stage_then_grade_leaves_items_byte_identical(tmp_path: Path, subject_dir: Path) -> None:
     """The learner edits the staged copy, between the two commands, never the items directory

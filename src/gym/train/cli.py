@@ -66,12 +66,14 @@ def probe_grade_command(
     unit_dir: Path = typer.Argument(...),
     which: str = typer.Argument(..., help="immediate|delayed"),
     session: str = typer.Option(..., "--session"),
+    cap_minutes: float = typer.Option(probe_module.CAP_MINUTES_DEFAULT, "--cap-minutes"),
 ) -> None:
-    """Grade every staged problem against its key and log one probe-item event each; refuses if
-    nothing was staged for this unit and side in this session."""
+    """Grade every staged problem against its key and log one probe-item event each (each carrying
+    whether it ran over --cap-minutes, recorded only, never enforced); refuses if nothing was
+    staged for this unit and side in this session."""
     _validate_which(which)
     subject_dir = unit_dir.resolve().parent.parent
-    probe_module.run_grade(subject_dir, unit_dir, which, session)
+    probe_module.run_grade(subject_dir, unit_dir, which, session, cap_minutes)
 
 
 @app.command("close")

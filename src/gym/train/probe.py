@@ -167,11 +167,15 @@ def latest_probe_start(subject_dir: Path, session_id: str, unit: str, which: str
     return matches[-1] if matches else None
 
 
+CAP_MINUTES_DEFAULT = 10.0
+
+
 def run_grade(
     subject_dir: Path,
     unit_dir: Path,
     which: str,
     session_id: str,
+    cap_minutes: float = CAP_MINUTES_DEFAULT,
     now: "datetime | None" = None,
 ) -> list[dict[str, str]]:
     """Grade every problem `gym train probe stage` staged for `unit_dir`/`which` in this session,
@@ -179,13 +183,17 @@ def run_grade(
     event exists for this unit and probe side in this session. `minutes` is elapsed time from that
     `probe-start` event's own clock stamp to `now` (or `datetime.now()`), shared across every
     problem — the same "one cap for the whole probe" semantics the original single command had,
-    now measured across two separate invocations instead of one wait."""
+    now measured across two separate invocations instead of one wait. `cap_minutes` (team lead
+    ruling, 2026-09-30, restoring what the seventh update dropped) is never enforced or refused
+    here — it only decides `over_cap` (`yes`/`no`), an optional field on every logged `probe-item`,
+    recorded as data for whoever reads the record later."""
     unit = unit_dir.name
     start_row = latest_probe_start(subject_dir, session_id, unit, which)
     if start_row is None:
         sys.exit(f"refused, no probe-start event for unit {unit!r}, which {which!r}, in session {session_id}")
     started = datetime.strptime(start_row["timestamp"], TIMESTAMP_FORMAT)
     elapsed_minutes = ((now or datetime.now()) - started).total_seconds() / 60
+    over_cap = "yes" if elapsed_minutes > cap_minutes else "no"
     work_root = subject_dir / "work"
     rows: list[dict[str, str]] = []
     for problem_name in start_row["problems"].split(","):
@@ -197,6 +205,7 @@ def run_grade(
             "problem": problem_name,
             "result": "pass" if passed else "fail",
             "minutes": f"{elapsed_minutes:.2f}",
+            "over_cap": over_cap,
             "fraction": f"{fraction:.4f}",
         }
         line = append_event(subject_dir, session_id, "tool:probe", "probe-item", fields)
