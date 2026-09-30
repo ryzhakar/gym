@@ -262,9 +262,10 @@ MATRIX_CSS = r"""
   .block-outline.block-discussion { stroke: #ff8f73; stroke-dasharray: 5,3; }
   /* A block can start at row/col 0, right over a Position-coloured cell --
      seen live as "discussion" landing on an orange cell and going half
-     invisible, coral-on-orange. A dark halo (graph.py's own fix for
-     glabel-over-varied-node-colour) keeps it legible over any cell colour. */
-  text.block-label { fill: #ff8f73; font-size: 9.5px; font-weight: 700; font-variant: small-caps;
+     invisible when it was coral-on-orange. A dark halo (graph.py's own fix
+     for glabel-over-varied-node-colour) keeps it legible over any cell
+     colour regardless of the label's own ink. */
+  text.block-label { fill: var(--chrome-dim); font-size: 10px; font-weight: 700; font-variant: small-caps;
     letter-spacing: .06em; pointer-events: none; paint-order: stroke;
     stroke: var(--canvas); stroke-width: 3px; stroke-linejoin: round; }
   .gap-hairline { stroke: var(--chrome-line); stroke-width: 1; }
@@ -672,26 +673,9 @@ MATRIX_JS = r"""
     });
   }
 
-  var layoutSettling = false;
   function render() {
     buildCellIndex();
     computeLayout();
-    // computeLayout() measures #wrap, but page.py's setView() calls render()
-    // before it fills in the matrix legend and the note line -- both still
-    // land in the header a tick later and grow it, which is exactly what
-    // made the "fits without scrolling" size land ~20px over budget on
-    // first paint. One corrective re-measure next frame (bounded: it only
-    // re-renders if the numbers actually changed) catches that without
-    // page.py needing to reorder anything.
-    if (!layoutSettling) {
-      layoutSettling = true;
-      requestAnimationFrame(function () {
-        layoutSettling = false;
-        var before = CELL + "," + HEAD_H;
-        computeLayout();
-        if (CELL + "," + HEAD_H !== before) render();
-      });
-    }
     var svg = document.getElementById("matrix");
     svg.innerHTML = "";
 
@@ -723,15 +707,32 @@ MATRIX_JS = r"""
       return;
     }
 
-    // background = "no claim" colour, one rect per (row band x col band) so
+    // background = "no claim" cells, one rect per (row band x col band) so
     // the gap between the core and the parked thin rows/cols stays visibly
-    // empty rather than reading as more "no claim" cells.
+    // empty rather than reading as more "no claim" cells. The field used to
+    // be one solid light rect -- a light island on the dark page. It is now
+    // a tiled pattern of individual faint dark squares (one per grid
+    // position, canvas-coloured gutter between them, same idea as the data
+    // cells' own stroke), anchored to each band's own top-left corner so the
+    // tiling stays pixel-aligned with the real cell grid even across the
+    // core/thin gap. O(1) DOM cost regardless of how many cells that is --
+    // a <pattern>, not one rect per position.
+    var bgDefs = svgEl("defs", {});
+    svg.appendChild(bgDefs);
+    var bgBandN = 0;
     function bgBand(rowStart, rowCount, colStart, colCount) {
       if (rowCount <= 0 || colCount <= 0) return;
+      var patId = "bgpat" + (bgBandN++);
+      var pattern = svgEl("pattern", {
+        id: patId, patternUnits: "userSpaceOnUse",
+        x: colX(colStart), y: rowY(rowStart), width: CELL, height: CELL
+      });
+      pattern.appendChild(svgEl("rect", { x: 1, y: 1, width: CELL - 2, height: CELL - 2, fill: "#161b23" }));
+      bgDefs.appendChild(pattern);
       svg.appendChild(svgEl("rect", {
         x: colX(colStart), y: rowY(rowStart),
         width: colCount * CELL, height: rowCount * CELL,
-        fill: "#dedad3"
+        fill: "url(#" + patId + ")"
       }));
     }
     bgBand(0, coreRowCount, 0, coreColCount);
@@ -873,12 +874,11 @@ MATRIX_JS = r"""
       svg.appendChild(svgEl("rect", {
         x: colX(fb.cMin), y: rowY(fb.rMin),
         width: (fb.cMax - fb.cMin + 1) * CELL, height: (fb.rMax - fb.rMin + 1) * CELL,
-        // The cell field underneath (including "no claim") is the light
-        // #dedad3, not the dark canvas -- a light wash at 6% was invisible
-        // against it in the first render; a dark neutral at the same alpha
-        // actually darkens the beige enough to read as "this area is one
-        // block" even where most of it is empty.
-        fill: "#1c1b1a", "fill-opacity": "0.06", class: "block-fill"
+        // The field is the dark canvas now (the light-beige field this
+        // used to sit on is gone), so the wash is a light neutral again --
+        // at 12%, not the original 6%, since 6% over a dark canvas read
+        // too close to invisible once the field stopped being light.
+        fill: "#dfe5ee", "fill-opacity": "0.12", class: "block-fill"
       }));
     }
 
@@ -978,7 +978,7 @@ MATRIX_JS = r"""
     }
     var none = document.createElement("span");
     none.className = "sw";
-    none.style.background = "#dedad3";
+    none.style.background = "#161b23";
     l.appendChild(none);
     var noneLab = document.createElement("span");
     noneLab.textContent = "none";
