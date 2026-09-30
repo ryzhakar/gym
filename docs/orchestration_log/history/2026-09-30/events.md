@@ -111,3 +111,5 @@
 2026-09-30T17:21 | agent:tests-map-core-2 | receipt | test_estimate.py (15) and test_check_map.py (22) written, values hand-derived; tests/map 52 pass, suite 172 pass; a bare pytest run collides on duplicate basenames between scripts/train/tests and tests/train, pre-existing; no bug found; unverified
 2026-09-30T17:21 | self | commitment | capabilities.md test count updated to 172, measured 17:21
 2026-09-30T17:24 | self | failure | no-op checks made to fill turns 17:21 to 17:24; same entry as history/2026-09-30/failures.md 'No-op checks made to fill turns'
+2026-09-30T17:25 | agent:gym-trainer | receipt | u01 attempt clock started 17:25, cap 17:35
+2026-09-30T17:36 | agent:gym-trainer | receipt | u01 attempt passed 6 of 6 inside the cap at 17:35; feedback and the unit's instruction given; reuse-1 presented at 17:36
