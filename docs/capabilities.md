@@ -4,7 +4,7 @@ What gym's built parts are and do. Measured 2026-09-30 unless dated otherwise.
 
 ## The gym app
 
-One Typer application, package `src/gym/`, entry point `uv run gym`. Groups: `gym map` (check, census, sample, frame, estimate, site), `gym train` (open, log, probe, close, status, check), `gym research` (books, bundle, cache, search, sendback), `gym records` (event, close, check). Tests under `tests/`: 104 pass (measured 2026-09-30, before the train group's second revision). Decided 2026-09-30, see docs/architecture_log.md.
+One Typer application, package `src/gym/`, entry point `uv run gym`. Groups: `gym map` (check, census, sample, frame, estimate, site), `gym train` (open, log, probe, close, status, check), `gym research` (books, bundle, cache, search, sendback), `gym records` (event, close, check). Tests under `tests/`: 172 pass (measured 2026-09-30 17:21). Decided 2026-09-30, see docs/architecture_log.md.
 
 ## The map site
 

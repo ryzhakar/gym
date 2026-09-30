@@ -108,3 +108,5 @@
 2026-09-30T17:14 | self | delegation | agent:tests-map-core-2, sonnet, background: relaunch of the estimate and check_map tests from the same prompt, writing files incrementally; wait bounded by heartbeat eed4185b
 2026-09-30T17:16 | agent:gym-trainer | receipt | all six baseline items attempted by 17:16; grading commands handed to the learner; feedback follows
 2026-09-30T17:19 | agent:gym-trainer | receipt | baseline graded: 1 of 6 passed (b6); feedback given per item; unit u01-own-move-borrow attempt presented at 17:19, novice tier, 10 minutes unaided
+2026-09-30T17:21 | agent:tests-map-core-2 | receipt | test_estimate.py (15) and test_check_map.py (22) written, values hand-derived; tests/map 52 pass, suite 172 pass; a bare pytest run collides on duplicate basenames between scripts/train/tests and tests/train, pre-existing; no bug found; unverified
+2026-09-30T17:21 | self | commitment | capabilities.md test count updated to 172, measured 17:21
