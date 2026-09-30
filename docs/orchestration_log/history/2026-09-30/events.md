@@ -313,3 +313,4 @@
 2026-09-30T23:57 | self | commitment | graph revision 4 committed after 94 map tests passed here
 2026-09-30T23:57 | self | discovery | map-default.png and map-pinned.png read: a real map now, islands with hulls and names, structure inside; left: island names float away from their hulls (semver at the top edge, unsafe between islands), green and blue islands touch at the centre-right, the pinned view's panel is light on a dark app
 2026-09-30T23:57 | self | delegation | agent:graph-map continued: island names anchored inside their hull's top edge, a dark panel matching the canvas, islands kept apart
+2026-09-30T23:57 | self | discovery | map-local2.png read: the local view around async runtimes reads like Obsidian, neighbours grouped by colour, Questions and neighbours in the panel; no change asked
