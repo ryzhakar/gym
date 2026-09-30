@@ -108,8 +108,9 @@ Interface details are settled later, in design iteration on real data (`docs/use
 - **Presentation:** a web interface.
 - **Home:** a git repository of plain-text entity files; the site is generated from it.
 - **Graphics first:** every view is a graphic; prose appears only when a mark is opened.
-- **Matrix:** the front door. One row per Question, Voices as columns, each cell showing the Position held; rows and columns reorder until blocks appear, and the blocks are Schools. This is Bertin's reorderable matrix ([source](https://www.r-bloggers.com/2013/06/the-reorderable-data-matrix-and-the-promise-of-pattern-discovery/)). Columns stay anonymous until clicked.
-- **Graph:** a second view showing how Concepts connect to each other and to the Questions, Values and Domains around them.
+- **Matrix:** One row per Question, Voices as columns, each cell showing the Position held; rows and columns reorder until blocks appear, and the blocks are Schools. This is Bertin's reorderable matrix ([source](https://www.r-bloggers.com/2013/06/the-reorderable-data-matrix-and-the-promise-of-pattern-discovery/)). Columns stay anonymous until clicked.
+- **Graph, the map itself (owner ruling 2026-09-30):** the front door. Concepts are the nodes; an edge between two Concepts holds every Question that touches both, and the more Questions the stronger it draws. Read at a glance and walked through Concepts, in the manner of Obsidian's graph: a Concept opens to its neighbourhood and its Questions; no prose on the canvas. Concepts are deduplicated in the data layer before drawing.
+- **Matrix, clustered two ways (owner ruling 2026-09-30):** Voices are similar by their stances on Questions, Questions are similar by the Voices taking stances on them; rows and columns are clustered on both, and the lumps that appear are the Schools.
 
 ## Boundaries
 
