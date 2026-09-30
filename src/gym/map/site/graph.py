@@ -44,6 +44,10 @@ ISLAND_COLOR = "#5b6472"
 
 COMMUNITY_CAP = 14
 ALWAYS_LABELLED = 45
+BACKBONE_PER_NODE = 2
+BRIDGES_LABELLED = 18
+BRIDGES_PER_PAIR = 3
+HUB_PERCENTILE = 0.99
 
 
 def _component_count(subset: set[str], edges: dict[tuple[str, str], list[str]]) -> int:
@@ -111,7 +115,7 @@ def build_graph_data(
         top = sorted(members[c], key=lambda n: (-degree[n], n))[:3]
         name = " · ".join(labels[n] for n in top)
         if c == island_comm:
-            name = "islands: %d detached clusters" % island_components
+            name = "islands: %d detached clusters (Fit all)" % island_components
         community_rows.append(
             {
                 "name": name,
@@ -145,7 +149,61 @@ def build_graph_data(
         e_b.append(node_index[b])
         e_q.append([question_index[q] for q in edges[(a, b)]])
 
-    top_labelled = sorted(nodes, key=lambda n: (-degree[n], n))[:ALWAYS_LABELLED]
+    # --- the backbone: what the opening frame draws ------------------------
+    # 4793 of 4837 edges carry one Question. Drawing all of them at once put
+    # every Concept inside a hub's spray of spokes and the picture read as one
+    # mass (cold review, docs/orchestration_log/recon/2026-09-30/frontend/
+    # map-review.md). The opening frame draws a backbone instead: every edge
+    # carrying two Questions or more, plus each Concept's two strongest, which
+    # guarantees no Concept is left with nothing drawn. The rest are in the
+    # page and appear on hover, on a pin, and in a local view.
+    incident: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for pair in edges:
+        incident[pair[0]].append(pair)
+        incident[pair[1]].append(pair)
+    backbone: set[tuple[str, str]] = {p for p, qs in edges.items() if len(qs) >= 2}
+    for n in nodes:
+        ranked = sorted(
+            incident[n],
+            key=lambda p: (
+                -len(edges[p]),
+                degree[p[1] if p[0] == n else p[0]],
+                p[1] if p[0] == n else p[0],
+            ),
+        )
+        backbone.update(ranked[:BACKBONE_PER_NODE])
+
+    # The reader is asked to name what bridges two islands, so the strongest
+    # few crossings of every community pair are drawn whatever their weight.
+    # Without this only 56 of the map's 390 crossings survived the per-node
+    # rule and most pairs showed no line at all.
+    by_pair: dict[tuple[int, int], list[tuple[str, str]]] = defaultdict(list)
+    for a, b in edges:
+        ca, cb = membership[a], membership[b]
+        if ca != cb:
+            by_pair[(min(ca, cb), max(ca, cb))].append((a, b))
+    for pair_edges in by_pair.values():
+        ranked = sorted(
+            pair_edges,
+            key=lambda p: (-len(edges[p]), -(degree[p[0]] + degree[p[1]]), p),
+        )
+        backbone.update(ranked[:BRIDGES_PER_PAIR])
+
+    # Degree is heavily skewed; the top percentile fuses the picture if it is
+    # drawn and pulled like everything else. Those Concepts keep a capped
+    # radius and a damped edge spring, both applied in the page.
+    ranked_degrees = sorted(degree[n] for n in nodes)
+    hub_cut = ranked_degrees[int(len(ranked_degrees) * HUB_PERCENTILE)]
+
+    # A bridge is what the reader is asked to name, so its ends are always
+    # labelled, alongside the highest-degree Concepts.
+    bridges = sorted(
+        (p for p in edges if membership[p[0]] != membership[p[1]]),
+        key=lambda p: (-len(edges[p]), p),
+    )
+    labelled = [n for n in sorted(nodes, key=lambda n: (-degree[n], n))[:ALWAYS_LABELLED]]
+    for p in bridges[:BRIDGES_LABELLED]:
+        labelled.extend(p)
 
     return {
         "islands_comm": island_comm,
@@ -160,7 +218,12 @@ def build_graph_data(
         "e_q": e_q,
         "communities": community_rows,
         "domains": domain_rows,
-        "always_labelled": [node_index[n] for n in top_labelled],
+        "always_labelled": sorted({node_index[n] for n in labelled}),
+        "backbone": [1 if (a, b) in backbone else 0 for (a, b) in sorted(edges)],
+        "bridge": [
+            1 if membership[a] != membership[b] else 0 for (a, b) in sorted(edges)
+        ],
+        "hub_cut": hub_cut,
         "stats": {
             "nodes": len(nodes),
             "edges": len(edges),
@@ -172,6 +235,15 @@ def build_graph_data(
             "max_weight": max((len(q) for q in edges.values()), default=0),
             "island_concepts": len(island_nodes),
             "island_clusters": island_components,
+            "backbone_edges": len(backbone),
+            "bridge_edges": sum(
+                1 for (a, b) in edges if membership[a] != membership[b]
+            ),
+            "backbone_bridges": sum(
+                1 for p in backbone if membership[p[0]] != membership[p[1]]
+            ),
+            "hub_cut": hub_cut,
+            "hubs": sum(1 for n in nodes if degree[n] > hub_cut),
         },
     }
 
@@ -182,7 +254,15 @@ GRAPH_CSS = r"""
   svg#graph { display: block; width: 100%; height: 100%; cursor: grab;
     background: var(--canvas); }
   svg#graph.panning { cursor: grabbing; }
-  #gscene .gedge { stroke: #7f8b9c; fill: none; }
+  #gscene .gedge { stroke: #6f7b8c; fill: none; }
+  /* A crossing between two communities is the thing a reader is asked to
+     name, so it is drawn brighter than a line inside one. */
+  #gscene .gedge.br { stroke: #cfe0f2; }
+  /* The opening frame draws the backbone. Everything else is in the page and
+     comes back on a hover, a pin, or in a local view. */
+  #gscene .gedge.nb { display: none; }
+  #gscene.showall .gedge.nb { display: block; }
+  #gscene .gedge.nb.hl { display: block; }
   #gscene .gnode circle { stroke: rgba(10,12,16,.85); stroke-width: 1; }
   #gscene .gnode { cursor: pointer; }
   #glabels { pointer-events: none; }
@@ -265,7 +345,10 @@ GRAPH_JS = r"""
 
   var gx = new Float64Array(GN), gy = new Float64Array(GN);
   var gr = new Float64Array(GN);
-  for (var ri = 0; ri < GN; ri++) gr[ri] = Math.min(2.2 + Math.sqrt(G.deg[ri]) * 1.5, 16);
+  var HUB_R = 2.2 + Math.sqrt(G.hub_cut) * 1.5;
+  for (var ri = 0; ri < GN; ri++) {
+    gr[ri] = Math.min(2.2 + Math.sqrt(G.deg[ri]) * 1.5, HUB_R);
+  }
 
   var gNodeEl = new Array(GN), gLabelEl = new Array(GN), gEdgeEl = new Array(GE);
   var activeNode = [], activeEdge = [];
@@ -354,22 +437,29 @@ GRAPH_JS = r"""
   }
 
   // --- the simulation -----------------------------------------------------
-  function runLayout(ids, edges, ticks, seed) {
-    var n = ids.length;
-    if (n === 0) return;
-    var side = Math.sqrt(n * 2600) + 120;
+  // Hubs are the top degree percentile, computed at build time. They draw at
+  // a capped radius and pull on a damped spring: a Concept touching ninety
+  // Questions otherwise drags every one of them onto itself, and that is what
+  // fused the first opening frame into a single mass.
+  var HUB_CUT = G.hub_cut;
+  function isHub(i) { return G.deg[i] > HUB_CUT; }
+
+  function seedNodes(ids, seed, side) {
     var rand = mulberry32(seed);
-    for (var s0 = 0; s0 < n; s0++) {
+    for (var i = 0; i < ids.length; i++) {
       var ang = rand() * Math.PI * 2, rad = Math.sqrt(rand()) * side / 2;
-      gx[ids[s0]] = Math.cos(ang) * rad;
-      gy[ids[s0]] = Math.sin(ang) * rad;
+      gx[ids[i]] = Math.cos(ang) * rad;
+      gy[ids[i]] = Math.sin(ang) * rad;
     }
-    if (n === 1) { gx[ids[0]] = 0; gy[ids[0]] = 0; return; }
-    var k = Math.sqrt(side * side / n);
-    var k2 = k * k;
+  }
+
+  function simulate(ids, edgeList, ticks, side, gravity) {
+    var n = ids.length;
+    if (n < 2) return;
+    var k = Math.sqrt(side * side / n), k2 = k * k;
     var dx = new Float64Array(n), dy = new Float64Array(n);
     var slot = {};
-    for (var m0 = 0; m0 < n; m0++) slot[ids[m0]] = m0;
+    for (var m = 0; m < n; m++) slot[ids[m]] = m;
     var acc = { x: 0, y: 0 };
     for (var t = 0; t < ticks; t++) {
       var temp = (1 - t / ticks) * k * 0.55 + 0.4;
@@ -380,29 +470,38 @@ GRAPH_JS = r"""
         qtForce(root, ids[a], k2, acc);
         dx[a] += acc.x; dy[a] += acc.y;
       }
-      for (var e = 0; e < edges.length; e++) {
-        var ee = edges[e];
-        var ia = G.e_a[ee], ib = G.e_b[ee];
+      for (var e = 0; e < edgeList.length; e++) {
+        var ee = edgeList[e], ia = G.e_a[ee], ib = G.e_b[ee];
         var sa = slot[ia], sb = slot[ib];
         if (sa === undefined || sb === undefined) continue;
         var ex = gx[ia] - gx[ib], ey = gy[ia] - gy[ib];
         var ed = Math.sqrt(ex * ex + ey * ey) || 0.01;
         var wf = 1 + Math.log(1 + edgeWeight(ee)) * 0.9;
+        if (isHub(ia) || isHub(ib)) wf *= 0.28;
         var f2 = ed * ed / k * wf;
         var fx = ex / ed * f2, fy = ey / ed * f2;
         dx[sa] -= fx; dy[sa] -= fy;
         dx[sb] += fx; dy[sb] += fy;
       }
+      var g = gravity === undefined ? 0.006 : gravity;
       for (var c = 0; c < n; c++) {
         var id = ids[c];
         var len = Math.sqrt(dx[c] * dx[c] + dy[c] * dy[c]) || 1e-6;
         var cap = Math.min(len, temp);
         gx[id] += dx[c] / len * cap;
         gy[id] += dy[c] / len * cap;
-        gx[id] -= gx[id] * 0.006;
-        gy[id] -= gy[id] * 0.006;
+        gx[id] -= gx[id] * g;
+        gy[id] -= gy[id] * g;
       }
     }
+  }
+
+  function runLayout(ids, edgeList, ticks, seed, gravity) {
+    if (!ids.length) return;
+    if (ids.length === 1) { gx[ids[0]] = 0; gy[ids[0]] = 0; return; }
+    var side = Math.sqrt(ids.length * 1500) + 90;
+    seedNodes(ids, seed, side);
+    simulate(ids, edgeList, ticks, side, gravity);
     relaxCollisions(ids, 60);
   }
 
@@ -447,6 +546,191 @@ GRAPH_JS = r"""
     }
   }
 
+  // --- the opening frame: communities as islands --------------------------
+  // One force run over 1368 Concepts gives one mass. The communities are
+  // real, but they interleave, and a cold reader could not separate three of
+  // them by eye (map-review.md, 2026-09-30). The opening layout is built in
+  // two levels instead. Each community is laid out on its own, from its own
+  // edges alone, and becomes a disc; the discs are then packed -- pushed
+  // apart wherever they overlap, pulled together by the Questions that cross
+  // between them -- seeded on a ring that alternates large and small so two
+  // big ones never start adjacent. The 125 detached clusters are not a
+  // community, so they ring the outside instead of taking room in the middle.
+
+  function edgesWithin(ids) {
+    var inSet = {};
+    for (var i = 0; i < ids.length; i++) inSet[ids[i]] = true;
+    var seen = {}, out = [];
+    for (var a = 0; a < ids.length; a++) {
+      var n = ids[a];
+      for (var b = 0; b < gAdj[n].length; b++) {
+        var e = gAdj[n][b];
+        if (!seen[e] && inSet[other(e, n)]) { seen[e] = true; out.push(e); }
+      }
+    }
+    return out;
+  }
+
+  function componentsOf(ids) {
+    var inSet = {};
+    for (var i = 0; i < ids.length; i++) inSet[ids[i]] = true;
+    var seen = {}, out = [];
+    for (var s = 0; s < ids.length; s++) {
+      var start = ids[s];
+      if (seen[start]) continue;
+      seen[start] = true;
+      var stack = [start], comp = [];
+      while (stack.length) {
+        var x = stack.pop();
+        comp.push(x);
+        for (var a = 0; a < gAdj[x].length; a++) {
+          var y = other(gAdj[x][a], x);
+          if (inSet[y] && !seen[y]) { seen[y] = true; stack.push(y); }
+        }
+      }
+      comp.sort(function (p, q) { return p - q; });
+      out.push(comp);
+    }
+    return out;
+  }
+
+  function recentre(ids) {
+    var cx = 0, cy = 0;
+    for (var i = 0; i < ids.length; i++) { cx += gx[ids[i]]; cy += gy[ids[i]]; }
+    cx /= ids.length; cy /= ids.length;
+    var r = 0;
+    for (var j = 0; j < ids.length; j++) {
+      var id = ids[j];
+      gx[id] -= cx; gy[id] -= cy;
+      var d = Math.sqrt(gx[id] * gx[id] + gy[id] * gy[id]) + gr[id];
+      if (d > r) r = d;
+    }
+    return r;
+  }
+
+  function shift(ids, dx, dy) {
+    for (var i = 0; i < ids.length; i++) { gx[ids[i]] += dx; gy[ids[i]] += dy; }
+  }
+
+  var DISC_GAP = 44;
+
+  function packDiscs(units, interW) {
+    var n = units.length;
+    if (n === 0) return;
+    var byComm = {};
+    for (var i = 0; i < n; i++) byComm[units[i].comm] = units[i];
+    var area = 0;
+    for (var j = 0; j < n; j++) area += units[j].r * units[j].r;
+    var R0 = Math.sqrt(area) * 1.15 + DISC_GAP;
+    var order = units.slice().sort(function (a, b) { return b.r - a.r || a.comm - b.comm; });
+    var ring = [], lo = 0, hi = n - 1;
+    for (var s = 0; s < n; s++) ring.push(s % 2 === 0 ? order[lo++] : order[hi--]);
+    for (var t = 0; t < n; t++) {
+      var ang = (t / n) * Math.PI * 2;
+      ring[t].cx = Math.cos(ang) * R0;
+      ring[t].cy = Math.sin(ang) * R0;
+    }
+    for (var it = 0; it < 700; it++) {
+      for (var a = 0; a < n; a++) { units[a].fx = 0; units[a].fy = 0; }
+      for (var b = 0; b < n; b++) {
+        for (var c = b + 1; c < n; c++) {
+          var A = units[b], B = units[c];
+          var dx = B.cx - A.cx, dy = B.cy - A.cy;
+          var d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+          var want = A.r + B.r + DISC_GAP;
+          if (d >= want) continue;
+          var push = (want - d) * 0.5;
+          A.fx -= dx / d * push; A.fy -= dy / d * push;
+          B.fx += dx / d * push; B.fy += dy / d * push;
+        }
+      }
+      for (var key in interW) {
+        if (!interW.hasOwnProperty(key)) continue;
+        var parts = key.split(",");
+        var U = byComm[+parts[0]], V = byComm[+parts[1]];
+        if (!U || !V) continue;
+        var ex = V.cx - U.cx, ey = V.cy - U.cy;
+        var ed = Math.sqrt(ex * ex + ey * ey) || 0.01;
+        var slack = ed - (U.r + V.r + DISC_GAP);
+        if (slack <= 0) continue;
+        var pull = Math.min(slack * 0.5, slack * 0.006 * interW[key]);
+        U.fx += ex / ed * pull; U.fy += ey / ed * pull;
+        V.fx -= ex / ed * pull; V.fy -= ey / ed * pull;
+      }
+      for (var u = 0; u < n; u++) {
+        // Without a real pull to the middle the discs stay on the seed ring
+        // and leave a hole; separation alone never contracts.
+        units[u].cx += units[u].fx - units[u].cx * 0.022;
+        units[u].cy += units[u].fy - units[u].cy * 0.022;
+      }
+    }
+  }
+
+  function ringDiscs(units, inner) {
+    if (!units.length) return;
+    var total = 0;
+    for (var i = 0; i < units.length; i++) total += units[i].r + 26;
+    var radius = Math.max(inner, total / (Math.PI * 2));
+    var acc = 0;
+    for (var j = 0; j < units.length; j++) {
+      acc += units[j].r + 26;
+      var ang = (acc / total) * Math.PI * 2;
+      units[j].cx = Math.cos(ang) * (radius + units[j].r);
+      units[j].cy = Math.sin(ang) * (radius + units[j].r);
+    }
+  }
+
+  function layoutTwoLevel(ids, edgeList) {
+    var byComm = {};
+    for (var i = 0; i < ids.length; i++) {
+      var c = G.comm[ids[i]];
+      (byComm[c] || (byComm[c] = [])).push(ids[i]);
+    }
+    var intra = {}, interW = {};
+    for (var e = 0; e < edgeList.length; e++) {
+      var ee = edgeList[e], ca = G.comm[G.e_a[ee]], cb = G.comm[G.e_b[ee]];
+      if (ca === cb) (intra[ca] || (intra[ca] = [])).push(ee);
+      else {
+        var key = Math.min(ca, cb) + "," + Math.max(ca, cb);
+        interW[key] = (interW[key] || 0) + edgeWeight(ee);
+      }
+    }
+    var core = [], fringe = [];
+    var keys = [];
+    for (var k in byComm) if (byComm.hasOwnProperty(k)) keys.push(+k);
+    keys.sort(function (a, b) { return a - b; });
+    for (var q = 0; q < keys.length; q++) {
+      var comm = keys[q], members = byComm[comm];
+      if (comm === G.islands_comm) {
+        var comps = componentsOf(members);
+        comps.sort(function (a, b) { return b.length - a.length || a[0] - b[0]; });
+        for (var z = 0; z < comps.length; z++) {
+          runLayout(comps[z], edgesWithin(comps[z]), 110, 9001 + z, 0.03);
+          fringe.push({ ids: comps[z], r: recentre(comps[z]), comm: comm });
+        }
+      } else {
+        // Strong gravity inside a community: at 0.014 the members smear and
+        // two neighbouring territories interleave at their edges, which is
+        // the failure this layout exists to fix. The cost is real and is
+        // stated in the report: inside one community, position is packing,
+        // not structure. Intra-community structure is read in a local view,
+        // which runs a plain force layout on the neighbourhood.
+        runLayout(members, intra[comm] || [], 300, 1337 + comm, 0.035);
+        core.push({ comm: comm, ids: members, r: recentre(members) });
+      }
+    }
+    packDiscs(core, interW);
+    var R = 0;
+    for (var p = 0; p < core.length; p++) {
+      var d = Math.sqrt(core[p].cx * core[p].cx + core[p].cy * core[p].cy) + core[p].r;
+      if (d > R) R = d;
+    }
+    ringDiscs(fringe, R * 1.20 + DISC_GAP);
+    for (var u = 0; u < core.length; u++) shift(core[u].ids, core[u].cx, core[u].cy);
+    for (var v = 0; v < fringe.length; v++) shift(fringe[v].ids, fringe[v].cx, fringe[v].cy);
+    relaxCollisions(ids, 40);
+  }
+
   // --- scene --------------------------------------------------------------
   var gsvg = document.getElementById("graph");
   var gscene = null, gEdgeLayer = null, gNodeLayer = null, gLabelLayer = null;
@@ -455,7 +739,9 @@ GRAPH_JS = r"""
     gsvg.innerHTML = "";
     gNodeEl = new Array(GN); gLabelEl = new Array(GN); gEdgeEl = new Array(GE);
     hlNodes = []; hlEdges = [];
-    gscene = svgEl("g", { id: "gscene" });
+    // A local view draws every line it holds; the opening frame draws the
+    // backbone and keeps the rest one hover away.
+    gscene = svgEl("g", { id: "gscene", class: localDepth > 0 ? "showall" : "" });
     gEdgeLayer = svgEl("g", {});
     gNodeLayer = svgEl("g", {});
     gscene.appendChild(gEdgeLayer);
@@ -467,10 +753,11 @@ GRAPH_JS = r"""
     for (var a = 0; a < activeEdge.length; a++) {
       var e = activeEdge[a];
       var w = edgeWeight(e);
+      var bridge = G.bridge[e] === 1;
       var line = svgEl("line", {
-        class: "gedge",
-        "stroke-width": Math.min(0.32 + w * 0.62, 4).toFixed(2),
-        "stroke-opacity": Math.min(0.13 + w * 0.13, 0.8).toFixed(3)
+        class: "gedge" + (G.backbone[e] ? "" : " nb") + (bridge ? " br" : ""),
+        "stroke-width": (Math.min(0.32 + w * 0.62, 4) * (bridge ? 1.5 : 1)).toFixed(2),
+        "stroke-opacity": Math.min((bridge ? 0.34 : 0.13) + w * 0.13, 0.85).toFixed(3)
       });
       gEdgeEl[e] = line;
       gEdgeLayer.appendChild(line);
@@ -807,7 +1094,7 @@ GRAPH_JS = r"""
     localDepth = depth;
     if (depth === 0) {
       setActive(allNodeIds);
-      runLayout(activeNode, activeEdge, 320, 1337);
+      layoutTwoLevel(activeNode, activeEdge);
     } else {
       setActive(neighbourhood(centre, depth));
       runLayout(activeNode, activeEdge, 420, 4242);
@@ -1133,8 +1420,14 @@ GRAPH_JS = r"""
   function updateStat() {
     var hiddenNodes = 0;
     for (var a = 0; a < activeNode.length; a++) if (commOff[G.comm[activeNode[a]]]) hiddenNodes++;
+    var drawn = activeEdge.length;
+    if (!localDepth) {
+      drawn = 0;
+      for (var b = 0; b < activeEdge.length; b++) if (G.backbone[activeEdge[b]]) drawn++;
+    }
     document.getElementById("stat").textContent =
-      (activeNode.length - hiddenNodes) + " Concepts, " + activeEdge.length + " edges" +
+      (activeNode.length - hiddenNodes) + " Concepts, " + drawn + " of " +
+      activeEdge.length + " edges drawn" +
       (localDepth ? " · local depth " + localDepth : "") +
       " · layout " + layoutMs + " ms";
   }
@@ -1160,7 +1453,7 @@ GRAPH_JS = r"""
     graphReady = true;
     setActive(allNodeIds);
     var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
-    runLayout(activeNode, activeEdge, 320, 1337);
+    layoutTwoLevel(activeNode, activeEdge);
     var t1 = (window.performance && performance.now) ? performance.now() : Date.now();
     layoutMs = Math.round(t1 - t0);
     buildScene();

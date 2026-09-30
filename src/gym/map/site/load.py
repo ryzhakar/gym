@@ -139,6 +139,17 @@ def dominant_domain(
     return out
 
 
+def voice_numbering(voices: dict[str, dict]) -> dict[str, int]:
+    """One stable number per Voice, sorted by id.
+
+    The one numbering for the whole page (owner ruling 2026-09-30): every
+    view that needs to show an anonymous "Voice N" label calls this same
+    function rather than inventing its own, so a Voice reads the same
+    number in the Graph panel's Claim list and the Matrix's columns.
+    """
+    return {vid: i + 1 for i, vid in enumerate(sorted(voices))}
+
+
 def walk_payload(
     questions: dict[str, dict],
     positions: dict[str, dict],
@@ -151,13 +162,10 @@ def walk_payload(
 ) -> dict:
     """Everything the Concept panel needs to open a Question in full.
 
-    Voices are numbered once here, over the sorted voice ids, so a number
-    is a property of the map rather than of whatever the page happens to be
-    showing. Returned as `voice_number` and also exposed at the top level of
-    the page's data (page.py); the Matrix reads that same mapping for its
-    column labels (owner ruling 2026-09-30: one stable number per Voice for
-    the whole page, shared with the Graph panel) rather than numbering its
-    own subset's column order.
+    Calls `voice_numbering()` for its Claim numbers and also returns that
+    same mapping as `voice_number`, so a caller that only wants the
+    numbering (page.py, for the page's top-level shared field) does not
+    have to reach into this payload's internals for it.
     """
     args_by_position: dict[str, list[str]] = defaultdict(list)
     for aid, a in arguments.items():
@@ -169,7 +177,7 @@ def walk_payload(
         if pid in positions and c.get("voice") in voices:
             claims_by_position[pid].append(cid)
 
-    voice_number = {vid: i + 1 for i, vid in enumerate(sorted(voices))}
+    voice_number = voice_numbering(voices)
 
     positions_out: dict[str, dict] = {}
     for pid, p in positions.items():

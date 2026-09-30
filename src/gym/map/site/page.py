@@ -318,8 +318,10 @@ def build_data(map_dir: Path) -> dict:
         "claims": mat["claims"],
         "matrix": mat["matrix"],
         "default_subset": mat["default_subset"],
+        "clustering": mat["clustering"],
         "graph": graph,
         "walk": walk,
+        "voice_number": load_mod.voice_numbering(voices),
     }
 
 
