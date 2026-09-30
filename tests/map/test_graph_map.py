@@ -269,13 +269,24 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
 
         # The side panel narrows the canvas. Nothing may be drawn under it:
         # a hub at the right edge used to have its name cut mid-word.
+        # Every drawn name -- a Concept's and an island's -- must sit inside
+        # the canvas, clear of the side panel and clear of the legend. The
+        # hidden node the page measures text against is skipped by its
+        # visibility, not by its position.
         overflow = """() => {
           const svg = document.getElementById('graph').getBoundingClientRect();
+          const panel = document.getElementById('panel').getBoundingClientRect();
+          const hud = document.getElementById('graph-hud').getBoundingClientRect();
           const bad = [];
-          document.querySelectorAll('#glabels .glabel').forEach(e => {
-            if (e.style.display !== 'block') return;
+          document.querySelectorAll('#glabels .glabel, #ghullnames .ghullname').forEach(e => {
+            if (e.style.display !== 'block' || e.style.visibility === 'hidden') return;
             const r = e.getBoundingClientRect();
-            if (r.right > svg.right + 1 || r.left < svg.left - 1) bad.push(e.textContent);
+            if (r.right > svg.right + 1) bad.push(['svg-right', e.textContent]);
+            else if (r.left < svg.left - 1) bad.push(['svg-left', e.textContent]);
+            else if (panel.width && r.right > panel.left) bad.push(['panel', e.textContent]);
+            else if (r.right > hud.left && r.left < hud.right &&
+                     r.bottom > hud.top && r.top < hud.bottom)
+              bad.push(['legend', e.textContent]);
           });
           return bad;
         }"""
@@ -303,6 +314,32 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
             "() => document.getElementById('graph').getBoundingClientRect().width"
         ) == wide
         assert page.evaluate(overflow) == []
+
+        # The reviewer's path is search, not a click, and it clipped where a
+        # click did not: the search centres the view, so a Concept can end up
+        # just past the canvas with its label overflowing whichever way it
+        # faces. Walked here exactly as a reader walks it.
+        page.fill("#gsearch", "unsafe")
+        page.wait_for_selector("#gsuggest div")
+        page.eval_on_selector("#gsuggest div", "el => el.click()")
+        page.wait_for_selector("#panel.open")
+        page.wait_for_timeout(500)
+        assert page.evaluate("() => window.__gym.pinned()") == "unsafe"
+        assert page.evaluate(overflow) == [], page.evaluate(overflow)
+        page.eval_on_selector("#panel-body .qline", "el => el.click()")
+        page.wait_for_selector("#panel-body .pos")
+        page.wait_for_timeout(300)
+        assert page.evaluate(overflow) == [], page.evaluate(overflow)
+        named_here = page.eval_on_selector_all(
+            "#ghullnames .ghullname",
+            "els => els.filter(e => e.style.display === 'block').length",
+        )
+        assert named_here >= 1, "an island name is drawn on this path too"
+        print("search path clean, island names drawn:", named_here)
+        page.screenshot(path=str(SHOTS / "map-search-path.png"))
+        page.keyboard.press("Escape")
+        page.evaluate("() => window.__gym.fit()")
+        page.wait_for_timeout(300)
 
         assert page.evaluate("() => window.__gym.click('async-runtimes')")
         page.wait_for_selector("#panel.open")
@@ -438,6 +475,7 @@ def test_graph_page_is_readable_and_walkable(tmp_path: Path) -> None:
         page.wait_for_timeout(200)
         page.evaluate("() => window.__gym.zoom(2.2)")
         page.wait_for_timeout(250)
+        assert page.evaluate(overflow) == [], page.evaluate(overflow)
         page.screenshot(path=str(SHOTS / "map-island-hull.png"))
 
         # the legend folds to a strip and the fit takes the width back

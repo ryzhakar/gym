@@ -1013,14 +1013,17 @@ GRAPH_JS = r"""
       var name = G.communities[+c].name;
       var left = h.minx * vk + vx, right = h.maxx * vk + vx;
       var room = right - left - 16;
-      var opts = nameLayouts(name), chosen = null, size = 0;
+      var opts = nameLayouts(name), chosen = null, size = 0, widest = 0;
       for (var o = 0; o < opts.length; o++) {
-        var fits = room / (longestLine(opts[o]) * NAME_CHAR);
-        var sz = Math.min(NAME_MAX, fits);
-        if (sz >= NAME_MIN) { chosen = opts[o]; size = sz; break; }
+        var at11 = 0;
+        for (var li2 = 0; li2 < opts[o].length; li2++) {
+          at11 = Math.max(at11, textWidth(opts[o][li2], NAME_MAX, false));
+        }
+        var sz = Math.min(NAME_MAX, NAME_MAX * room / at11);
+        if (sz >= NAME_MIN) { chosen = opts[o]; size = sz; widest = at11 * sz / NAME_MAX; break; }
       }
       if (!chosen) { h.el.style.display = "none"; continue; }
-      var half = longestLine(chosen) * size * NAME_CHAR / 2;
+      var half = widest / 2;
       var sx = h.cx * vk + vx;
       var top = h.topY * vk + vy + size + 5;
       if (sx - half < left + 8) sx = left + 8 + half;
@@ -1051,6 +1054,29 @@ GRAPH_JS = r"""
   var gsvg = document.getElementById("graph");
   var gscene = null, gEdgeLayer = null, gNodeLayer = null, gLabelLayer = null;
   var gInterLayer = null, gHullLayer = null, gHullNameLayer = null;
+  var gMeasure = null, widthCache = {};
+
+  function textWidth(text, size, bold) {
+    var key = size + "|" + (bold ? 1 : 0) + "|" + text;
+    var hit = widthCache[key];
+    if (hit !== undefined) return hit;
+    var w;
+    if (!gMeasure) {
+      w = text.length * size * 0.58;
+    } else {
+      gMeasure.setAttribute("font-size", size);
+      gMeasure.style.fontWeight = bold ? "600" : "400";
+      gMeasure.textContent = text;
+      try {
+        w = gMeasure.getComputedTextLength();
+      } catch (err) {
+        w = text.length * size * 0.58;
+      }
+      if (!w) w = text.length * size * 0.58;
+    }
+    widthCache[key] = w;
+    return w;
+  }
 
   function buildScene() {
     gsvg.innerHTML = "";
@@ -1076,6 +1102,20 @@ GRAPH_JS = r"""
     gsvg.appendChild(gHullNameLayer);
     gLabelLayer = svgEl("g", { id: "glabels" });
     gsvg.appendChild(gLabelLayer);
+    // Label widths were guessed from the character count. A bold 12px
+    // neighbour label runs about 12% wider than that guess, which is more
+    // than the margin the edge test allows, so a label passed the test and
+    // was then cut by the canvas edge where the panel begins. They are
+    // measured now, once each, against this hidden text node.
+    // In its own layer, not in #glabels: anything that selects the drawn
+    // labels must not find the ruler among them.
+    var measureLayer = svgEl("g", { id: "gmeasure" });
+    measureLayer.style.visibility = "hidden";
+    gMeasure = svgEl("text", { class: "glabel", x: "-9999", y: "-9999" });
+    gMeasure.style.display = "block";
+    measureLayer.appendChild(gMeasure);
+    gsvg.appendChild(measureLayer);
+    widthCache = {};
 
     // A line inside an island is drawn above, a crossing below and as a
     // curve: straight crossings cut the canvas into a star and read as noise,
@@ -1187,7 +1227,17 @@ GRAPH_JS = r"""
       var hr = hud.getBoundingClientRect();
       left = Math.max(left, hr.right - r.left + 16);
     }
-    return { left: left, right: 12, top: 12, bottom: 30 };
+    // The panel sits beside the canvas, so normally it takes nothing off it.
+    // The overlap is reserved anyway: between opening the panel and the
+    // browser reflowing, the canvas still reports its old width, and a label
+    // placed in that instant is placed against a box that no longer exists.
+    var right = 12;
+    var panel = document.getElementById("panel");
+    if (panel && panel.classList.contains("open")) {
+      var pr = panel.getBoundingClientRect();
+      right = Math.max(right, r.right - pr.left + 12);
+    }
+    return { left: left, right: right, top: 12, bottom: 30 };
   }
 
   function fitView() {
@@ -1286,6 +1336,7 @@ GRAPH_JS = r"""
     // is not drawn at all.
     // The island names go down first and a Concept label never lands on one.
     // The legend's own box goes in with them, so nothing is drawn under it.
+    var ins = canvasInsets();
     var placed = updateHullNames(), shown = 0;
     var hudEl = document.getElementById("graph-hud");
     if (hudEl && hudEl.offsetWidth) {
@@ -1298,16 +1349,22 @@ GRAPH_JS = r"""
     for (var c = 0; c < cands.length && shown < LABEL_BUDGET; c++) {
       var k = cands[c];
       var fs = k.pri <= 1 ? 12 : 11;
-      var w = G.labels[k.i].length * fs * 0.55;
+      var w = textWidth(G.labels[k.i], fs, k.pri <= 1);
       var rad = gr[k.i] * vk;
+      var rightEdge = r.width - ins.right;
       var anchor = "start", tx = k.sx + rad + 3, left = tx;
-      if (tx + w > r.width - 4) {
+      if (tx + w > rightEdge) {
         anchor = "end";
         tx = k.sx - rad - 3;
         left = tx - w;
-        if (left < 4) continue;
       }
       var box = { x: left, y: k.sy - fs, w: w, h: fs + 3 };
+      // One boundary test on the box that will actually be drawn, both
+      // sides. Checking only the side the flip moved to left a Concept whose
+      // dot sits just past the canvas with a label that overflowed whichever
+      // way it faced -- which is how "hot patching" and "JS interop" were
+      // still being cut by the panel after the flip was added.
+      if (box.x < ins.left || box.x + box.w > rightEdge) continue;
       var clash = false;
       for (var q2 = 0; q2 < placed.length; q2++) {
         var o = placed[q2];
