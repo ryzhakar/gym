@@ -106,3 +106,5 @@
 2026-09-30T17:14 | agent:gym-trainer | receipt | b6-enum clock started 17:13
 2026-09-30T17:14 | self | discovery | agent:tests-map-core stalled: transcript unchanged since 17:08:30, no test file written, no pytest process; stopped at 17:14 and relaunched from the same prompt file
 2026-09-30T17:14 | self | delegation | agent:tests-map-core-2, sonnet, background: relaunch of the estimate and check_map tests from the same prompt, writing files incrementally; wait bounded by heartbeat eed4185b
+2026-09-30T17:16 | agent:gym-trainer | receipt | all six baseline items attempted by 17:16; grading commands handed to the learner; feedback follows
+2026-09-30T17:19 | agent:gym-trainer | receipt | baseline graded: 1 of 6 passed (b6); feedback given per item; unit u01-own-move-borrow attempt presented at 17:19, novice tier, 10 minutes unaided
