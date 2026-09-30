@@ -1,6 +1,7 @@
 @docs/ground-truth.md
 @docs/conventions.md
 @.claude/memento.yaml
+@docs/architecture_log.md
 
 ## Condition
 

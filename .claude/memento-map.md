@@ -1,6 +1,6 @@
 # memento map
 
-Audited 2026-09-26.
+Audited 2026-09-30.
 
 | path | kind | load | purpose |
 |---|---|---|---|
@@ -8,6 +8,8 @@ Audited 2026-09-26.
 | docs/ground-truth.md | frame | self | gym as given: starting point, target domains, subjects, tools |
 | docs/conventions.md | directive | self | how to work: rules with grounds |
 | .claude/memento.yaml | schema | self | record kinds, homes, formats, admission |
+| docs/architecture_log.md | change | self | changes to what gym computes or runs |
+| docs/capabilities.md | fact | need | what gym's built parts are and do |
 | .claude/memento-map.md | map | start | index of records |
 | docs/orchestration_log/history/{date}/events*.md | trace | start (tail) | one line per event |
 | docs/orchestration_log/history/{date}/session*.md | digest | start (close block) | a span's narrative and close block |
