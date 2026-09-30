@@ -40,3 +40,11 @@ WHY:           owner rulings 2026-09-30: the Concept graph is the map itself, Ob
 INVALIDATES:   every Concept count before the dedup; the Graph v0 and v01 renders under recon/2026-09-30/frontend/; any reading of the Matrix that treated its order as arbitrary
 EVIDENCE:      commits 9602197, bb0d915, 44cc092, 090a2d4, 635d6f5, a8bf2dc, e745638; 254 tests pass; cold review passed all four tests, recon/2026-09-30/frontend/map-review-2.md
 
+## 2026-09-30 — Baseline items run by command
+
+KIND:          runnable
+FROM → TO:     baseline items attempted from a hand-copied stub and graded by a shell loop the learner ran, which silently weakened grading on 5 of 6 items → `gym train baseline stage` and `gym train baseline grade`, run by the trainer from absolute paths, key tests brought in by the command, one probe-item event per item with which=baseline; the trainer definition v4 calls them
+WHY:           the first-session audit (recon/2026-09-30/train/trainer-quality-report.md) ranked the copy loop and the colon path as the costliest faults
+INVALIDATES:   the by-hand baseline procedure in recon/2026-09-30/train/baseline-procedure.md; any session id holding a colon
+EVIDENCE:      commits 2c8e3a3, ed3b481; 280 tests pass
+
