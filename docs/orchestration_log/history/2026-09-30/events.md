@@ -307,3 +307,9 @@
 2026-09-30T23:55 | owner | receipt | in conversation: the line Nothing to add was a message; violation
 2026-09-30T23:55 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-09-30T23:56 | self | failure | a status check of the working tree with three agents mid-edit, nothing decided by it; same entry as history/2026-09-30/failures.md No-op checks made to fill turns
+2026-09-30T23:56 | owner | receipt | in conversation: the line Waiting on three agents was a message; violation
+2026-09-30T23:56 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-09-30T23:56 | agent:graph-map | receipt | revision 4: radial containment with degree pull inside islands, curved crossings below, blurred hulls named by hubs, header and legend fold, panel on a 4/8/12 grid with chips and one title, keys; fit excludes legend and panel; detached clusters in a band below the body; 94 map tests; where a designer would not ship: pulled positions, search and legend in one box, weight ramp for a range the data lacks, no seam between dark canvas and light panel; unverified
+2026-09-30T23:57 | self | commitment | graph revision 4 committed after 94 map tests passed here
+2026-09-30T23:57 | self | discovery | map-default.png and map-pinned.png read: a real map now, islands with hulls and names, structure inside; left: island names float away from their hulls (semver at the top edge, unsafe between islands), green and blue islands touch at the centre-right, the pinned view's panel is light on a dark app
+2026-09-30T23:57 | self | delegation | agent:graph-map continued: island names anchored inside their hull's top edge, a dark panel matching the canvas, islands kept apart
