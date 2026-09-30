@@ -155,3 +155,6 @@
 2026-09-30T19:19 | self | commitment | architecture log entry: training sessions keep their own records
 2026-09-30T19:20 | agent:trainer-definition-v3 | receipt | gym-trainer-v3.md and summons-template-v3.md final: tools *, key/ and workspace bans as rules, own agents for all but the conversation, probe stage and grade with per-item fields, substance in note=, one confidence per unit, narrative before return, README pointer; every command checked against --help and run on a scratch unit; open: tools * leaves only rules between the trainer and the item bank; unverified
 2026-09-30T19:20 | self | commitment | gym-trainer v3 installed (7901e74), summons template at training/summons-template.md; capabilities.md gains The trainer
+2026-09-30T19:21 | self | decision | decided under the handover: u02 and u03 get the source-level item audit before u02's session of 2026-10-01; the Graph view's two rough edges get fixed; both delegated
+2026-09-30T19:21 | self | delegation | agent:item-bank-audit-u02-u03, sonnet, background; output recon/2026-09-30/train/item-bank-audit-u02-u03.md; wait bounded by heartbeat eed4185b
+2026-09-30T19:21 | self | delegation | agent:graph-v01, sonnet, background: soft boundary and Domains and Values in the default subset; output recon/2026-09-30/frontend/graph-v01-report.md; wait bounded by heartbeat eed4185b
