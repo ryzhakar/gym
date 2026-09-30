@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 
 import yaml
 
-PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00"]
+PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#7B3F61"]
 
 
 def load_kind(map_dir: Path, name: str) -> dict[str, dict]:
@@ -102,11 +103,16 @@ def main(map_dir: Path, out: Path) -> None:
                 "position": pid,
                 "claim": chosen,
                 "changed": changed,
+                "dated": bool(claims[chosen].get("date")),
                 "history": history if len(cids) > 1 else None,
             }
         )
 
-    # --- color index: positions actually chosen for a question, ranked by position id ---
+    # --- color index: positions actually chosen for a question, ranked by position id.
+    # N>6 no longer clamps to 6 (info loss: 2+ genuinely different Positions
+    # shared a color). Position 7 keeps color 7 ("overflow", one shared bucket
+    # for every position past the 6th); positions 8+ still land in that same
+    # bucket, since the palette only carries one overflow color.
     overflow_questions = 0
     color_index: dict[tuple[str, str], int] = {}
     for qid, pids in question_positions_used.items():
@@ -114,24 +120,45 @@ def main(map_dir: Path, out: Path) -> None:
         if len(ordered) > 6:
             overflow_questions += 1
         for i, pid in enumerate(ordered):
-            color_index[(qid, pid)] = min(i + 1, 6)
+            color_index[(qid, pid)] = min(i + 1, 7)
 
     for cell in matrix_cells:
         cell["color"] = color_index[(cell["q"], cell["position"])]
-        cell["checked"] = "practiced" in claims[cell["claim"]]
+        cell["checked"] = "checked" in claims[cell["claim"]]
 
-    # --- default subset: where blocks can appear ---
-    candidate_questions = {
-        qid
-        for qid in question_voices
-        if len(question_voices[qid]) >= 2 and len(question_positions_used[qid]) >= 2
-    }
-    voice_candidate_q_count: dict[str, set[str]] = defaultdict(set)
-    for cell in matrix_cells:
-        if cell["q"] in candidate_questions:
-            voice_candidate_q_count[cell["v"]].add(cell["q"])
-    candidate_voices = {vid for vid, qs in voice_candidate_q_count.items() if len(qs) >= 2}
+    # --- default subset: iterate the two filters to a fixed point (a bipartite
+    # 2-core): a literal single pass (the prototype's reading) can leave a
+    # question in the subset whose only qualifying voices get filtered out by
+    # the voice-side rule, or a voice whose only qualifying questions get
+    # dropped by the question-side rule. Repeat both filters, each time
+    # restricted to the survivors of the other side, until neither set moves.
+    all_questions = set(question_voices)
+    all_voices = {vid for cells in question_voices.values() for vid in cells}
+    cur_questions, cur_voices = all_questions, all_voices
+    while True:
+        q_voices_live: dict[str, set[str]] = defaultdict(set)
+        q_positions_live: dict[str, set[str]] = defaultdict(set)
+        for cell in matrix_cells:
+            if cell["v"] in cur_voices:
+                q_voices_live[cell["q"]].add(cell["v"])
+                q_positions_live[cell["q"]].add(cell["position"])
+        next_questions = {
+            qid
+            for qid in cur_questions
+            if len(q_voices_live.get(qid, ())) >= 2 and len(q_positions_live.get(qid, ())) >= 2
+        }
+        v_questions_live: dict[str, set[str]] = defaultdict(set)
+        for cell in matrix_cells:
+            if cell["q"] in next_questions:
+                v_questions_live[cell["v"]].add(cell["q"])
+        next_voices = {
+            vid for vid in cur_voices if len(v_questions_live.get(vid, ())) >= 2
+        }
+        if next_questions == cur_questions and next_voices == cur_voices:
+            break
+        cur_questions, cur_voices = next_questions, next_voices
 
+    candidate_questions, candidate_voices = cur_questions, cur_voices
     default_cells = [
         cell
         for cell in matrix_cells
@@ -156,7 +183,7 @@ def main(map_dir: Path, out: Path) -> None:
             "paraphrase": c.get("paraphrase"),
             "quote": c.get("quote"),
             "date": c.get("date"),
-            "checked": "practiced" in c,
+            "checked": c.get("checked"),
             "source": {"title": src.get("title"), "url": src.get("url")},
         }
 
@@ -186,8 +213,12 @@ def main(map_dir: Path, out: Path) -> None:
 
     voices_payload = {vid: {"name": v.get("name") or vid} for vid, v in voices.items()}
 
+    checked_count = sum(1 for c in claims.values() if "checked" in c)
+
     data = {
         "meta": {
+            "subject": "rust",
+            "generated": date.today().isoformat(),
             "counts": {
                 "questions": len(questions),
                 "positions": len(positions),
@@ -206,11 +237,17 @@ def main(map_dir: Path, out: Path) -> None:
             "undated_picks": undated_picks,
             "mixed_dated_undated": mixed_dated_undated,
             "overflow_questions": overflow_questions,
-            "seriation": "greedy nearest-neighbour, single deterministic pass",
+            "seriation": (
+                "greedy nearest-neighbour, single deterministic pass per axis; "
+                "columns (Voices) rank by color-index agreement with the last-"
+                "placed Voice; rows (Questions) rank by shared-Voice count with "
+                "the last-placed Question first, ties broken by that same "
+                "color-index agreement"
+            ),
             "checked_rule": (
-                "claim.practiced present (664/771, always 'unknown') = checked "
-                "(quote/date verified 2026-09-28 against Source); absent (107/771, "
-                "gap=voice-below-bar) = provisional"
+                f"claim.checked present ({checked_count}/{len(claims)}) = checked "
+                "(panel shows its date and verdict, confirmed or corrected, "
+                "against Source); absent = provisional"
             ),
             "latest_rule": (
                 "per (question,voice): among dated claims, max date wins, ties by "
@@ -219,7 +256,15 @@ def main(map_dir: Path, out: Path) -> None:
             ),
             "color_rule": (
                 "positions actually chosen for a question, sorted by position id, "
-                "numbered 1..N; N>6 clamps to 6"
+                "numbered 1..N; N>6 gets a 7th shared 'overflow' color instead of "
+                "clamping into an existing one"
+            ),
+            "default_subset_rule": (
+                "candidate questions: >=2 voices holding a claim on it and >=2 "
+                "distinct positions held, both counted only over surviving "
+                "voices; candidate voices: hold a claim on >=2 surviving "
+                "candidate questions; iterated to a fixed point (2-core), not a "
+                "single pass"
             ),
         },
         "palette": PALETTE,
@@ -255,7 +300,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Rust opinion map — matrix prototype</title>
+<title>Rust opinion map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {
@@ -289,6 +334,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .cell { stroke: #ffffff; stroke-width: 1; cursor: pointer; }
   .cell.provisional { stroke-dasharray: 2,2; stroke: #8a8378; }
   .cell.changed-marker { fill: #1c1b1a; }
+  .cell.undated-marker { fill: none; stroke: #ffffff; stroke-width: 1.1; }
   text.lbl { fill: var(--ink); font-size: 11px; cursor: pointer; user-select: none; }
   text.lbl:hover { fill: #000; text-decoration: underline; }
   text.lbl.dragging { opacity: 0.4; }
@@ -302,6 +348,9 @@ HTML_TEMPLATE = r"""<!doctype html>
     border: 1px solid var(--border); margin-right: 4px; }
   #panel .badge.checked { background: #e4f3e9; border-color: #9cc9ac; }
   #panel .badge.provisional { background: #f3ece4; border-color: #cbb290; }
+  #panel .badge.undated { background: #eeeeee; border-color: #b9b9b9; }
+  #panel .badge.voice-chip { cursor: pointer; }
+  #panel .badge.voice-chip:hover { background: #efece6; }
   #panel .badge.tag-fact { background: #e4edf3; }
   #panel .badge.tag-tradeoff { background: #f3ecf9; }
   #panel .badge.tag-taste { background: #f9f3e4; }
@@ -320,7 +369,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 </head>
 <body>
 <header>
-  <h1>Rust opinion map — reorderable matrix (prototype)</h1>
+  <h1>Rust opinion map — reorderable matrix</h1>
   <button id="btn-scope">Default subset</button>
   <button id="btn-reorder">Reorder (seriate)</button>
   <span class="stat" id="stat"></span>
@@ -341,6 +390,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   var rowOrder = [], colOrder = [];
   var revealed = {};
   var cellIndex = {};
+  var voiceNumber = {};
 
   function key(q, v) { return q + "\u0001" + v; }
 
@@ -362,6 +412,13 @@ HTML_TEMPLATE = r"""<!doctype html>
   function resetOrders() {
     rowOrder = currentQuestions();
     colOrder = currentVoices();
+    // Anonymous Voice numbers are assigned once, here, from this initial
+    // column order, and never recomputed by doReorder or a drag swap — so a
+    // number stays with its Voice for the rest of this page load (or until
+    // the subset itself changes, which is a fresh load of a different
+    // column set).
+    voiceNumber = {};
+    for (var i = 0; i < colOrder.length; i++) voiceNumber[colOrder[i]] = i + 1;
   }
 
   function axisMaps(rows, cols) {
@@ -380,6 +437,9 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   function mapSize(m) { var n = 0; for (var k in m) if (m.hasOwnProperty(k)) n++; return n; }
 
+  // Color-index agreement: count of shared keys (opposite-axis items) where
+  // both maps also hold the same color value. Used for column (Voice)
+  // seriation, unchanged from the prototype, and as the row tie-break below.
   function similarity(mapA, mapB) {
     var small = mapA, large = mapB;
     if (mapSize(mapB) < mapSize(mapA)) { small = mapB; large = mapA; }
@@ -390,7 +450,41 @@ HTML_TEMPLATE = r"""<!doctype html>
     return n;
   }
 
-  function greedySeriate(ids, dataMaps) {
+  // Shared-key count, ignoring color: number of Voices holding a Claim on
+  // both Questions. Used as the primary row (Question) similarity, per the
+  // owner's brief — color-index agreement is only a comparable ordinal
+  // within one row's own arbitrary numbering, so it is a tie-break here, not
+  // the primary signal.
+  function overlap(mapA, mapB) {
+    var small = mapA, large = mapB;
+    if (mapSize(mapB) < mapSize(mapA)) { small = mapB; large = mapA; }
+    var n = 0;
+    for (var k in small) {
+      if (small.hasOwnProperty(k) && large.hasOwnProperty(k)) n++;
+    }
+    return n;
+  }
+
+  function scoreOf(scoreFns, lastMap, candMap) {
+    var out = [];
+    for (var i = 0; i < scoreFns.length; i++) out.push(scoreFns[i](lastMap, candMap));
+    return out;
+  }
+
+  // Lexicographic compare over a score tuple: true when `a` ranks strictly
+  // ahead of `b` (first differing element wins).
+  function scoreBetter(a, b) {
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return a[i] > b[i];
+    }
+    return false;
+  }
+  function scoreEqual(a, b) {
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function greedySeriate(ids, dataMaps, scoreFns) {
     if (ids.length <= 1) return ids.slice();
     var sorted = ids.slice().sort(function (a, b) {
       var da = mapSize(dataMaps[a]), db = mapSize(dataMaps[b]);
@@ -407,11 +501,12 @@ HTML_TEMPLATE = r"""<!doctype html>
       if (remKeys.length === 0) break;
       var last = order[order.length - 1];
       var lastMap = dataMaps[last];
-      var best = null, bestScore = -1;
+      var best = null, bestScore = null;
       for (var r = 0; r < remKeys.length; r++) {
         var cand = remKeys[r];
-        var score = similarity(lastMap, dataMaps[cand]);
-        if (score > bestScore || (score === bestScore && (best === null || cand < best))) {
+        var score = scoreOf(scoreFns, lastMap, dataMaps[cand]);
+        if (bestScore === null || scoreBetter(score, bestScore) ||
+            (scoreEqual(score, bestScore) && cand < best)) {
           bestScore = score; best = cand;
         }
       }
@@ -423,8 +518,11 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   function doReorder() {
     var maps = axisMaps(rowOrder, colOrder);
-    rowOrder = greedySeriate(rowOrder, maps.rowMap);
-    colOrder = greedySeriate(colOrder, maps.colMap);
+    // Rows (Questions): primary = shared-Voice count; ties by color-index
+    // agreement (Open question #2 in the prototype notes, now resolved).
+    rowOrder = greedySeriate(rowOrder, maps.rowMap, [overlap, similarity]);
+    // Columns (Voices): color-index agreement alone, as in the prototype.
+    colOrder = greedySeriate(colOrder, maps.colMap, [similarity]);
     render();
   }
 
@@ -467,9 +565,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   function closePanel() { document.getElementById("panel").classList.remove("open"); }
 
   function voiceLabel(vid) {
-    var idx = colOrder.indexOf(vid);
     if (revealed[vid]) return DATA.voices[vid].name;
-    return "Voice " + (idx >= 0 ? idx + 1 : "?");
+    return "Voice " + (voiceNumber.hasOwnProperty(vid) ? voiceNumber[vid] : "?");
   }
 
   function showClaimPanel(qid, vid) {
@@ -495,9 +592,11 @@ HTML_TEMPLATE = r"""<!doctype html>
     var claim = DATA.claims[c.claim];
     var pos = DATA.positions[c.position];
 
+    var isChecked = !!claim.checked;
     var badges = document.createElement("div");
     badges.appendChild(badge(voiceLabel(vid), ""));
-    badges.appendChild(badge(claim.checked ? "checked" : "provisional", claim.checked ? "checked" : "provisional"));
+    badges.appendChild(badge(isChecked ? "checked" : "provisional", isChecked ? "checked" : "provisional"));
+    if (!c.dated) badges.appendChild(badge("undated pick", "undated"));
     if (pos.tag) badges.appendChild(badge(pos.tag, "tag-" + pos.tag));
     if (c.changed) badges.appendChild(badge("changed position", ""));
     body.appendChild(badges);
@@ -519,7 +618,36 @@ HTML_TEMPLATE = r"""<!doctype html>
       srcNode.textContent = "(no source on file)";
     }
     body.appendChild(field("Source", srcNode));
-    body.appendChild(field("Date", claim.date || "unknown"));
+    body.appendChild(field("Date", claim.date || "unknown (undated pick)"));
+    if (isChecked) {
+      body.appendChild(field(
+        "Checked",
+        claim.checked.date + " — " + claim.checked.verdict + " (" + claim.checked.method + ")"
+      ));
+    }
+
+    var others = [];
+    for (var oi = 0; oi < DATA.matrix.length; oi++) {
+      var oc = DATA.matrix[oi];
+      if (oc.q === qid && oc.v !== vid && oc.position === c.position) others.push(oc.v);
+    }
+    others.sort();
+    if (others.length) {
+      var othersWrap = document.createElement("div");
+      others.forEach(function (ovid) {
+        var chip = badge(voiceLabel(ovid), "voice-chip");
+        chip.addEventListener("click", function () {
+          revealed[ovid] = !revealed[ovid];
+          showClaimPanel(qid, vid);
+          render();
+        });
+        othersWrap.appendChild(chip);
+      });
+      body.appendChild(field(
+        "Other Voices holding this Position on this Question (" + others.length + ")",
+        othersWrap
+      ));
+    }
 
     if (c.history && c.history.length > 1) {
       var histWrap = document.createElement("div");
@@ -720,6 +848,14 @@ HTML_TEMPLATE = r"""<!doctype html>
             cx: cx + CELL - 3, cy: cy + 3, r: 2, class: "changed-marker"
           }));
         }
+        if (!c.dated) {
+          // Undated pick (no dated Claim in this cell's group): a visible
+          // ring in the opposite corner from the "changed" dot, orthogonal
+          // to and distinct from the checked/provisional border style.
+          svg.appendChild(svgEl("circle", {
+            cx: cx + 4, cy: cy + CELL - 5, r: 2.4, class: "undated-marker"
+          }));
+        }
       }
     }
 
@@ -733,13 +869,19 @@ HTML_TEMPLATE = r"""<!doctype html>
     var l = document.getElementById("legend");
     l.innerHTML = "";
     var lab = document.createElement("span");
-    lab.textContent = "position 1–6 within its own row (not comparable across rows):";
+    lab.textContent =
+      "position within its own row, not comparable across rows (1–6, 7 = overflow / 7+ held):";
     l.appendChild(lab);
     for (var i = 0; i < DATA.palette.length; i++) {
       var sw = document.createElement("span");
       sw.className = "sw";
       sw.style.background = DATA.palette[i];
       l.appendChild(sw);
+      if (i === DATA.palette.length - 1) {
+        var ofLab = document.createElement("span");
+        ofLab.textContent = "7+";
+        l.appendChild(ofLab);
+      }
     }
     var none = document.createElement("span");
     none.className = "sw";
@@ -762,8 +904,13 @@ HTML_TEMPLATE = r"""<!doctype html>
   document.getElementById("panel-close").addEventListener("click", closePanel);
 
   document.getElementById("note").textContent =
-    "Provisional Claims (unverified Voice) render with a dashed cell border. " +
-    "A filled dot marks a cell where the Voice changed Position over time — click for the history. " +
+    "Rust opinion map — " + DATA.meta.counts.questions + " Questions, " +
+    DATA.meta.counts.positions + " Positions, " + DATA.meta.counts.claims + " Claims, " +
+    DATA.meta.counts.voices + " Voices — generated " + DATA.meta.generated + ". " +
+    "Solid border = checked (quote/date verified against Source, 2026-09-28); " +
+    "dashed border = provisional (unverified Voice, never fidelity-checked). " +
+    "A ring marks an undated pick (no dated Claim to sort by); a filled dot marks a cell " +
+    "where the Voice changed Position over time — click for the history. " +
     "Column names stay anonymous until clicked.";
 
   buildLegend();
