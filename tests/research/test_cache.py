@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
-
-import cache  # noqa: E402
+from gym.research import cache
 
 BEVY_REDIRECT = (b'<!doctype html><script>window.location.replace(target + hash);</script><noscript>'
                  b'<meta content="0; url=https://bevy.org/learn/quick-start/introduction/" http-equiv=refresh></noscript>')

@@ -36,15 +36,14 @@ read from samples/bundles/, so batch 1 can be re-cut into a scratch directory an
 """
 import argparse
 import csv
-import sys
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
-sys.path.insert(0, str(Path(__file__).parent))
-import cache as c  # noqa: E402 - local module, path set above
+from gym.paths import ROOT
+from gym.research import cache as c
 
-RECON = Path("/Users/ryzhakar/pp/gym/docs/orchestration_log/recon/2026-09-27/research/rust-map")
+RECON = ROOT / "docs/orchestration_log/recon/2026-09-27/research/rust-map"
 SAMPLES = RECON / "samples"
 BUNDLES = SAMPLES / "bundles"
 SLICE_TARGET_CHARS = 150_000

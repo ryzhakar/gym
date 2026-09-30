@@ -81,14 +81,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import cache  # noqa: E402  (normalize_doi reuse)
+from gym.paths import ROOT
+from gym.research import cache  # normalize_doi reuse
 
 UA = "Mozilla/5.0 (gym-research-search; +https://github.com/ryzhakar)"
 MAILTO = "gym-research@example.org"
 FIELDS = ["query", "db", "status", "hits", "doi", "title", "year", "abstract"]
-DEFAULT_SOURCES = Path(
-    "/Users/ryzhakar/pp/gym/docs/orchestration_log/recon/2026-09-27"
+DEFAULT_SOURCES = (
+    ROOT / "docs/orchestration_log/recon/2026-09-27"
     "/research/teaching/ledger/sources.csv"
 )
 SCREEN_SEED = 20260927  # fixed, logged on every screen-list run

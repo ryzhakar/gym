@@ -29,7 +29,9 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
-CACHE = Path("/Users/ryzhakar/pp/gym/docs/orchestration_log/recon/cache")
+from gym.paths import ROOT
+
+CACHE = ROOT / "docs/orchestration_log/recon/cache"
 INDEX = CACHE / "index.csv"
 INDEX_FIELDS = ["key", "doi_or_url", "route", "fetched_at", "agent", "chars"]
 AGENT = "cache-script"
@@ -1029,9 +1031,9 @@ def cmd_ingest_tmp() -> int:
     return 0
 
 
-DEFAULT_STATUS_CSV = (
-    "/Users/ryzhakar/pp/gym/docs/orchestration_log/recon/2026-09-27/research/"
-    "rust-map/samples/prefetch-b1-status.csv"
+DEFAULT_STATUS_CSV = str(
+    ROOT / "docs/orchestration_log/recon/2026-09-27/research"
+    "/rust-map/samples/prefetch-b1-status.csv"
 )
 
 
