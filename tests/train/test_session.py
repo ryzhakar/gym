@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gym.train.events import events_path, session_md_path
-from gym.train.session import gap_days, open_session
+from gym.train.session import gap_days, open_session, validate_session_id
 
 
 @pytest.fixture
@@ -15,45 +15,76 @@ def subject_dir(tmp_path: Path) -> Path:
 
 
 def test_open_session_creates_the_directory_and_heading(subject_dir: Path) -> None:
-    session_id = open_session(subject_dir, "arthur", "opus", "2026-09-30T10:00")
-    assert session_id == "2026-09-30T10:00"
+    session_id = open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
+    assert session_id == "2026-09-30T10-00"
     heading = session_md_path(subject_dir, session_id).read_text(encoding="utf-8")
-    assert heading.splitlines()[0] == "# 2026-09-30T10:00"
+    assert heading.splitlines()[0] == "# 2026-09-30T10-00"
     assert "learner: arthur" in heading
     assert "trainer model: opus" in heading
     assert "gap_days: none" in heading
 
 
 def test_open_session_logs_the_open_event(subject_dir: Path) -> None:
-    session_id = open_session(subject_dir, "arthur", "opus", "2026-09-30T10:00")
+    session_id = open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
     events = events_path(subject_dir, session_id).read_text(encoding="utf-8")
     assert " | manager | open | " in events
     assert "learner=arthur" in events
     assert "trainer_model=opus" in events
 
 
-def test_open_session_defaults_the_id_to_now(subject_dir: Path) -> None:
+def test_open_session_defaults_the_id_to_now_hyphen_shaped(subject_dir: Path) -> None:
     session_id = open_session(subject_dir, "arthur", "opus")
     assert session_md_path(subject_dir, session_id).is_file()
+    assert ":" not in session_id
+    validate_session_id(session_id)  # does not raise
 
 
 def test_open_session_refuses_an_existing_session(subject_dir: Path) -> None:
-    open_session(subject_dir, "arthur", "opus", "2026-09-30T10:00")
+    open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
     with pytest.raises(SystemExit, match="already exists"):
-        open_session(subject_dir, "arthur", "opus", "2026-09-30T10:00")
+        open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
 
 
 def test_gap_days_is_none_for_the_first_session(subject_dir: Path) -> None:
-    assert gap_days(subject_dir, "2026-09-30T10:00") is None
+    assert gap_days(subject_dir, "2026-09-30T10-00") is None
 
 
 def test_gap_days_is_computed_from_the_previous_session(subject_dir: Path) -> None:
-    open_session(subject_dir, "arthur", "opus", "2026-09-28T10:00")
-    assert gap_days(subject_dir, "2026-09-30T10:00") == pytest.approx(2.0)
+    open_session(subject_dir, "arthur", "opus", "2026-09-28T10-00")
+    assert gap_days(subject_dir, "2026-09-30T10-00") == pytest.approx(2.0)
 
 
 def test_second_open_session_writes_the_measured_gap(subject_dir: Path) -> None:
-    open_session(subject_dir, "arthur", "opus", "2026-09-28T10:00")
-    open_session(subject_dir, "arthur", "opus", "2026-09-30T10:00")
-    heading = session_md_path(subject_dir, "2026-09-30T10:00").read_text(encoding="utf-8")
+    open_session(subject_dir, "arthur", "opus", "2026-09-28T10-00")
+    open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
+    heading = session_md_path(subject_dir, "2026-09-30T10-00").read_text(encoding="utf-8")
     assert "gap_days: 2.00" in heading
+
+
+def test_validate_session_id_accepts_the_hyphen_shape() -> None:
+    validate_session_id("2026-09-30T10-00")  # does not raise
+
+
+def test_validate_session_id_refuses_the_old_colon_shape() -> None:
+    """Team lead ruling (2026-09-30): the colon shape this module used before this fix is now
+    refused outright, since a colon in a session id breaks `cargo test` on macOS once it reaches a
+    probe's staging path."""
+    with pytest.raises(SystemExit, match=r"is not %Y-%m-%dT%H-%M"):
+        validate_session_id("2026-09-30T10:00")
+
+
+def test_validate_session_id_refuses_a_malformed_id() -> None:
+    with pytest.raises(SystemExit, match=r"is not %Y-%m-%dT%H-%M"):
+        validate_session_id("not-a-timestamp")
+
+
+def test_open_session_refuses_a_malformed_id(subject_dir: Path) -> None:
+    with pytest.raises(SystemExit, match=r"is not %Y-%m-%dT%H-%M"):
+        open_session(subject_dir, "arthur", "opus", "2026-09-30")
+    assert not (subject_dir / "sessions").exists()  # refused before creating anything
+
+
+def test_open_session_refuses_a_colon_shaped_id(subject_dir: Path) -> None:
+    with pytest.raises(SystemExit, match=r"is not %Y-%m-%dT%H-%M"):
+        open_session(subject_dir, "arthur", "opus", "2026-09-30T10:00")
+    assert not (subject_dir / "sessions").exists()

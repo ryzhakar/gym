@@ -199,7 +199,7 @@ def test_run_probe_logs_one_probe_item_event_per_problem_even_on_a_compile_failu
     assert len(rows) == 2
     by_problem = {row["problem"]: row for row in rows}
     assert by_problem["p1"]["result"] == "fail"
-    assert by_problem["p1"]["continuous"] == "0.0000"
+    assert by_problem["p1"]["fraction"] == "0.0000"
     assert by_problem["p2"]["result"] == "pass"
 
     logged = read_events(subject_dir / "sessions" / "sess-1" / "events.md")

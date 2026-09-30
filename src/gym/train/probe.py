@@ -85,7 +85,11 @@ def run_cargo_test(crate_dir: Path) -> tuple[bool, float]:
 
 
 def session_path_segment(session_id: str) -> str:
-    """`session_id` made safe as a filesystem path component: a colon breaks `cargo test` on macOS."""
+    """`session_id` made safe as a filesystem path component: a colon breaks `cargo test` on macOS
+    (`$DYLD_FALLBACK_LIBRARY_PATH` uses `:` as its own separator). `gym train open` now refuses any
+    session id not already shaped `YYYY-MM-DDTHH-MM` (hyphen — team lead ruling, 2026-09-30), so
+    this is normally a no-op; kept as a defensive second layer for any id that reaches here some
+    other way."""
     return session_id.replace(":", "-")
 
 
@@ -154,14 +158,14 @@ def run_probe(
         print(f"over the {cap_minutes:g}-minute cap: {elapsed_minutes:.1f} min")
     rows: list[dict[str, str]] = []
     for problem, work_dir in zip(problems, staged):
-        passed, continuous = grade_item(work_dir, key_dir_for(unit_dir, which, problem.name))
+        passed, fraction = grade_item(work_dir, key_dir_for(unit_dir, which, problem.name))
         fields = {
             "unit": unit,
             "which": which,
             "problem": problem.name,
             "result": "pass" if passed else "fail",
             "minutes": f"{elapsed_minutes:.2f}",
-            "continuous": f"{continuous:.4f}",
+            "fraction": f"{fraction:.4f}",
         }
         line = append_event(subject_dir, session_id, "tool:probe", "probe-item", fields)
         rows.append({"line": line, **fields})

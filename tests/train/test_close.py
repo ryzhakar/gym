@@ -12,7 +12,7 @@ from gym.train.events import append_event, events_path, session_md_path
 @pytest.fixture
 def opened_session(tmp_path: Path) -> tuple[Path, str]:
     subject_dir = tmp_path / "rust"
-    session_id = "2026-09-30T10:00"
+    session_id = "2026-09-30T10-00"
     (subject_dir / "sessions" / session_id).mkdir(parents=True)
     (subject_dir / "sessions" / session_id / "events.md").touch()
     session_md_path(subject_dir, session_id).write_text(f"# {session_id}\n", encoding="utf-8")

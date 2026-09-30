@@ -13,13 +13,13 @@ from gym.train.status import build_status, due_queue_rows, format_status
 @pytest.fixture
 def subject_dir(tmp_path: Path) -> Path:
     directory = tmp_path / "rust"
-    session_id = "2026-09-30T10:00"
+    session_id = "2026-09-30T10-00"
     (directory / "sessions" / session_id).mkdir(parents=True)
     (directory / "sessions" / session_id / "events.md").touch()
     return directory
 
 
-SESSION = "2026-09-30T10:00"
+SESSION = "2026-09-30T10-00"
 
 
 def test_due_queue_delayed_probe_needs_seven_days_past_its_own_due_date() -> None:

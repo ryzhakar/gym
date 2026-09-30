@@ -12,7 +12,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from gym.train.schema import ACTORS, KINDS, TIMESTAMP_FORMAT, parse_fields, validate_fields
+from gym.train.schema import ACTORS, KINDS, TIMESTAMP_FORMAT, parse_fields, quote_value, validate_fields
 
 LINE_SHAPE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}) \| (?P<actor>[\w:.-]+) \| (?P<kind>[\w-]+) \| (?P<rest>\S.*)$"
@@ -33,7 +33,9 @@ def session_md_path(subject_dir: Path, session_id: str) -> Path:
 
 def parse_line(line: str) -> tuple[str, str, str, dict[str, str]]:
     """One raw line to `(timestamp, actor, kind, fields)`. Raises `ValueError` with the reason on
-    any of the four refusal cases except the clock check, which needs file context."""
+    any of the four refusal cases except the clock check, which needs file context. Field parsing
+    (`gym.train.schema.parse_fields`) uses `shlex.split`, so a free-text field's quoted value
+    (`note`, `principle`, ...) survives holding spaces regardless of where it falls on the line."""
     match = LINE_SHAPE.match(line)
     if not match:
         raise ValueError(f"not 'timestamp | actor | kind | key=value ...': {line!r}")
@@ -57,7 +59,7 @@ def build_line(timestamp: str, actor: str, kind: str, fields: dict[str, str]) ->
     error = validate_fields(kind, fields)
     if error:
         raise ValueError(error)
-    rest = " ".join(f"{key}={value}" for key, value in fields.items())
+    rest = " ".join(f"{key}={quote_value(value)}" for key, value in fields.items())
     return f"{timestamp} | {actor} | {kind} | {rest}"
 
 
