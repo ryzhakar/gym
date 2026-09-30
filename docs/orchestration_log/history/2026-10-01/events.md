@@ -16,3 +16,6 @@
 2026-10-01T00:33 | agent:map-review-4 | receipt | map-review-4.md: a to e all PASS, 22 fresh screenshots, zero console errors; the clip retested on three Concepts, gone; worst remaining: island names at the dim upper fringe, cosmetic; unverified
 2026-10-01T00:33 | self | decision | decided: the quality push reaches the owner now: graph revisions 4 to 7, Matrix v2, CLI ergonomics, trainer v4, baseline commands, map data gaps; proud enough to deliver; the name-position note stays open as cosmetic
 2026-10-01T00:34 | self | span-event | close; HEAD 89db87f (dirty: .claude/work-silently, docs/orchestration_log/history/2026-10-01/session.md); next: bind, memento:init; on the owner's go: gym train open training/rust --learner arthur --trainer-model <model>, fill the id into the summons, summon gym-trainer; else the owner's next task
+2026-10-01T00:37 | self | span-event | open; heartbeat after the close; nothing pending but the owner's go
+2026-10-01T00:37 | owner | receipt | in conversation: the line Span closed at fa080a4 was a message; violation
+2026-10-01T00:37 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
