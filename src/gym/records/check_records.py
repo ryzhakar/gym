@@ -1,6 +1,6 @@
 """Check gym's records against the shapes and rules `.claude/memento.yaml` declares.
 
-Usage: `uv run python scripts/check_records.py`. One line per finding; exit 1 on any FAIL.
+Usage: `gym records check`. One line per finding; exit 1 on any FAIL.
 Files are the ones the next commit would hold: tracked plus untracked, minus ignored.
 """
 
@@ -15,7 +15,8 @@ from typing import NamedTuple
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent
+from gym.paths import ROOT
+
 SCHEMA_PATH = ROOT / ".claude/memento.yaml"
 ORCHESTRATION = ROOT / "docs/orchestration_log"
 LIVING_KINDS = ["charter", "frame", "directive", "opinion_map", "subject", "fact", "map", "schema"]

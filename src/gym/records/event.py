@@ -1,6 +1,6 @@
 """Append one event to the current span's trace, stamped by the clock and checked against the schema.
 
-Usage: `uv run python scripts/event.py <actor> <kind> <what>`.
+Usage: `gym records event <actor> <kind> <what>`.
 `self span-event "open; ..."` starts a trace file dated today; every other event goes to the newest trace.
 """
 
@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from check_records import ORCHESTRATION, load_schema, trace_line_shape
+from gym.records.check_records import ORCHESTRATION, load_schema, trace_line_shape
 
 
 def is_span_opening(kind: str, what: str) -> bool:

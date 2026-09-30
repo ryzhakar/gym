@@ -1,6 +1,6 @@
 """Close the current span: append its close block to the span's session record and a span-event to its trace.
 
-Usage: `uv run python scripts/close_span.py --state "..." --open "..." --next "..."`.
+Usage: `gym records close --state "..." --open "..." --next "..."`.
 HEAD and the working-tree state come from git, the time from the clock; a multi-line state separates lines with `\\n`.
 """
 
@@ -11,8 +11,9 @@ import subprocess
 import sys
 from datetime import datetime
 
-from check_records import ROOT, close_block_findings, load_schema
-from event import append_event, current_trace
+from gym.paths import ROOT
+from gym.records.check_records import close_block_findings, load_schema
+from gym.records.event import append_event, current_trace
 
 
 def git(*args: str) -> str:
@@ -34,17 +35,12 @@ def close_block(state: str, open_items: str, next_step: str, width: int) -> str:
     return f"\n## Close — {datetime.now().strftime('%Y-%m-%dT%H:%M')}\n\n" + "\n".join(fields) + "\n"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--state", required=True)
-    parser.add_argument("--open", required=True, dest="open_items")
-    parser.add_argument("--next", required=True, dest="next_step")
-    args = parser.parse_args()
+def run(state: str, open_items: str, next_step: str) -> int:
     schema = load_schema()
     session = current_trace(opening=False).parent / "session.md"
     before = session.read_bytes() if session.exists() else None
     prefix = "" if before else f"# {session.parent.name}\n"
-    block = close_block(args.state, args.open_items, args.next_step, schema["kinds"]["digest"]["close_label_width"])
+    block = close_block(state, open_items, next_step, schema["kinds"]["digest"]["close_label_width"])
     with session.open("a", encoding="utf-8") as handle:
         handle.write(prefix + block)
     problems = list(close_block_findings(schema, session))
@@ -54,9 +50,18 @@ def main() -> int:
         else:
             session.write_bytes(before)
         sys.exit("refused, close block malformed: " + "; ".join(problem.message for problem in problems))
-    append_event("self", "span-event", f"close; HEAD {head_line()}; next: {args.next_step}")
+    append_event("self", "span-event", f"close; HEAD {head_line()}; next: {next_step}")
     print(f"{session}: close block written")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state", required=True)
+    parser.add_argument("--open", required=True, dest="open_items")
+    parser.add_argument("--next", required=True, dest="next_step")
+    args = parser.parse_args()
+    return run(args.state, args.open_items, args.next_step)
 
 
 if __name__ == "__main__":
