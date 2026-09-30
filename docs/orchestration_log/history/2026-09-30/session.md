@@ -31,3 +31,8 @@ state   app: gym map, research, records, train; trainer v3; map rebuilt: Concept
         silence holds; directives silence-holds and token-thrift; heartbeat feb9bb57 session-only
 open    none running; u02 session due 2026-10-01 on the owner's go, summons at recon/2026-10-01/prompts/summons-u02.md; deferrals unchanged
 next    bind, memento:init; on the owner's go: gym train open training/rust --learner arthur --trainer-model <model>, fill the id into the summons, summon gym-trainer; otherwise the owner's next task
+
+## Span 2026-09-30T23:20 → , quality push
+
+The owner ordered quality pushed on every axis with the manager reading images itself. Read: islands packed in rings, cross-edge noise, header prose, a Matrix on a light theme with clipped labels and empty block boxes, detached clusters as decorative rings. Dispatched: graph revision 4 (opus), Matrix v2, CLI ergonomics (committed aa8a054), map data gaps from cached evidence (committed f5e6971, check 417 to 394), a first-session audit and the trainer v4 it produced (committed 2c8e3a3), baseline stage and grade commands with the audit's tooling fixes. Session limit hit 23:37, three agents resumed at 23:51. Silence breaches continued on harness prompts; a failure entry names the reflex.
+
