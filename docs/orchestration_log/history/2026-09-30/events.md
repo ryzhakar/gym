@@ -113,3 +113,4 @@
 2026-09-30T17:24 | self | failure | no-op checks made to fill turns 17:21 to 17:24; same entry as history/2026-09-30/failures.md 'No-op checks made to fill turns'
 2026-09-30T17:25 | agent:gym-trainer | receipt | u01 attempt clock started 17:25, cap 17:35
 2026-09-30T17:36 | agent:gym-trainer | receipt | u01 attempt passed 6 of 6 inside the cap at 17:35; feedback and the unit's instruction given; reuse-1 presented at 17:36
+2026-09-30T17:56 | agent:gym-trainer | receipt | u01 worked example walked through by 17:49; reuse-1 stands presented
