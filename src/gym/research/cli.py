@@ -25,8 +25,8 @@ def _validate_team(team: str) -> str:
 @app.command("books")
 def books_cmd(
     team: str = typer.Argument(..., help="team-a or team-b", callback=_validate_team),
-    batch: int = typer.Option(1, "--batch"),
-    out: Path = typer.Option(books_mod.BUNDLES, "--out"),
+    batch: int = typer.Option(1, "--batch", help="Batch number to cut bundles for"),
+    out: Path = typer.Option(books_mod.BUNDLES, "--out", help="Directory to write the text bundles into"),
 ) -> None:
     """Cut batch-1 books-courses rows into ~150k-char text bundles."""
     books_mod.build(team, batch, out)
@@ -35,8 +35,8 @@ def books_cmd(
 @app.command("bundle")
 def bundle_cmd(
     team: str = typer.Argument(..., help="team-a or team-b", callback=_validate_team),
-    batch: int = typer.Option(1, "--batch"),
-    out: Path = typer.Option(bundle_mod.BUNDLES, "--out"),
+    batch: int = typer.Option(1, "--batch", help="Batch number to cut bundles for"),
+    out: Path = typer.Option(bundle_mod.BUNDLES, "--out", help="Directory to write the text bundles into"),
 ) -> None:
     """Cut a fetched batch into read-sized text bundles for extraction agents."""
     bundle_mod.build(team, batch, out)
@@ -58,7 +58,7 @@ app.add_typer(cache_app, name="cache")
 
 
 @cache_app.command("get")
-def cache_get(doi_or_url: str = typer.Argument(...)) -> None:
+def cache_get(doi_or_url: str = typer.Argument(..., help="A DOI or a URL to fetch (or read back from cache)")) -> None:
     """Cache hit -> print text path; miss -> fetch, save, print path."""
     raise typer.Exit(code=cache_mod.cmd_get(doi_or_url))
 
@@ -71,15 +71,15 @@ def cache_ingest_tmp() -> None:
 
 @cache_app.command("fetch-csv")
 def cache_fetch_csv(
-    csv_path: str = typer.Argument(...),
-    status_csv: str = typer.Argument(cache_mod.DEFAULT_STATUS_CSV),
+    csv_path: str = typer.Argument(..., help="CSV of rows to fetch, each with a url and a source-class"),
+    status_csv: str = typer.Argument(cache_mod.DEFAULT_STATUS_CSV, help="Path to write the per-row fetch status CSV"),
 ) -> None:
     """Fetch every row's url by source-class route; write a status csv."""
     raise typer.Exit(code=cache_mod.cmd_fetch_csv(csv_path, status_csv))
 
 
 @cache_app.command("fetch-book")
-def cache_fetch_book(url: str = typer.Argument(...)) -> None:
+def cache_fetch_book(url: str = typer.Argument(..., help="URL of the book's landing or print.html page")) -> None:
     """books-courses: fetch the whole book (print.html or a table-of-contents crawl)."""
     raise typer.Exit(code=cache_mod.cmd_fetch_book(url))
 
@@ -90,10 +90,10 @@ app.add_typer(search_app, name="search")
 
 @search_app.command("run")
 def search_run(
-    queries: Path = typer.Argument(...),
-    out: Path = typer.Argument(...),
+    queries: Path = typer.Argument(..., help="File of search queries, one per line"),
+    out: Path = typer.Argument(..., help="Path to write the results CSV"),
     db: str = typer.Option("both", "--db", help="openalex, crossref, or both"),
-    append: bool = typer.Option(False, "--append"),
+    append: bool = typer.Option(False, "--append", help="Append to an existing results CSV instead of overwriting it"),
 ) -> None:
     """Search every query, write one results csv."""
     if db not in ("openalex", "crossref", "both"):
@@ -103,9 +103,9 @@ def search_run(
 
 @search_app.command("found")
 def search_found(
-    out: Path = typer.Argument(...),
-    found_md: Path = typer.Argument(...),
-    sources: Path = typer.Option(search_mod.DEFAULT_SOURCES, "--sources"),
+    out: Path = typer.Argument(..., help="Results CSV from `gym research search run`"),
+    found_md: Path = typer.Argument(..., help="Path to write the new/seen DOI report"),
+    sources: Path = typer.Option(search_mod.DEFAULT_SOURCES, "--sources", help="CSV of previously seen DOIs"),
 ) -> None:
     """Distinct DOIs from a run, marked new/seen."""
     search_mod.cmd_found(out, found_md, sources)
@@ -113,11 +113,11 @@ def search_found(
 
 @search_app.command("screen-list")
 def search_screen_list(
-    need: str = typer.Argument(...),
+    need: str = typer.Argument(..., help="How many relevance votes a DOI needs to make the screen list"),
     files: List[Path] = typer.Argument(
         ..., help="results.csv... out.csv (last is the output)"
     ),
-    sources: Path = typer.Option(search_mod.DEFAULT_SOURCES, "--sources"),
+    sources: Path = typer.Option(search_mod.DEFAULT_SOURCES, "--sources", help="CSV of previously seen DOIs"),
 ) -> None:
     """Union of distinct DOIs across capture files, for relevance screening."""
     if len(files) < 2:
@@ -128,8 +128,8 @@ def search_screen_list(
 
 @search_app.command("tally")
 def search_tally(
-    screen: Path = typer.Argument(...),
-    results: List[Path] = typer.Argument(...),
+    screen: Path = typer.Argument(..., help="Screen-list CSV from `gym research search screen-list`"),
+    results: List[Path] = typer.Argument(..., help="One or more capture results CSVs to tally"),
 ) -> None:
     """Per-capture relevant counts, overlap, Chapman estimate, unseen fraction."""
     search_mod.cmd_tally(screen, results)

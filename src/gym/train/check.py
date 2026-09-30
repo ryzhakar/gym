@@ -72,7 +72,7 @@ def check(subject_dir: Path) -> list[str]:
 
 def main(subject_dir: Path) -> int:
     findings = check(subject_dir)
+    print(f"train: {len(findings)} FAIL")
     for line in findings:
         print(line)
-    print(f"train: {len(findings)} FAIL")
     return 1 if findings else 0

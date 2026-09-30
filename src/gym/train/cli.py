@@ -31,10 +31,12 @@ def _validate_which(which: str) -> None:
 
 @app.command("open")
 def open_command(
-    subject_dir: Path = typer.Argument(...),
-    learner: str = typer.Option(..., "--learner"),
-    trainer_model: str = typer.Option(..., "--trainer-model"),
-    session_id: Optional[str] = typer.Option(None, "--id"),
+    subject_dir: Path = typer.Argument(..., help="Subject directory, e.g. training/rust; created if new"),
+    learner: str = typer.Option(..., "--learner", help="The learner's name, recorded in session.md"),
+    trainer_model: str = typer.Option(..., "--trainer-model", help="The trainer model's name, recorded in session.md"),
+    session_id: Optional[str] = typer.Option(
+        None, "--id", help="Session id, YYYY-MM-DDTHH-MM; default: now"
+    ),
 ) -> None:
     """Create the session directory, write session.md's heading, log the open event; print the session id."""
     typer.echo(session_module.open_session(subject_dir, learner, trainer_model, session_id))
@@ -42,11 +44,11 @@ def open_command(
 
 @app.command("log")
 def log_command(
-    subject_dir: Path = typer.Argument(...),
-    session_id: str = typer.Argument(...),
-    actor: str = typer.Argument(...),
-    kind: str = typer.Argument(...),
-    fields: Optional[list[str]] = typer.Argument(None),
+    subject_dir: Path = typer.Argument(..., help="Subject directory, e.g. training/rust"),
+    session_id: str = typer.Argument(..., help="Session id this event belongs to, as printed by `gym train open`"),
+    actor: str = typer.Argument(..., help="Who logged this event: manager, trainer, tool:probe, ..."),
+    kind: str = typer.Argument(..., help="Event kind the session schema admits, e.g. attempt, feedback, queue"),
+    fields: Optional[list[str]] = typer.Argument(None, help="field=value pairs carried by this event kind"),
 ) -> None:
     """Append one event line after validation."""
     typer.echo(log_event(subject_dir, session_id, actor, kind, fields or []))
@@ -54,9 +56,9 @@ def log_command(
 
 @probe_app.command("stage")
 def probe_stage_command(
-    unit_dir: Path = typer.Argument(...),
+    unit_dir: Path = typer.Argument(..., help="Unit directory holding the probe's problem files"),
     which: str = typer.Argument(..., help="immediate|delayed|probe-<letter>"),
-    session: str = typer.Option(..., "--session"),
+    session: str = typer.Option(..., "--session", help="Session id this stage belongs to"),
 ) -> None:
     """Copy the unit's probe problems to the work path and log a probe-start event; prints the staged paths."""
     _validate_which(which)
@@ -66,10 +68,12 @@ def probe_stage_command(
 
 @probe_app.command("grade")
 def probe_grade_command(
-    unit_dir: Path = typer.Argument(...),
+    unit_dir: Path = typer.Argument(..., help="Unit directory holding the probe's problem files"),
     which: str = typer.Argument(..., help="immediate|delayed|probe-<letter>"),
-    session: str = typer.Option(..., "--session"),
-    cap_minutes: float = typer.Option(probe_module.CAP_MINUTES_DEFAULT, "--cap-minutes"),
+    session: str = typer.Option(..., "--session", help="Session id this grade belongs to"),
+    cap_minutes: float = typer.Option(
+        probe_module.CAP_MINUTES_DEFAULT, "--cap-minutes", help="Minutes per problem recorded as the cap, never enforced"
+    ),
 ) -> None:
     """Grade every staged problem against its key and log one probe-item event each (each carrying
     whether it ran over --cap-minutes, recorded only, never enforced); refuses if nothing was
@@ -81,14 +85,16 @@ def probe_grade_command(
 
 @app.command("close")
 def close_command(
-    subject_dir: Path = typer.Argument(...),
-    session_id: str = typer.Argument(...),
-    minutes: int = typer.Option(..., "--minutes"),
-    units: str = typer.Option(..., "--units"),
-    interruptions: int = typer.Option(..., "--interruptions"),
-    assistant_closed: str = typer.Option(..., "--assistant-closed"),
-    next_step: str = typer.Option(..., "--next"),
-    probe_minutes: Optional[float] = typer.Option(None, "--probe-minutes"),
+    subject_dir: Path = typer.Argument(..., help="Subject directory, e.g. training/rust"),
+    session_id: str = typer.Argument(..., help="Session id to close, as printed by `gym train open`"),
+    minutes: int = typer.Option(..., "--minutes", help="Total minutes the session ran"),
+    units: str = typer.Option(..., "--units", help="Unit id(s) worked this session, comma-separated"),
+    interruptions: int = typer.Option(..., "--interruptions", help="Count of interruptions during the session"),
+    assistant_closed: str = typer.Option(..., "--assistant-closed", help="yes/no: did the trainer close the session"),
+    next_step: str = typer.Option(..., "--next", help="First step for the next session"),
+    probe_minutes: Optional[float] = typer.Option(
+        None, "--probe-minutes", help="Total minutes spent on probes this session, if any ran"
+    ),
 ) -> None:
     """Append a close block to session.md and log the close event."""
     typer.echo(
@@ -99,12 +105,16 @@ def close_command(
 
 
 @app.command("status")
-def status_command(subject_dir: Path = typer.Argument(...)) -> None:
+def status_command(
+    subject_dir: Path = typer.Argument(..., help="Subject directory, e.g. training/rust"),
+) -> None:
     """Per-unit attempt/probe/confidence history, due queue rows, and the last 20 event lines."""
     raise typer.Exit(code=status_module.main(subject_dir))
 
 
 @app.command("check")
-def check_command(subject_dir: Path = typer.Argument(...)) -> None:
+def check_command(
+    subject_dir: Path = typer.Argument(..., help="Subject directory, e.g. training/rust"),
+) -> None:
     """Lint every session's events.md and session.md; exit 1 on any FAIL."""
     raise typer.Exit(code=check_module.main(subject_dir))

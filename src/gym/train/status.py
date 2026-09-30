@@ -81,6 +81,19 @@ def build_status(subject_dir: Path, today: "date | None" = None) -> dict:
     }
 
 
+def _table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    """Left-aligned columns, two spaces apart, each column sized to its widest cell."""
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def fmt(cells: list[str]) -> str:
+        return "  ".join(cell.ljust(widths[i]) for i, cell in enumerate(cells)).rstrip()
+
+    return [fmt(headers), *(fmt(row) for row in rows)]
+
+
 def format_status(status: dict) -> str:
     lines: list[str] = []
     units = sorted(
@@ -93,31 +106,34 @@ def format_status(status: dict) -> str:
     lines.append("## Units")
     if not units:
         lines.append("(no unit events logged yet)")
-    for unit in units:
-        attempt = status["last_attempt"].get(unit)
-        immediate = status["last_probe_immediate"].get(unit)
-        delayed = status["last_probe_delayed"].get(unit)
-        other = status["other_probes"].get(unit, {})
-        confidence = status["last_confidence"].get(unit)
-        lines.append(f"- {unit}")
-        lines.append(f"  last attempt: {attempt['result'] if attempt else 'none'}")
-        lines.append(
-            "  last immediate probe: "
-            + (f"{immediate['result']} ({immediate['timestamp'][:10]})" if immediate else "none")
-        )
-        lines.append(
-            "  last delayed probe: " + (f"{delayed['result']} ({delayed['timestamp'][:10]})" if delayed else "none")
-        )
-        for side in sorted(other):
-            row = other[side]
-            lines.append(f"  other probe {side}: {row['result']} ({row['timestamp'][:10]})")
-        lines.append(f"  last confidence: {confidence['value'] if confidence else 'none'}")
+    else:
+        headers = ["UNIT", "ATTEMPT", "IMMEDIATE PROBE", "DELAYED PROBE", "CONFIDENCE", "OTHER PROBES"]
+        rows = []
+        for unit in units:
+            attempt = status["last_attempt"].get(unit)
+            immediate = status["last_probe_immediate"].get(unit)
+            delayed = status["last_probe_delayed"].get(unit)
+            other = status["other_probes"].get(unit, {})
+            confidence = status["last_confidence"].get(unit)
+            other_cell = "; ".join(
+                f"{side}: {other[side]['result']} ({other[side]['timestamp'][:10]})" for side in sorted(other)
+            )
+            rows.append([
+                unit,
+                attempt["result"] if attempt else "none",
+                f"{immediate['result']} ({immediate['timestamp'][:10]})" if immediate else "none",
+                f"{delayed['result']} ({delayed['timestamp'][:10]})" if delayed else "none",
+                confidence["value"] if confidence else "none",
+                other_cell or "none",
+            ])
+        lines.extend(_table(headers, rows))
     lines.append("")
     lines.append("## Due queue")
     if not status["due_queue"]:
         lines.append("(none due)")
-    for row in status["due_queue"]:
-        lines.append(f"- {row['kind']} unit={row['unit']} due={row['due']}")
+    else:
+        rows = [[row["kind"], row["unit"], row["due"]] for row in status["due_queue"]]
+        lines.extend(_table(["KIND", "UNIT", "DUE"], rows))
     lines.append("")
     lines.append(f"## Tail (last {TAIL_LINES} events)")
     if not status["tail"]:

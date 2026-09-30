@@ -73,8 +73,10 @@ def test_format_status_prints_units_due_queue_and_tail(subject_dir: Path) -> Non
     append_event(subject_dir, SESSION, "trainer", "attempt", {"unit": "u1", "item": "u1-attempt", "result": "pass", "minutes": "2"})
     append_event(subject_dir, SESSION, "manager", "queue", {"unit": "u1", "kind": "next_unit", "due": "2020-01-01"})
     text = format_status(build_status(subject_dir))
-    assert "## Units" in text and "- u1" in text
-    assert "## Due queue" in text and "next_unit unit=u1 due=2020-01-01" in text
+    assert "## Units" in text and "u1" in text.splitlines()[2]
+    assert "## Due queue" in text
+    due_row = next(line for line in text.splitlines() if line.startswith("next_unit"))
+    assert due_row.split() == ["next_unit", "u1", "2020-01-01"]
     assert "## Tail (last 20 events)" in text
 
 
@@ -107,4 +109,4 @@ def test_build_status_and_format_status_surface_a_third_probe_side(subject_dir: 
     text = format_status(status)
 
     assert status["other_probes"]["u1"]["probe-c"]["result"] == "pass"
-    assert "other probe probe-c: pass" in text
+    assert "probe-c: pass" in text

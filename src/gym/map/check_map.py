@@ -318,9 +318,9 @@ def run_checks(map_dir: Path) -> list[Finding]:
 
 def main(map_dir: Path) -> int:
     findings = run_checks(map_dir)
+    print(f"map: {len(findings)} FAIL")
     for finding in findings:
         print(f"{finding.level}  {finding.where}  {finding.message}")
     entities, _ = load_entities(map_dir, load_schema(map_dir))
     print(report(entities))
-    print(f"\nmap: {len(findings)} FAIL")
     return 1 if findings else 0

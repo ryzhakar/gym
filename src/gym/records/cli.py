@@ -19,9 +19,9 @@ def check() -> None:
 
 @app.command("event")
 def event(
-    actor: str = typer.Argument(...),
-    kind: str = typer.Argument(...),
-    what: list[str] = typer.Argument(...),
+    actor: str = typer.Argument(..., help="Who this event happened to: owner, self, agent:<name>, or tool:<name>"),
+    kind: str = typer.Argument(..., help="Event kind the schema admits, e.g. decision, discovery, commitment"),
+    what: list[str] = typer.Argument(..., help="The event's text; joined with spaces into one line"),
 ) -> None:
     """Append one event to the current span's trace, stamped by the clock and checked against the schema."""
     trace, line = append_event(actor, kind, " ".join(what))
@@ -30,9 +30,9 @@ def event(
 
 @app.command("close")
 def close(
-    state: str = typer.Option(..., "--state"),
-    open_items: str = typer.Option(..., "--open"),
-    next_step: str = typer.Option(..., "--next"),
+    state: str = typer.Option(..., "--state", help="At most 3 lines: the state the span leaves behind"),
+    open_items: str = typer.Option(..., "--open", help="Waits, tripwires, or delegations still open; or 'none'"),
+    next_step: str = typer.Option(..., "--next", help="The first step for whoever picks this up next"),
 ) -> None:
     """Close the current span: append its close block to the session record and a span-event to the trace."""
     raise typer.Exit(code=_close_span.run(state, open_items, next_step))
