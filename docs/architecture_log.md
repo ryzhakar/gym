@@ -23,3 +23,11 @@ FROM → TO:     verification of a Claim's quote and date recorded only in maps/
 WHY:           the map's rule that every entry shows whether it is provisional or checked (docs/opinion-map.md § Done and upkeep); the site reads the field
 INVALIDATES:   any count that reads verification status from README prose; `practiced` never meant checked
 EVIDENCE:      commit 7bb354e; `gym map check --map maps/rust` 417 FAIL before and after
+
+## 2026-09-30 — Training sessions keep their own records
+
+KIND:          runnable
+FROM → TO:     five CSV tables under training/rust/record/ written by scripts/train/ (log.py, probe.py), the sessions row written by nobody, an interactive probe run by the learner → one directory per session under training/<subject>/sessions/<id>/ holding events.md and session.md, written through `gym train open`, `log`, `probe stage`, `probe grade`, `close`; `status` derives the queue, unit history and confidence; `check` lints; ids colon-free
+WHY:           owner ruling 2026-09-30: a training session has its own record and events, the tables dropped; the learner does no administration
+INVALIDATES:   every reader of training/rust/record/*.csv; every summons naming scripts/train/; probe minutes as one shared elapsed time
+EVIDENCE:      commits 7f22d78, 5692800, 3067135, d7f00ba, fa8cab9, d788cd2, 35b3f23; 192 tests pass; session 2026-09-30T15:40 converted, `gym train check training/rust` 0 FAIL

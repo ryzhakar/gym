@@ -152,3 +152,4 @@
 2026-09-30T19:18 | agent:items-readme-tools | receipt | Tools allowed to the learner appended to training/rust/items/README.md; verified by tail
 2026-09-30T19:18 | self | decision | decided: the three u01 draft replacements stay in recon until the item bank's next revision with the u03 re-audit; probe-b runs as is on 2026-10-07
 2026-09-30T19:18 | self | failure | a shell variable holding a command failed under zsh and short-circuited a chain: five events, the per-item minutes commit and the narrative merge did not run while the later deletions did; redone now
+2026-09-30T19:19 | self | commitment | architecture log entry: training sessions keep their own records
