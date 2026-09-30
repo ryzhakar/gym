@@ -33,21 +33,21 @@ ground  owner ruling 2026-09-26
 
 ### record-check
 when    before committing a change that touches a record
-do      `uv run python scripts/check_records.py`; commit only on 0 FAIL
+do      `uv run gym records check`; commit only on 0 FAIL
 never   a commit over a FAIL; a format rule trusted to reading alone
 why     the schema's formats, grounds and pointers are checked by a program, not by attention
-ground  owner ruling 2026-09-26 (competera's scripts port as a deterministic value-add)
+ground  owner ruling 2026-09-26 (competera's scripts port as a deterministic value-add); owner ruling 2026-09-30 (one typer app)
 
 ### event-lines
 when    writing an event line or closing a span
-do      `uv run python scripts/event.py <actor> <kind> <what>`; `uv run python scripts/close_span.py --state … --open … --next …`
+do      `uv run gym records event <actor> <kind> <what>`; `uv run gym records close --state … --open … --next …`
 never   a hand-typed timestamp or close block
 why     the clock and git stamp them, and a malformed line is refused at write time
-ground  owner ruling 2026-09-26 (competera's scripts port as a deterministic value-add)
+ground  owner ruling 2026-09-26 (competera's scripts port as a deterministic value-add); owner ruling 2026-09-30 (one typer app)
 
 ### memento-by-orchestrator
 when    memento work: pat-down, events, span closes, record edits
-do      the orchestrator reads and writes the records itself, through scripts/event.py, scripts/close_span.py and direct edits
+do      the orchestrator reads and writes the records itself, through `gym records event`, `gym records close` and direct edits
 never   a record read or write delegated to an agent; a second carve-out from agentic-delegation's file prohibition
 why     "memento is the sole exception: orchestrator keeps their records themselves"
 ground  owner ruling 2026-09-30
