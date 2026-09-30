@@ -179,3 +179,4 @@
 2026-09-30T21:20 | owner | receipt | in conversation, with two screenshots: the site is unusable in both views and not to the spec the manager claimed to follow
 2026-09-30T21:20 | self | failure | site shipped on tests and console checks, never on use: Matrix a scatter without blocks, Graph a hairball with description text as Value and Domain labels; same entry as history/2026-09-30/failures.md 'A site shipped on tests and console checks, never on use'
 2026-09-30T21:20 | self | discovery | density: 771 Claims over 401 Questions by 374 Voices fills 0.5 percent of the matrix; 149 Questions hold 2 or more Voices; the spec's blocks need Voices sharing Positions on shared Questions, which this data rarely holds
+2026-09-30T21:23 | agent:probe-sides | receipt | probe sides generalised to probe-[a-z]; immediate and delayed CLI aliases; the session's three probe-item lines converted to which=probe-a; check 0 FAIL; 219 tests pass; unverified
