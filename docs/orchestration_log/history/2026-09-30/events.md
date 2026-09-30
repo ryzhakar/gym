@@ -119,3 +119,5 @@
 2026-09-30T18:11 | agent:gym-trainer | receipt | reuse-2 passed 1 of 1 in 2m41s at 18:11; practice done; immediate probe next, confidence ratings requested
 2026-09-30T18:14 | agent:gym-trainer | receipt | confidence before an unseen probe collapses to one rating per unit, logged once per item; a design point for the trainer definition and the record schema
 2026-09-30T18:14 | agent:gym-trainer | receipt | confidence 4 logged; immediate probe procedure issued at 18:14: probe.py on u01, 10 minutes, learner alone
+2026-09-30T18:16 | agent:gym-trainer | receipt | reported by the trainer as ruled by the owner in session: the trainer runs probe.py from its own shell and presses Enter on the learner's done; the learner does no administration; the definition's 'never run it from your shell' needs the owner's durable word; probe running that way now
+2026-09-30T18:16 | self | decision | decided: the definition draft v3 gains the probe-run rule as reported, marked pending the owner's word; the key/ rule stays: grading reads key/ inside the script, the trainer never opens it
