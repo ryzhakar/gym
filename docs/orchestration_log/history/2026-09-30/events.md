@@ -256,3 +256,5 @@
 2026-09-30T23:02 | self | failure | status line on a harness prompt again; same entry as history/2026-09-30/failures.md Silence broken after compaction by harness prompts
 2026-09-30T23:03 | agent:graph-map | receipt | clip fix: ResizeObserver refits the canvas to the width left of the panel, labels flip or drop at the edge; browser test pins the right-most Concept and asserts no label crosses an edge; 88 map tests; map-pinned.png regenerated; unverified
 2026-09-30T23:03 | self | commitment | clip fix committed after 88 map tests passed here; the page reaches the owner now
+2026-09-30T23:03 | agent:u02-summons-prep | receipt | u02-readiness.md: summons-u02.md written from the template with live status; unit-pick yields u02-enums-match (next_unit due 2026-10-01); all nine members present; 20 scratch cargo runs, every key passes, every stub fails by design; no blockers; unverified
+2026-09-30T23:03 | self | commitment | u02 session ready for the owner's go: gym train open, fill the session id into recon/2026-10-01/prompts/summons-u02.md, summon gym-trainer
