@@ -70,3 +70,46 @@ do      put everything the owner needs to see inside the question tool call itse
 never   a wall of conversation text; a question that leans on an earlier message
 why     the owner does not read conversation text: "i won't read your walls of text here, ever."
 ground  owner ruling 2026-09-26
+
+## Training
+
+### session-records
+when    a training session runs
+do      the manager opens `training/<subject>/sessions/<id>/` with `gym train open` before the summons and closes it with `gym train close` after the trainer returns; the trainer logs every turn with `gym train log`; feedback and instruction lines carry their substance in `note=`
+never   a session on shared tables; a turn logged nowhere; feedback that survives only in a transcript
+why     "surely a training session should have its own record and events"; the learning moments of the first session lived only in the trainer's transcript
+ground  owner ruling 2026-09-30
+
+### session-ids
+when    naming a session or any path derived from it
+do      `YYYY-MM-DDTHH-MM`, hyphens only
+never   a colon in a path
+why     a colon in a path breaks cargo on macOS, the DYLD_FALLBACK_LIBRARY_PATH separator
+ground  history/2026-09-30/events.md, 16:28
+
+### direct-sessions
+when    the learner trains
+do      the learner converses with the trainer in the trainer's own session; the manager summons it with a summons file under recon and does its own work meanwhile
+never   the manager relaying turns between learner and trainer
+why     "the goal is not for you to relay shit to me, but for me to train with them in their subagent session"
+ground  owner ruling 2026-09-30
+
+### trainer-summons
+when    the manager summons the trainer
+do      a prompt file carrying subject, workspace, items directory, session id, the status output and the opening item; the trainer holds every tool and may summon agents of its own; the key/ ban stays a rule in its definition
+never   a summons that exists only in conversation; a tool restriction standing in for the key/ rule
+ground  owner ruling 2026-09-30
+
+### probes-by-trainer
+when    a probe runs
+do      the trainer stages and grades it from its own shell with `gym train probe stage` and `gym train probe grade` on the learner's "go" and "done"; the learner runs no command
+never   the learner doing administration; the trainer opening key/
+why     "you exist so i can focus on the learning, not administration"
+ground  owner ruling 2026-09-30, in session, confirmed in the question tool
+
+### session-narrative
+when    a session ends
+do      the trainer writes the session's narrative, per item what the learner did, the fault or pass, the feedback, the principle, misconceptions and tool quirks, into the session record before its close block
+never   a trainer instance released before its narrative is written
+why     the first session's feedback was recoverable only because the instance was still resumable
+ground  owner ruling 2026-09-30
