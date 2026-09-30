@@ -172,3 +172,5 @@
 2026-09-30T21:14 | self | delegation | agent:probe-sides, sonnet, background: which accepts any probe-[a-z] side, events carry the literal side; output recon/2026-09-30/app/probe-sides-report.md
 2026-09-30T21:14 | self | delegation | agent:install-u01-probe-c, sonnet, background; output recon/2026-09-30/train/install-u01-probe-c-report.md; all three bounded by heartbeat eed4185b
 2026-09-30T21:16 | owner | receipt | in conversation: asked whether the map of concepts is a connected graph; answered: Concepts connect only through Questions, Concept-to-Concept edges 0 of 1447, two routes offered, none started
+2026-09-30T21:17 | agent:install-u03-reuse-3 | receipt | u03 reuse-3 installed with key and hints entry; stub fails, solution passes 3 visible and 5 held-out; open: the attempt-first form names two reuse items, nothing tells a session to run three; unverified
+2026-09-30T21:17 | self | delegation | agent:items-readme-layout, haiku, background: items README layout line names reuse-N and further probe sides
