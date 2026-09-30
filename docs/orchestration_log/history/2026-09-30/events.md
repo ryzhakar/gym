@@ -327,3 +327,5 @@
 2026-10-01T00:02 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T00:02 | agent:matrix-v2 | receipt | round 2: dark tiled field, cells 21 px sized to width (default subset scrolls vertically), discussion label muted small caps, wash light neutral 12 percent; 6 matrix tests pass; unverified
 2026-10-01T00:03 | self | discovery | matrix-default.png read after round 2: dark field, 21 px cells, blocks and the discussion label read, a page consistent with the graph; committed
+2026-10-01T00:03 | owner | receipt | in conversation: the line Only the graph's revision 5 remains was a message; violation
+2026-10-01T00:03 | self | failure | status line on a harness prompt; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
