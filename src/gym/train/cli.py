@@ -12,6 +12,7 @@ import typer
 from gym.train import baseline as baseline_module
 from gym.train import check as check_module
 from gym.train import close as close_module
+from gym.train import practice as practice_module
 from gym.train import probe as probe_module
 from gym.train import session as session_module
 from gym.train import status as status_module
@@ -22,6 +23,8 @@ probe_app = typer.Typer(help="Stage a unit's probe problems, then grade them onc
 app.add_typer(probe_app, name="probe")
 baseline_app = typer.Typer(help="Stage a baseline item's stub, then grade it once ready — mirrors probe stage/grade.")
 app.add_typer(baseline_app, name="baseline")
+practice_app = typer.Typer(help="Grade a practice item's learner folder against its held-out tests.")
+app.add_typer(practice_app, name="practice")
 
 
 def _validate_which(which: str) -> None:
@@ -132,6 +135,20 @@ def baseline_grade_command(
     refuses if nothing was staged for this item in this session. Never opens or prints key/."""
     subject_dir = subject_dir.resolve()
     baseline_module.run_grade(subject_dir, item, session, cap_minutes)
+
+
+@practice_app.command("grade")
+def practice_grade_command(
+    unit_dir: Path = typer.Argument(..., help="Unit directory, e.g. training/rust/items/u02-enums-match"),
+    item: str = typer.Option(..., "--item", help="Practice item directory name in the unit, e.g. attempt, reuse-1"),
+    session: str = typer.Option(..., "--session", help="Session id this grade belongs to"),
+) -> None:
+    """Copy the learner's folder for the item to a scratch directory, bring the unit's held-out
+    tests from its key/ in, run cargo test there, and log one grade event; the learner's folder is
+    never touched and key/ is never printed. Refuses if the learner's folder does not exist."""
+    unit_dir = unit_dir.resolve()
+    subject_dir = unit_dir.parent.parent
+    practice_module.run_grade(subject_dir, unit_dir, item, session)
 
 
 @app.command("close")

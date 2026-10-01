@@ -100,3 +100,17 @@ def test_build_line_and_parse_line_round_trip() -> None:
 def test_parse_line_refuses_a_malformed_line() -> None:
     with pytest.raises(ValueError, match="not 'timestamp"):
         parse_line("not a valid line at all")
+
+
+def test_a_grade_line_by_tool_practice_is_accepted_and_read_back(tmp_path: Path) -> None:
+    subject = tmp_path / "rust"
+    (subject / "sessions" / "s1").mkdir(parents=True)
+    (subject / "sessions" / "s1" / "events.md").touch()
+
+    line = append_event(
+        subject, "s1", "tool:practice", "grade", {"unit": "u02", "item": "reuse-1", "result": "pass", "fraction": "1.0000"}
+    )
+
+    rows = read_events(subject / "sessions" / "s1" / "events.md")
+    assert " | tool:practice | grade | " in line
+    assert [(row["actor"], row["event_kind"], row["result"]) for row in rows] == [("tool:practice", "grade", "pass")]

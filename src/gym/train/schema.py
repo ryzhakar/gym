@@ -37,7 +37,7 @@ TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M"
 # from the clock.
 SESSION_ID_FORMAT = "%Y-%m-%dT%H-%M"
 
-ACTORS = ("manager", "trainer", "learner", "tool:probe")
+ACTORS = ("manager", "trainer", "learner", "tool:probe", "tool:practice")
 
 Validator = Callable[[str], "str | None"]
 
@@ -225,6 +225,14 @@ KINDS: dict[str, dict[str, Validator]] = {
         "problem": nonempty,
         "result": enum("pass", "fail"),
         "minutes": float_at_least(0),
+    },
+    # Session 2026-10-01T15-56 narrative, What to change: Tooling: no command graded a practice
+    # item against its held-out tests. `gym train practice grade` logs this, by `tool:practice`.
+    "grade": {
+        "unit": nonempty,
+        "item": nonempty,
+        "result": enum("pass", "fail"),
+        "fraction": float_in(0.0, 1.0),
     },
     "queue": {
         "unit": nonempty,

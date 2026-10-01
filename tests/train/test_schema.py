@@ -332,3 +332,25 @@ def test_probe_go_which_refuses_an_alias_and_baseline() -> None:
     for bad in ("immediate", "delayed", "baseline", "probe-ab"):
         error = validate_fields("probe-go", {"unit": "u1", "which": bad})
         assert error is not None and "which" in error
+
+
+def test_grade_requires_unit_item_result_and_fraction() -> None:
+    fields = {"unit": "u02", "item": "reuse-1", "result": "pass", "fraction": "1.0000"}
+    assert validate_fields("grade", fields) is None
+    for missing in fields:
+        short = {name: value for name, value in fields.items() if name != missing}
+        error = validate_fields("grade", short)
+        assert error is not None and missing in error
+
+
+def test_grade_result_is_pass_or_fail_and_fraction_a_share() -> None:
+    base = {"unit": "u02", "item": "reuse-1", "result": "pass", "fraction": "0.5000"}
+    assert validate_fields("grade", {**base, "result": "fail"}) is None
+    assert "result" in (validate_fields("grade", {**base, "result": "skip"}) or "")
+    assert "fraction" in (validate_fields("grade", {**base, "fraction": "1.5"}) or "")
+    assert "fraction" in (validate_fields("grade", {**base, "fraction": "most"}) or "")
+
+
+def test_grade_refuses_an_unknown_field() -> None:
+    fields = {"unit": "u02", "item": "reuse-1", "result": "pass", "fraction": "1.0", "minutes": "3"}
+    assert "unknown field" in (validate_fields("grade", fields) or "")
