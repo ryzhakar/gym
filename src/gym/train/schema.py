@@ -209,6 +209,13 @@ KINDS: dict[str, dict[str, Validator]] = {
         "which": matches(r"probe-[a-z]"),
         "problems": csv_list,
     },
+    # Session 2026-10-01T15-56 narrative, What to change: Procedure and Tooling: a probe may be
+    # staged before the learner starts, so `gym train probe go` logs this mark and `grade` measures
+    # minutes from it. `which` is the literal side name, as on `probe-start`.
+    "probe-go": {
+        "unit": nonempty,
+        "which": matches(r"probe-[a-z]"),
+    },
     "probe-item": {
         "unit": nonempty,
         # `baseline` is a literal addition, not a probe side: `gym train baseline grade` logs its

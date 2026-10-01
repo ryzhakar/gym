@@ -316,3 +316,19 @@ def test_go_requires_unit_and_item() -> None:
 def test_go_refuses_an_unknown_field() -> None:
     error = validate_fields("go", {"unit": "u1", "item": "x", "which": "probe-a"})
     assert error is not None and "unknown field" in error
+
+
+def test_probe_go_requires_unit_and_a_literal_probe_side() -> None:
+    assert validate_fields("probe-go", {"unit": "u1", "which": "probe-a"}) is None
+    assert validate_fields("probe-go", {"unit": "u1", "which": "probe-c"}) is None
+    for missing in ("unit", "which"):
+        fields = {"unit": "u1", "which": "probe-a"}
+        del fields[missing]
+        error = validate_fields("probe-go", fields)
+        assert error is not None and missing in error
+
+
+def test_probe_go_which_refuses_an_alias_and_baseline() -> None:
+    for bad in ("immediate", "delayed", "baseline", "probe-ab"):
+        error = validate_fields("probe-go", {"unit": "u1", "which": bad})
+        assert error is not None and "which" in error

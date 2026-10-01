@@ -19,6 +19,12 @@ before it becomes a path component (`cargo test`'s `$DYLD_FALLBACK_LIBRARY_PATH`
 literal `:` on macOS — moot in practice now that `gym train open` only ever produces a hyphen-shaped
 id, but kept as a defensive second layer).
 
+`gym train probe go` (session 2026-10-01T15-56 narrative): a probe may be staged before the learner
+starts, so the learner's start is its own event, `probe-go`, logged by this command after `stage`.
+`grade` measures from the latest `probe-go` of that unit and side since its latest staging when one
+exists — each problem's `minutes` and the probe's `total_minutes` are the last save minus the go,
+floored at 0 — and from the `probe-start` stage time, as before, when none does.
+
 Team lead ruling (2026-09-30): a unit may carry a third probe side, `probe-c`, for a repeat of the
 unit — and any further side of the same shape. `which` still accepts `immediate`/`delayed` as
 aliases for `probe-a`/`probe-b`, or a literal side name matching `probe-[a-z]` (`resolve_side`);
@@ -193,6 +199,44 @@ def latest_probe_start(subject_dir: Path, session_id: str, unit: str, which: str
     return matches[-1] if matches else None
 
 
+def run_go(
+    subject_dir: Path, unit_dir: Path, which: str, session_id: str, now: "datetime | None" = None
+) -> dict:
+    """Log one `probe-go` event: the learner's start mark for the probe `run_stage` staged for
+    `unit_dir`/`which` in this session. Refuses outright if no `probe-start` event exists for that
+    unit and side in this session, since a mark with nothing staged marks nothing. Returns
+    `{'line'}` and prints the line. The event's own `which` is the resolved, literal side name."""
+    unit = unit_dir.name
+    side = resolve_side(which)
+    if latest_probe_start(subject_dir, session_id, unit, which) is None:
+        sys.exit(f"refused, no probe-start event for unit {unit!r}, which {side!r}, in session {session_id}; stage first")
+    line = append_event(subject_dir, session_id, "tool:probe", "probe-go", {"unit": unit, "which": side}, now=now)
+    print(line)
+    return {"line": line}
+
+
+def latest_probe_go(subject_dir: Path, session_id: str, unit: str, which: str) -> "dict[str, str] | None":
+    """The most recent `probe-go` event for `unit`/`which` in this session that comes after the
+    latest `probe-start` of that unit and side in the file, or `None`. A go before the latest
+    staging marked work that staging wiped, so it does not count; file order, not the minute
+    stamp, decides, since a go may share the stage's minute."""
+    side = resolve_side(which)
+    rows = read_events(events_path(subject_dir, session_id))
+    starts = [
+        index
+        for index, row in enumerate(rows)
+        if row["event_kind"] == "probe-start" and row["unit"] == unit and row["which"] == side
+    ]
+    if not starts:
+        return None
+    goes = [
+        row
+        for row in rows[starts[-1] + 1 :]
+        if row["event_kind"] == "probe-go" and row["unit"] == unit and row["which"] == side
+    ]
+    return goes[-1] if goes else None
+
+
 CAP_MINUTES_DEFAULT = 10.0
 
 
@@ -237,28 +281,38 @@ def run_grade(
     against its key, and log one `probe-item` event each. Refuses outright if no `probe-start`
     event exists for this unit and probe side in this session.
 
-    Team lead ruling (2026-09-30): each event's own `minutes` is now per-problem, not shared — the
-    latest modification time under that problem's staged `src/` minus the `probe-start` event's own
-    clock stamp (`minutes_since`), so an untouched problem (never edited since staging) reads
-    `minutes=0`, and a problem the learner actually worked on reads how long *that* work took.
-    `total_minutes` (new, optional) is the old shared quantity — `now` (or `datetime.now()`) minus
-    the `probe-start` event's clock stamp, the same on every problem in this call — kept because
-    `over_cap` (`yes`/`no`, still optional, recorded only, never enforced or refused) is judged
-    against `total_minutes`, not the new per-problem `minutes`."""
+    Team lead ruling (2026-09-30): each event's own `minutes` is per-problem, not shared — the
+    latest modification time under that problem's staged `src/` minus the reference time
+    (`minutes_since`), so an untouched problem (never edited since staging) reads `minutes=0`, and
+    a problem the learner actually worked on reads how long *that* work took. `total_minutes` is
+    the probe's own time, the same on every problem in one call; `over_cap` (`yes`/`no`, recorded
+    only, never enforced or refused) is judged against it.
+
+    The reference time is the latest `probe-go` of this unit and side since its latest staging
+    (`latest_probe_go`) when one exists: then `total_minutes` is the latest save over every problem
+    minus the go, floored at 0 (0 when nothing was saved). With no go it is the `probe-start`
+    event's own clock stamp, and `total_minutes` is `now` (or `datetime.now()`) minus that stamp."""
     unit = unit_dir.name
     side = resolve_side(which)
     start_row = latest_probe_start(subject_dir, session_id, unit, which)
     if start_row is None:
         sys.exit(f"refused, no probe-start event for unit {unit!r}, which {side!r}, in session {session_id}")
     started = datetime.strptime(start_row["timestamp"], TIMESTAMP_FORMAT)
-    total_minutes = max(0.0, ((now or datetime.now()) - started).total_seconds() / 60)
-    over_cap = "yes" if total_minutes > cap_minutes else "no"
+    go_row = latest_probe_go(subject_dir, session_id, unit, which)
+    reference = datetime.strptime(go_row["timestamp"], TIMESTAMP_FORMAT) if go_row else started
     work_root = subject_dir / "work"
+    problem_names = start_row["problems"].split(",")
+    work_dirs = {name: work_root / session_path_segment(session_id) / unit / name for name in problem_names}
+    saves = {name: latest_mtime_under(work_dirs[name] / "src") for name in problem_names}
+    if go_row:
+        total_minutes = minutes_since(reference, max((mtime for mtime in saves.values() if mtime is not None), default=None))
+    else:
+        total_minutes = max(0.0, ((now or datetime.now()) - started).total_seconds() / 60)
+    over_cap = "yes" if total_minutes > cap_minutes else "no"
     rows: list[dict[str, str]] = []
-    for problem_name in start_row["problems"].split(","):
-        work_dir = work_root / session_path_segment(session_id) / unit / problem_name
-        item_minutes = minutes_since(started, latest_mtime_under(work_dir / "src"))
-        passed, fraction = grade_item(work_dir, key_dir_for(unit_dir, which, problem_name))
+    for problem_name in problem_names:
+        item_minutes = minutes_since(reference, saves[problem_name])
+        passed, fraction = grade_item(work_dirs[problem_name], key_dir_for(unit_dir, which, problem_name))
         fields = {
             "unit": unit,
             "which": side,

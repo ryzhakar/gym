@@ -454,3 +454,188 @@ def test_stage_then_grade_leaves_items_byte_identical(tmp_path: Path, subject_di
     probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert (unit_dir / "probe-a" / "p1" / "src" / "lib.rs").read_bytes() == before
+
+
+# --- `gym train probe go`: the learner's start mark, from which grade measures minutes ---
+
+CLOCK = datetime(2026, 10, 1, 10, 0)
+
+
+def _log(subject_dir: Path, kind: str, fields: dict[str, str], when: datetime) -> None:
+    from gym.train.events import append_event
+
+    append_event(subject_dir, "sess-1", "tool:probe", kind, fields, now=when)
+
+
+def _staged_by_hand(
+    tmp_path: Path, subject_dir: Path, stage_at: datetime = CLOCK, which: str = "probe-a"
+) -> tuple[Path, dict[str, Path]]:
+    """A unit staged with an explicit clock: files copied, `probe-start` logged at `stage_at`, every
+    source file's mtime pinned at `stage_at`, so each test sets only the saves and marks it means."""
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    work: dict[str, Path] = {}
+    for problem in ("p1", "p2"):
+        work[problem] = probe.stage_item(unit_dir / which / problem, subject_dir / "work", "sess-1", "unit-1")
+        for path in work[problem].rglob("*"):
+            if path.is_file():
+                _set_mtime(path, stage_at)
+    _log(subject_dir, "probe-start", {"unit": "unit-1", "which": which, "problems": "p1,p2"}, stage_at)
+    return unit_dir, work
+
+
+def _save(work_dir: Path, when: datetime) -> None:
+    lib = work_dir / "src" / "lib.rs"
+    lib.write_text(LIB_RS_PASSING, encoding="utf-8")
+    _set_mtime(lib, when)
+
+
+def test_run_go_logs_a_probe_go_event_for_the_staged_side(tmp_path: Path, subject_dir: Path, capsys: pytest.CaptureFixture) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+
+    result = probe.run_go(subject_dir, unit_dir, "immediate", "sess-1")
+
+    goes = [row for row in read_events(subject_dir / "sessions" / "sess-1" / "events.md") if row["event_kind"] == "probe-go"]
+    assert len(goes) == 1
+    assert (goes[0]["actor"], goes[0]["unit"], goes[0]["which"]) == ("tool:probe", "unit-1", "probe-a")
+    assert capsys.readouterr().out.strip().endswith(result["line"])
+
+
+def test_run_go_logs_the_literal_side_for_a_literal_third_side(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1", which_dirs=("probe-a", "probe-b", "probe-c"))
+    probe.run_stage(subject_dir, unit_dir, "probe-c", "sess-1")
+
+    probe.run_go(subject_dir, unit_dir, "probe-c", "sess-1")
+
+    goes = [row for row in read_events(subject_dir / "sessions" / "sess-1" / "events.md") if row["event_kind"] == "probe-go"]
+    assert goes[0]["which"] == "probe-c"
+
+
+def test_run_go_refuses_without_a_probe_start_for_that_unit_and_side(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")
+    with pytest.raises(SystemExit, match="no probe-start event for unit 'unit-1', which 'probe-a'"):
+        probe.run_go(subject_dir, unit_dir, "immediate", "sess-1")
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+    with pytest.raises(SystemExit, match="no probe-start event for unit 'unit-1', which 'probe-b'"):
+        probe.run_go(subject_dir, unit_dir, "delayed", "sess-1")
+
+
+def test_latest_probe_go_is_none_without_a_go_and_the_latest_with_several(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir, _work = _staged_by_hand(tmp_path, subject_dir)
+    assert probe.latest_probe_go(subject_dir, "sess-1", "unit-1", "immediate") is None
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=2))
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=4))
+    row = probe.latest_probe_go(subject_dir, "sess-1", "unit-1", "immediate")
+    assert row is not None and row["timestamp"] == "2026-10-01T10:04"
+
+
+def test_latest_probe_go_ignores_another_side_and_a_go_before_the_latest_staging(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir, _work = _staged_by_hand(tmp_path, subject_dir)
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=2))
+    _log(subject_dir, "probe-start", {"unit": "unit-1", "which": "probe-b", "problems": "p1,p2"}, CLOCK + timedelta(minutes=3))
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-b"}, CLOCK + timedelta(minutes=4))
+    assert probe.latest_probe_go(subject_dir, "sess-1", "unit-1", "delayed")["timestamp"] == "2026-10-01T10:04"
+    assert probe.latest_probe_go(subject_dir, "sess-1", "unit-1", "immediate")["timestamp"] == "2026-10-01T10:02"
+    # staged again after that go: the go marked work the restaging wiped
+    _log(subject_dir, "probe-start", {"unit": "unit-1", "which": "probe-a", "problems": "p1,p2"}, CLOCK + timedelta(minutes=6))
+    assert probe.latest_probe_go(subject_dir, "sess-1", "unit-1", "immediate") is None
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_measures_minutes_and_total_from_the_go_mark_not_the_stage_time(tmp_path: Path, subject_dir: Path) -> None:
+    """Staged 10:00, go 10:02, p1 last saved 10:05, p2 10:04, graded 10:30 with a 10 minute cap:
+    from the stage time p1 would read 5.00 and the total 30.00, over the cap; from the go, p1 3.00,
+    p2 2.00, total 3.00 (latest last save of the probe minus the go), under the cap."""
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=2))
+    _save(work["p1"], CLOCK + timedelta(minutes=5))
+    _save(work["p2"], CLOCK + timedelta(minutes=4))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=CLOCK + timedelta(minutes=30))
+    by_problem = {row["problem"]: row for row in rows}
+
+    assert by_problem["p1"]["minutes"] == "3.00"
+    assert by_problem["p2"]["minutes"] == "2.00"
+    assert all(row["total_minutes"] == "3.00" for row in rows)
+    assert all(row["over_cap"] == "no" for row in rows)
+    assert {row["result"] for row in rows} == {"pass"}
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_without_a_go_still_measures_from_the_stage_time(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _save(work["p1"], CLOCK + timedelta(minutes=5))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=CLOCK + timedelta(minutes=30))
+    by_problem = {row["problem"]: row for row in rows}
+
+    assert by_problem["p1"]["minutes"] == "5.00"
+    assert by_problem["p2"]["minutes"] == "0.00"
+    assert all(row["total_minutes"] == "30.00" and row["over_cap"] == "yes" for row in rows)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_floors_a_save_before_the_go_at_0_and_an_unsaved_probe_totals_0(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=7))
+    _save(work["p1"], CLOCK + timedelta(minutes=5))  # saved before the go
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=30))
+
+    assert all(row["minutes"] == "0.00" and row["total_minutes"] == "0.00" and row["over_cap"] == "no" for row in rows)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_uses_the_latest_go(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=1))
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=4))
+    _save(work["p1"], CLOCK + timedelta(minutes=6))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=30))
+
+    assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "2.00"
+    assert all(row["total_minutes"] == "2.00" for row in rows)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_ignores_a_go_logged_before_the_probe_was_staged_again(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=2))
+    _log(subject_dir, "probe-start", {"unit": "unit-1", "which": "probe-a", "problems": "p1,p2"}, CLOCK + timedelta(minutes=10))
+    _save(work["p1"], CLOCK + timedelta(minutes=14))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=30))
+
+    assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "4.00"
+    assert all(row["total_minutes"] == "20.00" for row in rows)
+
+
+def test_cli_probe_go_logs_a_probe_go_event(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from gym.train.cli import app
+
+    subject = tmp_path / "rust"
+    (subject / "sessions" / "sess-1").mkdir(parents=True)
+    (subject / "sessions" / "sess-1" / "events.md").touch()
+    unit_dir = make_unit_dir(subject / "items", "unit-1")
+    runner = CliRunner()
+
+    staged = runner.invoke(app, ["probe", "stage", str(unit_dir), "immediate", "--session", "sess-1"])
+    went = runner.invoke(app, ["probe", "go", str(unit_dir), "immediate", "--session", "sess-1"])
+
+    assert staged.exit_code == 0, staged.output
+    assert went.exit_code == 0, went.output
+    goes = [row for row in read_events(subject / "sessions" / "sess-1" / "events.md") if row["event_kind"] == "probe-go"]
+    assert [(row["actor"], row["unit"], row["which"]) for row in goes] == [("tool:probe", "unit-1", "probe-a")]
+
+
+def test_cli_probe_go_refuses_an_unknown_side(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from gym.train.cli import app
+
+    result = CliRunner().invoke(app, ["probe", "go", str(tmp_path / "x" / "y" / "unit-1"), "tomorrow", "--session", "s"])
+    assert result.exit_code == 2
+    assert "Invalid value for which" in result.output
