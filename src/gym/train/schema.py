@@ -145,6 +145,13 @@ KINDS: dict[str, dict[str, Validator]] = {
         "unit": nonempty,
         "item": nonempty,
     },
+    # Session 2026-10-01T15-56 narrative, What to change: Procedure: the learner's start mark was
+    # logged as `present`, which it is not. `go` is that mark; it consumes no queue row and
+    # `gym train status` ignores it.
+    "go": {
+        "unit": nonempty,
+        "item": nonempty,
+    },
     "question": {
         "unit": nonempty,
         "item": nonempty,
@@ -250,8 +257,10 @@ KIND_OPTIONAL_FIELDS: dict[str, dict[str, Validator]] = {
     # number — the one old `sessions.csv` column (`record_schema.py`'s `probe_minutes`,
     # `float_at_least(0)` there too) this schema gives a home to.
     "close": {"probe_minutes": float_at_least(0)},
-    # Finding 12: a procedural turn need not belong to any one unit.
-    "procedure": {"unit": nonempty},
+    # Finding 12: a procedural turn need not belong to any one unit. `item` names the item the
+    # answer was given on, when one applies (session 2026-10-01T15-56: procedure answers were logged
+    # as `feedback` with a note saying no kind fit).
+    "procedure": {"unit": nonempty, "item": nonempty},
 }
 
 

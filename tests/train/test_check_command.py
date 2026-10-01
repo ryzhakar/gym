@@ -89,3 +89,30 @@ def test_closed_session_with_a_close_block_is_clean(subject_dir: Path) -> None:
     open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
     close_session(subject_dir, "2026-09-30T10-00", minutes=10, units="u1", interruptions=0, assistant_closed="yes", next_step="u2")
     assert check(subject_dir) == []
+
+
+def test_go_and_procedure_lines_are_clean(subject_dir: Path) -> None:
+    open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
+    events = subject_dir / "sessions" / "2026-09-30T10-00" / "events.md"
+    with events.open("a", encoding="utf-8") as handle:
+        handle.write("2099-01-01T00:00 | trainer | go | unit=u1 item=reuse-1\n")
+        handle.write('2099-01-01T00:01 | trainer | procedure | unit=u1 item=reuse-1 note="the cap is 10 minutes"\n')
+    assert check(subject_dir) == []
+
+
+def test_go_without_an_item_is_a_fail(subject_dir: Path) -> None:
+    open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
+    events = subject_dir / "sessions" / "2026-09-30T10-00" / "events.md"
+    with events.open("a", encoding="utf-8") as handle:
+        handle.write("2026-09-30T10:05 | trainer | go | unit=u1\n")
+    findings = check(subject_dir)
+    assert any("missing field(s) for go: item" in finding for finding in findings)
+
+
+def test_procedure_without_a_note_is_a_fail(subject_dir: Path) -> None:
+    open_session(subject_dir, "arthur", "opus", "2026-09-30T10-00")
+    events = subject_dir / "sessions" / "2026-09-30T10-00" / "events.md"
+    with events.open("a", encoding="utf-8") as handle:
+        handle.write("2026-09-30T10:05 | trainer | procedure | unit=u1 item=reuse-1\n")
+    findings = check(subject_dir)
+    assert any("missing field(s) for procedure: note" in finding for finding in findings)

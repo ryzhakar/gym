@@ -236,3 +236,25 @@ def test_each_queue_row_is_judged_on_its_own_unit_and_kind() -> None:
         _event("attempt", "u02", "2026-10-01T15:57"),
     ]
     assert due_queue_rows(rows, today=date(2026, 10, 1)) == [rows[1]]
+
+
+def test_status_ignores_go_and_procedure_events(subject_dir: Path) -> None:
+    """Neither kind is an attempt, a probe, a confidence or a queue consumer: the units table and
+    the due queue read the same with or without them, and a `go` does not consume a `next_unit`."""
+    append_event(
+        subject_dir, SESSION, "manager", "queue", {"unit": "u2", "kind": "next_unit", "due": "2020-01-01"},
+        now=_stamp("2026-09-30", "09:00"),
+    )
+    before = build_status(subject_dir, today=date(2026, 10, 1))
+    append_event(subject_dir, SESSION, "trainer", "go", {"unit": "u2", "item": "reuse-1"}, now=_stamp("2026-09-30", "10:00"))
+    append_event(
+        subject_dir, SESSION, "trainer", "procedure", {"unit": "u2", "item": "reuse-1", "note": "clock starts at go"},
+        now=_stamp("2026-09-30", "10:01"),
+    )
+
+    after = build_status(subject_dir, today=date(2026, 10, 1))
+
+    for key in ("last_attempt", "last_probe_immediate", "last_probe_delayed", "other_probes", "last_confidence", "due_queue"):
+        assert after[key] == before[key], key
+    assert [row["unit"] for row in after["due_queue"]] == ["u2"]
+    assert "u2" not in format_status(after).split("## Due queue")[0]

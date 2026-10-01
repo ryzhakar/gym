@@ -292,3 +292,27 @@ def test_procedure_requires_note_and_allows_an_optional_unit() -> None:
 def test_procedure_refuses_a_missing_note() -> None:
     error = validate_fields("procedure", {"unit": "u1"})
     assert error is not None and "note" in error
+
+
+def test_procedure_accepts_unit_item_and_note_together() -> None:
+    fields = {"unit": "u02-enums-match", "item": "reuse-1", "note": "the clock starts at the learner's go"}
+    assert validate_fields("procedure", fields) is None
+
+
+def test_procedure_item_must_not_be_empty() -> None:
+    error = validate_fields("procedure", {"note": "the cap is 10 minutes", "item": ""})
+    assert error is not None and "procedure.item empty" in error
+
+
+def test_go_requires_unit_and_item() -> None:
+    assert validate_fields("go", {"unit": "u02-enums-match", "item": "reuse-1"}) is None
+    for missing in ("unit", "item"):
+        fields = {"unit": "u02-enums-match", "item": "reuse-1"}
+        del fields[missing]
+        error = validate_fields("go", fields)
+        assert error is not None and missing in error
+
+
+def test_go_refuses_an_unknown_field() -> None:
+    error = validate_fields("go", {"unit": "u1", "item": "x", "which": "probe-a"})
+    assert error is not None and "unknown field" in error
