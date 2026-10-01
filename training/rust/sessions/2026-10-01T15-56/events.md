@@ -1,0 +1,59 @@
+2026-10-01T15:56 | manager | open | learner=arthur trainer_model=claude-sonnet-5-5-inherited
+2026-10-01T15:57 | trainer | start | unit=u02-enums-match
+2026-10-01T15:57 | trainer | present | unit=u02-enums-match item=attempt request=none
+2026-10-01T16:15 | trainer | build | unit=u02-enums-match item=attempt result=compile-error request=none
+2026-10-01T16:15 | trainer | build | unit=u02-enums-match item=attempt result=4-of-6-pass request=none
+2026-10-01T16:16 | trainer | attempt | unit=u02-enums-match item=attempt result=fail minutes=16.65 request=none
+2026-10-01T16:16 | trainer | feedback | unit=u02-enums-match item=attempt request=none note="enum_form label has branches swapped: below 0 gives hot, 30 and up gives freezing, so hot_from_30 and freezing_below_0 fail; flat_form not written so cargo test does not compile; last save 16.65 min after start, over the 10 min cap, unenforced while working"
+2026-10-01T16:16 | trainer | instruction | unit=u02-enums-match item=attempt request=none principle="variant carries only its own data" note="attempt left the flat struct form unwritten and never met what a struct costs; walking the window-events worked example, subgoal 1 first; enum_form _ arm in fault_code and if-chain inside one arm are for subgoals 2 and 3"
+2026-10-01T16:16 | trainer | question | unit=u02-enums-match item=attempt request=none
+2026-10-01T16:18 | trainer | question | unit=u02-enums-match item=attempt request=explain
+2026-10-01T16:22 | trainer | instruction | unit=u02-enums-match item=attempt request=none principle="variant carries only its own data" note="learner predicted a flat struct with all fields required cannot be built and its x cannot be read off a key press; actual: constructor fills dummies, e.x compiles and returns the dummy; Option fields compile too and move the check to run time; enum gives E0609, learner right on match-then-access"
+2026-10-01T16:22 | trainer | question | unit=u02-enums-match item=attempt request=none
+2026-10-01T16:24 | trainer | instruction | unit=u02-enums-match item=attempt request=none principle="cover every case" note="attempt ended fault_code with a _ arm instead of naming Temperature and Off, so a variant added later silently answers None; canonical names every variant so the compiler stops on the addition; learner predicted E0004 correctly on the Close example"
+2026-10-01T16:24 | trainer | question | unit=u02-enums-match item=attempt request=none
+2026-10-01T16:26 | trainer | instruction | unit=u02-enums-match item=attempt request=none principle="order arms from specific to general" note="attempt put the temperature thresholds in an if-chain inside one Temperature arm, and hot and freezing got swapped there; canonical gives each threshold its own guard or range arm ahead of the plain temperature arm; learner predicted Stale answers correctly (label stops, fault_code returns None)"
+2026-10-01T16:26 | trainer | question | unit=u02-enums-match item=attempt request=none
+2026-10-01T16:28 | trainer | instruction | unit=u02-enums-match item=attempt request=none principle="bind what the arm uses" note="attempt bound degrees then tested it by hand in an if-chain inside the arm, where range patterns or guards on separate arms get the unreachable-pattern check; swap itself was a slip; learner predicted q returns generic key arm correctly"
+2026-10-01T16:28 | trainer | question | unit=u02-enums-match item=attempt request=none
+2026-10-01T16:32 | trainer | instruction | unit=u02-enums-match item=attempt request=none principle="bind what the arm uses" note="learner predicted E0425 on Scroll(1..=3) using d correctly; closed the walk: d@range binds and tests, guards read bound fields, guarded arm does not count for exhaustiveness; record in workspace example-chat.md; closes with reuse-1 as fresh isomorphic item"
+2026-10-01T16:32 | trainer | present | unit=u02-enums-match item=reuse-1 request=none
+2026-10-01T16:50 | trainer | feedback | unit=u02-enums-match item=attempt request=none note="correction: attempt minutes=16.65 ran from staging to last save and includes env setup and message lag; the over-cap claim is unsupported; fail stands on tests (label swapped, flat_form unwritten), not on time; practice clock changes to learner go message until last save mtime"
+2026-10-01T16:51 | trainer | feedback | unit=u02-enums-match item=reuse-1 request=explain note="procedure answer, no kind fits: no folder parameter needed, run cargo from inside the crate folder as in session 1; root-open advice for probes withdrawn as unverified for rust-analyzer; probe clock still starts at stage, so finish all other setup before go"
+2026-10-01T16:53 | trainer | feedback | unit=u02-enums-match item=reuse-1 request=explain note="procedure answer, no kind fits: reuse-1 is new, unit u02 ticket pricing, not the u01 reuse-1 of session 1 and not the attempt"
+2026-10-01T16:54 | trainer | present | unit=u02-enums-match item=reuse-1 request=none
+2026-10-01T17:01 | trainer | feedback | unit=u02-enums-match item=reuse-1 request=explain note="procedure answer, no kind fits: Rust Book and std docs allowed on practice items per items README; pointed to example-chat.md for the pattern syntax already taught"
+2026-10-01T17:06 | trainer | build | unit=u02-enums-match item=reuse-1 result=compile-error request=none
+2026-10-01T17:06 | trainer | attempt | unit=u02-enums-match item=reuse-1 result=fail minutes=11.27 request=none
+2026-10-01T17:06 | trainer | feedback | unit=u02-enums-match item=reuse-1 request=none note="Adult and Child are declared with braces and field age but arms use parentheses with age: inside, and Adult{_} is not a field pattern; parse error stops cargo test before any test runs; behind it 0..=65 includes 65 which spec prices 800, and Group and Staff arms are missing"
+2026-10-01T17:06 | trainer | instruction | unit=u02-enums-match item=reuse-1 request=none principle="pattern mirrors the variant declaration" note="attempt wrote tuple-paren patterns for named-field variants Adult and Child and a bare underscore in braces; canonical copies the declaration: braces and field name for named-field variants, parentheses and position for tuple variants; supplied hint ladder skipped because level 1 assumes the tests run"
+2026-10-01T17:06 | trainer | question | unit=u02-enums-match item=reuse-1 request=none
+2026-10-01T17:08 | trainer | instruction | unit=u02-enums-match item=reuse-1 request=none principle="pattern mirrors the variant declaration" note="learner predicted b and d correctly; E0164 for tuple pattern on struct variant, E0769 for struct pattern on tuple variant; shapes restated from the example; record appended to workspace example-chat.md; closed with reuse-2 as fresh item"
+2026-10-01T17:08 | trainer | present | unit=u02-enums-match item=reuse-2 request=none
+2026-10-01T17:10 | trainer | present | unit=u02-enums-match item=reuse-2 request=none
+2026-10-01T17:24 | trainer | build | unit=u02-enums-match item=reuse-2 result=compile-error request=none
+2026-10-01T17:24 | trainer | attempt | unit=u02-enums-match item=reuse-2 result=fail minutes=13.53 request=none
+2026-10-01T17:24 | trainer | feedback | unit=u02-enums-match item=reuse-2 request=none note="cost converts an i32 sum to u32 with into, E0277 since a signed value has no lossless conversion, so the lib does not compile; dot, line and pen_up constructors never defined though tests import them; Dot arm binds x and y unused; enum shape, endpoint and zero-length rule match the spec; spec sets no cap, learner said clock ran out"
+2026-10-01T17:25 | trainer | feedback | unit=u02-enums-match item=reuse-2 request=explain note="correction: reuse-2 spec has no cap and trainer did not say so when presenting it; learner stopped at 13.53 min believing a clock ran out; fail stands on tests but the stopping point is not a measure of ability; learner may continue untimed"
+2026-10-01T17:37 | trainer | build | unit=u02-enums-match item=reuse-2 result=visible-green request=none
+2026-10-01T17:37 | trainer | attempt | unit=u02-enums-match item=reuse-2 result=pass minutes=25.43 request=none
+2026-10-01T17:37 | trainer | feedback | unit=u02-enums-match item=reuse-2 request=none note="visible and structure tests green; held-out not run, no command grades practice items and key/ stays closed; own scratch test found x2 - x1 is an i32 subtraction that overflows for a line from i32::MIN to i32::MAX, panic in debug, the unsigned conversion comes after it; minutes include the pause while the learner read the trainer reply; no cap on this item"
+2026-10-01T17:37 | trainer | present | unit=u02-enums-match item=attempt-return request=none
+2026-10-01T17:53 | trainer | build | unit=u02-enums-match item=attempt-return result=visible-green request=none
+2026-10-01T17:53 | trainer | attempt | unit=u02-enums-match item=attempt-return result=pass minutes=15.4 request=none
+2026-10-01T17:53 | trainer | feedback | unit=u02-enums-match item=attempt-return request=none note="14 of 14 visible tests green both forms, held-out not run; flat_form holds two Option fields with off as both None so the type admits both set, resolved only by arm order, and the final catch-all arm cannot be checked by the compiler, the hand-tracking the example described, harmless to tests since fields are private; enum_form fault_code still ends in underscore None arm after the cover-every-case instruction; minutes is an upper bound from the present message, learner sent no go"
+2026-10-01T17:53 | trainer | question | unit=u02-enums-match item=probe-a request=none
+2026-10-01T17:53 | trainer | feedback | unit=u02-enums-match item=attempt-return request=none note="procedure: learner states standing permission to start the clock at the trainer message when no go is sent; attempt-return minutes=15.4 stands as the measure, not an upper bound; the permission was not in the trainer's record before this message"
+2026-10-01T17:55 | trainer | confidence | unit=u02-enums-match item=p1-tokens value=4 request=none
+2026-10-01T17:55 | trainer | confidence | unit=u02-enums-match item=p2-tilt-status value=4 request=none
+2026-10-01T17:55 | trainer | confidence | unit=u02-enums-match item=p3-alert value=4 request=none
+2026-10-01T17:55 | tool:probe | probe-start | unit=u02-enums-match which=probe-a problems=p1-tokens,p2-tilt-status,p3-alert
+2026-10-01T17:56 | trainer | present | unit=u02-enums-match item=p1-tokens request=none
+2026-10-01T18:13 | tool:probe | probe-item | unit=u02-enums-match which=probe-a problem=p1-tokens result=pass minutes=0.00 total_minutes=18.44 over_cap=yes fraction=1.0000
+2026-10-01T18:13 | tool:probe | probe-item | unit=u02-enums-match which=probe-a problem=p2-tilt-status result=pass minutes=5.82 total_minutes=18.44 over_cap=yes fraction=1.0000
+2026-10-01T18:13 | tool:probe | probe-item | unit=u02-enums-match which=probe-a problem=p3-alert result=pass minutes=17.58 total_minutes=18.44 over_cap=yes fraction=1.0000
+2026-10-01T18:14 | trainer | feedback | unit=u02-enums-match item=probe-a request=none note="3 of 3 pass at fraction 1.0; no fault in graded tests; p1 minutes=0.00 is a tool artifact because it reads only src/ and p1 edits prediction.txt; go-based working time about 3.4 for p1, 1.1 for p2, 11 for p3, about 15.5 total against the 10 minute shared cap, over_cap yes recorded not enforced; p1 is the type of baseline b6 which the learner passed before practice so it adds little evidence of learning; immediate probe is not retention evidence"
+2026-10-01T18:14 | trainer | queue | unit=u02-enums-match kind=delayed_probe due=2026-10-08
+2026-10-01T18:14 | trainer | queue | unit=u02-enums-match kind=revisit due=2026-11-01
+2026-10-01T18:14 | trainer | queue | unit=u03-result-question-mark kind=next_unit due=2026-10-02
+2026-10-01T20:42 | manager | close | minutes=138 units=u02-enums-match interruptions=0 assistant_closed=no probe_minutes=18.44
