@@ -53,3 +53,4 @@
 2026-10-01T07:17 | self | failure | status line on a harness prompt at 06:57; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T07:37 | self | failure | status line at 07:17 with no prompt at all, after the commit; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T07:37 | self | failure | status line at 07:17, logged at 07:37, and again the reflex: the heartbeat turn must end on the commit; same entry as history/2026-09-30/failures.md
+2026-10-01T07:57 | self | failure | status line on a harness prompt at 07:37; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
