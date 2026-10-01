@@ -240,3 +240,34 @@ def test_run_grade_minutes_reflects_the_edit_not_a_cargo_run(subject_dir: Path) 
 
     minutes = baseline.minutes_since(started, baseline.latest_save_mtime(result["work_dir"]))
     assert minutes == pytest.approx(2.0, abs=0.02)
+
+
+@pytest.mark.parametrize("relative", ["Cargo.toml", "Cargo.lock", "spec.md", "tests/visible.rs", "target/debug/fake"])
+def test_latest_save_mtime_ignores_the_locked_and_generated_files(subject_dir: Path, relative: str) -> None:
+    make_baseline_item(subject_dir, "b1-own")
+    work_dir = baseline.run_stage(subject_dir, "b1-own", "sess-1")["work_dir"]
+    old = datetime(2026, 9, 30, 10, 0).timestamp()
+    for path in work_dir.rglob("*"):
+        if path.is_file():
+            os.utime(path, (old, old))
+    newer = datetime(2026, 9, 30, 12, 0).timestamp()
+    changed = work_dir / relative
+    changed.parent.mkdir(parents=True, exist_ok=True)
+    changed.write_text("changed\n", encoding="utf-8")
+    os.utime(changed, (newer, newer))
+
+    assert baseline.latest_save_mtime(work_dir) == pytest.approx(old)
+
+
+def test_latest_save_mtime_counts_a_predict_output_edit(subject_dir: Path) -> None:
+    make_baseline_item(subject_dir, "b1-own")
+    work_dir = baseline.run_stage(subject_dir, "b1-own", "sess-1")["work_dir"]
+    old = datetime(2026, 9, 30, 10, 0).timestamp()
+    for path in work_dir.rglob("*"):
+        if path.is_file():
+            os.utime(path, (old, old))
+    newer = datetime(2026, 9, 30, 12, 0).timestamp()
+    (work_dir / "prediction.txt").write_text("42\n", encoding="utf-8")
+    os.utime(work_dir / "prediction.txt", (newer, newer))
+
+    assert baseline.latest_save_mtime(work_dir) == pytest.approx(newer)

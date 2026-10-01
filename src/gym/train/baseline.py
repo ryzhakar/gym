@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 from gym.train.events import append_event, events_path, read_events
-from gym.train.probe import CAP_MINUTES_DEFAULT, grade_item, minutes_since, session_path_segment
+from gym.train.probe import CAP_MINUTES_DEFAULT, grade_item, latest_save_mtime, minutes_since, session_path_segment
 from gym.train.schema import TIMESTAMP_FORMAT
 
 
@@ -102,25 +102,6 @@ def latest_present(subject_dir: Path, session_id: str, item: str) -> "dict[str, 
         if row["event_kind"] == "present" and row.get("unit") == "baseline" and row.get("item") == item
     ]
     return matches[-1] if matches else None
-
-
-def latest_save_mtime(work_dir: Path) -> "float | None":
-    """The latest modification time among `work_dir`'s own files, excluding `target/` (cargo's
-    build cache — touched by every `cargo build`/`check`/`test` run the item bank's own tooling
-    rules allow, which would otherwise read as a "save" the instant the learner merely re-ran a
-    check) and `tests/` (the bank's own test files: unedited by the learner before grading, and
-    `grade_item` copies a held-out one in only after this is read). Covers `src/lib.rs` items and
-    `prediction.txt` items (top-level, not under `src/`) alike, unlike probe's own
-    `latest_mtime_under`, which only ever looks under a problem's `src/`."""
-    if not work_dir.is_dir():
-        return None
-    excluded = {"target", "tests"}
-    mtimes = [
-        path.stat().st_mtime
-        for path in work_dir.rglob("*")
-        if path.is_file() and excluded.isdisjoint(path.relative_to(work_dir).parts)
-    ]
-    return max(mtimes) if mtimes else None
 
 
 def run_grade(

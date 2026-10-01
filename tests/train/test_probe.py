@@ -639,3 +639,77 @@ def test_cli_probe_go_refuses_an_unknown_side(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["probe", "go", str(tmp_path / "x" / "y" / "unit-1"), "tomorrow", "--session", "s"])
     assert result.exit_code == 2
     assert "Invalid value for which" in result.output
+
+
+# --- last save: the newest mtime over every file of a problem's folder but the locked ones ---
+
+OLD = datetime(2026, 10, 1, 9, 0)
+
+
+def _work_folder(root: Path) -> Path:
+    """A staged problem folder with every file pinned at `OLD`."""
+    make_problem_crate(root)
+    (root / "spec.md").write_text("Edit: src/lib.rs\n", encoding="utf-8")
+    for path in root.rglob("*"):
+        if path.is_file():
+            _set_mtime(path, OLD)
+    return root
+
+
+def _touch_new(root: Path, relative: str, when: datetime) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("changed\n", encoding="utf-8")
+    _set_mtime(path, when)
+
+
+@pytest.mark.parametrize(
+    "relative", ["tests/visible.rs", "tests/heldout.rs", "target/debug/fake", "Cargo.toml", "Cargo.lock", "spec.md"]
+)
+def test_latest_save_mtime_ignores_the_locked_and_generated_files(tmp_path: Path, relative: str) -> None:
+    folder = _work_folder(tmp_path / "p1")
+    _touch_new(folder, relative, OLD + timedelta(minutes=30))
+
+    assert probe.latest_save_mtime(folder) == pytest.approx(OLD.timestamp())
+
+
+@pytest.mark.parametrize("relative", ["prediction.txt", "src/lib.rs", "src/main.rs", "src/extra/mod.rs", "notes.md", "src/tests/mod.rs"])
+def test_latest_save_mtime_counts_an_edit_to_any_other_file(tmp_path: Path, relative: str) -> None:
+    folder = _work_folder(tmp_path / "p1")
+    when = OLD + timedelta(minutes=3)
+    _touch_new(folder, relative, when)
+
+    assert probe.latest_save_mtime(folder) == pytest.approx(when.timestamp())
+
+
+def test_latest_save_mtime_is_none_for_a_missing_folder_or_one_with_only_ignored_files(tmp_path: Path) -> None:
+    assert probe.latest_save_mtime(tmp_path / "nope") is None
+    only_ignored = tmp_path / "only"
+    only_ignored.mkdir()
+    (only_ignored / "Cargo.toml").write_text(CARGO_TOML, encoding="utf-8")
+    assert probe.latest_save_mtime(only_ignored) is None
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_reads_a_predict_output_edit_to_prediction_txt_as_working_time(tmp_path: Path, subject_dir: Path) -> None:
+    """Session 2026-10-01T15-56: p1 edits only `prediction.txt`, outside `src/`, and read 0.00."""
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _touch_new(work["p1"], "prediction.txt", CLOCK + timedelta(minutes=3))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=5))
+    by_problem = {row["problem"]: row for row in rows}
+
+    assert by_problem["p1"]["minutes"] == "3.00"
+    assert by_problem["p2"]["minutes"] == "0.00"
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_does_not_read_its_own_cargo_run_as_a_save(tmp_path: Path, subject_dir: Path) -> None:
+    """A learner's `cargo test` writes `Cargo.lock` and `target/`; neither is a save."""
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _touch_new(work["p1"], "Cargo.lock", CLOCK + timedelta(minutes=9))
+    _touch_new(work["p1"], "target/debug/fake", CLOCK + timedelta(minutes=9))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=10))
+
+    assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "0.00"

@@ -39,6 +39,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from gym.train.events import append_event, events_path, read_events
 from gym.train.schema import TIMESTAMP_FORMAT
@@ -240,13 +241,41 @@ def latest_probe_go(subject_dir: Path, session_id: str, unit: str, which: str) -
 CAP_MINUTES_DEFAULT = 10.0
 
 
-def latest_mtime_under(directory: Path) -> "float | None":
-    """The most recent modification time (epoch seconds) among every file under `directory`, or
-    `None` when it holds none at all (missing, or empty)."""
+def latest_mtime_under(directory: Path, skip: "Callable[[Path], bool] | None" = None) -> "float | None":
+    """The most recent modification time (epoch seconds) among every file under `directory` that
+    `skip` (given the file's path relative to `directory`) does not name, or `None` when there is
+    none (missing, empty, or all skipped)."""
     if not directory.is_dir():
         return None
-    mtimes = [path.stat().st_mtime for path in directory.rglob("*") if path.is_file()]
+    mtimes = [
+        path.stat().st_mtime
+        for path in directory.rglob("*")
+        if path.is_file() and not (skip and skip(path.relative_to(directory)))
+    ]
     return max(mtimes) if mtimes else None
+
+
+# What is never the learner's own save, in a problem's folder: the bank's test files, cargo's build
+# output, the manifest and lockfile cargo and the learner's own `cargo` runs write, and the spec.
+# Directories at the folder's root only, files at the root only: a `tests` under `src/` is work.
+NOT_A_SAVE_DIRS = ("tests", "target")
+NOT_A_SAVE_FILES = ("Cargo.toml", "Cargo.lock", "spec.md")
+
+
+def _is_not_a_save(relative: Path) -> bool:
+    if len(relative.parts) == 1:
+        return relative.name in NOT_A_SAVE_FILES
+    return relative.parts[0] in NOT_A_SAVE_DIRS
+
+
+def latest_save_mtime(work_dir: Path) -> "float | None":
+    """A problem's last-save time: the newest modification time over every file in `work_dir`
+    except `tests/`, `target/`, `Cargo.toml`, `Cargo.lock` and `spec.md` (`NOT_A_SAVE_*`), or `None`
+    when no other file exists. Any edit counts — `src/`, a predict-output item's `prediction.txt`,
+    any file the learner adds — where an earlier version read only `src/` and gave a problem that
+    edits `prediction.txt` 0.00 minutes (session 2026-10-01T15-56). Probe and baseline grading both
+    read it."""
+    return latest_mtime_under(work_dir, skip=_is_not_a_save)
 
 
 def minutes_since(reference: datetime, mtime_epoch: "float | None") -> float:
@@ -282,7 +311,7 @@ def run_grade(
     event exists for this unit and probe side in this session.
 
     Team lead ruling (2026-09-30): each event's own `minutes` is per-problem, not shared — the
-    latest modification time under that problem's staged `src/` minus the reference time
+    last-save time of that problem's staged folder (`latest_save_mtime`) minus the reference time
     (`minutes_since`), so an untouched problem (never edited since staging) reads `minutes=0`, and
     a problem the learner actually worked on reads how long *that* work took. `total_minutes` is
     the probe's own time, the same on every problem in one call; `over_cap` (`yes`/`no`, recorded
@@ -303,7 +332,7 @@ def run_grade(
     work_root = subject_dir / "work"
     problem_names = start_row["problems"].split(",")
     work_dirs = {name: work_root / session_path_segment(session_id) / unit / name for name in problem_names}
-    saves = {name: latest_mtime_under(work_dirs[name] / "src") for name in problem_names}
+    saves = {name: latest_save_mtime(work_dirs[name]) for name in problem_names}
     if go_row:
         total_minutes = minutes_since(reference, max((mtime for mtime in saves.values() if mtime is not None), default=None))
     else:
