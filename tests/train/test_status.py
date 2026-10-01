@@ -22,10 +22,12 @@ def subject_dir(tmp_path: Path) -> Path:
 SESSION = "2026-09-30T10-00"
 
 
-def test_due_queue_delayed_probe_needs_seven_days_past_its_own_due_date() -> None:
+def test_due_queue_delayed_probe_is_due_once_its_own_due_date_is_reached() -> None:
+    """Replaces the 7-days-past-due rule (team lead ruling, 2026-10-01): the row's `due` is already
+    the date the delayed probe falls due."""
     rows = [{"event_kind": "queue", "unit": "u1", "kind": "delayed_probe", "due": "2026-09-20"}]
-    assert due_queue_rows(rows, today=date(2026, 9, 26)) == []  # 6 days past due: not yet
-    assert due_queue_rows(rows, today=date(2026, 9, 27)) == rows  # 7 days past due: due
+    assert due_queue_rows(rows, today=date(2026, 9, 19)) == []  # the day before: not yet
+    assert due_queue_rows(rows, today=date(2026, 9, 20)) == rows  # its due date: due
 
 
 def test_due_queue_revisit_and_next_unit_are_due_once_their_date_has_passed() -> None:
@@ -258,3 +260,32 @@ def test_status_ignores_go_and_procedure_events(subject_dir: Path) -> None:
         assert after[key] == before[key], key
     assert [row["unit"] for row in after["due_queue"]] == ["u2"]
     assert "u2" not in format_status(after).split("## Due queue")[0]
+
+
+def test_delayed_probe_is_due_on_its_own_due_date_and_not_the_day_before() -> None:
+    rows = [_queue("u1", "delayed_probe", "2026-10-07", "2026-09-30T18:24")]
+    assert due_queue_rows(rows, today=date(2026, 10, 6)) == []
+    assert due_queue_rows(rows, today=date(2026, 10, 7)) == rows
+    assert due_queue_rows(rows, today=date(2026, 10, 8)) == rows
+
+
+def test_live_case_delayed_probe_queued_after_the_immediate_probe_reads_due_on_its_due_date(tmp_path: Path) -> None:
+    """Immediate probe 2026-09-30, queue row due 2026-10-07: status on 10-07 lists it, on 10-06 does not."""
+    subject = tmp_path / "rust"
+    session_id = "2026-09-30T15-40"
+    (subject / "sessions" / session_id).mkdir(parents=True)
+    (subject / "sessions" / session_id / "events.md").touch()
+    append_event(
+        subject, session_id, "tool:probe", "probe-item",
+        {"unit": "u01", "which": "probe-a", "problem": "p1", "result": "pass", "minutes": "1"},
+        now=_stamp("2026-09-30", "18:23"),
+    )
+    append_event(
+        subject, session_id, "manager", "queue", {"unit": "u01", "kind": "delayed_probe", "due": "2026-10-07"},
+        now=_stamp("2026-09-30", "18:24"),
+    )
+
+    assert build_status(subject, today=date(2026, 10, 6))["due_queue"] == []
+    due = build_status(subject, today=date(2026, 10, 7))["due_queue"]
+    assert [(row["kind"], row["unit"], row["due"]) for row in due] == [("delayed_probe", "u01", "2026-10-07")]
+    assert "delayed_probe  u01   2026-10-07" in format_status(build_status(subject, today=date(2026, 10, 7)))

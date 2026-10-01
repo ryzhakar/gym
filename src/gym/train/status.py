@@ -77,23 +77,22 @@ def consumes(queue_row: dict[str, str], row: dict[str, str]) -> bool:
 
 def due_queue_rows(rows: list[dict[str, str]], today: "date | None" = None) -> list[dict[str, str]]:
     """The latest `queue` row per (unit, its own `kind` field), still due today and not yet
-    consumed. Per the task: a `delayed_probe` row is due once 7 or more days have passed since its
-    own `due` date; a `revisit` or `next_unit` row is due once its `due` date has simply passed. A
-    row stops reading due once a later event, in any session, consumes it (`consumes`): a `start`,
-    `attempt` or `probe-item` of its unit for `next_unit`, a `start` or `attempt` for `revisit`, a
-    `probe-item` of the delayed side for `delayed_probe`."""
+    consumed. A row of any kind is due once its own `due` date has been reached: a `delayed_probe`
+    row's `due` is already the date the probe falls due (the trainer sets it a week after the
+    immediate probe), so no further wait is added. A row stops reading due once a later event, in
+    any session, consumes it (`consumes`): a `start`, `attempt` or `probe-item` of its unit for
+    `next_unit`, a `start` or `attempt` for `revisit`, a `probe-item` of the delayed side for
+    `delayed_probe`."""
     today = today or date.today()
     latest: dict[tuple[str, str], dict[str, str]] = {}
     for row in rows:
         if row["event_kind"] == "queue":
             latest[(row["unit"], row["kind"])] = row
-    due = []
-    for (_unit, kind), row in latest.items():
-        days_passed = (today - date.fromisoformat(row["due"])).days
-        threshold = 7 if kind == "delayed_probe" else 0
-        if days_passed >= threshold and not any(consumes(row, other) for other in rows):
-            due.append(row)
-    return due
+    return [
+        row
+        for row in latest.values()
+        if date.fromisoformat(row["due"]) <= today and not any(consumes(row, other) for other in rows)
+    ]
 
 
 def build_status(subject_dir: Path, today: "date | None" = None) -> dict:
