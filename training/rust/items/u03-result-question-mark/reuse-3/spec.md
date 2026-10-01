@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 Implement `tally` so `cargo test` passes. `Tally` and `TallyError` stay as written.
 
 - Input is whitespace-separated ballot counts, e.g. `"120 98 143"`.

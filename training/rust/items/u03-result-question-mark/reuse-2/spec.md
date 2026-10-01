@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 Implement `withdraw` so `cargo test` passes. `TxError` stays as written.
 
 - `amount_text` must parse as a `u64`; otherwise `BadAmount`, carrying the parse error.

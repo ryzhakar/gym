@@ -15,4 +15,4 @@ Fixes 2 and 3 are two different ways out of the same error.
 - No copies of any `String`: no `clone`, `to_owned`, `to_vec` or `to_string` in any file under `src/`. Tests check the source and the strings' heap addresses.
 - `tests/visible.rs` is locked.
 
-10 minutes, unaided, compiler on. Stop at 10, finished or not.
+10 minutes, unaided, compiler on. Over 10 is recorded, never a stop.

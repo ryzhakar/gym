@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 Implement `parse_reading` so `cargo test` passes. `ReadError` stays as written.
 
 - The bytes must be UTF-8 (`std::str::from_utf8`); otherwise `ReadError::Utf8`, carrying the error.

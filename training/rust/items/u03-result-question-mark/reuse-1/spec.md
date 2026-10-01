@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 Implement `parse_point` so `cargo test` passes. `Point` and `PointError` stay as written.
 
 - Input `"x,y"`, split at the first `,`. No spaces are allowed around the numbers.

@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 `cargo test` fails: the crate does not compile. Make it pass.
 
 - `broadcast` returns one line per recipient, in order: `"<recipient>: <msg>"`.

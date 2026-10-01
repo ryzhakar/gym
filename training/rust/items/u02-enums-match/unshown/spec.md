@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 Implement `next` so `cargo test` passes. `Door` and `Action` stay as written.
 
 - Closed + Pull → Open. Open + Push → Closed. Closed + Lock → Locked. Locked + Unlock → Closed.

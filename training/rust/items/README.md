@@ -8,6 +8,7 @@ Author: drill author (opus), 2026-09-28. Piece P3 of `docs/orchestration_log/rec
 - `<unit>/`: `attempt.md` and `attempt/`; `example.md`; `reuse-1/`, `reuse-2/` and further `reuse-N/` where a unit's skill needs them (u03 holds three); `unshown/`; probe sides `probe-a/` (immediate), `probe-b/` (delayed) and further `probe-<letter>/` for a repeat of the unit (u01 holds `probe-c/`), each with `p1-*`, `p2-*`, `p3-*`; `hints.yaml`; `key/<problem>/` mirroring every problem path, probes included (`key/probe-a/p1-*`).
 - Every problem is one standalone cargo crate: it declares its own `[workspace]`, so no item depends on another or on a parent workspace. A probe is three crates, not one workspace: one member that fails to compile makes cargo print no test result for any member (checked with cargo 1.91.1).
 - Each problem's `spec.md` carries one `Edit:` line naming the files the learner may change. Nothing else in the crate is the learner's.
+- A cap is a recorded time measure checked against the learner's last save, never enforced; `Cap: none` marks an item with no cap.
 
 ## Grading
 

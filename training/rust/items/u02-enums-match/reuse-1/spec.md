@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 Implement `price`, in cents, so `cargo test` passes. `Ticket` stays as written.
 
 - Adult: 65 or older 800; otherwise 1200.

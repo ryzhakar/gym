@@ -2,6 +2,8 @@
 
 Edit: src/lib.rs
 
+Cap: none. Time is recorded and never stops you.
+
 A plotter takes three commands: draw a dot at (x, y); draw a line from (x1, y1) to (x2, y2); lift the pen. Define the type `Command` as an enum, then these functions, so `cargo test` passes:
 
 - `dot(x: i32, y: i32)`, `line(x1: i32, y1: i32, x2: i32, y2: i32)`, `pen_up()`: each returns a `Command`.

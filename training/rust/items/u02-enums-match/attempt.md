@@ -21,4 +21,4 @@ Each file defines `Reading` and the same five functions:
 
 The tests reach `Reading` only through these functions, so its inside is yours. `tests/visible.rs` is locked.
 
-10 minutes, unaided, compiler on. Stop at 10, finished or not.
+10 minutes, unaided, compiler on. Over 10 is recorded, never a stop.
