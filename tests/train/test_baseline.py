@@ -242,7 +242,9 @@ def test_run_grade_minutes_reflects_the_edit_not_a_cargo_run(subject_dir: Path) 
     assert minutes == pytest.approx(2.0, abs=0.02)
 
 
-@pytest.mark.parametrize("relative", ["Cargo.toml", "Cargo.lock", "spec.md", "tests/visible.rs", "target/debug/fake"])
+@pytest.mark.parametrize(
+    "relative", ["Cargo.toml", "Cargo.lock", "spec.md", "tests/visible.rs", "target/debug/fake", ".bacon-locations"]
+)
 def test_latest_save_mtime_ignores_the_locked_and_generated_files(subject_dir: Path, relative: str) -> None:
     make_baseline_item(subject_dir, "b1-own")
     work_dir = baseline.run_stage(subject_dir, "b1-own", "sess-1")["work_dir"]

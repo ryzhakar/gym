@@ -664,7 +664,8 @@ def _touch_new(root: Path, relative: str, when: datetime) -> None:
 
 
 @pytest.mark.parametrize(
-    "relative", ["tests/visible.rs", "tests/heldout.rs", "target/debug/fake", "Cargo.toml", "Cargo.lock", "spec.md"]
+    "relative",
+    ["tests/visible.rs", "tests/heldout.rs", "target/debug/fake", "Cargo.toml", "Cargo.lock", "spec.md", ".bacon-locations"],
 )
 def test_latest_save_mtime_ignores_the_locked_and_generated_files(tmp_path: Path, relative: str) -> None:
     folder = _work_folder(tmp_path / "p1")
@@ -713,3 +714,29 @@ def test_grade_does_not_read_its_own_cargo_run_as_a_save(tmp_path: Path, subject
     rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=10))
 
     assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "0.00"
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_does_not_read_a_bacon_run_after_the_last_edit_as_a_save(tmp_path: Path, subject_dir: Path) -> None:
+    """bacon writes `.bacon-locations` into the crate when it runs a check: live data showed it 4 to
+    346 seconds after the last `src/` edit. Last edit 10:03, bacon file 10:09: minutes are 3.00."""
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _save(work["p1"], CLOCK + timedelta(minutes=3))
+    _touch_new(work["p1"], ".bacon-locations", CLOCK + timedelta(minutes=9))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=10))
+
+    assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "3.00"
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_with_a_go_does_not_total_a_bacon_run_as_working_time(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=1))
+    _save(work["p1"], CLOCK + timedelta(minutes=4))
+    _touch_new(work["p2"], ".bacon-locations", CLOCK + timedelta(minutes=12))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=20))
+
+    assert all(row["total_minutes"] == "3.00" for row in rows)
+    assert {row["problem"]: row["minutes"] for row in rows}["p2"] == "0.00"

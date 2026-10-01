@@ -256,10 +256,12 @@ def latest_mtime_under(directory: Path, skip: "Callable[[Path], bool] | None" = 
 
 
 # What is never the learner's own save, in a problem's folder: the bank's test files, cargo's build
-# output, the manifest and lockfile cargo and the learner's own `cargo` runs write, and the spec.
+# output, the manifest and lockfile cargo and the learner's own `cargo` runs write, the spec, and
+# bacon's `.bacon-locations`, which bacon writes whenever it runs a check (live data: 4 to 346 seconds
+# after the last `src/` edit).
 # Directories at the folder's root only, files at the root only: a `tests` under `src/` is work.
 NOT_A_SAVE_DIRS = ("tests", "target")
-NOT_A_SAVE_FILES = ("Cargo.toml", "Cargo.lock", "spec.md")
+NOT_A_SAVE_FILES = ("Cargo.toml", "Cargo.lock", "spec.md", ".bacon-locations")
 
 
 def _is_not_a_save(relative: Path) -> bool:
@@ -270,7 +272,7 @@ def _is_not_a_save(relative: Path) -> bool:
 
 def latest_save_mtime(work_dir: Path) -> "float | None":
     """A problem's last-save time: the newest modification time over every file in `work_dir`
-    except `tests/`, `target/`, `Cargo.toml`, `Cargo.lock` and `spec.md` (`NOT_A_SAVE_*`), or `None`
+    except `tests/`, `target/`, `Cargo.toml`, `Cargo.lock`, `spec.md` and `.bacon-locations` (`NOT_A_SAVE_*`), or `None`
     when no other file exists. Any edit counts — `src/`, a predict-output item's `prediction.txt`,
     any file the learner adds — where an earlier version read only `src/` and gave a problem that
     edits `prediction.txt` 0.00 minutes (session 2026-10-01T15-56). Probe and baseline grading both
