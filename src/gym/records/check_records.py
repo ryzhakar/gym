@@ -339,10 +339,10 @@ def check_failures(schema: dict) -> Iterator[Finding]:
             openings = [label for line in body for label in labels if line.startswith(f"{label}:")]
             if openings != labels:
                 yield fail(f"{rel(path)}:{line_number}", f"paragraphs open {openings}, not {labels}")
-        trace = path.parent / "events.md"
-        pointers = sum(" | failure | " in line for line in read(trace).splitlines()) if trace.exists() else 0
+        traces = [trace for trace in path.parent.iterdir() if JOURNAL_FILE_PATTERNS[1].fullmatch(trace.name)]
+        pointers = sum(" | failure | " in line for trace in traces for line in read(trace).splitlines())
         if pointers < len(entries):
-            yield fail(rel(path), f"{len(entries)} entries but {pointers} failure lines in {rel(trace)}")
+            yield fail(rel(path), f"{len(entries)} entries but {pointers} failure lines in events*.md of {rel(path.parent)}")
 
 
 def check_spans_closed_in_digest(schema: dict) -> Iterator[Finding]:

@@ -43,6 +43,13 @@ def open_span(span: str | None, text: str = "open; begins") -> Path:
     return trace
 
 
+def write_failures(day: Path, entries: int) -> Path:
+    """A failures.md holding `entries` well-formed entries."""
+    path = day / "failures.md"
+    path.write_text("".join(f"## Probe {n}\n\nWhat happened: p.\n\nMechanism: p.\n\nCorrection: p.\n\n" for n in range(1, entries + 1)), encoding="utf-8")
+    return path
+
+
 @pytest.mark.parametrize("span", ["a", "alpha", "a1", "2099-01-02", "a-b-c"])
 def test_an_opening_creates_the_spans_own_trace_in_todays_directory(history: Path, at: Clock, span: str) -> None:
     at("2099-01-02T09:00")
@@ -285,3 +292,47 @@ def test_the_schema_homes_and_the_map_admit_suffixed_names() -> None:
     assert check_records.kind_of(schema, files[1]) == "digest"
     assert list(check_records.check_map(schema, files)) == []
     assert list(check_records.check_history_admission(files)) == []
+
+
+def test_a_failure_recorded_with_a_span_counts_against_the_days_failures(history: Path, at: Clock) -> None:
+    at("2099-01-02T09:00")
+    open_span("alpha")
+    write_failures(history / "2099-01-02", entries=1)
+    [finding] = journal_findings()
+    assert "1 entries but 0 failure lines" in finding.message
+
+    at("2099-01-02T09:30")
+    event_module.append_event("self", "failure", "alpha failure, entry one", span="alpha")
+
+    assert journal_findings() == []
+
+
+def test_failure_lines_of_the_shared_trace_and_every_span_add_up_against_the_days_failures(history: Path, at: Clock) -> None:
+    at("2099-01-02T09:00")
+    open_span(None, "open; shared begins")
+    open_span("alpha")
+    open_span("beta")
+    write_failures(history / "2099-01-02", entries=3)
+    at("2099-01-02T09:30")
+    event_module.append_event("self", "failure", "shared failure")
+    event_module.append_event("self", "failure", "alpha failure", span="alpha")
+
+    [finding] = journal_findings()
+    assert "3 entries but 2 failure lines" in finding.message
+
+    event_module.append_event("self", "failure", "beta failure", span="beta")
+
+    assert journal_findings() == []
+
+
+def test_a_failure_line_on_another_day_does_not_count_for_this_days_failures(history: Path, at: Clock) -> None:
+    at("2099-01-02T09:00")
+    open_span("alpha")
+    write_failures(history / "2099-01-02", entries=1)
+    at("2099-01-03T09:00")
+    open_span("beta")
+    event_module.append_event("self", "failure", "beta failure", span="beta")
+
+    findings = journal_findings()
+
+    assert [finding.where for finding in findings] == ["docs/orchestration_log/history/2099-01-02/failures.md"]
