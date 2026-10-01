@@ -1,7 +1,8 @@
 """Close the current span: append its close block to the span's session record and a span-event to its trace.
 
-Usage: `gym records close --state "..." --open "..." --next "..."`.
+Usage: `gym records close [--span <suffix>] --state "..." --open "..." --next "..."`.
 HEAD and the working-tree state come from git, the time from the clock; a multi-line state separates lines with `\\n`.
+Without `--span` the record is the shared `session.md`; with it, the span's own `session-<suffix>.md` beside `events-<suffix>.md`.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from datetime import datetime
 
 from gym.paths import ROOT
 from gym.records.check_records import close_block_findings, load_schema
-from gym.records.event import append_event, current_trace
+from gym.records.event import append_event, current_trace, trace_name
 
 
 def git(*args: str) -> str:
@@ -26,6 +27,11 @@ def head_line() -> str:
     return f"{git('rev-parse', '--short', 'HEAD')} ({state})"
 
 
+def session_name(span: str | None) -> str:
+    """The session record paired with the span's trace: `events` in the trace's name becomes `session`."""
+    return "session" + trace_name(span).removeprefix("events")
+
+
 def close_block(state: str, open_items: str, next_step: str, width: int) -> str:
     def field(label: str, value: str) -> str:
         first, *rest = value.split("\\n")
@@ -35,9 +41,9 @@ def close_block(state: str, open_items: str, next_step: str, width: int) -> str:
     return f"\n## Close — {datetime.now().strftime('%Y-%m-%dT%H:%M')}\n\n" + "\n".join(fields) + "\n"
 
 
-def run(state: str, open_items: str, next_step: str) -> int:
+def run(state: str, open_items: str, next_step: str, span: str | None = None) -> int:
     schema = load_schema()
-    session = current_trace(opening=False).parent / "session.md"
+    session = current_trace(opening=False, span=span).parent / session_name(span)
     before = session.read_bytes() if session.exists() else None
     prefix = "" if before else f"# {session.parent.name}\n"
     block = close_block(state, open_items, next_step, schema["kinds"]["digest"]["close_label_width"])
@@ -50,7 +56,7 @@ def run(state: str, open_items: str, next_step: str) -> int:
         else:
             session.write_bytes(before)
         sys.exit("refused, close block malformed: " + "; ".join(problem.message for problem in problems))
-    append_event("self", "span-event", f"close; HEAD {head_line()}; next: {next_step}")
+    append_event("self", "span-event", f"close; HEAD {head_line()}; next: {next_step}", span=span)
     print(f"{session}: close block written")
     return 0
 

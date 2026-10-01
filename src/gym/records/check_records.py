@@ -348,7 +348,7 @@ def check_failures(schema: dict) -> Iterator[Finding]:
 def check_spans_closed_in_digest(schema: dict) -> Iterator[Finding]:
     for trace in journal_files(JOURNAL_FILE_PATTERNS[1]):
         closes = sum(re.search(r" \| span-event \| close", line) is not None for line in read(trace).splitlines())
-        digest = trace.parent / trace.name.replace("events", "session")
+        digest = trace.parent / ("session" + trace.name.removeprefix("events"))
         blocks = sum(line.startswith("## Close") for line in read(digest).splitlines()) if digest.exists() else 0
         if closes > blocks:
             yield fail(rel(trace), f"{closes} span closes but {blocks} close blocks in {rel(digest)}")
