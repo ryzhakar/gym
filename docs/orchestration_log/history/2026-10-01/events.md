@@ -42,3 +42,4 @@
 2026-10-01T03:37 | self | failure | status line on a harness prompt at 03:17; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T03:57 | self | failure | status line on a harness prompt at 03:37; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T04:17 | self | failure | status line on a harness prompt at 03:57; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T04:37 | self | failure | status line on a harness prompt at 04:17; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
