@@ -48,3 +48,11 @@ WHY:           the first-session audit (recon/2026-09-30/train/trainer-quality-r
 INVALIDATES:   the by-hand baseline procedure in recon/2026-09-30/train/baseline-procedure.md; any session id holding a colon
 EVIDENCE:      commits 2c8e3a3, ed3b481; 280 tests pass
 
+
+## 2026-10-01 — Training time and grading measure what the learner did
+
+KIND:          computed
+FROM → TO:     a probe's minutes measured from the stage to the newest edit under `src/`, with bacon's location file counting as a save; practice items judged on their visible tests only; a queue row that stayed due after its unit was worked; a delayed probe read due 14 days out → minutes measured from the learner's `go` mark to the newest edit of any unlocked file; `gym train practice grade` runs an item's held-out tests in a scratch copy; a queue row stops reading due once a later event of its unit consumes it; a delayed probe is due on its row's date
+WHY:           the first u02 session's narrative (training/rust/sessions/2026-10-01T15-56/session.md): setup and staging time sat inside the minutes, a prediction problem read 0.00, a visible-tests pass was reported as a pass, and u02 stayed due after it was done
+INVALIDATES:   every probe minute and total_minutes recorded before 2026-10-01T20:43, which measured from the stage and counted bacon's file as a save, u02's 18.44 included; every practice result recorded without a `grade` event, which rests on visible tests alone; every due-queue reading taken before 2026-10-01T20:43
+EVIDENCE:      commits 9d12af4, 107e7a9, 342a3ab, 3271521, 7a0e1f4, 916ba78, dd97d99; 436 tests pass
