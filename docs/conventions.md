@@ -36,14 +36,21 @@ when    before committing a change that touches a record
 do      `uv run gym records check`; commit only on 0 FAIL
 never   a commit over a FAIL; a format rule trusted to reading alone
 why     the schema's formats, grounds and pointers are checked by a program, not by attention
-ground  owner ruling 2026-09-26 (competera's scripts port as a deterministic value-add); owner ruling 2026-09-30 (one typer app)
+ground  owner ruling 2026-09-26; owner ruling 2026-09-30 (one typer app)
 
 ### event-lines
 when    writing an event line or closing a span
 do      `uv run gym records event <actor> <kind> <what>`; `uv run gym records close --state … --open … --next …`
 never   a hand-typed timestamp or close block
 why     the clock and git stamp them, and a malformed line is refused at write time
-ground  owner ruling 2026-09-26 (competera's scripts port as a deterministic value-add); owner ruling 2026-09-30 (one typer app)
+ground  owner ruling 2026-09-26; owner ruling 2026-09-30 (one typer app)
+
+### span-records
+when    a span opens
+do      the span writes `events-<suffix>.md` and `session-<suffix>.md` through `--span <suffix>` on `gym records event` and `close`; the suffix is the session's handle, e.g. `u2`
+never   a span appending to another span's files; a close block written into a pair the span did not open
+why     "we should keep our records separate. this is a new span."
+ground  owner ruling 2026-10-01
 
 ### memento-by-orchestrator
 when    memento work: pat-down, events, span closes, record edits
@@ -77,7 +84,7 @@ ground  owner ruling 2026-09-26
 when    a training session runs
 do      the manager opens `training/<subject>/sessions/<id>/` with `gym train open` before the summons and closes it with `gym train close` after the trainer returns; the trainer logs every turn with `gym train log`; feedback and instruction lines carry their substance in `note=`
 never   a session on shared tables; a turn logged nowhere; feedback that survives only in a transcript
-why     "surely a training session should have its own record and events"; the learning moments of the first session lived only in the trainer's transcript
+why     "surely a training session should have its own record and events"
 ground  owner ruling 2026-09-30
 
 ### session-ids
@@ -111,7 +118,6 @@ ground  owner ruling 2026-09-30, in session, confirmed in the question tool
 when    a session ends
 do      the trainer writes the session's narrative, per item what the learner did, the fault or pass, the feedback, the principle, misconceptions and tool quirks, into the session record before its close block
 never   a trainer instance released before its narrative is written
-why     the first session's feedback was recoverable only because the instance was still resumable
 ground  owner ruling 2026-09-30
 
 ## Communication
@@ -127,14 +133,14 @@ ground  owner ruling 2026-09-30
 when    laying or keeping the heartbeat cron
 do      lay it while a background run is pending and cancel it when none is; re-lay on the next dispatch
 never   a heartbeat firing into an idle session; a wake that guards nothing
-why     every idle heartbeat ended in a harness prompt and a status line; forty breaches in one night were the cron's, not the work's
+why     forty breaches in one night were the idle cron's, not the work's
 ground  owner ruling 2026-10-01
 
 ### empty-reply-to-the-harness
 when    a harness prompt asks for visible output while silence holds
 do      reply with the empty string and no tool call; a second prompt gets the same
 never   a status line; an event line recording the prompt; a call made to answer it
-why     recording the breach was itself the breach's vehicle: each note ended in another line
+why     each recorded breach ended in another line
 ground  owner ruling 2026-10-01
 
 ### token-thrift

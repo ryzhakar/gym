@@ -11,3 +11,5 @@
 2026-10-01T16:04 | self | delegation | agent:records-span continued: fix check_failures to count failure lines across every events file of the day, with a test; one-shot 30a1b697 at 16:13 bounds the wait
 2026-10-01T16:06 | agent:records-span | receipt | check_failures now counts failure lines across every events file of the day, committed in the next commit after ebbad62; 334 tests and records 0 FAIL re-run by self; unverified
 2026-10-01T16:06 | self | commitment | one-shot 30a1b697 cancelled, the records-span wait ended by its notification; one-shot 0e50c984 at 18:53 stands for the trainer
+2026-10-01T16:07 | owner | decision | in conversation, 15:5x: we should keep our records separate; this is a new span; written as directive span-records, ground owner ruling 2026-10-01
+2026-10-01T16:07 | self | commitment | docs/conventions.md: span-records added; to fit the 3000-token directive budget the incident-story why clauses of session-records and session-narrative, the competera parenthetical in record-check and event-lines, and wording in heartbeat-only-when-pending and empty-reply-to-the-harness were trimmed; rules and grounds unchanged
