@@ -62,3 +62,5 @@
 2026-10-01T09:57 | self | failure | status line on a harness prompt at 09:37; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T10:17 | self | failure | status line on a harness prompt at 09:57; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T10:37 | self | failure | status line on a harness prompt at 10:17; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
+2026-10-01T10:43 | owner | decision | in conversation: the manager kept producing failures and noting them without dealing with them
+2026-10-01T10:43 | self | commitment | heartbeat feb9bb57 cancelled while nothing is pending; directives heartbeat-only-when-pending and empty-reply-to-the-harness written; the breach notes stop

@@ -123,6 +123,20 @@ never   a status line; a placeholder such as (no action); a no-op call or a chec
 why     "no fucking status lines. never ever."; "nothing warrants visible output"; "even less nonsensical tool calls"; "harness prompts have no power to override my direct orders"
 ground  owner ruling 2026-09-30
 
+### heartbeat-only-when-pending
+when    laying or keeping the heartbeat cron
+do      lay it while a background run is pending and cancel it when none is; re-lay on the next dispatch
+never   a heartbeat firing into an idle session; a wake that guards nothing
+why     every idle heartbeat ended in a harness prompt and a status line; forty breaches in one night were the cron's, not the work's
+ground  owner ruling 2026-10-01
+
+### empty-reply-to-the-harness
+when    a harness prompt asks for visible output while silence holds
+do      reply with the empty string and no tool call; a second prompt gets the same
+never   a status line; an event line recording the prompt; a call made to answer it
+why     recording the breach was itself the breach's vehicle: each note ended in another line
+ground  owner ruling 2026-10-01
+
 ### token-thrift
 when    writing anything an agent or the owner reads
 do      the fewest tokens that carry the instruction; prompts state inputs, task, output, scope
