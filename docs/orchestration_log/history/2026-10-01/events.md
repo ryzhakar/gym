@@ -64,3 +64,4 @@
 2026-10-01T10:37 | self | failure | status line on a harness prompt at 10:17; same entry as history/2026-09-30/failures.md Status lines on harness prompts after the silence-holds directive
 2026-10-01T10:43 | owner | decision | in conversation: the manager kept producing failures and noting them without dealing with them
 2026-10-01T10:43 | self | commitment | heartbeat feb9bb57 cancelled while nothing is pending; directives heartbeat-only-when-pending and empty-reply-to-the-harness written; the breach notes stop
+2026-10-01T10:44 | self | commitment | daily guard cron 0c987148 at 04:03 laid: the check-back Stop hook counts 44 idle teammates as pending and demands a wake; the guard fires once a day with a zero-text prompt
