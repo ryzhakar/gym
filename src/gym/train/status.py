@@ -10,6 +10,18 @@ from gym.train.events import all_events
 
 TAIL_LINES = 20
 
+IMMEDIATE_SIDE = "probe-a"
+DELAYED_SIDE = "probe-b"
+
+# The event kinds that consume a queue row, by the row's own `kind`: a later event of the row's unit
+# that does the thing the row asked for. `delayed_probe` is consumed only by a `probe-item` of the
+# delayed side, since a `probe-item` of the immediate side is not the delayed probe.
+QUEUE_CONSUMER_KINDS = {
+    "next_unit": ("start", "attempt", "probe-item"),
+    "revisit": ("start", "attempt"),
+    "delayed_probe": ("probe-item",),
+}
+
 
 def last_attempt_by_unit(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     last: dict[str, dict[str, str]] = {}
@@ -50,10 +62,26 @@ def last_confidence_by_unit(rows: list[dict[str, str]]) -> dict[str, dict[str, s
     return last
 
 
+def consumes(queue_row: dict[str, str], row: dict[str, str]) -> bool:
+    """Whether `row` is an event of the queue row's own unit that does what the queue row asked for
+    (`QUEUE_CONSUMER_KINDS`) and is timestamped strictly after the queue row — event stamps have
+    minute precision, so an event in the queue row's own minute is not later."""
+    if row["event_kind"] not in QUEUE_CONSUMER_KINDS[queue_row["kind"]]:
+        return False
+    if row.get("unit") != queue_row["unit"]:
+        return False
+    if queue_row["kind"] == "delayed_probe" and row.get("which") != DELAYED_SIDE:
+        return False
+    return row["timestamp"] > queue_row["timestamp"]
+
+
 def due_queue_rows(rows: list[dict[str, str]], today: "date | None" = None) -> list[dict[str, str]]:
-    """The latest `queue` row per (unit, its own `kind` field), still due today. Per the task: a
-    `delayed_probe` row is due once 7 or more days have passed since its own `due` date; a
-    `revisit` or `next_unit` row is due once its `due` date has simply passed."""
+    """The latest `queue` row per (unit, its own `kind` field), still due today and not yet
+    consumed. Per the task: a `delayed_probe` row is due once 7 or more days have passed since its
+    own `due` date; a `revisit` or `next_unit` row is due once its `due` date has simply passed. A
+    row stops reading due once a later event, in any session, consumes it (`consumes`): a `start`,
+    `attempt` or `probe-item` of its unit for `next_unit`, a `start` or `attempt` for `revisit`, a
+    `probe-item` of the delayed side for `delayed_probe`."""
     today = today or date.today()
     latest: dict[tuple[str, str], dict[str, str]] = {}
     for row in rows:
@@ -63,7 +91,7 @@ def due_queue_rows(rows: list[dict[str, str]], today: "date | None" = None) -> l
     for (_unit, kind), row in latest.items():
         days_passed = (today - date.fromisoformat(row["due"])).days
         threshold = 7 if kind == "delayed_probe" else 0
-        if days_passed >= threshold:
+        if days_passed >= threshold and not any(consumes(row, other) for other in rows):
             due.append(row)
     return due
 
@@ -72,8 +100,8 @@ def build_status(subject_dir: Path, today: "date | None" = None) -> dict:
     rows = all_events(subject_dir)
     return {
         "last_attempt": last_attempt_by_unit(rows),
-        "last_probe_immediate": last_probe_by_unit(rows, "probe-a"),
-        "last_probe_delayed": last_probe_by_unit(rows, "probe-b"),
+        "last_probe_immediate": last_probe_by_unit(rows, IMMEDIATE_SIDE),
+        "last_probe_delayed": last_probe_by_unit(rows, DELAYED_SIDE),
         "other_probes": other_probes_by_unit(rows),
         "last_confidence": last_confidence_by_unit(rows),
         "due_queue": due_queue_rows(rows, today),
