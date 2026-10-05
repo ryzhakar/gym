@@ -34,3 +34,6 @@
 2026-10-05T22:14 | self | decision | decided: F3 is a command-argument correction like the caps wording, fixed now; F4 adds behaviour beyond the approved four and is dormant, left for the syllabus session
 2026-10-05T22:15 | agent:trainer-def-review | receipt | re-review PASS: F3 resolved, F4 deferred
 2026-10-05T22:15 | self | commitment | trainer definition committed 81c0581; gym-cf messaged with the landed changes
+2026-10-05T23:03 | agent:gym-cf | receipt | session 2026-10-05T21-58 report: 62 minutes, u03 attempt fail, reuse-1 pass, reuse-2 not started, no probe; learner ended at 23:01; revisit u03 due 2026-10-06; gym CLI in the main tree broken 22:00-22:06 by the per-problem-caps edit in progress, trainer logged through a HEAD worktree
+2026-10-05T23:03 | self | failure | tooling edited in the live tree during a training session; entry history/2026-10-05/failures.md
+2026-10-05T23:03 | self | commitment | session 2026-10-05T21-58 closed by the manager: 62 minutes, assistant_closed no (not asked)
