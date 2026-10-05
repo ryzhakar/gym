@@ -25,3 +25,12 @@
 2026-10-05T21:58 | agent:gym-cf | receipt | cross-session message from a trainer session gym-cf: provisioned by the owner, asks for session inputs
 2026-10-05T21:58 | owner | decision | question tool: start gym-cf on u03 now, with the trainer definition as it stands on disk; demand proper setup: manifestos, memento, the works
 2026-10-05T21:58 | self | delegation | session 2026-10-05T21-58 opened by the manager for gym-cf (trainer model unstated); summons recon/2026-10-05/prompts/summons-2026-10-05T21-58.md with setup demands: trainer stack binding, the definition read whole, memento:init read-only, own span pair --span cf, probe grade without --cap-minutes
+2026-10-05T22:01 | owner | decision | in conversation: once the updates land, message gym-cf mid-session with them
+2026-10-05T22:01 | self | commitment | posted: on per-problem caps committed and the trainer definition reviewed and committed, message gym-cf with what changed (probe grade fields and the four behaviours)
+2026-10-05T22:07 | agent:per-problem-caps | receipt | 526e62d: caps read per problem from spec Cap lines, over_cap per problem or absent, total_minutes a plain sum, --cap-minutes removed from probe grade; 440 tests pass (verified by self)
+2026-10-05T22:08 | agent:trainer-def-writer | receipt | run-the-probe field wording aligned with 526e62d; still uncommitted
+2026-10-05T22:08 | self | delegation | agent:trainer-def-review, sonnet, background: independent review of the trainer definition diff against the four approved items; output recon/2026-10-05/review/trainer-def-review.md
+2026-10-05T22:14 | agent:trainer-def-review | receipt | FAIL: four items correct; F3 high: line 8 gives baseline stage|grade a unit dir, the command takes a subject dir (baseline.py:33), lost in the revert; F4 medium: no rule when practice grade refuses an item without key tests, dormant
+2026-10-05T22:14 | self | decision | decided: F3 is a command-argument correction like the caps wording, fixed now; F4 adds behaviour beyond the approved four and is dormant, left for the syllabus session
+2026-10-05T22:15 | agent:trainer-def-review | receipt | re-review PASS: F3 resolved, F4 deferred
+2026-10-05T22:15 | self | commitment | trainer definition committed 81c0581; gym-cf messaged with the landed changes
