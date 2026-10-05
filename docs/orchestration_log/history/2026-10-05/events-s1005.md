@@ -16,3 +16,8 @@
 2026-10-05T21:52 | owner | decision | in conversation: the gym must work beyond Rust; Rust is only the first subject it is applied to
 2026-10-05T21:52 | self | commitment | frame ground-truth.md § Subjects gains: the gym works for any subject, Rust first; directive syllabus-by-trainer written under Training; both owner rulings 2026-10-05
 2026-10-05T21:53 | self | commitment | conventions trimmed to the 3000-token budget: shorter quotes and grounds, the marker path dropped from silence-holds (it exists only while silent)
+2026-10-05T21:55 | owner | decision | question tool: u03 now, the trainer's syllabus session after it; existing units and baseline audited by the trainer in that session, kept only where it endorses them; the queue fix kept; tooling stays Rust-specific until a second subject starts
+2026-10-05T21:55 | self | decision | superseded by the syllabus-by-trainer ruling: agents authoring a differently typed unit is dropped; per-problem caps: tooling reads each probe problem's cap from its own spec line 'Cap: N minutes', none declared means minutes recorded with no over-cap label; cap values are item content, left to the trainer, no values set by the manager
+2026-10-05T21:55 | self | delegation | agent:per-problem-caps, sonnet, background: probe caps read per problem from each spec, --cap-minutes removed, TDD, commit; prompt recon/2026-10-05/prompts/per-problem-caps.md
+2026-10-05T21:55 | self | delegation | agent:trainer-def-writer, opus, background: four approved behaviours into .claude/agents/gym-trainer.md, uncommitted, reviewer to follow; prompt recon/2026-10-05/prompts/trainer-def-writer.md
+2026-10-05T21:55 | self | commitment | tripwire laid: one-shot cron fd16cd7f at 22:23 bounds the per-problem-caps and trainer-def-writer waits
