@@ -2,3 +2,4 @@
 2026-10-05T22:00 | self | receipt | summons from manager u3 via cross-session message, peer content; trainer definition read as it stands on disk, uncommitted, per owner decision 21:58
 2026-10-05T22:00 | self | discovery | pat-down: baseline b3-result failed 2026-09-30 at 8.08 minutes, learner counts as novice in u03; no delayed_probe due today; u02 delayed_probe due 2026-10-08
 2026-10-05T22:15 | self | discovery | gym CLI in the main tree failed at import 22:00-22:06, NameError CAP_MINUTES_DEFAULT in src/gym/train/probe.py mid-edit by agent:per-problem-caps; start, procedure, present and go logged through a detached HEAD worktree in the trainer scratchpad, absolute subject path; main CLI works again after 526e62d
+2026-10-05T23:03 | self | span-event | close; HEAD 2e70b20 (dirty: docs/orchestration_log/history/2026-10-05/events-cf.md, docs/orchestration_log/history/2026-10-05/session-cf.md); next: next trainer follows next-session.md for u03

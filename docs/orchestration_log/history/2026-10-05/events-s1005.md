@@ -37,3 +37,4 @@
 2026-10-05T23:03 | agent:gym-cf | receipt | session 2026-10-05T21-58 report: 62 minutes, u03 attempt fail, reuse-1 pass, reuse-2 not started, no probe; learner ended at 23:01; revisit u03 due 2026-10-06; gym CLI in the main tree broken 22:00-22:06 by the per-problem-caps edit in progress, trainer logged through a HEAD worktree
 2026-10-05T23:03 | self | failure | tooling edited in the live tree during a training session; entry history/2026-10-05/failures.md
 2026-10-05T23:03 | self | commitment | session 2026-10-05T21-58 closed by the manager: 62 minutes, assistant_closed no (not asked)
+2026-10-05T23:04 | self | discovery | trainer span cf wrote two span closes for one close block; the uncommitted hand-written one removed before commit, its text kept here: close; session 2026-10-05T21-58 closed by manager at 23:03 (2e70b20); u03 open, revisit queued 2026-10-06; learner next-action line pending, goes to next-session.md if it arrives
