@@ -32,6 +32,7 @@ All of substantial interest:
 A subject is the field at hand for gym's language-learning part, for example a language (owner ruling 2026-09-26).
 
 - Rust is "confidently first in the queue and good for motivation right now"; C, Haskell, Swift and others may follow (owner ruling 2026-09-26).
+- The gym works for any subject; Rust is only the first it is applied to (owner ruling 2026-10-05).
 - The owner decides, per subject, how deep the rabbit holes go and how wide the net is cast. Interest is uneven: high for Rust, far lower for "all of the breadth of questions C accumulated over the years" (owner ruling 2026-09-26).
 
 ## Tools

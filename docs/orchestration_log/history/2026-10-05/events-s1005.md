@@ -2,3 +2,17 @@
 2026-10-05T21:02 | owner | receipt | in conversation: pat-down; this marks the start of a new session; load what the records say is needed
 2026-10-05T21:02 | self | discovery | pat-down: baseline close u2 2026-10-01T21:36 expected HEAD b471adc dirty events-u2.md; found HEAD 5e3a681, the close commit itself (events-u2.md, session-u2.md only), tree clean but the silence marker; no crons survive, nothing pending, so no heartbeat per heartbeat-only-when-pending
 2026-10-05T21:02 | self | discovery | pat-down settled: obligations: the owner's judgement of the trainer-account review (training/rust/sessions/2026-10-01T15-56/review/) and of the tooling work applied before it; the map panel and Matrix visualisation change list not yet given; u03-result-question-mark session on the owner's go; delayed probes due u01 2026-10-07, u02 2026-10-08; silence holds
+2026-10-05T21:03 | owner | decision | in conversation: silence off for now; review the suggestions from the previous session; every question through the question tool, portable, assuming no prior knowledge
+2026-10-05T21:03 | self | delegation | agent:decision-brief, sonnet, background: owner-ready brief of the u02 change list, its applied status and the checkers' verdicts, options per group; output recon/2026-10-05/review/decision-brief.md
+2026-10-05T21:04 | self | commitment | tripwire laid: one-shot cron 094f796b at 21:23 bounds the decision-brief wait
+2026-10-05T21:10 | agent:decision-brief | receipt | decision-brief.md: 12 suggestions W-1..W-12 in 5 groups; W-1 applied and in force; W-2/4/7/8/9/11 coded into the trainer definition then reverted, their tooling still committed and uncalled; W-9 premise refuted; W-3, W-5, W-6 never acted on; W-10 applied and confirmed; unverified
+2026-10-05T21:10 | self | commitment | tripwire 094f796b cancelled: notification arrived
+2026-10-05T21:48 | owner | decision | question tool, u02 change list: trainer definition gains items 1-4 only (practice grade, probe go clock, go and procedure kinds, practice clock on go stated at presentation), not the compile-stage hint nor the cap wording; through a writer and a separate reviewer
+2026-10-05T21:48 | owner | decision | question tool: probes get per-problem caps in place of one shared cap
+2026-10-05T21:48 | owner | decision | question tool: u03 next as queued; agents author a unit of a different exercise type afterwards
+2026-10-05T21:48 | owner | decision | question tool: the five standing fixes (item cap wording, any-file minutes, consumed queue row, delayed probe due date, bacon file) reviewed one by one
+2026-10-05T21:52 | owner | decision | question tool: keep the item cap wording, any-file probe minutes, delayed-probe due date and the bacon-file fix
+2026-10-05T21:52 | owner | decision | question tool, on the queue fix: the roadmap or syllabus is up to the trainer to figure out, preferably in a dedicated session; the owner is suspicious of units prescribed beforehand, since it smells like someone else prescribing them
+2026-10-05T21:52 | owner | decision | in conversation: the gym must work beyond Rust; Rust is only the first subject it is applied to
+2026-10-05T21:52 | self | commitment | frame ground-truth.md § Subjects gains: the gym works for any subject, Rust first; directive syllabus-by-trainer written under Training; both owner rulings 2026-10-05
+2026-10-05T21:53 | self | commitment | conventions trimmed to the 3000-token budget: shorter quotes and grounds, the marker path dropped from silence-holds (it exists only while silent)
