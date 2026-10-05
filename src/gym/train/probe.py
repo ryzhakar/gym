@@ -238,9 +238,6 @@ def latest_probe_go(subject_dir: Path, session_id: str, unit: str, which: str) -
     return goes[-1] if goes else None
 
 
-CAP_MINUTES_DEFAULT = 10.0
-
-
 def latest_mtime_under(directory: Path, skip: "Callable[[Path], bool] | None" = None) -> "float | None":
     """The most recent modification time (epoch seconds) among every file under `directory` that
     `skip` (given the file's path relative to `directory`) does not name, or `None` when there is
@@ -300,29 +297,47 @@ def minutes_since(reference: datetime, mtime_epoch: "float | None") -> float:
     return max(0.0, (touched - reference).total_seconds() / 60)
 
 
+# A problem's own `spec.md` line naming its cap, e.g. `Cap: 10 minutes` or `Cap: 7.5 minutes`.
+CAP_LINE_PATTERN = re.compile(r"(?im)^Cap:\s*(\d+(?:\.\d+)?)\s*minutes?\b")
+
+
+def read_cap_minutes(problem_dir: Path) -> "float | None":
+    """A problem's own cap, in minutes, from its own `spec.md`'s `Cap: N minutes` line (`N` may be
+    decimal) — owner ruling (2026-10-05): a probe's cap is per problem, never shared across the
+    probe's problems. `None` when `spec.md` is missing or carries no such line: the problem's
+    `minutes` is still recorded, it simply gets no `over_cap` label."""
+    spec_path = problem_dir / "spec.md"
+    if not spec_path.is_file():
+        return None
+    match = CAP_LINE_PATTERN.search(spec_path.read_text(encoding="utf-8"))
+    return float(match.group(1)) if match else None
+
+
 def run_grade(
     subject_dir: Path,
     unit_dir: Path,
     which: str,
     session_id: str,
-    cap_minutes: float = CAP_MINUTES_DEFAULT,
-    now: "datetime | None" = None,
 ) -> list[dict[str, str]]:
     """Grade every problem `gym train probe stage` staged for `unit_dir`/`which` in this session,
     against its key, and log one `probe-item` event each. Refuses outright if no `probe-start`
     event exists for this unit and probe side in this session.
 
-    Team lead ruling (2026-09-30): each event's own `minutes` is per-problem, not shared — the
-    last-save time of that problem's staged folder (`latest_save_mtime`) minus the reference time
+    Team lead ruling (2026-09-30): each event's own `minutes` is per-problem — the last-save time
+    of that problem's staged folder (`latest_save_mtime`) minus the reference time
     (`minutes_since`), so an untouched problem (never edited since staging) reads `minutes=0`, and
-    a problem the learner actually worked on reads how long *that* work took. `total_minutes` is
-    the probe's own time, the same on every problem in one call; `over_cap` (`yes`/`no`, recorded
-    only, never enforced or refused) is judged against it.
+    a problem the learner actually worked on reads how long *that* work took.
 
-    The reference time is the latest `probe-go` of this unit and side since its latest staging
-    (`latest_probe_go`) when one exists: then `total_minutes` is the latest save over every problem
-    minus the go, floored at 0 (0 when nothing was saved). With no go it is the `probe-start`
-    event's own clock stamp, and `total_minutes` is `now` (or `datetime.now()`) minus that stamp."""
+    Owner ruling (2026-10-05): caps are per-problem too, never shared. Each problem's own cap comes
+    from its own `spec.md` (`read_cap_minutes`, read from the item source, not the staged copy).
+    `over_cap` (`yes`/`no`, recorded only, never enforced or refused) is judged against that
+    problem's own `minutes` and is left off the event entirely when the problem carries no cap
+    line. `total_minutes`, kept for whoever still reads it, is the plain sum of every graded
+    problem's own `minutes` in this call — no longer a separate, shared, elapsed-clock quantity.
+
+    The reference time every problem's `minutes` is measured from is the latest `probe-go` of this
+    unit and side since its latest staging (`latest_probe_go`) when one exists, else the
+    `probe-start` event's own clock stamp."""
     unit = unit_dir.name
     side = resolve_side(which)
     start_row = latest_probe_start(subject_dir, session_id, unit, which)
@@ -335,25 +350,24 @@ def run_grade(
     problem_names = start_row["problems"].split(",")
     work_dirs = {name: work_root / session_path_segment(session_id) / unit / name for name in problem_names}
     saves = {name: latest_save_mtime(work_dirs[name]) for name in problem_names}
-    if go_row:
-        total_minutes = minutes_since(reference, max((mtime for mtime in saves.values() if mtime is not None), default=None))
-    else:
-        total_minutes = max(0.0, ((now or datetime.now()) - started).total_seconds() / 60)
-    over_cap = "yes" if total_minutes > cap_minutes else "no"
+    item_minutes = {name: minutes_since(reference, saves[name]) for name in problem_names}
+    total_minutes = sum(item_minutes.values())
+    source_dir = probe_dir(unit_dir, which)
     rows: list[dict[str, str]] = []
     for problem_name in problem_names:
-        item_minutes = minutes_since(reference, saves[problem_name])
+        cap = read_cap_minutes(source_dir / problem_name)
         passed, fraction = grade_item(work_dirs[problem_name], key_dir_for(unit_dir, which, problem_name))
         fields = {
             "unit": unit,
             "which": side,
             "problem": problem_name,
             "result": "pass" if passed else "fail",
-            "minutes": f"{item_minutes:.2f}",
+            "minutes": f"{item_minutes[problem_name]:.2f}",
             "total_minutes": f"{total_minutes:.2f}",
-            "over_cap": over_cap,
             "fraction": f"{fraction:.4f}",
         }
+        if cap is not None:
+            fields["over_cap"] = "yes" if item_minutes[problem_name] > cap else "no"
         line = append_event(subject_dir, session_id, "tool:probe", "probe-item", fields)
         rows.append({"line": line, **fields})
         print(f"{problem_name}: {fields['result']} ({fraction:.2f})")

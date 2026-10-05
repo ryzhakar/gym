@@ -315,22 +315,6 @@ def test_run_grade_refuses_a_literal_side_with_no_matching_probe_start(tmp_path:
         probe.run_grade(subject_dir, unit_dir, "probe-c", "sess-1")
 
 
-@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
-def test_run_grade_total_minutes_is_computed_from_the_probe_start_events_own_timestamp(tmp_path: Path, subject_dir: Path) -> None:
-    """Team lead ruling (2026-09-30): `total_minutes` is the shared quantity the old, single
-    `minutes` field used to be — grade time minus the `probe-start` event's own clock stamp, the
-    same on every problem in one `grade` call."""
-    unit_dir = make_unit_dir(tmp_path, "unit-1")
-    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
-    # the probe-start event was just stamped with the real clock; graded "now" is 5 minutes later
-    started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
-    real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
-
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=real_start + timedelta(minutes=5))
-
-    assert all(float(row["total_minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
-
-
 def _set_mtime(path: Path, when: datetime) -> None:
     epoch = when.timestamp()
     os.utime(path, (epoch, epoch))
@@ -351,10 +335,10 @@ def test_run_grade_minutes_is_0_for_an_untouched_problem(tmp_path: Path, subject
     for problem in ("p1", "p2"):
         _set_mtime(subject_dir / "work" / "sess-1" / "unit-1" / problem / "src" / "lib.rs", real_start)
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=real_start + timedelta(minutes=5))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert all(row["minutes"] == "0.00" for row in rows)
-    assert all(float(row["total_minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
+    assert all(row["total_minutes"] == "0.00" for row in rows)  # the plain sum of two 0.00 items
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
@@ -373,12 +357,12 @@ def test_run_grade_minutes_reflects_the_edited_problems_own_mtime(tmp_path: Path
     _set_mtime(p1_src, real_start + timedelta(minutes=3))
     _set_mtime(subject_dir / "work" / "sess-1" / "unit-1" / "p2" / "src" / "lib.rs", real_start)
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=real_start + timedelta(minutes=5))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
     by_problem = {row["problem"]: row for row in rows}
 
     assert float(by_problem["p1"]["minutes"]) == pytest.approx(3.0, abs=0.02)
     assert by_problem["p2"]["minutes"] == "0.00"  # p2 was never touched
-    assert all(float(row["total_minutes"]) == pytest.approx(5.0, abs=0.02) for row in rows)
+    assert all(float(row["total_minutes"]) == pytest.approx(3.0, abs=0.02) for row in rows)  # the plain sum, 3.00 + 0.00
 
 
 def test_latest_mtime_under_returns_none_for_a_missing_directory(tmp_path: Path) -> None:
@@ -403,39 +387,82 @@ def test_minutes_since_computes_positive_elapsed_minutes() -> None:
     assert probe.minutes_since(reference, reference.timestamp() + 90) == pytest.approx(1.5, abs=0.001)
 
 
-def test_run_grade_defaults_cap_minutes_to_10() -> None:
-    assert probe.CAP_MINUTES_DEFAULT == 10.0
+# --- per-problem caps (owner ruling, 2026-10-05): each problem's own `spec.md` `Cap: N minutes`
+# line, judged against that problem's own `minutes`; no such line, no `over_cap` label at all ---
+
+
+def test_read_cap_minutes_reads_the_spec_s_cap_line(tmp_path: Path) -> None:
+    problem_dir = tmp_path / "p1"
+    problem_dir.mkdir()
+    (problem_dir / "spec.md").write_text("# title\n\nSome text.\n\nCap: 12 minutes\n", encoding="utf-8")
+    assert probe.read_cap_minutes(problem_dir) == 12.0
+
+
+def test_read_cap_minutes_accepts_a_decimal_cap(tmp_path: Path) -> None:
+    problem_dir = tmp_path / "p1"
+    problem_dir.mkdir()
+    (problem_dir / "spec.md").write_text("Cap: 7.5 minutes\n", encoding="utf-8")
+    assert probe.read_cap_minutes(problem_dir) == pytest.approx(7.5)
+
+
+def test_read_cap_minutes_is_none_without_a_cap_line(tmp_path: Path) -> None:
+    problem_dir = tmp_path / "p1"
+    problem_dir.mkdir()
+    (problem_dir / "spec.md").write_text("# title\n\nNo cap named here.\n", encoding="utf-8")
+    assert probe.read_cap_minutes(problem_dir) is None
+
+
+def test_read_cap_minutes_is_none_without_a_spec_file(tmp_path: Path) -> None:
+    assert probe.read_cap_minutes(tmp_path / "no-such-problem") is None
+
+
+def _give_cap(unit_dir: Path, which: str, problem: str, cap_minutes: str) -> None:
+    spec = unit_dir / which / problem / "spec.md"
+    spec.write_text(spec.read_text(encoding="utf-8") + f"\nCap: {cap_minutes} minutes\n", encoding="utf-8")
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
-def test_run_grade_records_over_cap_no_when_under_the_cap(tmp_path: Path, subject_dir: Path) -> None:
+def test_run_grade_omits_over_cap_when_the_problem_has_no_cap_line(tmp_path: Path, subject_dir: Path) -> None:
+    unit_dir = make_unit_dir(tmp_path, "unit-1")  # neither p1 nor p2 carries a Cap: line
+    probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
+
+    assert all("over_cap" not in row for row in rows)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_run_grade_labels_over_cap_no_when_a_problem_stays_under_its_own_cap(tmp_path: Path, subject_dir: Path) -> None:
     unit_dir = make_unit_dir(tmp_path, "unit-1")
+    _give_cap(unit_dir, "probe-a", "p1", "10")
     probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
     started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
     real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
+    _set_mtime(subject_dir / "work" / "sess-1" / "unit-1" / "p1" / "src" / "lib.rs", real_start + timedelta(minutes=3))
 
-    rows = probe.run_grade(
-        subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=real_start + timedelta(minutes=5)
-    )
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
+    by_problem = {row["problem"]: row for row in rows}
 
-    assert all(row["over_cap"] == "no" for row in rows)
+    assert by_problem["p1"]["over_cap"] == "no"
+    assert "over_cap" not in by_problem["p2"]  # p2 carries no Cap: line of its own
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
-def test_run_grade_records_over_cap_yes_when_over_the_cap_never_refusing(tmp_path: Path, subject_dir: Path) -> None:
+def test_run_grade_labels_over_cap_yes_when_a_problem_runs_past_its_own_cap(tmp_path: Path, subject_dir: Path) -> None:
     """The cap is recorded as data, never enforced: grading still runs and logs normally past it."""
     unit_dir = make_unit_dir(tmp_path, "unit-1")
+    _give_cap(unit_dir, "probe-a", "p1", "2")
     probe.run_stage(subject_dir, unit_dir, "immediate", "sess-1")
     started = probe.latest_probe_start(subject_dir, "sess-1", "unit-1", "immediate")
     real_start = datetime.strptime(started["timestamp"], TIMESTAMP_FORMAT)
+    _set_mtime(subject_dir / "work" / "sess-1" / "unit-1" / "p1" / "src" / "lib.rs", real_start + timedelta(minutes=5))
 
-    rows = probe.run_grade(
-        subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=real_start + timedelta(minutes=15)
-    )
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
+    by_problem = {row["problem"]: row for row in rows}
 
-    assert len(rows) == 2
-    assert all(row["over_cap"] == "yes" for row in rows)
-    assert {row["result"] for row in rows} == {"pass"}  # grading itself is unaffected
+    assert by_problem["p1"]["over_cap"] == "yes"
+    assert by_problem["p1"]["result"] == "pass"  # over cap still grades normally, never refuses
+    assert "over_cap" not in by_problem["p2"]
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
@@ -543,21 +570,21 @@ def test_latest_probe_go_ignores_another_side_and_a_go_before_the_latest_staging
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
 def test_grade_measures_minutes_and_total_from_the_go_mark_not_the_stage_time(tmp_path: Path, subject_dir: Path) -> None:
-    """Staged 10:00, go 10:02, p1 last saved 10:05, p2 10:04, graded 10:30 with a 10 minute cap:
-    from the stage time p1 would read 5.00 and the total 30.00, over the cap; from the go, p1 3.00,
-    p2 2.00, total 3.00 (latest last save of the probe minus the go), under the cap."""
+    """Staged 10:00, go 10:02, p1 last saved 10:05, p2 10:04: from the stage time p1 would read
+    5.00; from the go, p1 3.00, p2 2.00, total the plain sum, 5.00. Neither problem carries a
+    Cap: line, so over_cap is absent on both."""
     unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
     _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=2))
     _save(work["p1"], CLOCK + timedelta(minutes=5))
     _save(work["p2"], CLOCK + timedelta(minutes=4))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=CLOCK + timedelta(minutes=30))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
     by_problem = {row["problem"]: row for row in rows}
 
     assert by_problem["p1"]["minutes"] == "3.00"
     assert by_problem["p2"]["minutes"] == "2.00"
-    assert all(row["total_minutes"] == "3.00" for row in rows)
-    assert all(row["over_cap"] == "no" for row in rows)
+    assert all(row["total_minutes"] == "5.00" for row in rows)
+    assert all("over_cap" not in row for row in rows)
     assert {row["result"] for row in rows} == {"pass"}
 
 
@@ -566,12 +593,12 @@ def test_grade_without_a_go_still_measures_from_the_stage_time(tmp_path: Path, s
     unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
     _save(work["p1"], CLOCK + timedelta(minutes=5))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", cap_minutes=10.0, now=CLOCK + timedelta(minutes=30))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
     by_problem = {row["problem"]: row for row in rows}
 
     assert by_problem["p1"]["minutes"] == "5.00"
     assert by_problem["p2"]["minutes"] == "0.00"
-    assert all(row["total_minutes"] == "30.00" and row["over_cap"] == "yes" for row in rows)
+    assert all(row["total_minutes"] == "5.00" and "over_cap" not in row for row in rows)
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
@@ -580,9 +607,9 @@ def test_grade_floors_a_save_before_the_go_at_0_and_an_unsaved_probe_totals_0(tm
     _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=7))
     _save(work["p1"], CLOCK + timedelta(minutes=5))  # saved before the go
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=30))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
-    assert all(row["minutes"] == "0.00" and row["total_minutes"] == "0.00" and row["over_cap"] == "no" for row in rows)
+    assert all(row["minutes"] == "0.00" and row["total_minutes"] == "0.00" and "over_cap" not in row for row in rows)
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
@@ -592,7 +619,7 @@ def test_grade_uses_the_latest_go(tmp_path: Path, subject_dir: Path) -> None:
     _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=4))
     _save(work["p1"], CLOCK + timedelta(minutes=6))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=30))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "2.00"
     assert all(row["total_minutes"] == "2.00" for row in rows)
@@ -605,10 +632,10 @@ def test_grade_ignores_a_go_logged_before_the_probe_was_staged_again(tmp_path: P
     _log(subject_dir, "probe-start", {"unit": "unit-1", "which": "probe-a", "problems": "p1,p2"}, CLOCK + timedelta(minutes=10))
     _save(work["p1"], CLOCK + timedelta(minutes=14))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=30))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "4.00"
-    assert all(row["total_minutes"] == "20.00" for row in rows)
+    assert all(row["total_minutes"] == "4.00" for row in rows)  # the plain sum, 4.00 + 0.00
 
 
 def test_cli_probe_go_logs_a_probe_go_event(tmp_path: Path) -> None:
@@ -639,6 +666,28 @@ def test_cli_probe_go_refuses_an_unknown_side(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["probe", "go", str(tmp_path / "x" / "y" / "unit-1"), "tomorrow", "--session", "s"])
     assert result.exit_code == 2
     assert "Invalid value for which" in result.output
+
+
+def test_cli_probe_grade_refuses_the_removed_cap_minutes_option(tmp_path: Path) -> None:
+    """Owner ruling (2026-10-05): the shared `--cap-minutes` option is gone from `probe grade` —
+    caps are per-problem, read from each problem's own spec.md."""
+    from typer.testing import CliRunner
+
+    from gym.train.cli import app
+
+    subject = tmp_path / "rust"
+    (subject / "sessions" / "sess-1").mkdir(parents=True)
+    (subject / "sessions" / "sess-1" / "events.md").touch()
+    unit_dir = make_unit_dir(subject / "items", "unit-1")
+    runner = CliRunner()
+    runner.invoke(app, ["probe", "stage", str(unit_dir), "immediate", "--session", "sess-1"])
+
+    result = runner.invoke(
+        app, ["probe", "grade", str(unit_dir), "immediate", "--session", "sess-1", "--cap-minutes", "5"]
+    )
+
+    assert result.exit_code != 0
+    assert "no such option" in result.output.lower()
 
 
 # --- last save: the newest mtime over every file of a problem's folder but the locked ones ---
@@ -697,7 +746,7 @@ def test_grade_reads_a_predict_output_edit_to_prediction_txt_as_working_time(tmp
     unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
     _touch_new(work["p1"], "prediction.txt", CLOCK + timedelta(minutes=3))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=5))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
     by_problem = {row["problem"]: row for row in rows}
 
     assert by_problem["p1"]["minutes"] == "3.00"
@@ -711,7 +760,7 @@ def test_grade_does_not_read_its_own_cargo_run_as_a_save(tmp_path: Path, subject
     _touch_new(work["p1"], "Cargo.lock", CLOCK + timedelta(minutes=9))
     _touch_new(work["p1"], "target/debug/fake", CLOCK + timedelta(minutes=9))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=10))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "0.00"
 
@@ -724,7 +773,7 @@ def test_grade_does_not_read_a_bacon_run_after_the_last_edit_as_a_save(tmp_path:
     _save(work["p1"], CLOCK + timedelta(minutes=3))
     _touch_new(work["p1"], ".bacon-locations", CLOCK + timedelta(minutes=9))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=10))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "3.00"
 
@@ -736,7 +785,7 @@ def test_grade_with_a_go_does_not_total_a_bacon_run_as_working_time(tmp_path: Pa
     _save(work["p1"], CLOCK + timedelta(minutes=4))
     _touch_new(work["p2"], ".bacon-locations", CLOCK + timedelta(minutes=12))
 
-    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=20))
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
 
     assert all(row["total_minutes"] == "3.00" for row in rows)
     assert {row["problem"]: row["minutes"] for row in rows}["p2"] == "0.00"

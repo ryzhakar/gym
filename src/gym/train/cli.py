@@ -90,17 +90,15 @@ def probe_grade_command(
     unit_dir: Path = typer.Argument(..., help="Unit directory holding the probe's problem files"),
     which: str = typer.Argument(..., help="immediate|delayed|probe-<letter>"),
     session: str = typer.Option(..., "--session", help="Session id this grade belongs to"),
-    cap_minutes: float = typer.Option(
-        probe_module.CAP_MINUTES_DEFAULT, "--cap-minutes", help="Minutes per problem recorded as the cap, never enforced"
-    ),
 ) -> None:
-    """Grade every staged problem against its key and log one probe-item event each (each carrying
-    whether it ran over --cap-minutes, recorded only, never enforced); refuses if nothing was
-    staged for this unit and side in this session. Minutes run from the latest probe go when one
-    was logged since staging, else from the stage time."""
+    """Grade every staged problem against its key and log one probe-item event each (each
+    carrying over_cap, yes/no recorded only, never enforced, when that problem's own spec.md names
+    a Cap: N minutes line — omitted otherwise); refuses if nothing was staged for this unit and
+    side in this session. Minutes run from the latest probe go when one was logged since staging,
+    else from the stage time."""
     _validate_which(which)
     subject_dir = unit_dir.resolve().parent.parent
-    probe_module.run_grade(subject_dir, unit_dir, which, session, cap_minutes)
+    probe_module.run_grade(subject_dir, unit_dir, which, session)
 
 
 @baseline_app.command("stage")

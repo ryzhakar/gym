@@ -26,8 +26,13 @@ from datetime import datetime
 from pathlib import Path
 
 from gym.train.events import append_event, events_path, read_events
-from gym.train.probe import CAP_MINUTES_DEFAULT, grade_item, latest_save_mtime, minutes_since, session_path_segment
+from gym.train.probe import grade_item, latest_save_mtime, minutes_since, session_path_segment
 from gym.train.schema import TIMESTAMP_FORMAT
+
+# A baseline item is one problem, not a probe's several — its own time cap, never enforced, only
+# ever this one shared quantity (owner ruling, 2026-10-05, left baseline's own cap untouched: the
+# per-problem cap applies to a probe's several problems, which a baseline grade never has).
+CAP_MINUTES_DEFAULT = 10.0
 
 
 def baseline_root(subject_dir: Path) -> Path:

@@ -256,13 +256,12 @@ GLOBAL_OPTIONAL_FIELDS: dict[str, Validator] = {
 
 # An optional field recognized for one specific kind only.
 KIND_OPTIONAL_FIELDS: dict[str, dict[str, Validator]] = {
-    # Team lead ruling (2026-09-30): the per-probe time cap `gym train probe grade` dropped along
-    # with the interactive wait (seventh update) is restored as data, never enforced — `grade`
-    # takes `--cap-minutes` (default 10) and writes whether the graded attempt ran over it,
-    # `over_cap` here, on every `probe-item` it logs. `total_minutes` (later ruling, same date):
-    # once `minutes` became per-problem (the latest mtime under that problem's own staged `src/`
-    # minus the `probe-start` event's time), `over_cap` needed a separate, still-shared quantity to
-    # judge against — grade time minus `probe-start` time, the same on every problem in one call.
+    # Team lead ruling (2026-09-30): a time cap is restored as data on `probe-item`, never
+    # enforced. Owner ruling (2026-10-05): the cap is per problem, not shared — `gym train probe
+    # grade` reads each problem's own `spec.md` for a `Cap: N minutes` line and writes `over_cap`
+    # (judged against that problem's own `minutes`) only when one exists; a problem with no such
+    # line carries no `over_cap` field at all. `total_minutes` is the plain sum of every graded
+    # problem's own `minutes` in one `grade` call.
     "probe-item": {
         "fraction": float_in(0.0, 1.0),
         "over_cap": enum("yes", "no"),
