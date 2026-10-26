@@ -40,3 +40,11 @@
 2026-10-26T15:19 | self:claude-opus-5-5 | decision | schema amended on the owner's ruling 14:50: kind trace replaced by events, failure home failures.md replaced by failures*.md, project: block added (journal_corrections: 4 rewrites + rename ef73611)
 2026-10-26T15:19 | self:claude-opus-5-5 | decision | conventions record-check, event-lines, span-records, memento-by-orchestrator rewritten for memento verbs; map rows and capabilities follow; old gym records check FAILs on failures-* until unit 1 merges
 2026-10-26T15:21 | self:claude-opus-5-5 | commitment | unit 1 merged 5313309: gym records check keeps 4 residual checks, event/close retired; memento check 0 FAIL, gym records check 0 FAIL, pytest 420 pass
+2026-10-26T15:23 | owner:Arthur Ryzhak | decision | task: tend to the trainer's grievances
+2026-10-26T15:23 | self:claude-opus-5-5 | delegation | agent:grievances, sonnet, background: extract trainer grievances and fix status; prompt recon/2026-10-26/gm/grievances.md
+2026-10-26T15:25 | agent:grievances | receipt | report recon/2026-10-26/gm/grievances-report.md: 31 grievances, 15 fixed, 16 open; next-session blockers: minutes double count, u03 probe-a specs lack Cap, window kill orphans nvim servers; 2 owner questions: trainer session ownership, revisit meaning
+2026-10-26T15:25 | self:claude-opus-5-5 | decision | decided: problem minutes run from the later of go and the previous problem's newest save; total from go to newest save
+2026-10-26T15:25 | self:claude-opus-5-5 | delegation | agent:fix-next-session, sonnet, worktree train-fixes, background: minutes, Cap lines, window quit; prompt recon/2026-10-26/gm/fix-next-session.md
+2026-10-26T15:26 | owner:Arthur Ryzhak | decision | the trainer may open and close its own training session when no manager session is running; the manager does it when present
+2026-10-26T15:26 | owner:Arthur Ryzhak | decision | queue: an unfinished unit gets its own resume kind; revisit stays review of a finished unit
+2026-10-26T15:26 | self:claude-opus-5-5 | decision | conventions session-records gains except: no manager session, the trainer opens and closes it; record-check do trimmed for budget

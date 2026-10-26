@@ -33,7 +33,7 @@ ground  owner ruling 2026-09-26
 
 ### record-check
 when    before committing a change that touches a record
-do      `memento check` and `uv run gym records check`; commit only on 0 FAIL from both, the exit read directly
+do      `memento check` and `uv run gym records check`; commit only on 0 FAIL from both
 never   a commit over a FAIL; a format rule trusted to reading alone
 why     the schema's formats, grounds and pointers are checked by a program, not by attention
 ground  owner rulings 2026-09-26, 2026-09-30, 2026-10-26
@@ -85,7 +85,8 @@ when    a training session runs
 do      the manager opens `training/<subject>/sessions/<id>/` with `gym train open` before the summons and closes it with `gym train close` after the trainer returns; the trainer logs every turn with `gym train log`; feedback and instruction lines carry their substance in `note=`
 never   a session on shared tables; a turn logged nowhere; feedback that survives only in a transcript
 why     "surely a training session should have its own record and events"
-ground  owner ruling 2026-09-30
+ground  owner rulings 2026-09-30, 2026-10-26
+except  no manager session: the trainer opens and closes it
 
 ### syllabus-by-trainer
 when    deciding units, their order and content
