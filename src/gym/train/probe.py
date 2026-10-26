@@ -324,16 +324,16 @@ def run_grade(
     event exists for this unit and probe side in this session.
 
     Team lead ruling (2026-09-30): each event's own `minutes` is per-problem — the last-save time
-    of that problem's staged folder (`latest_save_mtime`) minus the reference time
-    (`minutes_since`), so an untouched problem (never edited since staging) reads `minutes=0`, and
-    a problem the learner actually worked on reads how long *that* work took.
+    of that problem's staged folder (`latest_save_mtime`) minus its start, so an untouched problem (never edited since
+    staging) reads `minutes=0`, and a problem the learner actually worked on reads how long *that* work took.
 
     Owner ruling (2026-10-05): caps are per-problem too, never shared. Each problem's own cap comes
     from its own `spec.md` (`read_cap_minutes`, read from the item source, not the staged copy).
     `over_cap` (`yes`/`no`, recorded only, never enforced or refused) is judged against that
     problem's own `minutes` and is left off the event entirely when the problem carries no cap
-    line. `total_minutes`, kept for whoever still reads it, is the plain sum of every graded
-    problem's own `minutes` in this call — no longer a separate, shared, elapsed-clock quantity.
+    line. Manager ruling (2026-10-26): a problem's `minutes` run from the later of the reference
+    time and the previous problem's newest save, so the problems' minutes sum to at most
+    `total_minutes`, the reference time to the newest save of any problem.
 
     The reference time every problem's `minutes` is measured from is the latest `probe-go` of this
     unit and side since its latest staging (`latest_probe_go`) when one exists, else the
@@ -350,8 +350,13 @@ def run_grade(
     problem_names = start_row["problems"].split(",")
     work_dirs = {name: work_root / session_path_segment(session_id) / unit / name for name in problem_names}
     saves = {name: latest_save_mtime(work_dirs[name]) for name in problem_names}
-    item_minutes = {name: minutes_since(reference, saves[name]) for name in problem_names}
-    total_minutes = sum(item_minutes.values())
+    item_minutes: dict[str, float] = {}
+    mark = reference
+    for name in problem_names:
+        item_minutes[name] = minutes_since(mark, saves[name])
+        if saves[name] is not None:
+            mark = max(mark, datetime.fromtimestamp(saves[name]))
+    total_minutes = (mark - reference).total_seconds() / 60
     source_dir = probe_dir(unit_dir, which)
     rows: list[dict[str, str]] = []
     for problem_name in problem_names:

@@ -571,7 +571,8 @@ def test_latest_probe_go_ignores_another_side_and_a_go_before_the_latest_staging
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
 def test_grade_measures_minutes_and_total_from_the_go_mark_not_the_stage_time(tmp_path: Path, subject_dir: Path) -> None:
     """Staged 10:00, go 10:02, p1 last saved 10:05, p2 10:04: from the stage time p1 would read
-    5.00; from the go, p1 3.00, p2 2.00, total the plain sum, 5.00. Neither problem carries a
+    5.00; from the go, p1 3.00; p2 starts at p1's save, after its own, so 0.00; the total runs
+    go to the newest save, 3.00. Neither problem carries a
     Cap: line, so over_cap is absent on both."""
     unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
     _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK + timedelta(minutes=2))
@@ -582,10 +583,30 @@ def test_grade_measures_minutes_and_total_from_the_go_mark_not_the_stage_time(tm
     by_problem = {row["problem"]: row for row in rows}
 
     assert by_problem["p1"]["minutes"] == "3.00"
-    assert by_problem["p2"]["minutes"] == "2.00"
-    assert all(row["total_minutes"] == "5.00" for row in rows)
+    assert by_problem["p2"]["minutes"] == "0.00"
+    assert all(row["total_minutes"] == "3.00" for row in rows)
     assert all("over_cap" not in row for row in rows)
     assert {row["result"] for row in rows} == {"pass"}
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_grade_minutes_run_from_the_previous_problems_save_and_sum_to_at_most_the_total(tmp_path: Path, subject_dir: Path) -> None:
+    """The u01 probe-b shape: p1 saved 2.00 after the go, p2 5.50 after it. Measured from the go
+    each, the minutes sum to 7.50 against 5.50 elapsed. A problem's minutes run from the later of
+    the go and the previous problem's newest save: p1 2.00, p2 3.50, the total go to the newest
+    save of any problem, 5.50."""
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    _log(subject_dir, "probe-go", {"unit": "unit-1", "which": "probe-a"}, CLOCK)
+    _save(work["p1"], CLOCK + timedelta(minutes=2))
+    _save(work["p2"], CLOCK + timedelta(minutes=5.5))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
+    by_problem = {row["problem"]: row for row in rows}
+
+    assert by_problem["p1"]["minutes"] == "2.00"
+    assert by_problem["p2"]["minutes"] == "3.50"
+    assert all(row["total_minutes"] == "5.50" for row in rows)
+    assert sum(float(row["minutes"]) for row in rows) <= float(rows[0]["total_minutes"])
 
 
 @pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
