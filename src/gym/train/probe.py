@@ -117,7 +117,32 @@ def run_cargo_test(crate_dir: Path) -> tuple[bool, float]:
         failed += int(match.group(2))
     if passed + failed == 0:
         return False, 0.0
+    if failed and (crate_dir / "prediction.txt").is_file():
+        line_fraction = predicted_line_fraction(crate_dir)
+        if line_fraction is not None:
+            return False, line_fraction
     return failed == 0, passed / (passed + failed)
+
+
+def predicted_line_fraction(crate_dir: Path) -> "float | None":
+    """For a predict item, the share of lines of the program's output that `prediction.txt` has
+    right, position by position, against the longer of the two (manager ruling 2026-10-26: 8 of
+    10 lines right no longer reads 0.00). Trailing whitespace and blank trailing lines are
+    ignored, as the item's own test does. `None` when the program does not run."""
+    result = subprocess.run(
+        ["cargo", "run", "--quiet", "--manifest-path", str(crate_dir / "Cargo.toml")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    actual = [line.rstrip() for line in result.stdout.rstrip().splitlines()]
+    predicted = [line.rstrip() for line in (crate_dir / "prediction.txt").read_text(encoding="utf-8").rstrip().splitlines()]
+    longest = max(len(actual), len(predicted))
+    if longest == 0:
+        return None
+    return sum(a == p for a, p in zip(actual, predicted)) / longest
 
 
 def session_path_segment(session_id: str) -> str:

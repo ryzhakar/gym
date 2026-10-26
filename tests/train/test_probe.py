@@ -810,3 +810,47 @@ def test_grade_with_a_go_does_not_total_a_bacon_run_as_working_time(tmp_path: Pa
 
     assert all(row["total_minutes"] == "3.00" for row in rows)
     assert {row["problem"]: row["minutes"] for row in rows}["p2"] == "0.00"
+
+
+MAIN_RS = 'fn main() {\n    println!("a");\n    println!("b");\n    println!("c");\n    println!("d");\n}\n'
+PREDICT_TOML = '[package]\nname = "predict_under_test"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n'
+PREDICT_TEST = (
+    '#[test]\nfn prediction_matches_the_output() {\n'
+    '    let out = std::process::Command::new(env!("CARGO_BIN_EXE_predict_under_test")).output().unwrap();\n'
+    '    let predicted = std::fs::read_to_string("prediction.txt").unwrap();\n'
+    '    assert_eq!(String::from_utf8(out.stdout).unwrap().trim_end(), predicted.trim_end());\n}\n'
+)
+
+
+def make_predict_crate(root: Path, prediction: str) -> Path:
+    (root / "src").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (root / "Cargo.toml").write_text(PREDICT_TOML, encoding="utf-8")
+    (root / "src" / "main.rs").write_text(MAIN_RS, encoding="utf-8")
+    (root / "tests" / "visible.rs").write_text(PREDICT_TEST, encoding="utf-8")
+    (root / "prediction.txt").write_text(prediction, encoding="utf-8")
+    return root
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_a_predict_item_scores_the_share_of_lines_right(tmp_path: Path) -> None:
+    crate = make_predict_crate(tmp_path / "p", "a\nb\nx\nd\n")
+
+    passed, fraction = probe.run_cargo_test(crate)
+
+    assert passed is False
+    assert fraction == pytest.approx(0.75)
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_a_predict_item_with_a_missing_and_an_extra_line_scores_against_the_longer(tmp_path: Path) -> None:
+    crate = make_predict_crate(tmp_path / "p", "a\nb\n")
+    assert probe.run_cargo_test(crate) == (False, pytest.approx(0.5))
+    (crate / "prediction.txt").write_text("a\nb\nc\nd\ne\nf\n", encoding="utf-8")
+    assert probe.run_cargo_test(crate) == (False, pytest.approx(4 / 6))
+
+
+@pytest.mark.skipif(CARGO_MISSING, reason="cargo not on PATH")
+def test_a_correct_predict_item_passes_at_1(tmp_path: Path) -> None:
+    crate = make_predict_crate(tmp_path / "p", "a\nb\nc\nd\n")
+    assert probe.run_cargo_test(crate) == (True, pytest.approx(1.0))
