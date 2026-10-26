@@ -17,7 +17,8 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess]
 #   left_width  columns of the left column (spec over edit files), None: what the right leaves
 #   spec_rows   rows of the spec pane, None: an equal share
 #   first_share (num, den) of the edit rows the first edit file takes when there are several
-#   right       {"terminal": cmd, "width": cols} or {"glob": pattern under the crate}
+#   right       {"tmux": cmd, "width": cols}, a tmux pane beside nvim (owner 2026-10-26: no
+#               interactive tool inside an nvim terminal), or {"glob": pattern under the crate}
 LAYOUTS: dict[str, dict] = {
     "predict": {
         "match": {"prediction.txt"},
@@ -31,7 +32,7 @@ LAYOUTS: dict[str, dict] = {
         "left_width": None,
         "spec_rows": 14,
         "first_share": (3, 5),
-        "right": {"terminal": "bacon test", "width": 70},
+        "right": {"tmux": "bacon test", "width": 70},
     },
 }
 
@@ -49,6 +50,7 @@ class Plan:
     name: str
     kind: str
     script: str
+    pane: Optional[dict] = None
 
 
 def subprocess_runner(argv: list[str]) -> subprocess.CompletedProcess:
@@ -88,7 +90,9 @@ def window_name(crate: Path, prefix: Optional[str] = None) -> str:
         crate = crate.resolve()
         unit = next((p for p in crate.parents if UNIT_DIR.fullmatch(p.name)), crate.parent)
         prefix = unit.name.split("-", 1)[0]
-    return f"{prefix}-{crate.name.split('-', 1)[0]}"
+    head, _, tail = crate.name.partition("-")
+    short = crate.name if tail.isdigit() else head
+    return f"{prefix}-{short}"
 
 
 def _vim_str(text: str) -> str:
@@ -108,15 +112,14 @@ def layout_script(kind: str, spec: str, edit_files: list[str], right_files: list
     left = list(range(1, n + 2))
     lines = [f'" gym train window: {kind} layout, generated', _open("edit", spec)]
     lines += [_open("belowright split", f) for f in edit_files]
-    if "terminal" in right:
-        lines += ["botright vsplit", f"terminal {right['terminal']}"]
-        right_count = 1
+    if "tmux" in right:
+        right_count = 0
     else:
         right_count = len(right_files)
         for i, f in enumerate(right_files):
             lines.append(_open("botright vsplit" if i == 0 else "belowright split", f))
     right_wins = list(range(n + 2, n + 2 + right_count))
-    if right.get("width") and right_wins:
+    if right.get("width") and right_wins and "tmux" not in right:
         lines.append(f"{right_wins[0]}wincmd w")
         lines.append(f"vertical resize {right['width']}")
         lines += [f"{w}wincmd w | setlocal winfixwidth" for w in right_wins]
@@ -158,7 +161,8 @@ def plan_window(crate: Path, prefix: Optional[str] = None) -> Plan:
         else []
     )
     script = layout_script(kind, os.path.relpath(spec, crate), edit_files, right_files)
-    return Plan(crate=crate, name=window_name(crate, prefix), kind=kind, script=script)
+    pane = right if "tmux" in right else None
+    return Plan(crate=crate, name=window_name(crate, prefix), kind=kind, script=script, pane=pane)
 
 
 def current_session(runner: Runner) -> str:
@@ -190,4 +194,8 @@ def open_windows(
         else:
             runner(["tmux", "new-session", "-d", "-s", session, "-n", plan.name, "-c", str(plan.crate), *nvim])
             session_exists = True
+        if plan.pane:
+            target = f"={session}:={plan.name}"
+            runner(["tmux", "split-window", "-d", "-h", "-l", str(plan.pane["width"]), "-t", target,
+                    "-c", str(plan.crate), plan.pane["tmux"]])
     return plans

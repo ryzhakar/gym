@@ -113,8 +113,7 @@ def test_code_script_files_sizes_focus() -> None:
     for name in ("src/lib.rs", "src/caller_side.rs", "src/callee_side.rs"):
         assert f"'{name}'" in script
     assert script.index("src/lib.rs") < script.index("src/caller_side.rs") < script.index("src/callee_side.rs")
-    assert "terminal bacon test" in script
-    assert "vertical resize 70" in script
+    assert "terminal" not in script  # bacon runs in a tmux pane, never an nvim terminal
     assert "resize 14" in script
     # spec is window 1, edit files 2..4; first edit file larger than the others, focus ends there
     assert "let s:first = s:rest * 3 / 5" in script
@@ -167,6 +166,29 @@ def test_kill_then_create(tmp_path: Path) -> None:
     nvim = _nvim_argv(new)
     assert nvim[:3] == ["nvim", "-n", "-S"]
     assert Path(nvim[3]).read_text() == plans[0].script
+
+
+def test_code_crate_gets_bacon_tmux_pane_beside_nvim(tmp_path: Path) -> None:
+    runner = FakeRunner(windows=("other",))
+    window.open_windows([P2], session="gym", prefix=None, runner=runner, script_dir=tmp_path)
+    subs = [c[1] for c in runner.calls]
+    assert subs.index("new-window") < subs.index("split-window")
+    split = next(c for c in runner.calls if c[1] == "split-window")
+    assert split[split.index("-t") + 1] == "=gym:=u02-p2"
+    assert split[split.index("-l") + 1] == "70"
+    assert "-h" in split and "-d" in split
+    assert split[split.index("-c") + 1] == str(P2.resolve())
+    assert split[-1] == "bacon test"
+
+
+def test_predict_crate_gets_no_tmux_pane(tmp_path: Path) -> None:
+    runner = FakeRunner(windows=("other",))
+    window.open_windows([P1], session="gym", prefix=None, runner=runner, script_dir=tmp_path)
+    assert "split-window" not in [c[1] for c in runner.calls]
+
+
+def test_window_name_keeps_numbered_crate_whole() -> None:
+    assert window.window_name(Path("/x/u03-result-question-mark/reuse-2")) == "u03-reuse-2"
 
 
 def test_no_kill_when_absent(tmp_path: Path) -> None:
