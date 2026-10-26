@@ -33,28 +33,28 @@ ground  owner ruling 2026-09-26
 
 ### record-check
 when    before committing a change that touches a record
-do      `uv run gym records check`; commit only on 0 FAIL
+do      `memento check` and `uv run gym records check`; commit only on 0 FAIL from both, the exit read directly
 never   a commit over a FAIL; a format rule trusted to reading alone
 why     the schema's formats, grounds and pointers are checked by a program, not by attention
-ground  owner rulings 2026-09-26, 2026-09-30
+ground  owner rulings 2026-09-26, 2026-09-30, 2026-10-26
 
 ### event-lines
-when    writing an event line or closing a span
-do      `uv run gym records event <actor> <kind> <what>`; `uv run gym records close --state … --open … --next …`
+when    writing an event line, a failure, or closing a span
+do      `memento events add`, `memento failure add`, `memento digest close`
 never   a hand-typed timestamp or close block
 why     the clock and git stamp them, and a malformed line is refused at write time
-ground  owner rulings 2026-09-26, 2026-09-30
+ground  owner rulings 2026-09-26, 2026-09-30, 2026-10-26
 
 ### span-records
 when    a span opens
-do      the span writes `events-<suffix>.md` and `session-<suffix>.md` through `--span <suffix>` on `gym records event` and `close`; the suffix is the session's handle, e.g. `u2`
+do      `memento events open --suffix <s>`, then `--span <date>-<s>` on every journal verb; the suffix is the session's handle, e.g. `u2`
 never   a span appending to another span's files; a close block written into a pair the span did not open
 why     "we should keep our records separate. this is a new span."
-ground  owner ruling 2026-10-01
+ground  owner rulings 2026-10-01, 2026-10-26
 
 ### memento-by-orchestrator
 when    memento work: pat-down, events, span closes, record edits
-do      the orchestrator reads and writes the records itself, through `gym records event`, `gym records close` and direct edits
+do      the orchestrator reads and writes the records itself, through memento's verbs and direct edits
 never   record reads or writes delegated to an agent; file carve-outs beyond this and the peers commons
 why     "memento is the sole exception: orchestrator keeps their records themselves"
 ground  owner rulings 2026-09-30, 2026-10-26
