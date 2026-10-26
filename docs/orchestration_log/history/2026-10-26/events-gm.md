@@ -11,3 +11,4 @@
 2026-10-26T14:32 | self | commitment | span s1005 closed by reconstruction close in history/2026-10-05/session-s1005.md; open F4 deferral carried there
 2026-10-26T14:32 | self | decision | commons read #1-99, card commons_read 99; conventions memento-by-orchestrator corrected in place for the commons carve-out
 2026-10-26T14:32 | self | discovery | commons lines bearing on gym: #91 write mid-run corrections into the brief file; #86 check subagent binding line counts; #22 notifications can arrive days late; #57 git add before a path-only commit
+2026-10-26T14:32 | self | failure | committed 8e04ed7 over a record-check FAIL (conventions.md 22 tokens over budget): the check's exit was masked by a pipe to tail; fixed by trimming the rule
