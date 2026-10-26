@@ -168,6 +168,48 @@ def test_kill_then_create(tmp_path: Path) -> None:
     assert Path(nvim[3]).read_text() == plans[0].script
 
 
+class NvimLingersRunner(FakeRunner):
+    """`list-panes` reports nvim for the first `lingers` queries, then none."""
+
+    def __init__(self, lingers: int, **kwargs):
+        super().__init__(**kwargs)
+        self.lingers = lingers
+
+    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess:
+        if argv[1] == "list-panes":
+            self.calls.append(argv)
+            self.lingers -= 1
+            return subprocess.CompletedProcess(argv, 0, "nvim\nbacon\n" if self.lingers >= 0 else "bacon\n", "")
+        return super().__call__(argv)
+
+
+def test_nvim_is_quit_and_awaited_before_the_window_is_killed(tmp_path: Path) -> None:
+    runner = NvimLingersRunner(lingers=2, windows=("u02-p1",))
+    naps: list[float] = []
+    window.open_windows([P1], session="gym", prefix=None, runner=runner, script_dir=tmp_path, sleep=naps.append)
+    subs = [c[1] for c in runner.calls]
+    keys = next(c for c in runner.calls if c[1] == "send-keys")
+    assert keys[keys.index("-t") + 1] == "=gym:=u02-p1"
+    assert keys[keys.index("-t") + 2 :] == ["Escape", ":qa!", "Enter"]
+    assert subs.index("send-keys") < subs.index("list-panes") < subs.index("kill-window")
+    assert subs.count("list-panes") == 3  # two lingering reads, one clear
+    assert len(naps) == 2
+
+
+def test_a_stuck_nvim_is_given_up_on_after_a_bounded_wait(tmp_path: Path) -> None:
+    runner = NvimLingersRunner(lingers=10**6, windows=("u02-p1",))
+    naps: list[float] = []
+    window.open_windows([P1], session="gym", prefix=None, runner=runner, script_dir=tmp_path, sleep=naps.append)
+    assert "kill-window" in [c[1] for c in runner.calls]
+    assert sum(naps) <= 5
+
+
+def test_no_nvim_quit_for_a_window_that_does_not_exist(tmp_path: Path) -> None:
+    runner = FakeRunner(windows=("other",))
+    window.open_windows([P2], session="gym", prefix=None, runner=runner, script_dir=tmp_path)
+    assert "send-keys" not in [c[1] for c in runner.calls]
+
+
 def test_code_crate_gets_bacon_tmux_pane_beside_nvim(tmp_path: Path) -> None:
     runner = FakeRunner(windows=("other",))
     window.open_windows([P2], session="gym", prefix=None, runner=runner, script_dir=tmp_path)

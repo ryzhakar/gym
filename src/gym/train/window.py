@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -174,11 +175,32 @@ def current_session(runner: Runner) -> str:
     return result.stdout.strip() or "gym"
 
 
+QUIT_POLLS = 20
+QUIT_POLL_SECONDS = 0.25
+
+
+def quit_nvim(target: str, runner: Runner, sleep: Callable[[float], None]) -> None:
+    """Quit the window's nvim cleanly (`:qa!` stops its language servers) and wait, up to
+    QUIT_POLLS * QUIT_POLL_SECONDS, for no pane of the window to run nvim; killing the window
+    first orphans the servers (grievance report 2026-10-26)."""
+    runner(["tmux", "send-keys", "-t", target, "Escape", ":qa!", "Enter"])
+    for _ in range(QUIT_POLLS):
+        panes = runner(["tmux", "list-panes", "-t", target, "-F", "#{pane_current_command}"])
+        if "nvim" not in panes.stdout.split():
+            return
+        sleep(QUIT_POLL_SECONDS)
+
+
 def open_windows(
-    crates: list[Path], session: Optional[str], prefix: Optional[str], runner: Runner, script_dir: Path
+    crates: list[Path],
+    session: Optional[str],
+    prefix: Optional[str],
+    runner: Runner,
+    script_dir: Path,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> list[Plan]:
-    """Plan every crate first (refusing before any tmux call), then per crate: kill a window of
-    the same name, write the script, create the window running `nvim -n -S <script>`. Session
+    """Plan every crate first (refusing before any tmux call), then per crate: quit the nvim of,
+    then kill, a window of the same name, write the script, create the window running `nvim -n -S <script>`. Session
     None: the session of `$TMUX`, else `gym`."""
     plans = [plan_window(crate, prefix) for crate in crates]
     session = session or current_session(runner)
@@ -190,7 +212,9 @@ def open_windows(
         if session_exists:
             listed = runner(["tmux", "list-windows", "-t", f"={session}", "-F", "#{window_name}"])
             if plan.name in listed.stdout.splitlines():
-                runner(["tmux", "kill-window", "-t", f"={session}:={plan.name}"])
+                target = f"={session}:={plan.name}"
+                quit_nvim(target, runner, sleep)
+                runner(["tmux", "kill-window", "-t", target])
             runner(["tmux", "new-window", "-d", "-t", f"={session}:", "-n", plan.name, "-c", str(plan.crate), *nvim])
         else:
             runner(["tmux", "new-session", "-d", "-s", session, "-n", plan.name, "-c", str(plan.crate), *nvim])
