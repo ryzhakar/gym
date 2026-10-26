@@ -55,3 +55,15 @@
 2026-10-26T15:28 | self:claude-opus-5-5 | decision | conventions: git-etiquette rule replaces commit-message and atomic-commits, commit-as-you-go loses its no-push clause; manager moved to worktree gym.worktrees/manager on branch session/manager
 2026-10-26T15:30 | owner:Arthur Ryzhak | decision | main trigger: main is fast-forwarded from a session branch once an independent review passes and both record checks and the tests are green
 2026-10-26T15:31 | owner:Arthur Ryzhak | decision | syllabus session runs in trainer-u3 by message with a summons file; the owner wakes it
+2026-10-26T15:31 | self:claude-opus-5-5 | delegation | peer:gym/trainer (trainer-u3): syllabus session before u03, grievances #23 #25 #30 (#24 #26 for its judgment); summons recon/2026-10-26/gm/summons-syllabus.md
+2026-10-26T15:32 | self:claude-opus-5-5 | commitment | [ask] summons to trainer-u3 sent; [notice] to machine-setup-manager on bacon-ls prefs outside dotfiles (grievance #9)
+2026-10-26T15:32 | self:claude-opus-5-5 | decision | batch 2 for agent fix-next-session after its current work: #4 predict per-line fraction, #5 go stamp with seconds, #22 resume queue kind
+2026-10-26T17:21 | agent:probe-transfer | receipt | u03 probe-a: p1 transfer (shallow), p2 recall with a wrong seed token (ok_or for map_err, E0599), p3 near-recall; fixes in recon/2026-10-26/gm/probe-transfer-report.md
+2026-10-26T17:21 | agent:fix-next-session | receipt | train-fixes 57421aa minutes, 33198a9 window quits nvim first, 64761f9 Cap: 10 minutes per u03 probe-a problem (no shared cap); 3 allowed failures only, gym train check 0 FAIL; real window with bacon-ls unverified
+2026-10-26T17:21 | peer:machine-setup-manager | receipt | [notice] bacon prefs.toml tracked in dotfiles c9d0e49, live file symlinked; gitignore effect on gym unproven
+2026-10-26T17:21 | self:claude-opus-5-5 | delegation | agent:fix-next-session continued: batch 2 #4 #5 #22; brief appended
+2026-10-26T17:27 | agent:fix-next-session | receipt | batch 2 on train-fixes: 0f864a9 predict per-line fraction, 5fc2b17 go at= seconds, f23abe3 0421978 resume kind and trainer definition; 429 pass, 3 allowed failures, gym train check 0 FAIL
+2026-10-26T17:27 | self:claude-opus-5-5 | delegation | agent:train-fixes-review, sonnet, background: independent review of train-fixes; prompt recon/2026-10-26/gm/train-fixes-review.md
+2026-10-26T17:34 | agent:train-fixes-review | receipt | train-fixes PASS: same 3 allowed failures as main, gym train check 0 FAIL, all 7 commits import alone, u01 probe-b recomputed 12.62 -> 5.50; low findings: attribution by list order, predict compares by position with no timeout, send-keys reaches the active pane only
+2026-10-26T17:34 | self:claude-opus-5-5 | commitment | main fast-forwarded to c721371 and pushed (origin main was 23 behind): migration, conventions, train-fixes batches 1-2; worktree train-fixes removed
+2026-10-26T17:35 | self | failure | Events written to the root checkout from a worktree session
