@@ -12,4 +12,6 @@ Edit: src/lib.rs
 - No `unwrap`, `expect`, `panic!`, `unreachable!` or `todo!` either.
 - `tests/visible.rs` is locked. Held-out tests add cases.
 
+Cap: 10 minutes
+
 Probe: unaided, trainer closed. 10 minutes for p1, p2 and p3 together.

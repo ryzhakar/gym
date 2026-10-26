@@ -9,4 +9,6 @@ Implement `seconds` so `cargo test` passes. `DurationError` stays as written.
 - Propagate with `?`. No `unwrap`, `expect`, `panic!`, `unreachable!` or `todo!` in `src/lib.rs`.
 - `tests/visible.rs` is locked. Held-out tests add cases.
 
+Cap: 10 minutes
+
 Probe: unaided, trainer closed. 10 minutes for p1, p2 and p3 together.
