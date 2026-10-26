@@ -1,0 +1,5 @@
+2026-10-26T12:30 | self | span-event | open; trainer span cf resumed for session 2026-10-26T12-30, opened by the trainer on the owner's authorisation; queue: u01 delayed, u02 delayed, u03 revisit
+2026-10-26T12:41 | self | discovery | probe grade total_minutes sums per-problem minutes that each run from go, double counting: u01 probe-b 12.62 reported, 5.5 elapsed; per-problem minutes are cumulative from go, not each problem's own time
+2026-10-26T12:45 | self | decision | trainer prepares a tmux window per staged item (nvim tabs spec plus edit file, bacon per crate) so the learner spends no clock on setup; on the learner's request in session 2026-10-26T12-30
+2026-10-26T12:59 | self | delegation | agent:window-builder, opus, worktree, background: gym train window command, per-type nvim layouts in tmux; prompt recon/2026-10-26/cf/window-command.md
+2026-10-26T14:10 | self | span-event | close; HEAD b8b1fe4 (dirty: docs/orchestration_log/history/2026-10-05/events-cf.md, docs/orchestration_log/history/2026-10-26/, training/rust/sessions/2026-10-26T12-30/); next: next trainer: u03 reuse-3 then immediate probe-a, windows via gym train window
