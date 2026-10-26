@@ -1,9 +1,11 @@
-"""train sub-app: gym train open/log/probe/close/status/check on the per-session record layout
+"""train sub-app: gym train open/log/probe/close/status/check/window on the per-session record layout
 under `<subject_dir>/sessions/<session_id>/`. `scripts/train/` (log.py, probe.py, record_schema.py,
 check_record.py, hooks/trainer_guard.py) stays untouched and live: a session in progress writes
 through it right now."""
 from __future__ import annotations
 
+import shlex
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +18,7 @@ from gym.train import practice as practice_module
 from gym.train import probe as probe_module
 from gym.train import session as session_module
 from gym.train import status as status_module
+from gym.train import window as window_module
 from gym.train.log import log_event
 
 app = typer.Typer(help="Training sessions: per-session events, logging, probing, status, checks.")
@@ -184,3 +187,42 @@ def check_command(
 ) -> None:
     """Lint every session's events.md and session.md; exit 1 on any FAIL."""
     raise typer.Exit(code=check_module.main(subject_dir))
+
+
+@app.command("window")
+def window_command(
+    crate_dirs: list[Path] = typer.Argument(..., help="Exercise crate directories, one tmux window each, in order"),
+    tmux_session: Optional[str] = typer.Option(
+        None, "--tmux-session", help="tmux session to put the windows in; default: the session of $TMUX, else gym"
+    ),
+    prefix: Optional[str] = typer.Option(
+        None, "--prefix", help="Window name prefix; default: the unit dir name up to its first hyphen, e.g. u02"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the tmux argv and each generated script; run only read-only tmux queries"
+    ),
+) -> None:
+    """Open one work screen per crate: a tmux window named <prefix>-<crate name up to its first
+    hyphen>, killed first if it exists, running nvim laid out for the exercise kind (code: spec over
+    edit files, bacon on the right; predict: spec over prediction.txt, src/*.rs on the right).
+    Prints one line per window: name and kind. Refuses a crate with no spec or no Edit line."""
+    real = window_module.subprocess_runner
+
+    def dry(argv: list[str]):
+        if argv[1] in window_module.QUERIES:
+            return real(argv)
+        typer.echo("$ " + shlex.join(argv))
+        return window_module.subprocess.CompletedProcess(argv, 0, "", "")
+
+    runner = dry if dry_run else real
+    script_dir = Path(tempfile.mkdtemp(prefix="gym-window-"))
+    try:
+        plans = window_module.open_windows(crate_dirs, tmux_session, prefix, runner, script_dir)
+    except window_module.WindowError as error:
+        typer.echo(f"refused: {error}", err=True)
+        raise typer.Exit(code=1)
+    for plan in plans:
+        if dry_run:
+            typer.echo(f"--- {script_dir / (plan.name + '.vim')}")
+            typer.echo(plan.script, nl=False)
+        typer.echo(f"{plan.name} {plan.kind}")
