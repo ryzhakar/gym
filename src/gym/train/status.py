@@ -32,26 +32,41 @@ def last_attempt_by_unit(rows: list[dict[str, str]]) -> dict[str, dict[str, str]
     return last
 
 
-def last_probe_by_unit(rows: list[dict[str, str]], which: str) -> dict[str, dict[str, str]]:
-    last: dict[str, dict[str, str]] = {}
-    for row in rows:
-        if row["event_kind"] == "probe-item" and row.get("which") == which:
-            last[row["unit"]] = row
-    return last
-
-
-def other_probes_by_unit(rows: list[dict[str, str]]) -> dict[str, dict[str, dict[str, str]]]:
-    """Every unit's last `probe-item` row for each side beyond `probe-a`/`probe-b` — a unit
-    carrying a third probe side (`probe-c`, a repeat of the unit; team lead ruling, 2026-09-30) or
-    any later one of the same shape — keyed by that side's own literal name."""
-    last: dict[str, dict[str, dict[str, str]]] = {}
+def probe_runs(rows: list[dict[str, str]]) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """Each (unit, side)'s latest probe run: the `probe-item` rows of that side logged in one
+    session after its previous run, one row per problem, a repeated problem keeping its later row."""
+    runs: dict[tuple[str, str], tuple[str | None, dict[str | None, dict[str, str]]]] = {}
     for row in rows:
         if row["event_kind"] != "probe-item":
             continue
-        side = row.get("which")
-        if side in ("probe-a", "probe-b"):
-            continue
-        last.setdefault(row["unit"], {})[side] = row
+        key = (row["unit"], row.get("which"))
+        session = row.get("session")
+        if key not in runs or runs[key][0] != session:
+            runs[key] = (session, {})
+        runs[key][1][row.get("problem")] = row
+    return {key: list(problems.values()) for key, (_, problems) in runs.items()}
+
+
+def probe_result(run: list[dict[str, str]]) -> dict[str, str]:
+    """The run's last row, its `result` aggregated over every problem: `pass` only when all passed,
+    else `fail <passed>/<problems>`."""
+    passed = sum(row["result"] == "pass" for row in run)
+    result = "pass" if passed == len(run) else f"fail {passed}/{len(run)}"
+    return {**run[-1], "result": result}
+
+
+def last_probe_by_unit(rows: list[dict[str, str]], which: str) -> dict[str, dict[str, str]]:
+    return {unit: probe_result(run) for (unit, side), run in probe_runs(rows).items() if side == which}
+
+
+def other_probes_by_unit(rows: list[dict[str, str]]) -> dict[str, dict[str, dict[str, str]]]:
+    """Every unit's last probe result for each side beyond `probe-a`/`probe-b` — a unit
+    carrying a third probe side (`probe-c`, a repeat of the unit; team lead ruling, 2026-09-30) or
+    any later one of the same shape — keyed by that side's own literal name."""
+    last: dict[str, dict[str, dict[str, str]]] = {}
+    for (unit, side), run in probe_runs(rows).items():
+        if side not in (IMMEDIATE_SIDE, DELAYED_SIDE):
+            last.setdefault(unit, {})[side] = probe_result(run)
     return last
 
 

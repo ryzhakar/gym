@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from gym.train.events import append_event
-from gym.train.status import build_status, due_queue_rows, format_status, other_probes_by_unit
+from gym.train.status import build_status, last_probe_by_unit, due_queue_rows, format_status, other_probes_by_unit
 
 
 @pytest.fixture
@@ -303,3 +303,41 @@ def test_resume_is_due_on_its_date_and_consumed_by_a_later_start_or_attempt(cons
 def test_resume_and_revisit_of_one_unit_are_separate_rows() -> None:
     rows = [_queue("u03", "resume", "2026-10-27", "2026-10-26T18:00"), _queue("u03", "revisit", "2026-10-27", "2026-10-26T18:01")]
     assert due_queue_rows(rows, today=date(2026, 10, 27)) == rows
+
+
+def _probe_rows(unit: str, which: str, session: str, results: list[str]) -> list[dict[str, str]]:
+    return [
+        {"event_kind": "probe-item", "unit": unit, "which": which, "session": session,
+         "problem": f"p{n}", "result": result, "timestamp": "2026-10-26T12:38"}
+        for n, result in enumerate(results, 1)
+    ]
+
+
+def test_probe_result_passes_only_when_every_problem_passed() -> None:
+    rows = _probe_rows("u1", "probe-b", "s1", ["pass", "pass", "pass"])
+    assert last_probe_by_unit(rows, "probe-b")["u1"]["result"] == "pass"
+
+
+def test_probe_result_with_a_failed_problem_reads_fail_passed_of_total() -> None:
+    """u01 and u02 delayed probes of 2026-10-26: p1 failed, p2 and p3 passed."""
+    rows = _probe_rows("u1", "probe-b", "s1", ["fail", "pass", "pass"])
+    assert last_probe_by_unit(rows, "probe-b")["u1"]["result"] == "fail 2/3"
+
+
+def test_probe_result_covers_only_the_latest_run_of_a_side() -> None:
+    rows = _probe_rows("u1", "probe-b", "s1", ["fail", "pass", "pass"]) + _probe_rows("u1", "probe-b", "s2", ["pass", "pass", "pass"])
+    assert last_probe_by_unit(rows, "probe-b")["u1"]["result"] == "pass"
+
+
+def test_probe_result_aggregates_other_sides_too() -> None:
+    rows = _probe_rows("u1", "probe-c", "s1", ["pass", "fail"])
+    assert other_probes_by_unit(rows)["u1"]["probe-c"]["result"] == "fail 1/2"
+
+
+def test_format_status_shows_a_failed_delayed_probe_as_fail_2_of_3(subject_dir: Path) -> None:
+    for problem, result in (("p1", "fail"), ("p2", "pass"), ("p3", "pass")):
+        append_event(
+            subject_dir, SESSION, "tool:probe", "probe-item",
+            {"unit": "u1", "which": "probe-b", "problem": problem, "result": result, "minutes": "4"},
+        )
+    assert "fail 2/3 (" in format_status(build_status(subject_dir))
