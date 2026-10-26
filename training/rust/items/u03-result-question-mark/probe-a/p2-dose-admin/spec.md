@@ -1,17 +1,17 @@
-# u03 replacement r3 · fix the compile error
+# u03 probe-a p2 · fix the compile error
 
 Edit: src/lib.rs
 
 `cargo test` fails: the crate does not compile. Make it pass.
 
 - `administer` keeps its signature. `DoseError` stays as written.
-- `dose_text` must parse as a `u32`; otherwise `BadAmount`, carrying the parse error.
+- The dose of `drug` is the number of the first entry in `doses` whose name equals `drug` exactly; no such entry: `UnknownDrug`.
 - A dose of 0 is `Empty`.
-- A dose above `stock` is `TooMuch`, carrying both numbers. Detect it with the subtraction itself: `u32::checked_sub`.
+- A dose above `stock` is `TooMuch`, carrying both numbers. The stock never goes below 0.
 - Otherwise return the stock left after the dose.
-- No `unwrap`, `expect`, `panic!`, `unreachable!` or `todo!` either.
+- No `unwrap`, `expect`, `panic!`, `unreachable!` or `todo!` in `src/lib.rs`.
 - `tests/visible.rs` is locked. Held-out tests add cases.
 
-Cap: 10 minutes
+Cap: 3 minutes. Recorded, never a stop.
 
-Probe: unaided, trainer closed. 10 minutes for p1, p2 and p3 together.
+Probe: unaided, trainer closed.

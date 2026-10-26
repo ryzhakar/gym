@@ -2,7 +2,7 @@
 
 Edit: src/lib.rs
 
-Cap: none. Time is recorded and never stops you.
+Cap: 10 minutes. Recorded, never a stop.
 
 Implement `parse_reading` so `cargo test` passes. `ReadError` stays as written.
 

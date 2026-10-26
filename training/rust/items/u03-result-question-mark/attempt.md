@@ -17,4 +17,6 @@ Rules, the same for both:
 
 `LineError` is in `src/lib.rs` and stays as written. `tests/visible.rs` is locked.
 
-10 minutes, unaided, compiler on. Over 10 is recorded, never a stop.
+Unaided, compiler on.
+
+Cap: 20 minutes. Recorded, never a stop.

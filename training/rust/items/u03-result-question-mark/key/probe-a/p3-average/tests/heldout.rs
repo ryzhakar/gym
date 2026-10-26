@@ -8,16 +8,23 @@ fn int_error(text: &str) -> std::num::ParseIntError {
 }
 
 #[test]
-fn first_bad_value_wins() {
-    assert_eq!(average(&["x", "y"]), Err(AvgError::Bad { index: 0, source: int_error("x") }));
-    assert_eq!(average(&["1", "2", ""]), Err(AvgError::Bad { index: 2, source: int_error("") }));
+fn first_bad_entry_wins() {
+    assert_eq!(average(&["x", "a=y"]), Err(AvgError::NoEquals { index: 0 }));
+    assert_eq!(average(&["a=y", "x"]), Err(AvgError::Bad { index: 0, source: int_error("y") }));
+    assert_eq!(average(&["a=1", "b=2", "c="]), Err(AvgError::Bad { index: 2, source: int_error("") }));
+}
+
+#[test]
+fn splits_at_the_first_equals() {
+    assert_eq!(average(&["a=b=3"]), Err(AvgError::Bad { index: 0, source: int_error("b=3") }));
+    assert_eq!(average(&["=4", "x y=6"]), Ok(5));
 }
 
 #[test]
 fn integer_division_and_negatives() {
-    assert_eq!(average(&["1", "2"]), Ok(1));
-    assert_eq!(average(&["-3", "-4"]), Ok(-3));
-    assert_eq!(average(&["7"]), Ok(7));
+    assert_eq!(average(&["p=1", "q=2"]), Ok(1));
+    assert_eq!(average(&["p=-3", "q=-4"]), Ok(-3));
+    assert_eq!(average(&["only=7"]), Ok(7));
 }
 
 #[test]

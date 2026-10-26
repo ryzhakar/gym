@@ -11,4 +11,6 @@ Edit: src/lib.rs
 - No `unwrap`, `expect`, `panic!`, `unreachable!` or `todo!`.
 - Locked: `tests/visible.rs`.
 
-Probe: unaided, trainer closed. 10 minutes for p1, p2 and p3 together.
+Cap: 6 minutes. Recorded, never a stop.
+
+Probe: unaided, trainer closed.
