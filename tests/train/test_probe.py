@@ -854,3 +854,18 @@ def test_a_predict_item_with_a_missing_and_an_extra_line_scores_against_the_long
 def test_a_correct_predict_item_passes_at_1(tmp_path: Path) -> None:
     crate = make_predict_crate(tmp_path / "p", "a\nb\nc\nd\n")
     assert probe.run_cargo_test(crate) == (True, pytest.approx(1.0))
+
+
+def test_run_go_stamps_the_second_and_grade_measures_from_it(tmp_path: Path, subject_dir: Path) -> None:
+    """The line stays minute-stamped; `at` carries the go to the second. Go 10:02:30, p1 saved
+    10:05:00: 2.50 minutes, where the minute stamp alone would read 3.00."""
+    unit_dir, work = _staged_by_hand(tmp_path, subject_dir)
+    probe.run_go(subject_dir, unit_dir, "immediate", "sess-1", now=CLOCK + timedelta(minutes=2, seconds=30))
+    go = probe.latest_probe_go(subject_dir, "sess-1", "unit-1", "immediate")
+    assert go["at"] == "2026-10-01T10:02:30"
+    _save(work["p1"], CLOCK + timedelta(minutes=5))
+
+    rows = probe.run_grade(subject_dir, unit_dir, "immediate", "sess-1")
+
+    assert {row["problem"]: row["minutes"] for row in rows}["p1"] == "2.50"
+    assert all(row["total_minutes"] == "2.50" for row in rows)

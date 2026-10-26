@@ -29,6 +29,9 @@ from typing import Callable
 # (memento's `events add`) — this is text inside a file, never a path component, so a colon is fine.
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M"
 
+# The go mark's own second-precise stamp, the `at` field of `probe-go`.
+GO_AT_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
 # The shape of a *session id* — used to name `sessions/<session_id>/` and, via
 # `gym.train.probe.session_path_segment`, the probe's staging directory under `work/`. Hyphen, not
 # colon: a colon in a path breaks `cargo test` on macOS, which puts the crate's manifest path in
@@ -260,8 +263,8 @@ KIND_OPTIONAL_FIELDS: dict[str, dict[str, Validator]] = {
     # enforced. Owner ruling (2026-10-05): the cap is per problem, not shared — `gym train probe
     # grade` reads each problem's own `spec.md` for a `Cap: N minutes` line and writes `over_cap`
     # (judged against that problem's own `minutes`) only when one exists; a problem with no such
-    # line carries no `over_cap` field at all. `total_minutes` is the plain sum of every graded
-    # problem's own `minutes` in one `grade` call.
+    # line carries no `over_cap` field at all. `total_minutes` runs from the go to the newest save
+    # of any problem in one `grade` call.
     "probe-item": {
         "fraction": float_in(0.0, 1.0),
         "over_cap": enum("yes", "no"),
@@ -275,6 +278,9 @@ KIND_OPTIONAL_FIELDS: dict[str, dict[str, Validator]] = {
     # answer was given on, when one applies (session 2026-10-01T15-56: procedure answers were logged
     # as `feedback` with a note saying no kind fit).
     "procedure": {"unit": nonempty, "item": nonempty},
+    # Manager ruling (2026-10-26): the line's stamp is minute-precise; `gym train probe go` adds the
+    # go to the second here (`GO_AT_FORMAT`), and `grade` measures from it when present.
+    "probe-go": {"at": matches(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")},
 }
 
 

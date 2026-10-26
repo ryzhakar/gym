@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Callable
 
 from gym.train.events import append_event, events_path, read_events
-from gym.train.schema import TIMESTAMP_FORMAT
+from gym.train.schema import GO_AT_FORMAT, TIMESTAMP_FORMAT
 
 ISOMORPH_OF = {"immediate": "probe-a", "delayed": "probe-b"}
 
@@ -236,7 +236,8 @@ def run_go(
     side = resolve_side(which)
     if latest_probe_start(subject_dir, session_id, unit, which) is None:
         sys.exit(f"refused, no probe-start event for unit {unit!r}, which {side!r}, in session {session_id}; stage first")
-    line = append_event(subject_dir, session_id, "tool:probe", "probe-go", {"unit": unit, "which": side}, now=now)
+    at = (now or datetime.now()).strftime(GO_AT_FORMAT)
+    line = append_event(subject_dir, session_id, "tool:probe", "probe-go", {"unit": unit, "which": side, "at": at}, now=now)
     print(line)
     return {"line": line}
 
@@ -370,7 +371,12 @@ def run_grade(
         sys.exit(f"refused, no probe-start event for unit {unit!r}, which {side!r}, in session {session_id}")
     started = datetime.strptime(start_row["timestamp"], TIMESTAMP_FORMAT)
     go_row = latest_probe_go(subject_dir, session_id, unit, which)
-    reference = datetime.strptime(go_row["timestamp"], TIMESTAMP_FORMAT) if go_row else started
+    if go_row and go_row.get("at"):
+        reference = datetime.strptime(go_row["at"], GO_AT_FORMAT)
+    elif go_row:
+        reference = datetime.strptime(go_row["timestamp"], TIMESTAMP_FORMAT)
+    else:
+        reference = started
     work_root = subject_dir / "work"
     problem_names = start_row["problems"].split(",")
     work_dirs = {name: work_root / session_path_segment(session_id) / unit / name for name in problem_names}
