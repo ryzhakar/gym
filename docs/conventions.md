@@ -55,9 +55,9 @@ ground  owner ruling 2026-10-01
 ### memento-by-orchestrator
 when    memento work: pat-down, events, span closes, record edits
 do      the orchestrator reads and writes the records itself, through `gym records event`, `gym records close` and direct edits
-never   a record read or write delegated to an agent; a second carve-out from agentic-delegation's file prohibition
+never   a record read or write delegated to an agent; a carve-out from agentic-delegation's file prohibition beyond this one and the peers commons
 why     "memento is the sole exception: orchestrator keeps their records themselves"
-ground  owner ruling 2026-09-30
+ground  owner rulings 2026-09-30, 2026-10-26 (the orchestrator reads the peers commons itself)
 
 ## Code
 

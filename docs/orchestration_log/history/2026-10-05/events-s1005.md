@@ -38,3 +38,4 @@
 2026-10-05T23:03 | self | failure | tooling edited in the live tree during a training session; entry history/2026-10-05/failures.md
 2026-10-05T23:03 | self | commitment | session 2026-10-05T21-58 closed by the manager: 62 minutes, assistant_closed no (not asked)
 2026-10-05T23:04 | self | discovery | trainer span cf wrote two span closes for one close block; the uncommitted hand-written one removed before commit, its text kept here: close; session 2026-10-05T21-58 closed by manager at 23:03 (2e70b20); u03 open, revisit queued 2026-10-06; learner next-action line pending, goes to next-session.md if it arrives
+2026-10-26T14:32 | self | span-event | close; HEAD 0385131 (dirty: docs/orchestration_log/history/2026-10-26/events-gm.md, docs/orchestration_log/history/2026-10-05/session-s1005.md); next: superseded by span gm
