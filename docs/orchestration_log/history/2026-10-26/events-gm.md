@@ -39,3 +39,4 @@
 2026-10-26T15:17 | self | delegation | agent:unit1-checker continued: review findings 1, 3, 4; brief appended
 2026-10-26T15:19 | self:claude-opus-5-5 | decision | schema amended on the owner's ruling 14:50: kind trace replaced by events, failure home failures.md replaced by failures*.md, project: block added (journal_corrections: 4 rewrites + rename ef73611)
 2026-10-26T15:19 | self:claude-opus-5-5 | decision | conventions record-check, event-lines, span-records, memento-by-orchestrator rewritten for memento verbs; map rows and capabilities follow; old gym records check FAILs on failures-* until unit 1 merges
+2026-10-26T15:21 | self:claude-opus-5-5 | commitment | unit 1 merged 5313309: gym records check keeps 4 residual checks, event/close retired; memento check 0 FAIL, gym records check 0 FAIL, pytest 420 pass
