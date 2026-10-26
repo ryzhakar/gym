@@ -26,7 +26,7 @@ from typing import Callable
 
 # The clock stamp every event *line* carries (the first `|`-delimited column), e.g.
 # `2026-09-30T16:36 | trainer | ...`. Colon, matching the rest of gym's own trace-line convention
-# (`gym.records.event`) — this is text inside a file, never a path component, so a colon is fine.
+# (memento's `events add`) — this is text inside a file, never a path component, so a colon is fine.
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M"
 
 # The shape of a *session id* — used to name `sessions/<session_id>/` and, via

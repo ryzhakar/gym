@@ -2,7 +2,7 @@
 close event.
 
 `## Close — <time>`, then `state`, `open`, `next`, each label padded to 8 columns — the same shape
-`gym.records.close_span` writes for memento's own session records, minus the `HEAD` line (train has
+memento's `digest close` writes for its own session records, minus the `HEAD` line (train has
 no git state to report; the task names only `state`, `open`, `next`).
 """
 from __future__ import annotations
