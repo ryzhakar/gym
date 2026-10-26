@@ -4,7 +4,7 @@ Audited 2026-09-30.
 
 | path | kind | load | purpose |
 |---|---|---|---|
-| CLAUDE.md | charter | self | the goal, session start, prime directives, pointers |
+| CLAUDE.md | charter | self | the condition, the goal, prime directives, pointers |
 | docs/ground-truth.md | frame | self | gym as given: starting point, target domains, subjects, tools |
 | docs/conventions.md | directive | self | how to work: rules with grounds |
 | .claude/memento.yaml | schema | self | record kinds, homes, formats, admission |
