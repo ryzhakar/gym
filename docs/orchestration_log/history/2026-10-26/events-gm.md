@@ -48,3 +48,10 @@
 2026-10-26T15:26 | owner:Arthur Ryzhak | decision | the trainer may open and close its own training session when no manager session is running; the manager does it when present
 2026-10-26T15:26 | owner:Arthur Ryzhak | decision | queue: an unfinished unit gets its own resume kind; revisit stays review of a finished unit
 2026-10-26T15:26 | self:claude-opus-5-5 | decision | conventions session-records gains except: no manager session, the trainer opens and closes it; record-check do trimmed for budget
+2026-10-26T15:27 | agent:grievances | receipt | 13 other open grievances listed: manager-side #4 predict per-line, #5 go seconds, #22 resume kind, #24 u03 probe transfer, #26 compile-stage hint rung, #31 none needed, #7/#8 trainer verifies on screen, #9 bacon-ls prefs outside repo; owner-side #20 worktree rule, #23/#25/#30 syllabus session
+2026-10-26T15:27 | self:claude-opus-5-5 | delegation | agent:probe-transfer, sonnet, background: u03 probe-a transfer vs recall; prompt recon/2026-10-26/gm/probe-transfer.md
+2026-10-26T15:28 | owner:Arthur Ryzhak | decision | adopt agent-conduct:git-etiquette project-wide (answer to grievance #20)
+2026-10-26T15:28 | owner:Arthur Ryzhak | decision | syllabus session before u03: grievances #23 item types, #25 caps, #30 evaluation order go to a trainer syllabus session first
+2026-10-26T15:28 | self:claude-opus-5-5 | decision | conventions: git-etiquette rule replaces commit-message and atomic-commits, commit-as-you-go loses its no-push clause; manager moved to worktree gym.worktrees/manager on branch session/manager
+2026-10-26T15:30 | owner:Arthur Ryzhak | decision | main trigger: main is fast-forwarded from a session branch once an independent review passes and both record checks and the tests are green
+2026-10-26T15:31 | owner:Arthur Ryzhak | decision | syllabus session runs in trainer-u3 by message with a summons file; the owner wakes it

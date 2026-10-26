@@ -5,21 +5,15 @@
 ### commit-as-you-go
 when    a unit of work is finished
 do      commit it at once, after `record-check` passes
-never   a finished unit left uncommitted; a push without the owner's word
+never   a finished unit left uncommitted
 why     records count as durable only once committed
-ground  owner ruling 2026-09-26
+ground  owner rulings 2026-09-26, 2026-10-26
 
-### commit-message
-when    committing
-do      one line, conventional: `type(scope): subject`
-never   a second line: no body, no trailer, no attribution or co-author line
-ground  owner ruling 2026-09-26
-
-### atomic-commits
-when    committing anything but memento changes
-do      one logical change per commit
-never   unrelated changes bundled into one commit
-ground  owner ruling 2026-09-26
+### git-etiquette
+when    a git command writes history, moves a branch, or adds a worktree
+do      follow the skill `agent-conduct:git-etiquette`; main fast-forwarded once a review passes and checks and tests are green
+never   a commit on main; main moved short of that trigger
+ground  owner ruling 2026-10-26
 except  memento changes follow `memento-commits`
 
 ### memento-commits
