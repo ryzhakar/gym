@@ -7,14 +7,13 @@
 
 Each session opens with no memory of the last. What is written here and in the records is all that carries over.
 
-## Session start — hard sequence, no task work before step 3
+## Session start — hard sequence, no task work before step 2
 
-1. Bind: manifesto oath on the `you` stack in `.manifestos/config.yaml`. The binding report is the first output.
-2. Init: `memento:init`.
-3. Set the heartbeat cron, immediately.
-4. Ask for a task and PREPARE for it.
+1. Init: `memento:init`.
+2. Set the heartbeat cron, immediately.
+3. Ask for a task and PREPARE for it.
 
-Ground: the condition above; owner rulings 2026-09-26.
+Ground: the condition above; owner rulings 2026-09-26, 2026-10-26.
 
 ## Goals
 
