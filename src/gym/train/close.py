@@ -17,7 +17,7 @@ LABEL_WIDTH = 8
 def summarize_state(rows: list[dict[str, str]]) -> str:
     """`state` per the task: a summary of this session's own `probe-item` and `queue` events.
     A row's `event_kind` is the event line's own kind (`probe-item`, `queue`, ...); a `queue`
-    row's `kind` field (`delayed_probe`/`revisit`/`next_unit`) is a different thing, read here as
+    row's `kind` field (`delayed_probe`/`revisit`/`resume`/`next_unit`) is a different thing, read here as
     `row['kind']` only after `event_kind` has already picked out the queue rows."""
     probes = [row for row in rows if row["event_kind"] == "probe-item"]
     queues = [row for row in rows if row["event_kind"] == "queue"]

@@ -289,3 +289,17 @@ def test_live_case_delayed_probe_queued_after_the_immediate_probe_reads_due_on_i
     due = build_status(subject, today=date(2026, 10, 7))["due_queue"]
     assert [(row["kind"], row["unit"], row["due"]) for row in due] == [("delayed_probe", "u01", "2026-10-07")]
     assert "delayed_probe  u01   2026-10-07" in format_status(build_status(subject, today=date(2026, 10, 7)))
+
+
+@pytest.mark.parametrize("consumer", ["start", "attempt"])
+def test_resume_is_due_on_its_date_and_consumed_by_a_later_start_or_attempt(consumer: str) -> None:
+    resume = _queue("u03", "resume", "2026-10-27", "2026-10-26T18:00")
+    assert due_queue_rows([resume], today=date(2026, 10, 26)) == []
+    assert due_queue_rows([resume], today=date(2026, 10, 27)) == [resume]
+    rows = [resume, _event(consumer, "u03", "2026-10-27T09:00")]
+    assert due_queue_rows(rows, today=date(2026, 10, 27)) == []
+
+
+def test_resume_and_revisit_of_one_unit_are_separate_rows() -> None:
+    rows = [_queue("u03", "resume", "2026-10-27", "2026-10-26T18:00"), _queue("u03", "revisit", "2026-10-27", "2026-10-26T18:01")]
+    assert due_queue_rows(rows, today=date(2026, 10, 27)) == rows

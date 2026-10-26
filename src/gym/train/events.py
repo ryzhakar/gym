@@ -101,7 +101,7 @@ def read_events(path: Path) -> list[dict[str, str]]:
     """Every line in one session's `events.md`, each as
     `{'timestamp','actor','event_kind','raw',**fields}`. The event's own kind is keyed
     `event_kind`, not `kind` — the `queue` kind's own required field is itself named `kind`
-    (`delayed_probe|revisit|next_unit`), and merging `**fields` after a plain `kind` key would let
+    (`delayed_probe|revisit|resume|next_unit`), and merging `**fields` after a plain `kind` key would let
     that field silently overwrite the event kind. A line the schema would refuse is skipped here —
     `gym train check` is what reports it."""
     rows: list[dict[str, str]] = []

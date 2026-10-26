@@ -239,7 +239,7 @@ KINDS: dict[str, dict[str, Validator]] = {
     },
     "queue": {
         "unit": nonempty,
-        "kind": enum("delayed_probe", "revisit", "next_unit"),
+        "kind": enum("delayed_probe", "revisit", "resume", "next_unit"),
         "due": iso_date,
     },
     "close": {

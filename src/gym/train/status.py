@@ -19,6 +19,7 @@ DELAYED_SIDE = "probe-b"
 QUEUE_CONSUMER_KINDS = {
     "next_unit": ("start", "attempt", "probe-item"),
     "revisit": ("start", "attempt"),
+    "resume": ("start", "attempt"),
     "delayed_probe": ("probe-item",),
 }
 
@@ -81,7 +82,7 @@ def due_queue_rows(rows: list[dict[str, str]], today: "date | None" = None) -> l
     row's `due` is already the date the probe falls due (the trainer sets it a week after the
     immediate probe), so no further wait is added. A row stops reading due once a later event, in
     any session, consumes it (`consumes`): a `start`, `attempt` or `probe-item` of its unit for
-    `next_unit`, a `start` or `attempt` for `revisit`, a `probe-item` of the delayed side for
+    `next_unit`, a `start` or `attempt` for `revisit` and `resume`, a `probe-item` of the delayed side for
     `delayed_probe`."""
     today = today or date.today()
     latest: dict[tuple[str, str], dict[str, str]] = {}

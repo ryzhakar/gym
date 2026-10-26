@@ -354,3 +354,10 @@ def test_grade_result_is_pass_or_fail_and_fraction_a_share() -> None:
 def test_grade_refuses_an_unknown_field() -> None:
     fields = {"unit": "u02", "item": "reuse-1", "result": "pass", "fraction": "1.0", "minutes": "3"}
     assert "unknown field" in (validate_fields("grade", fields) or "")
+
+
+def test_queue_accepts_the_resume_kind() -> None:
+    from gym.train.schema import validate_fields
+
+    assert validate_fields("queue", {"unit": "u03", "kind": "resume", "due": "2026-10-27"}) is None
+    assert validate_fields("queue", {"unit": "u03", "kind": "nonsense", "due": "2026-10-27"}) is not None
