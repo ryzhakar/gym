@@ -178,7 +178,7 @@ def test_code_crate_gets_bacon_tmux_pane_beside_nvim(tmp_path: Path) -> None:
     assert split[split.index("-l") + 1] == "70"
     assert "-h" in split and "-d" in split
     assert split[split.index("-c") + 1] == str(P2.resolve())
-    assert split[-1] == "bacon test"
+    assert split[-1] == "bacon test --config-toml 'apply_gitignore = false'"
 
 
 def test_predict_crate_gets_no_tmux_pane(tmp_path: Path) -> None:

@@ -32,7 +32,8 @@ LAYOUTS: dict[str, dict] = {
         "left_width": None,
         "spec_rows": 14,
         "first_share": (3, 5),
-        "right": {"tmux": "bacon test", "width": 70},
+        # training/rust/work/ is gitignored, and bacon skips saves to gitignored files by default
+        "right": {"tmux": "bacon test --config-toml 'apply_gitignore = false'", "width": 70},
     },
 }
 
