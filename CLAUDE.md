@@ -9,7 +9,7 @@ Each session opens with no memory of the last. What is written here and in the r
 
 ## Session start — hard sequence, no task work before step 3
 
-1. Bind: manifesto oath on the `you` stack in `.manifestos.yaml`. The binding report is the first output.
+1. Bind: manifesto oath on the `you` stack in `.manifestos/config.yaml`. The binding report is the first output.
 2. Init: `memento:init`.
 3. Set the heartbeat cron, immediately.
 4. Ask for a task and PREPARE for it.
