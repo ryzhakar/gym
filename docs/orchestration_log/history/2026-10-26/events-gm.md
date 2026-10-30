@@ -104,3 +104,6 @@
 2026-10-30T20:50 | self:claude-opus-5-5 | decision | review-trainer-1030 stopped: it judged trainer items and records, outside the manager's authority
 2026-10-30T20:52 | owner:Arthur Ryzhak | decision | fix the blanket-applied git-etiquette rule by cutting
 2026-10-30T20:52 | self:claude-opus-5-5 | decision | docs/conventions.md git-etiquette: cut 'a review passes and'; replaced: main moved once a review passes and checks and tests are green
+2026-10-30T21:00 | self:claude-opus-5-5 | discovery | main moved to 9f738a7 with 3 tests failing in the worktree, reported as known; root checkout 437 passed; cause: skip guards test only a directory a worktree holds without its files
+2026-10-30T21:00 | self:claude-opus-5-5 | delegation | agent:fix-skip-guards, branch fix/skip-guards; brief recon/2026-10-30/gm/fix-skip-guards.md
+2026-10-30T21:06 | agent:fix-skip-guards | receipt | d6d143a on fix/skip-guards, tests only; rerun in manager worktree 434 passed, 3 skipped, 0 failed
