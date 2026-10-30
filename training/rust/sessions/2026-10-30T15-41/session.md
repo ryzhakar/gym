@@ -55,3 +55,9 @@ The unit closes on the immediate pass. The delayed probe-b is queued for 2026-11
 - Items: add a held-out case to u03 reuse-6 where every line is 0, so the test checks `Empty` against lines rather than against the total. Check u03 probe-b and later string-input items for a std string API the learner has not met, such as `strip_suffix` and `split_at`. Such an API inflates the minutes off-target; either teach it first (u05) or give the split in the stub. Author the u04 bank before 2026-11-02, and the u05 bank.
 - Procedure: reuse-3's ten-minute cap held neither the target nor the cost of the string API. Caps stay recorded, never a stop. Confidence was asked once for the unit as specified; the learner's conditional "if the unit is the same one" suggests the prompt should say that the probe is on unit u03, `Result` and `?`.
 - Tooling: `gym train log` printed the go time to the minute only, so practice minutes come from that minute and are approximate. Add a seconds-precision `at=` to `go`, as `probe-go` has. In my own shell, a variable holding the log command failed with exit 127 under zsh; a shell function works.
+
+## Close — 2026-10-30T20:46
+
+state   3/3 probe item(s) passed; queued delayed_probe:u03-result-question-mark@2026-11-06, next_unit:u04-lifetimes@2026-11-02, next_unit:u05-str-slicing@2026-11-09
+open    none
+next    u03 delayed probe 2026-11-06; u04-lifetimes from 2026-11-02
