@@ -36,3 +36,13 @@ Findings to compile after the compaction:
   - Opus blind solves found spec gaps in recon/2026-10-30/cf/u04-blind-practice.md and u04-blind-probes.md, and two opus fixers closed them. The rule: each held-out test checks stated behaviour, and the p3 code sets are aligned across the probe sides.
   - Each problem: key green, stub red, a named wrong answer red. The caps are unmeasured on a human; only the LLM solve times exist.
 - **Discovery.** The queued `u05-str-slicing` collides with the curriculum id `u05-generics-traits`. Rename it before authoring, and re-number the curriculum's later units or give the string unit a non-numbered id.
+
+## Close — 2026-10-30T18:09
+
+HEAD    c15c7c2 (dirty: .claude/work-silently)
+state   u03 closed: immediate probe-a 3/3 on 2026-10-30, delayed probe due 11-06
+        u04-lifetimes bank authored and blind-checked, commit 3ce6583
+        branch trainer-u3/2026-10-26 pushed; awaits the manager's review and fast-forward
+open    manager: review and fast-forward trainer-u3/2026-10-26; gym train close for 2026-10-30T15-41 if not run
+        rename queued u05-str-slicing, which collides with u05-generics-traits
+next    next trainer: 2026-11-02 u01/u02 revisits and u04 start (novice: attempt, then the example walked by subgoal)
