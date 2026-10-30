@@ -11,7 +11,7 @@ ground  owner rulings 2026-09-26, 2026-10-26
 
 ### git-etiquette
 when    a git command writes history, moves a branch, or adds a worktree
-do      follow the skill `agent-conduct:git-etiquette`; main fast-forwarded once a review passes and checks and tests are green
+do      follow the skill `agent-conduct:git-etiquette`; main fast-forwarded once checks and tests are green
 never   a commit on main; main moved short of that trigger
 ground  owner ruling 2026-10-26
 except  memento changes follow `memento-commits`

@@ -90,3 +90,17 @@
 2026-10-26T21:11 | owner:Arthur Ryzhak | decision | compile the manager's you stack, on the owner's go only, due to a specific setup
 2026-10-26T21:11 | owner:Arthur Ryzhak | decision | strip Session start from CLAUDE.md: memento init and peers join load first, and hooks carry both
 2026-10-26T21:11 | self:claude-opus-5-5 | decision | schema amended on the owner's word: charter sections drop Session start (was [Condition, Session start, Goals, Prime directives, Pointers]), format prose drops its sentence; map row follows
+2026-10-26T21:12 | self:claude-opus-5-5 | commitment | [ask] to manifesto-steward: hazard to old-layout projects; main at 001a0f4, pushed
+2026-10-26T21:12 | peer:manifesto-steward | receipt | [answer] hazard sent to estafette-89, estafette-9a, product-catalog-maintainer; folders without a live session get commons #100; could not find the cited ruling in events-gm.md (it read the root checkout, which sits on trainer-u3/2026-10-26)
+2026-10-30T15:41 | peer:trainer-u3 | receipt | ask 15:41: open a Rust session for the owner, u03 revisit
+2026-10-30T15:42 | self:claude-opus-5-5 | delegation | session 2026-10-30T15-41 opened in the root checkout; summons recon/2026-10-30/gm/summons-u03.md sent to trainer-u3
+2026-10-30T20:46 | peer:trainer-u3 | receipt | notice 16:56: session 2026-10-30T15-41 done, narrative written, close owed
+2026-10-30T20:46 | owner:Arthur Ryzhak | decision | in the question tool: training uses no AI or LLM assistance, so assistant_closed is yes; no more questions, owner away, decide-while-away in force
+2026-10-30T20:46 | peer:trainer-u3 | receipt | notice 18:10: trainer-u3/2026-10-26 ready for review and fast-forward, tip f21416d; u05-str-slicing collides with curriculum u05-generics-traits
+2026-10-30T20:46 | self:claude-opus-5-5 | decision | queue solved: keep u05-str-slicing, curriculum u05-u12 renumbered u06-u13 by the trainer; alternative: string unit renamed non-numbered, curriculum untouched
+2026-10-30T20:47 | self:claude-opus-5-5 | decision | session 2026-10-30T15-41 closed, d5c80b3 on trainer-u3/2026-10-26, pushed
+2026-10-30T20:47 | self:claude-opus-5-5 | delegation | agent:review-trainer-1030, review of 001a0f4..d5c80b3; brief recon/2026-10-30/gm/review-trainer-1030.md
+2026-10-30T20:50 | self:claude-opus-5-5 | discovery | the u05 renumbering decision broke syllabus-by-trainer, the curriculum is the trainer's; retracted to trainer-u3
+2026-10-30T20:50 | self:claude-opus-5-5 | decision | review-trainer-1030 stopped: it judged trainer items and records, outside the manager's authority
+2026-10-30T20:52 | owner:Arthur Ryzhak | decision | fix the blanket-applied git-etiquette rule by cutting
+2026-10-30T20:52 | self:claude-opus-5-5 | decision | docs/conventions.md git-etiquette: cut 'a review passes and'; replaced: main moved once a review passes and checks and tests are green
