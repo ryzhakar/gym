@@ -26,9 +26,11 @@ runner = CliRunner()
 
 recon_missing = not SAMPLES.is_dir()
 skip_recon = pytest.mark.skipif(recon_missing, reason=f"gitignored recon data absent: {SAMPLES}")
+PREPARE_FILES = (RECON / "frame/frame.csv", SAMPLES / "frame-b1-input.csv")
 
 
-@skip_recon
+@pytest.mark.skipif(not all(p.is_file() for p in PREPARE_FILES),
+                    reason=f"gitignored recon data absent: {PREPARE_FILES}")
 def test_prepare_reproduces_batch_1_input(tmp_path: Path) -> None:
     out = tmp_path / "frame-b1-input.csv"
     result = runner.invoke(app, ["map", "frame", "--frame", str(RECON / "frame/frame.csv"), "--out", str(out)])
