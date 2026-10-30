@@ -21,3 +21,18 @@ Findings to compile after the compaction:
 - The gym-trainer stack binds only a subagent of that type. A peer trainer session binds `you:`, the orchestrator's stack. Running the trainer under its own stack needs `unharness prompt --config role.yaml | unharness launch -- claude` today, or `prompt --agent gym-trainer` in 4.0.0.
 - Precedence between elements belongs in an interplay file that `/compile-commitments` writes, and none exists yet.
 - The trainer committed ec6a5c7 and db03b46 on main, against git-etiquette. Since then its work goes on branch trainer-u3/2026-10-26.
+
+## After the compaction, 2026-10-26 evening to 2026-10-30
+
+- **Trainer stack compiled.** The gym-trainer interplay and commitments, full and minified, are in .manifestos/agents/gym-trainer/. With unharness 4.0.0, gym moved to the .manifestos/ layout (0e6341f). The manager merged it into main (fe59d1a, 7c95ee9) after review.
+- **Failure: the plugin update scope.** Updating the plugin for one login updated all eight, through the shared plugins folder; failures-cf.md has the entry. I sent the affected peers a hazard. The commons had recorded the shared folder before, and I didn't search it.
+- **Training session 2026-10-30T15-41 (record in commit 27f4a8e).**
+  - The u03 revisit: reuse-3 passed, with an eager collect before `?`.
+  - Instruction on `?` inside closures. Then reuse-6, authored mid-session by an opus agent (c62be12), passed lazily.
+  - The immediate probe-a passed 3 of 3. p1's minutes are confounded by a string-API search.
+  - Queued: the u03 delayed probe for 11-06, u04 for 11-02, and a string unit for 11-09.
+- **u04-lifetimes bank (3ce6583).**
+  - The brief is recon/2026-10-30/cf/u04-brief.md. Four opus authors wrote the attempt (fix), example.md, reuse-1 to reuse-4 (predict, write, fix, refactor), unshown (write), and probe-a and probe-b (fix, write, predict). An opus agent wrote hints.yaml.
+  - Opus blind solves found spec gaps in recon/2026-10-30/cf/u04-blind-practice.md and u04-blind-probes.md, and two opus fixers closed them. The rule: each held-out test checks stated behaviour, and the p3 code sets are aligned across the probe sides.
+  - Each problem: key green, stub red, a named wrong answer red. The caps are unmeasured on a human; only the LLM solve times exist.
+- **Discovery.** The queued `u05-str-slicing` collides with the curriculum id `u05-generics-traits`. Rename it before authoring, and re-number the curriculum's later units or give the string unit a non-numbered id.

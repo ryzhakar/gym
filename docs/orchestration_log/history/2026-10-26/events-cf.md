@@ -37,3 +37,18 @@
 2026-10-26T20:59 | self:claude-opus-5-5 | discovery | commons #21 (2026-10-14) already states that every login's plugins/ links to ~/.claude-shared/plugins, and an earlier body read it (commons_read 79); the failure "Plugin update for one login moved every login" traces to my not searching the commons before stating the scope of a shared change
 2026-10-26T20:59 | self:claude-opus-5-5 | discovery | all 8 logins, ~/.claude included, link plugins/ to the shared folder; 16 folders still hold .manifestos.yaml, listed in recon/2026-10-26/cf/old-layout-folders.md; agents-of-anarchy-marketplace moved by 20:55; [notice] with the list to manifesto-steward
 2026-10-26T21:00 | owner:Arthur Ryzhak | decision | drop the binding step from CLAUDE.md Session start; steps renumbered, the hooks bind the stack
+2026-10-30T16:59 | owner:Arthur Ryzhak | decision | training session 2026-10-30T15-41 ended at 16:56 on the learner's word; asks for a small string API unit later; u05-str-slicing queued 2026-11-09
+2026-10-30T16:59 | self:claude-opus-5-5 | receipt | session 2026-10-30T15-41: u03 reuse-3 pass, reuse-6 pass (authored mid-session, commit c62be12), immediate probe-a pass 3 of 3; narrative and record in commit 27f4a8e; manager told to close
+2026-10-30T16:59 | owner:Arthur Ryzhak | decision | the reuse-6 all-zero held-out case is dropped; author the u04 bank now, capable agents only
+2026-10-30T16:59 | self:claude-opus-5-5 | delegation | four opus authors for u04-lifetimes, about 17:05: attempt and example; reuse-1, reuse-3, unshown; reuse-2, reuse-4; probe-a and probe-b; brief recon/2026-10-30/cf/u04-brief.md
+2026-10-30T16:59 | self:claude-opus-5-5 | discovery | queued next_unit u05-str-slicing collides with the curriculum id u05-generics-traits; rename before authoring
+2026-10-30T17:04 | self:claude-opus-5-5 | receipt | u04 authors done: reuse-1, reuse-3, unshown; reuse-2, reuse-4; attempt and example.md; each key green, stub red, a wrong answer red
+2026-10-30T17:04 | self:claude-opus-5-5 | delegation | opus hints.yaml author for u04 practice problems; opus blind solver for u04 practice, report recon/2026-10-30/cf/u04-blind-practice.md
+2026-10-30T17:04 | owner:Arthur Ryzhak | decision | work silently and close everything when done
+2026-10-30T17:07 | self:claude-opus-5-5 | receipt | u04 hints.yaml written, 6 problems, compile ladder identical to u03, YAML valid; u04 probe-a and probe-b written, 6 problems, keys green, stubs red, wrong answers red
+2026-10-30T17:07 | self:claude-opus-5-5 | delegation | opus blind timed solver for u04 probes, report recon/2026-10-30/cf/u04-blind-probes.md
+2026-10-30T17:07 | self:claude-opus-5-5 | receipt | u04 practice blind solve: all six green first run, about 1 min each for a fluent solver; gaps: reuse-2 unstated trimming and empty cases, reuse-1 ok casing, reuse-4 wording, unshown swap type and missing panic ban check
+2026-10-30T17:07 | self:claude-opus-5-5 | delegation | opus fixer for the u04 practice spec gaps, rule: every held-out test checks a stated behaviour
+2026-10-30T17:10 | self:claude-opus-5-5 | receipt | u04 probe blind solve: six green, predicts first try; gaps: probe-b p2 empty pieces unstated and split_terminator fit, probe-a p2 early-stop trap held-out only, p3 sides test different codes and probe-b case 4 hinges on a coercion
+2026-10-30T17:10 | self:claude-opus-5-5 | delegation | opus fixer for the u04 probe gaps, p3 code sets aligned across sides
+2026-10-30T18:08 | self:claude-opus-5-5 | receipt | u04 practice gaps closed: reuse-1 ok casing, reuse-2 trimming and empty parts stated, reuse-4 wording, unshown after held-out type coercion dropped and source ban check added; each key green, stub red, wrong answer red
